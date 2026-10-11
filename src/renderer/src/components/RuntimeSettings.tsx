@@ -1,5 +1,4 @@
 import type { HarnessStatus } from '../../../shared/contracts'
-import { QuickLauncherShortcutSettings } from './QuickLauncherShortcutSettings'
 import {
   SettingsRow,
   SettingsSection,
@@ -14,11 +13,10 @@ import { cn } from '../lib/utils'
 
 interface RuntimeSettingsProps {
   harness: HarnessStatus | null
-  onError(message: string): void
 }
 
-/** General → Runtime: ND Harness status, quick launcher, and product architecture notes. */
-export function RuntimeSettings({ harness, onError }: RuntimeSettingsProps) {
+/** General → Runtime: ND Harness status and product architecture notes. */
+export function RuntimeSettings({ harness }: RuntimeSettingsProps) {
   const dotClass = harness?.state === 'ready'
     ? 'bg-primary'
     : harness?.state === 'running' || harness?.state === 'starting'
@@ -73,8 +71,6 @@ export function RuntimeSettings({ harness, onError }: RuntimeSettingsProps) {
           ) : null}
         </div>
       </SettingsSection>
-
-      <QuickLauncherShortcutSettings onError={onError} />
 
       <SettingsSection title="Product architecture">
         <div className="space-y-1.5">

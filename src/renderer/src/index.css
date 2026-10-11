@@ -315,11 +315,12 @@ body.float-mode,
   box-shadow: inset 0 -1px 0 rgb(0 0 0 / 10%);
 }
 
+/* Compact main menu box, pinned to the titlebar's top row in App.tsx. */
 #root > div:not(.float-mode) > header.app-drag nav[aria-label='ND-DSH navigation'] > div {
   border: 1px solid var(--border-soft);
   border-radius: 11px;
   background: var(--inset);
-  padding: 3px;
+  padding: 2px;
   box-shadow:
     inset 0 1px 2px rgb(0 0 0 / 16%),
     0 1px 0 rgb(255 255 255 / 4%);
@@ -327,9 +328,9 @@ body.float-mode,
 }
 
 #root > div:not(.float-mode) > header.app-drag nav[aria-label='ND-DSH navigation'] button {
-  min-height: 30px;
+  min-height: 26px;
   border-radius: 8px;
-  padding-inline: 12px;
+  padding-inline: 9px;
   letter-spacing: -0.01em;
 }
 

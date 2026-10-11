@@ -1,0 +1,32 @@
+{
+  "protocol": "nd.extension/1",
+  "id": "nd.translate",
+  "name": "ND Translate",
+  "description": "Translate text with Google Translate, ChatGPT, or Gemini in the ND browser. Google Translate is the default; AI providers may require sign-in or verification.",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "contexts": ["personal", "company", "project"],
+  "permissions": ["browser.navigate", "translate.history"],
+  "settings": [],
+  "contributions": {
+    "commands": [{
+      "id": "translate",
+      "title": "ND Translate",
+      "keywords": ["translation", "language", "google translate", "chatgpt", "gemini"],
+      "host": "browser.translate",
+      "openViewId": "translator"
+    }],
+    "views": [{
+      "id": "translator",
+      "title": "ND Translate",
+      "kind": "detail",
+      "host": "browser.translate",
+      "itemTitleKey": "text",
+      "itemBodyKey": "translatedText",
+      "actions": [
+        { "id": "history", "title": "Translation history", "host": "browser.translate.history" },
+        { "id": "clear-history", "title": "Clear translation history", "host": "browser.translate.history.clear" }
+      ]
+    }]
+  }
+}

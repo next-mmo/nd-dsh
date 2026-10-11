@@ -13,7 +13,7 @@ export interface ContextOption {
 /** Personal first, then every company, then each company's projects. */
 export function contextOptions(organization: OrganizationSnapshot | null): ContextOption[] {
   const options: ContextOption[] = [
-    { id: 'personal', label: 'Personal', detail: 'ND Home', context: { kind: 'personal' } },
+    { id: 'personal', label: 'Personal', detail: 'Personal space', context: { kind: 'personal' } },
   ]
   for (const company of organization?.companies ?? []) {
     options.push({
@@ -59,6 +59,18 @@ export function describeContextForUi(context: NdContext, organization: Organizat
   if (context.kind === 'company') return company?.name ?? 'Company'
   const project = organization?.projects.find((item) => item.id === context.projectId)
   return project ? `${company?.name ?? 'Company'} · ${project.name}` : 'Project'
+}
+
+export type BrowserFocusView = 'personal' | 'agent'
+
+/**
+ * Where a browser tab opened by a context belongs. Personal browsing is
+ * personal use, so it surfaces in the Personal space; a company or project tab
+ * stays in the Agent workbench it was opened from. A tab never appears under
+ * another context's chrome.
+ */
+export function browserFocusView(context: NdContext): BrowserFocusView {
+  return context.kind === 'personal' ? 'personal' : 'agent'
 }
 
 export interface CommandRunPlan {

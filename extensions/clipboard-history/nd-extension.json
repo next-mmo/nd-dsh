@@ -1,0 +1,77 @@
+{
+  "protocol": "nd.extension/1",
+  "id": "nd.clipboard-history",
+  "name": "Clipboard History",
+  "description": "A personal clipboard history that records nothing until you turn recording on. Install does not record, activation does not record, and the recording switch defaults to off.",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "contexts": ["personal"],
+  "permissions": ["clipboard.read", "clipboard.write"],
+  "settings": [
+    {
+      "key": "recordHistory",
+      "title": "Record clipboard history",
+      "type": "boolean",
+      "default": false,
+      "description": "Until this is on, ND records nothing. Turning it on starts the clipboard watcher; turning it off, disabling the extension, or uninstalling stops it immediately."
+    },
+    {
+      "key": "textCap",
+      "title": "Text entries to keep",
+      "type": "number",
+      "default": 300,
+      "description": "Oldest unpinned text entries beyond this cap are removed. Pinned entries are exempt."
+    },
+    {
+      "key": "imageCap",
+      "title": "Image entries to keep",
+      "type": "number",
+      "default": 30,
+      "description": "Oldest unpinned image entries beyond this cap are removed. Pinned entries are exempt."
+    },
+    {
+      "key": "pinnedCap",
+      "title": "Pinned entries to keep",
+      "type": "number",
+      "default": 25,
+      "description": "How many entries you may pin at once. Clearing history keeps pinned entries."
+    }
+  ],
+  "contributions": {
+    "commands": [
+      {
+        "id": "open-history",
+        "title": "Clipboard History",
+        "keywords": ["clipboard", "copy", "paste", "history"],
+        "host": "clipboard.history.list",
+        "openViewId": "history",
+        "contexts": ["personal"]
+      },
+      {
+        "id": "clear-history",
+        "title": "Clear Clipboard History",
+        "keywords": ["clipboard", "history", "clear", "delete"],
+        "host": "clipboard.history.clear",
+        "contexts": ["personal"]
+      }
+    ],
+    "views": [
+      {
+        "id": "history",
+        "title": "Clipboard History",
+        "description": "Nothing recorded yet. Copy something while recording is on and it will appear here.",
+        "kind": "list",
+        "host": "clipboard.history.list",
+        "itemTitleKey": "title",
+        "itemBodyKey": "detail",
+        "refreshIntervalMs": 3000,
+        "contexts": ["personal"],
+        "actions": [
+          { "id": "copy-again", "title": "Copy again", "host": "clipboard.history.copyAgain" },
+          { "id": "pin", "title": "Pin", "host": "clipboard.history.pin" },
+          { "id": "delete", "title": "Delete", "host": "clipboard.history.delete" }
+        ]
+      }
+    ]
+  }
+}

@@ -6,7 +6,8 @@ import { dirname, join } from 'node:path'
 import process from 'node:process'
 import { safeStorage, shell } from 'electron'
 import type { TokenSaverAccountId, TokenSaverAccountState } from '../../shared/token-saver.js'
-import { codexBinPath } from '../app-paths.js'
+import { bundledResourceRoot, codexBinPath } from '../app-paths.js'
+import { backgroundProcessEnvironment } from '../core/background-process-environment.js'
 
 const OAUTH_TIMEOUT_MS = 5 * 60_000
 const CODEX_LOGIN_TIMEOUT_MS = 10 * 60_000
@@ -354,10 +355,19 @@ function codexAuthExists(): boolean {
 }
 
 function runCodex(bin: string, args: string[]): Promise<void> {
-  const argv = bin.toLowerCase().endsWith('.js') ? [process.execPath, bin, ...args] : [bin, ...args]
+  const runAsNode = /\.[cm]?js$/i.test(bin)
+  const preload = join(bundledResourceRoot(), 'scripts', 'nd-background-process.cjs')
+  const nodePolicyArgs = process.platform === 'win32' ? ['--require', preload] : []
+  const argv = runAsNode ? [process.execPath, ...nodePolicyArgs, bin, ...args] : [bin, ...args]
+  const environment = { ...process.env }
+  delete environment.ELECTRON_RUN_AS_NODE
+  if (runAsNode) environment.ELECTRON_RUN_AS_NODE = '1'
   return new Promise((resolve, reject) => {
     const child = spawn(argv[0] as string, argv.slice(1), {
-      env: process.env,
+      env: backgroundProcessEnvironment(
+        environment,
+        preload,
+      ),
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     })

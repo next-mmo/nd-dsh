@@ -6,9 +6,11 @@
 //! request that leaves no process behind, a restart that keeps terminal identity,
 //! and a cache that never serves a stale result.
 
+use base64::Engine as _;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{BufReader, Read, Write};
@@ -1155,6 +1157,229 @@ fn workspace_snapshot_composes_reads_search_and_git_and_detects_stale_revisions(
 }
 
 #[test]
+fn workspace_fingerprint_artifacts_pins_the_recorded_layout() {
+    let fixture = temp_dir("fingerprint");
+    fs::write(fixture.join("research.md"), "hello").expect("write research");
+    fs::create_dir_all(fixture.join("design").join("sub")).expect("create design");
+    fs::write(fixture.join("design").join("a.txt"), "A").expect("write a");
+    fs::write(fixture.join("design").join("sub").join("b.txt"), "B").expect("write b");
+    let mut core = Core::launch();
+    let root = fixture.to_string_lossy().to_string();
+
+    let complete: Value = core
+        .call(
+            "workspace.fingerprint-artifacts",
+            json!({ "root": root, "paths": ["research.md", "design"] }),
+        )
+        .expect("workspace.fingerprint-artifacts");
+    let artifacts = complete["artifacts"].as_array().expect("artifacts");
+    assert_eq!(artifacts.len(), 2);
+    assert_eq!(artifacts[0]["path"], json!("research.md"));
+    assert_eq!(artifacts[0]["kind"], json!("file"));
+    assert_eq!(artifacts[0]["size"], json!(5));
+    assert_eq!(
+        artifacts[0]["sha256"],
+        json!("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824")
+    );
+    assert_eq!(artifacts[1]["path"], json!("design"));
+    assert_eq!(artifacts[1]["kind"], json!("directory"));
+    assert_eq!(artifacts[1]["size"], json!(2));
+    let mut expected = Sha256::new();
+    expected.update(b"design/a.txt\0");
+    expected.update(b"A");
+    expected.update(b"design/sub\0");
+    expected.update(b"design/sub/b.txt\0");
+    expected.update(b"B");
+    let expected: String = expected
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    assert_eq!(artifacts[1]["sha256"], json!(expected));
+
+    let escaped = core
+        .call::<Value>(
+            "workspace.fingerprint-artifacts",
+            json!({ "root": root, "paths": ["../outside.md"] }),
+        )
+        .expect_err("an escaping path must be refused");
+    assert_eq!(escaped.code, "method_failed");
+    assert!(escaped.message.contains("escapes the root"), "{escaped:?}");
+    let empty = core
+        .call::<Value>(
+            "workspace.fingerprint-artifacts",
+            json!({ "root": root, "paths": [] }),
+        )
+        .expect_err("an empty path list must be refused");
+    assert_eq!(empty.code, "invalid_params");
+    let _ = fs::remove_dir_all(&fixture);
+}
+
+/// A real encoded PNG, so the contract tests exercise the sidecar's decoder
+/// rather than a stub standing in for it.
+fn write_png_fixture(path: &Path, width: u32, height: u32) {
+    let buffer = image::ImageBuffer::from_fn(width, height, |x, y| {
+        image::Rgb([(x % 256) as u8, (y % 256) as u8, 96u8])
+    });
+    buffer.save(path).expect("write png fixture");
+}
+
+#[test]
+fn media_thumbnails_returns_decodable_jpeg_over_the_wire() {
+    let fixture = temp_dir("media-thumbnails");
+    let library = fixture.join("library");
+    fs::create_dir_all(&library).expect("create library");
+    write_png_fixture(&library.join("wide.png"), 640, 320);
+    fs::write(library.join("corrupt.png"), b"this is not an image").expect("write corrupt");
+    // A sibling tree the root has no business reaching into.
+    let external = temp_dir("media-thumbnails-external");
+    write_png_fixture(&external.join("secret.png"), 32, 32);
+
+    let mut core = Core::launch();
+    let root = fixture.to_string_lossy().to_string();
+
+    let result: Value = core
+        .call(
+            "media.thumbnails",
+            json!({ "root": root, "paths": ["library/wide.png"], "width": 160, "quality": 70 }),
+        )
+        .expect("media.thumbnails");
+
+    assert!(!result["truncated"].as_bool().expect("truncated"));
+    assert!(
+        result["failures"].as_array().expect("failures").is_empty(),
+        "unexpected failures: {result}"
+    );
+    let thumbnails = result["thumbnails"].as_array().expect("thumbnails");
+    assert_eq!(thumbnails.len(), 1);
+    let thumb = &thumbnails[0];
+    assert_eq!(thumb["path"], json!("library/wide.png"));
+    assert_eq!(thumb["format"], json!("jpeg"));
+    assert_eq!(thumb["width"], json!(160));
+    // 640x320 at width 160 keeps its 2:1 aspect ratio.
+    assert_eq!(thumb["height"], json!(80));
+    assert_eq!(thumb["sourceWidth"], json!(640));
+    assert_eq!(thumb["sourceHeight"], json!(320));
+
+    // The payload is base64 text (not a byte array) and really is a JPEG of the
+    // promised dimensions — that is the whole contract the desktop relies on.
+    let data = thumb["data"].as_str().expect("data must be a string");
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .expect("payload must be base64");
+    assert_eq!(
+        bytes.len(),
+        thumb["byteSize"].as_u64().expect("byteSize") as usize
+    );
+    let decoded = image::load_from_memory_with_format(&bytes, image::ImageFormat::Jpeg)
+        .expect("payload must be decodable jpeg");
+    assert_eq!(decoded.width(), 160);
+    assert_eq!(decoded.height(), 80);
+
+    // A corrupt sibling fails on its own and does not take the batch with it.
+    let partial: Value = core
+        .call(
+            "media.thumbnails",
+            json!({ "root": root, "paths": ["library/wide.png", "library/corrupt.png"] }),
+        )
+        .expect("partial batch");
+    assert_eq!(partial["thumbnails"].as_array().expect("ok").len(), 1);
+    let failures = partial["failures"].as_array().expect("failures");
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0]["path"], json!("library/corrupt.png"));
+
+    // Confinement is enforced on the wire, not just inside the module. Both a
+    // traversal and an absolute path to a file that genuinely exists must be
+    // refused before it is opened.
+    let traversed = core
+        .call::<Value>(
+            "media.thumbnails",
+            json!({ "root": root, "paths": ["../secret.png"] }),
+        )
+        .expect_err("parent traversal must be refused");
+    assert!(
+        traversed.message.contains("escapes the root"),
+        "unexpected message: {traversed:?}"
+    );
+    let absolute = core
+        .call::<Value>(
+            "media.thumbnails",
+            json!({ "root": root, "paths": [external.join("secret.png").to_string_lossy()] }),
+        )
+        .expect_err("an absolute path must be refused even when the file exists");
+    assert_eq!(absolute.code, "method_failed");
+    // The root itself is not a readable image library entry.
+    let nested_escape = core
+        .call::<Value>(
+            "media.thumbnails",
+            json!({ "root": library.to_string_lossy(), "paths": ["../library/wide.png"] }),
+        )
+        .expect_err("a nested traversal must be refused");
+    assert_eq!(nested_escape.code, "method_failed");
+
+    let _ = fs::remove_dir_all(&fixture);
+    let _ = fs::remove_dir_all(&external);
+}
+
+#[test]
+fn media_thumbnails_leaves_the_workspace_metric_alone() {
+    // A media root is a wallpaper library, not a linked workspace. Counting it
+    // as one would make the desktop's workspace gauge lie.
+    let fixture = temp_dir("media-metrics");
+    write_png_fixture(&fixture.join("a.png"), 32, 32);
+    let mut core = Core::launch();
+    let before = core.health()["workspaceCount"]
+        .as_u64()
+        .expect("workspaceCount");
+    let _: Value = core
+        .call(
+            "media.thumbnails",
+            json!({ "root": fixture.to_string_lossy(), "paths": ["a.png"] }),
+        )
+        .expect("media.thumbnails");
+    let after = core.health()["workspaceCount"]
+        .as_u64()
+        .expect("workspaceCount");
+    assert_eq!(
+        before, after,
+        "a media root must not be counted as a workspace"
+    );
+    let _ = fs::remove_dir_all(&fixture);
+}
+
+#[test]
+fn media_set_wallpaper_refuses_paths_it_must_not_touch() {
+    // Only the rejection paths are exercised: the success path changes the
+    // developer's real desktop, which a test run must never do.
+    let fixture = temp_dir("media-wallpaper");
+    write_png_fixture(&fixture.join("ok.png"), 32, 32);
+    fs::write(fixture.join("notes.txt"), b"not an image").expect("write notes");
+    let mut core = Core::launch();
+
+    for (label, path) in [
+        ("relative", "ok.png".to_owned()),
+        ("blank", "   ".to_owned()),
+        (
+            "unsupported extension",
+            fixture.join("notes.txt").to_string_lossy().into_owned(),
+        ),
+        (
+            "missing file",
+            fixture.join("absent.png").to_string_lossy().into_owned(),
+        ),
+        ("directory", fixture.to_string_lossy().into_owned()),
+    ] {
+        let error = match core.call::<Value>("media.set-wallpaper", json!({ "path": path })) {
+            Ok(value) => panic!("{label} must be refused, got {value}"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code, "method_failed", "{label}: {error:?}");
+    }
+
+    let _ = fs::remove_dir_all(&fixture);
+}
+
+#[test]
 fn every_declared_capability_is_reachable_and_unknown_methods_are_refused() {
     let mut core = Core::launch();
     let health = core.health();
@@ -1170,6 +1395,7 @@ fn every_declared_capability_is_reachable_and_unknown_methods_are_refused() {
         "terminal",
         "git",
         "workspace",
+        "media",
         "search",
         "revision",
         "cache",

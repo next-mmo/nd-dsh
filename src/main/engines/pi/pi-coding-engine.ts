@@ -1,5 +1,8 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import type {
   DshEventFrame,
   EngineModelOption,
@@ -9,7 +12,10 @@ import type {
 } from '../../../shared/contracts.js'
 import { PI_CODING_ENGINE_ID } from '../../../shared/coding-engines.js'
 import { stripWorkspaceContext } from '../../../shared/workspace-context.js'
-import { piBinPath } from '../../app-paths.js'
+import { managedPiAgentDir, piBinPath } from '../../app-paths.js'
+import { appBrowserConfigPath, DEFAULT_AGENT_BROWSER_SESSION } from '../../browser/agent-browser-client.js'
+import { parseContextWindow, protocolFromApiFormat, resolveRuntimeHeaders } from '../../provider-runtime.js'
+import type { ProviderStore } from '../../providers.js'
 import {
   deferred,
   engineEnvironment,
@@ -33,6 +39,25 @@ import {
 const LOCAL_TRANSCRIPT_EVENTS = 32
 const MODELS_CACHE_TTL_MS = 5 * 60_000
 const COMMAND_TIMEOUT_MS = 30_000
+
+const PROVIDER_ENV_MAP: Record<string, string> = {
+  deepseek: 'DEEPSEEK_API_KEY',
+  openai: 'OPENAI_API_KEY',
+  anthropic: 'ANTHROPIC_API_KEY',
+  google: 'GEMINI_API_KEY',
+  gemini: 'GEMINI_API_KEY',
+  openrouter: 'OPENROUTER_API_KEY',
+  groq: 'GROQ_API_KEY',
+  mistral: 'MISTRAL_API_KEY',
+  minimax: 'MINIMAX_API_KEY',
+  moonshot: 'MOONSHOT_API_KEY',
+  opencode: 'OPENCODE_API_KEY',
+  kimi: 'KIMI_API_KEY',
+  cerebras: 'CEREBRAS_API_KEY',
+  fireworks: 'FIREWORKS_API_KEY',
+  xai: 'XAI_API_KEY',
+  'azure-openai': 'AZURE_OPENAI_API_KEY',
+}
 
 interface TurnOutcome {
   status: string
@@ -76,6 +101,10 @@ export interface PiCodingEngineOptions {
   log?: (line: string) => void
   /** Test seam: process spawner (defaults to node:child_process.spawn). */
   spawnProcess?: typeof spawn
+  /** Provider store to inject active model credentials and routes into Pi turns. */
+  providers?: () => ProviderStore | undefined
+  /** Base skills directory to forward to Pi CLI via --skill. */
+  skillsDir?: () => string | undefined
 }
 
 export class PiCodingEngine {
@@ -136,9 +165,35 @@ export class PiCodingEngine {
    * native to Pi: an unset model means "whatever the CLI is configured with".
    */
   async listModels(): Promise<EngineModelOption[]> {
+    const store = this.options.providers?.()
+    if (store) {
+      try {
+        const enabled = store.allEnabled?.() ?? (store.enabled() ? [store.enabled()!] : [])
+        if (enabled.length > 0) {
+          const models: EngineModelOption[] = []
+          for (const provider of enabled) {
+            for (const model of provider.models) {
+              const qualifiedId = `${provider.id}/${model.id}`
+              if (!models.some((item) => item.id === qualifiedId)) {
+                models.push({ id: qualifiedId, name: `${provider.name} · ${model.id}` })
+              }
+            }
+          }
+          return models
+        }
+      } catch {
+        // Fallback gracefully to probed models below
+      }
+    }
+
     const cached = this.modelsCache
     if (cached && Date.now() - cached.at < MODELS_CACHE_TTL_MS) return cached.models
-    const models = await this.probeModels()
+    let models: EngineModelOption[] = []
+    try {
+      models = await this.probeModels()
+    } catch {
+      // If Pi's probe fails or Pi has no models configured yet
+    }
     this.modelsCache = { at: Date.now(), models }
     return models
   }
@@ -151,8 +206,9 @@ export class PiCodingEngine {
     const spawnProcess = this.options.spawnProcess ?? spawn
     return new Promise<EngineModelOption[]>((resolve, reject) => {
       const child = spawnCliCommand(spawnProcess, bin, ['--mode', 'rpc'], {
+        windowsHide: true,
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: engineEnvironment(),
+        env: this.buildEnvironment(),
       })
       let out = ''
       let err = ''
@@ -258,6 +314,13 @@ export class PiCodingEngine {
     if (activeSession.running) throw new Error('This Pi chat already has an active turn')
     if (options.cwd !== undefined) activeSession.cwd = options.cwd
     if (options.model !== undefined) activeSession.model = options.model
+    if (activeSession.model === undefined) {
+      const store = this.options.providers?.()
+      const enabled = store?.enabled?.()
+      if (enabled?.id && enabled.models[0]?.id) {
+        activeSession.model = `${enabled.id}/${enabled.models[0].id}`
+      }
+    }
 
     const settled = deferred<TurnOutcome>()
     activeSession.turnSettled = settled
@@ -331,6 +394,202 @@ export class PiCodingEngine {
     this.stopping = false
   }
 
+  private resolveSkills(cwd?: string): string[] {
+    const skills: string[] = []
+    if (cwd) {
+      const workspaceSkills = join(cwd, '.agents', 'skills')
+      if (existsSync(workspaceSkills)) {
+        skills.push(workspaceSkills)
+      }
+    }
+    const presetDir = this.options.skillsDir?.()
+    if (presetDir && existsSync(presetDir)) {
+      skills.push(presetDir)
+    }
+    return skills
+  }
+
+  private resolveExtensions(cwd?: string): string[] {
+    const extensions: string[] = []
+    const seen = new Set<string>()
+
+    const addFilesFrom = (dir: string) => {
+      if (!existsSync(dir)) return
+      try {
+        const entries = readdirSync(dir, { withFileTypes: true })
+        for (const entry of entries) {
+          if (entry.isFile() && (entry.name.endsWith('.js') || entry.name.endsWith('.ts') || entry.name.endsWith('.mjs'))) {
+            const full = join(dir, entry.name)
+            if (!seen.has(full)) {
+              seen.add(full)
+              extensions.push(full)
+            }
+          }
+        }
+      } catch {
+        // Directory read error
+      }
+    }
+
+    if (cwd) {
+      addFilesFrom(join(cwd, '.pi', 'extensions'))
+    }
+
+    const userHome = process.env.USERPROFILE ?? process.env.HOME ?? homedir()
+    addFilesFrom(join(userHome, '.pi', 'agent', 'extensions'))
+
+    return extensions
+  }
+
+  /**
+   * Synchronize ND model providers and secrets into Pi's config directory (~/.pi/agent or managed directory).
+   * Generates models.json and auth.json so custom OpenAI-compatible endpoints,
+   * local models, and decrypted credentials work natively in Pi without manual /login.
+   */
+  private syncAgentConfig(): string {
+    const dir = managedPiAgentDir()
+    try {
+      mkdirSync(dir, { recursive: true })
+    } catch {
+      // Ignore directory create errors
+    }
+
+    // Preserve any existing auth / models from ~/.pi/agent if available
+    const userHome = process.env.USERPROFILE ?? process.env.HOME ?? homedir()
+    const userPiAgentDir = join(userHome, '.pi', 'agent')
+    let baseAuth: Record<string, unknown> = {}
+    let baseModels: { providers?: Record<string, unknown> } = { providers: {} }
+
+    try {
+      const userAuthPath = join(userPiAgentDir, 'auth.json')
+      if (existsSync(userAuthPath)) {
+        baseAuth = JSON.parse(readFileSync(userAuthPath, 'utf8')) as Record<string, unknown>
+      }
+    } catch {
+      // Ignore read errors
+    }
+
+    try {
+      const userModelsPath = join(userPiAgentDir, 'models.json')
+      if (existsSync(userModelsPath)) {
+        baseModels = JSON.parse(readFileSync(userModelsPath, 'utf8')) as { providers?: Record<string, unknown> }
+      }
+    } catch {
+      // Ignore read errors
+    }
+
+    const authConfig: Record<string, unknown> = { ...baseAuth }
+    const providersConfig: Record<string, unknown> = { ...(baseModels.providers ?? {}) }
+
+    const store = this.options.providers?.()
+    if (store) {
+      try {
+        const enabled = store.allEnabled?.() ?? (store.enabled() ? [store.enabled()!] : [])
+        for (const provider of enabled) {
+          const key = provider.apiKey?.trim()
+          if (key) {
+            authConfig[provider.id] = { type: 'api_key', key }
+            authConfig[provider.id.toLowerCase()] = { type: 'api_key', key }
+          }
+
+          let apiProtocol: string = 'openai-completions'
+          try {
+            apiProtocol = protocolFromApiFormat(provider.apiFormat) ?? 'openai-completions'
+          } catch {
+            if (provider.id.toLowerCase().includes('anthropic')) apiProtocol = 'anthropic-messages'
+            else if (provider.id.toLowerCase().includes('google') || provider.id.toLowerCase().includes('gemini')) apiProtocol = 'google-generative-ai'
+          }
+
+          const resolvedHeaders = resolveRuntimeHeaders(provider.headers, provider.baseUrl)
+          const models = provider.models.map((m) => ({
+            id: m.id,
+            name: `${provider.name} · ${m.id}`,
+            contextWindow: parseContextWindow(m.context) ?? 128_000,
+            input: m.inputTypes?.includes('image') ? (['text', 'image'] as const) : (['text'] as const),
+          }))
+
+          providersConfig[provider.id] = {
+            name: provider.name,
+            ...(provider.baseUrl ? { baseUrl: provider.baseUrl } : {}),
+            api: apiProtocol,
+            apiKey: key || 'placeholder',
+            ...(resolvedHeaders && Object.keys(resolvedHeaders).length > 0 ? { headers: resolvedHeaders } : {}),
+            models,
+          }
+        }
+      } catch {
+        // Fallback gracefully
+      }
+    }
+
+    const targetDirs = [dir]
+    if (userPiAgentDir && userPiAgentDir !== dir && existsSync(userPiAgentDir)) {
+      targetDirs.push(userPiAgentDir)
+    }
+
+    for (const targetDir of targetDirs) {
+      try {
+        mkdirSync(targetDir, { recursive: true })
+        writeFileSync(join(targetDir, 'models.json'), JSON.stringify({ providers: providersConfig }, null, 2), 'utf8')
+        writeFileSync(join(targetDir, 'auth.json'), JSON.stringify(authConfig, null, 2), 'utf8')
+      } catch {
+        // Ignore write errors
+      }
+    }
+
+    return dir
+  }
+
+  /**
+   * Build the child process environment for Pi CLI.
+   * Injects ND's embedded browser session, PI_CODING_AGENT_DIR pointing to the
+   * synchronized models/credentials, and decrypted provider env vars so turns succeed.
+   */
+  private buildEnvironment(session?: PiSession): NodeJS.ProcessEnv {
+    const env: NodeJS.ProcessEnv = engineEnvironment()
+
+    // 1. ND embedded browser session integration (canonical browser)
+    try {
+      env.ND_DSH_AGENT_BROWSER_CONFIG = appBrowserConfigPath()
+      env.AGENT_BROWSER_CONFIG = env.ND_DSH_AGENT_BROWSER_CONFIG
+    } catch {
+      // Electron or app data path not ready yet in test harness
+    }
+    env.ND_DSH_AGENT_BROWSER_SESSION = session?.sessionId ?? DEFAULT_AGENT_BROWSER_SESSION
+    env.AGENT_BROWSER_SESSION = env.ND_DSH_AGENT_BROWSER_SESSION
+
+    // 2. Synchronize ND providers and credentials into Pi agent dir
+    try {
+      const agentDir = this.syncAgentConfig()
+      env.PI_CODING_AGENT_DIR = agentDir
+    } catch {
+      // Fallback gracefully
+    }
+
+    // 3. ND provider secrets injection into environment
+    const store = this.options.providers?.()
+    if (store) {
+      try {
+        const enabled = store.allEnabled?.() ?? (store.enabled() ? [store.enabled()!] : [])
+        for (const provider of enabled) {
+          const key = provider.apiKey?.trim()
+          if (!key) continue
+          const envVar = PROVIDER_ENV_MAP[provider.id.toLowerCase()]
+          if (envVar && !env[envVar]) {
+            env[envVar] = key
+          }
+          if (provider.id.toLowerCase() === 'openai' && provider.baseUrl && provider.baseUrl !== 'https://api.openai.com/v1') {
+            env.OPENAI_BASE_URL = provider.baseUrl
+          }
+        }
+      } catch {
+        // Fallback gracefully
+      }
+    }
+
+    return env
+  }
+
   /**
    * Reuse the session's live child or spawn a fresh `pi --mode rpc` process
    * for it. A respawn reloads the recorded session file so ND-side history
@@ -346,9 +605,17 @@ export class PiCodingEngine {
 
     const log = this.options.log ?? ((line: string) => console.warn(line))
     const spawnProcess = this.options.spawnProcess ?? spawn
-    const child = spawnCliCommand(spawnProcess, bin, ['--mode', 'rpc'], {
+    const args = ['--mode', 'rpc']
+    for (const skillPath of this.resolveSkills(session.cwd)) {
+      args.push('--skill', skillPath)
+    }
+    for (const extPath of this.resolveExtensions(session.cwd)) {
+      args.push('--extension', extPath)
+    }
+    const child = spawnCliCommand(spawnProcess, bin, args, {
+      windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: engineEnvironment(),
+      env: this.buildEnvironment(session),
       cwd: session.cwd ?? process.cwd(),
       // A process group lets POSIX teardown take the whole tree down; Windows
       // uses taskkill /T instead.
@@ -409,12 +676,25 @@ export class PiCodingEngine {
   /** Apply ND's selected model to the child when it differs from the active one. */
   private async applyModel(session: PiSession): Promise<void> {
     if (session.model === undefined) return
+    let provider = ''
+    let modelId = ''
     const separator = session.model.indexOf('/')
-    if (separator <= 0) return
-    const provider = session.model.slice(0, separator)
-    const modelId = session.model.slice(separator + 1)
-    // Model selection is best-effort: pi keeps its configured model.
-    await this.command(session, { type: 'set_model', provider, modelId }).catch(() => {})
+    if (separator > 0) {
+      provider = session.model.slice(0, separator)
+      modelId = session.model.slice(separator + 1)
+    } else {
+      modelId = session.model
+      const store = this.options.providers?.()
+      const all = store?.allEnabled?.() ?? (store?.enabled?.() ? [store.enabled()!] : [])
+      const matched = all.find((p) => p.models.some((m) => m.id === modelId))
+      if (matched) {
+        provider = matched.id
+      }
+    }
+    if (provider && modelId) {
+      // Model selection is best-effort: pi keeps its configured model.
+      await this.command(session, { type: 'set_model', provider, modelId }).catch(() => {})
+    }
   }
 
   /** Run one RPC command on the session's child and wait for its response. */

@@ -6,7 +6,6 @@ import { BridgePill } from './bridge-pill'
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover'
 import { SettingsSwitch } from './settings-primitives'
 import { cn } from '../lib/utils'
-import { useNativeViewOcclusion } from '../lib/use-native-view-occlusion'
 
 interface BrowserPaneProps {
   active: boolean
@@ -30,8 +29,6 @@ const activeIconButtonClasses = cn(
 )
 
 export function BrowserPane({ active, state, onSnapshot, onError, onOpenSettings }: BrowserPaneProps) {
-  const occluded = useNativeViewOcclusion()
-  const nativeViewVisible = active && !occluded
   const uiPreview = window.ndDshRuntimeMode === 'ui-preview'
   const surfaceRef = useRef<HTMLDivElement>(null)
   const addressFocused = useRef(false)
@@ -123,6 +120,11 @@ export function BrowserPane({ active, state, onSnapshot, onError, onOpenSettings
     })
   }
 
+  /**
+   * Bounds only: the native view is one shared child view, so the app shell
+   * owns whether it is visible (see the shell's surface decision). A pane that
+   * is not the active surface must never write bounds either.
+   */
   useEffect(() => {
     const surface = surfaceRef.current
     if (!surface) return
@@ -147,23 +149,6 @@ export function BrowserPane({ active, state, onSnapshot, onError, onOpenSettings
       window.removeEventListener('resize', syncBounds)
     }
   }, [active, onError])
-
-  useEffect(() => {
-    void window.ndDsh.browser.setVisible(nativeViewVisible)
-      .catch((cause) => onError(cause instanceof Error ? cause.message : String(cause)))
-    if (active) {
-      requestAnimationFrame(() => {
-        const rect = surfaceRef.current?.getBoundingClientRect()
-        if (rect && rect.width > 0 && rect.height > 0) {
-          void window.ndDsh.browser.setBounds({ x: rect.x, y: rect.y, width: rect.width, height: rect.height })
-            .catch((cause) => onError(cause instanceof Error ? cause.message : String(cause)))
-        }
-      })
-    }
-    return () => {
-      void window.ndDsh.browser.setVisible(false).catch(() => undefined)
-    }
-  }, [active, nativeViewVisible, onError])
 
   const navigate = async (): Promise<void> => {
     try {

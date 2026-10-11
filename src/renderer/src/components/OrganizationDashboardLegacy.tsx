@@ -1106,6 +1106,9 @@ interface TaskCardProps {
 
 function TaskCard({ task, state, busy, run, startRun, onEdit, onMove, canMoveUp, canMoveDown }: TaskCardProps) {
   const agent = state.agents.find((item) => item.id === task.assignedAgentId)
+  const member = task.assignedMemberId ? state.members?.find((item) => item.id === task.assignedMemberId) : undefined
+  const accountable = task.accountableMemberId ? state.members?.find((item) => item.id === task.accountableMemberId) : undefined
+  const isHuman = task.assigneeKind === 'human' || Boolean(task.assignedMemberId && !task.assignedAgentId)
   const waitingOn = task.dependsOn
     .map((id) => state.tasks.find((item) => item.id === id))
     .filter((item): item is OrganizationTask => Boolean(item) && item!.status !== 'completed')
@@ -1173,20 +1176,74 @@ function TaskCard({ task, state, busy, run, startRun, onEdit, onMove, canMoveUp,
         </div>
       ) : null}
       <footer className="flex items-center justify-between gap-1.5 text-[11px] text-faint">
-        <span className="truncate">{agent?.name ?? 'AI worker'}</span>
+        <span className="truncate" title={isHuman ? `Assigned to ${member?.displayName ?? 'Human member'}` : `Assigned to ${agent?.name ?? 'AI worker'}`}>
+          {isHuman ? `👤 ${member?.displayName ?? 'Human member'}` : `🤖 ${agent?.name ?? 'AI worker'}`}
+          {accountable && accountable.id !== member?.id ? ` · acc: ${accountable.displayName}` : ''}
+        </span>
         <span className="flex shrink-0 items-center gap-1">
           {activeRun ? (
             <button className={cn(orgButton, 'h-[22px] px-1.5 text-[11px]')} disabled={busy !== null} title="Stop the agent working on this task" onClick={() => void run(`cancel-${activeRun.id}`, () => window.ndDshOrganization.cancelRun(activeRun.id))}>Cancel</button>
           ) : null}
-          <TaskAction task={task} busy={busy} run={run} startRun={startRun} reviewRetry={Boolean(reviewFailure)} />
+          <TaskAction task={task} state={state} busy={busy} run={run} startRun={startRun} reviewRetry={Boolean(reviewFailure)} />
         </span>
       </footer>
     </article>
   )
 }
 
-function TaskAction({ task, busy, run, startRun, reviewRetry }: Pick<TaskCardProps, 'task' | 'busy' | 'run' | 'startRun'> & { reviewRetry: boolean }) {
+function TaskAction({ task, state, busy, run, startRun, reviewRetry }: Pick<TaskCardProps, 'task' | 'state' | 'busy' | 'run' | 'startRun'> & { reviewRetry: boolean }) {
   const small = cn(orgButton, 'h-[22px] px-1.5 text-[11px]')
+  const isHuman = task.assigneeKind === 'human' || Boolean(task.assignedMemberId && !task.assignedAgentId)
+
+  if (isHuman) {
+    if (task.status === 'ready') {
+      return (
+        <button
+          className={small}
+          disabled={busy !== null}
+          onClick={() => void run(`task-start-${task.id}`, () => window.ndDshOrganization.mutate({ type: 'task.update', id: task.id, patch: { status: 'in_progress' } }))}
+        >
+          Start
+        </button>
+      )
+    }
+    if (task.status === 'in_progress') {
+      return (
+        <button
+          className={small}
+          disabled={busy !== null}
+          onClick={() => {
+            const memberId = task.assignedMemberId ?? state.members?.find((m) => m.companyId === task.companyId)?.id
+            if (!memberId) return
+            void run(`task-submit-${task.id}`, () => window.ndDshOrganization.mutate({
+              type: 'task.submitWork',
+              taskId: task.id,
+              memberId,
+              summary: 'Human work completed and submitted for review',
+            }))
+          }}
+        >
+          Submit
+        </button>
+      )
+    }
+    if (task.status === 'blocked') {
+      return (
+        <button
+          className={small}
+          disabled={busy !== null}
+          onClick={() => void run(`task-unblock-${task.id}`, () => window.ndDshOrganization.mutate({ type: 'task.update', id: task.id, patch: { status: 'ready' } }))}
+        >
+          Unblock
+        </button>
+      )
+    }
+    if (task.status === 'review') {
+      return <small className="shrink-0">{task.reviewerKind === 'human' ? 'in human review' : 'in review'}</small>
+    }
+    return <small className="shrink-0">{task.status.replace('_', ' ')}</small>
+  }
+
   if (task.status === 'ready' || task.status === 'blocked') {
     return <button className={small} disabled={busy !== null} onClick={() => void run(`task-${task.id}`, () => startRun(`“${task.title}”`, () => window.ndDshOrganization.runTask(task.id)))}>{task.status === 'blocked' ? 'Retry' : 'Run'}</button>
   }
@@ -1214,18 +1271,26 @@ function TaskEditDialog({ task, state, onClose, onSave }: {
   onClose(): void
   onSave(patch: Extract<Parameters<typeof window.ndDshOrganization.mutate>[0], { type: 'task.update' }>['patch']): Promise<void>
 }) {
+  const isHumanInitial = task.assigneeKind === 'human' || Boolean(task.assignedMemberId && !task.assignedAgentId)
   const [draft, setDraft] = useState({
     title: task.title,
     description: task.description,
     acceptance: task.acceptanceCriteria.join('\n'),
     priority: task.priority,
     status: task.status,
+    assigneeKind: (task.assigneeKind ?? (isHumanInitial ? 'human' : 'agent')) as 'human' | 'agent',
     assignedAgentId: task.assignedAgentId ?? '',
+    assignedMemberId: task.assignedMemberId ?? '',
+    accountableMemberId: task.accountableMemberId ?? '',
+    reviewerKind: (task.reviewerKind ?? (task.reviewerMemberId ? 'human' : 'agent')) as 'human' | 'agent',
+    reviewerMemberId: task.reviewerMemberId ?? '',
+    reviewerAgentId: task.reviewerAgentId ?? '',
     milestoneId: task.milestoneId ?? '',
   })
   const [saving, setSaving] = useState(false)
   const active = task.status === 'in_progress' || task.status === 'review'
   const agents = state.agents.filter((item) => item.companyId === task.companyId)
+  const members = (state.members ?? []).filter((item) => item.companyId === task.companyId && item.status === 'active')
   const statusChoices = EDITABLE_STATUSES.includes(task.status) ? EDITABLE_STATUSES : [task.status]
   const testCommand = state.projects.find((item) => item.id === task.projectId)?.testCommand?.trim()
 
@@ -1239,8 +1304,16 @@ function TaskEditDialog({ task, state, onClose, onSave }: {
         description: draft.description,
         acceptanceCriteria: acceptanceCriteria.length ? acceptanceCriteria : task.acceptanceCriteria,
         priority: draft.priority,
+        assigneeKind: draft.assigneeKind,
+        ...(draft.assigneeKind === 'agent'
+          ? (draft.assignedAgentId ? { assignedAgentId: draft.assignedAgentId } : {})
+          : (draft.assignedMemberId ? { assignedMemberId: draft.assignedMemberId } : {})),
+        ...(draft.accountableMemberId ? { accountableMemberId: draft.accountableMemberId } : {}),
+        reviewerKind: draft.reviewerKind,
+        ...(draft.reviewerKind === 'human'
+          ? (draft.reviewerMemberId ? { reviewerMemberId: draft.reviewerMemberId } : {})
+          : (draft.reviewerAgentId ? { reviewerAgentId: draft.reviewerAgentId } : {})),
         ...(draft.status !== task.status ? { status: draft.status } : {}),
-        ...(draft.assignedAgentId && draft.assignedAgentId !== task.assignedAgentId ? { assignedAgentId: draft.assignedAgentId } : {}),
         ...(draft.milestoneId !== (task.milestoneId ?? '') ? { milestoneId: draft.milestoneId } : {}),
       })
       onClose()
@@ -1307,12 +1380,66 @@ function TaskEditDialog({ task, state, onClose, onSave }: {
                 </SelectContent>
               </Select>
             </label>
-            <label className="flex flex-col gap-1 text-xs text-muted-foreground">Assignee
-              <Select value={draft.assignedAgentId || 'none'} disabled={active} onValueChange={(value) => setDraft((current) => ({ ...current, assignedAgentId: value === 'none' ? '' : value }))}>
+            <label className="flex flex-col gap-1 text-xs text-muted-foreground">Assignee Type
+              <Select value={draft.assigneeKind} disabled={active} onValueChange={(value) => setDraft((current) => ({ ...current, assigneeKind: value as 'human' | 'agent' }))}>
                 <SelectTrigger className="h-8 rounded-md border-border-strong bg-background text-sm"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {!draft.assignedAgentId ? <SelectItem value="none">Unassigned</SelectItem> : null}
-                  {agents.map((agent) => <SelectItem key={agent.id} value={agent.id}>{agent.name}</SelectItem>)}
+                  <SelectItem value="agent">🤖 Agent</SelectItem>
+                  <SelectItem value="human">👤 Human Member</SelectItem>
+                </SelectContent>
+              </Select>
+            </label>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <label className="flex flex-col gap-1 text-xs text-muted-foreground">Assignee
+              {draft.assigneeKind === 'human' ? (
+                <Select value={draft.assignedMemberId || 'none'} disabled={active} onValueChange={(value) => setDraft((current) => ({ ...current, assignedMemberId: value === 'none' ? '' : value }))}>
+                  <SelectTrigger className="h-8 rounded-md border-border-strong bg-background text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {!draft.assignedMemberId ? <SelectItem value="none">Unassigned</SelectItem> : null}
+                    {members.map((member) => <SelectItem key={member.id} value={member.id}>👤 {member.displayName}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Select value={draft.assignedAgentId || 'none'} disabled={active} onValueChange={(value) => setDraft((current) => ({ ...current, assignedAgentId: value === 'none' ? '' : value }))}>
+                  <SelectTrigger className="h-8 rounded-md border-border-strong bg-background text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {!draft.assignedAgentId ? <SelectItem value="none">Unassigned</SelectItem> : null}
+                    {agents.map((agent) => <SelectItem key={agent.id} value={agent.id}>🤖 {agent.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              )}
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-muted-foreground">Accountable Member
+              <Select value={draft.accountableMemberId || 'none'} disabled={active} onValueChange={(value) => setDraft((current) => ({ ...current, accountableMemberId: value === 'none' ? '' : value }))}>
+                <SelectTrigger className="h-8 rounded-md border-border-strong bg-background text-sm"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  {members.map((member) => <SelectItem key={member.id} value={member.id}>👤 {member.displayName}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-muted-foreground">Reviewer
+              <Select
+                value={draft.reviewerKind === 'human' ? (draft.reviewerMemberId ? `human:${draft.reviewerMemberId}` : 'none') : (draft.reviewerAgentId ? `agent:${draft.reviewerAgentId}` : 'default_agent')}
+                disabled={active}
+                onValueChange={(value) => {
+                  if (value === 'none') {
+                    setDraft((curr) => ({ ...curr, reviewerKind: 'human', reviewerMemberId: '' }))
+                  } else if (value === 'default_agent') {
+                    setDraft((curr) => ({ ...curr, reviewerKind: 'agent', reviewerAgentId: '', reviewerMemberId: '' }))
+                  } else if (value.startsWith('human:')) {
+                    setDraft((curr) => ({ ...curr, reviewerKind: 'human', reviewerMemberId: value.slice(6) }))
+                  } else if (value.startsWith('agent:')) {
+                    setDraft((curr) => ({ ...curr, reviewerKind: 'agent', reviewerAgentId: value.slice(6) }))
+                  }
+                }}
+              >
+                <SelectTrigger className="h-8 rounded-md border-border-strong bg-background text-sm"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="default_agent">🤖 AI Reviewer (Auto)</SelectItem>
+                  {members.map((member) => <SelectItem key={`human:${member.id}`} value={`human:${member.id}`}>👤 {member.displayName} (Reviewer)</SelectItem>)}
+                  {agents.map((agent) => <SelectItem key={`agent:${agent.id}`} value={`agent:${agent.id}`}>🤖 {agent.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </label>

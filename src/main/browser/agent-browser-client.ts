@@ -72,15 +72,17 @@ export class AgentBrowserClient {
     this.binary = this.resolveBinary(projectRoot)
     this.entryPath = resolve(
       process.env.ND_DSH_AGENT_BROWSER_ENTRY
-        ?? join(
-          app.isPackaged ? process.resourcesPath : projectRoot,
-          'node_modules',
-          'agent-browser',
-          'bin',
-          'agent-browser.js',
-        ),
+        ?? (process.platform === 'win32'
+          ? join(app.isPackaged ? process.resourcesPath : projectRoot, 'scripts', 'nd-agent-browser-cli.mjs')
+          : join(
+            app.isPackaged ? process.resourcesPath : projectRoot,
+            'node_modules',
+            'agent-browser',
+            'bin',
+            'agent-browser.js',
+          )),
     )
-    this.electronNodeMode = app.isPackaged && !process.env.ND_DSH_AGENT_BROWSER_BIN?.trim()
+    this.electronNodeMode = (app.isPackaged || process.platform === 'win32') && !process.env.ND_DSH_AGENT_BROWSER_BIN?.trim()
   }
 
   status(): AgentBrowserStatus {
@@ -279,9 +281,8 @@ export class AgentBrowserClient {
       if (isAbsolute(override) || override.includes('/') || override.includes('\\')) return resolve(override)
       return override
     }
-    if (app.isPackaged) return process.execPath
-    const executable = process.platform === 'win32' ? 'agent-browser.cmd' : 'agent-browser'
-    return join(projectRoot, 'node_modules', '.bin', executable)
+    if (app.isPackaged || process.platform === 'win32') return process.execPath
+    return join(projectRoot, 'node_modules', '.bin', 'agent-browser')
   }
 
   private async run(

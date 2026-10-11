@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Group, Panel, Separator } from 'react-resizable-panels'
 import { toast } from 'sonner'
-import type { AppInspectArea, AppInspectMode, AppInspectResult, BrowserState, DshSurface, DshViewState, ExternalElementPickView, HarnessStatus, InspectScope, SurfaceState, ThemeMode, ThemeState, WorkspaceFile, WorkspaceState } from '../../shared/contracts'
+import type { AppInspectArea, AppInspectMode, AppInspectResult, BrowserState, ComposerImageAttachment, DshSurface, DshViewState, ExternalElementPickView, HarnessStatus, InspectScope, SurfaceState, ThemeMode, ThemeState, WorkspaceFile, WorkspaceState } from '../../shared/contracts'
 import type { OrganizationSnapshot } from '../../shared/organization'
 import { BrowserPane } from './components/BrowserPane'
 import { ProjectGitControls } from './components/ProjectGitControls'
@@ -13,6 +13,7 @@ import { Badge } from './components/ui/badge'
 import { Toaster } from './components/ui/sonner'
 import { ChatPanel } from './components/ChatPanel'
 import { SurfaceErrorBoundary } from './components/surface-error-boundary'
+import { useNativeViewOcclusion } from './lib/use-native-view-occlusion'
 import { DesignView } from './components/DesignView'
 import { DiffView } from './components/DiffView'
 import { DshCodingSurface } from './components/DshCodingSurface'
@@ -25,13 +26,18 @@ import { RuntimePrompts } from './components/RuntimePrompts'
 import { ThemeToggle } from './components/ThemeToggle'
 import { TitlebarIconButton } from './components/titlebar-icon-button'
 import { CaptureOverlay, type CaptureOverlayMode } from './components/CaptureOverlay'
+import { ModalInspectDock } from './components/modal-inspect-dock'
 import { ScreenshotDropdown } from './components/ScreenshotDropdown'
 import { QuickLauncher } from './components/QuickLauncher'
 import { HomeView } from './components/HomeView'
+import { PersonalSurface, type PersonalPane } from './components/personal-surface'
+import { PersonalDialpad } from './components/personal-dialpad'
 import { ExtensionPackagesCard } from './components/ExtensionPackages'
+import { ExtensionKeepAliveHost, ExtensionKeepAliveTabs, useExtensionKeepAliveReopenHandler } from './components/extension-view-keepalive'
 import { cn } from './lib/utils'
 import { fileAccent } from './lib/file-accents'
 import { isWorkspaceSelected } from './lib/workspace-selection'
+import { useModalDialogOpen } from './lib/modal-dialog-presence'
 import {
   buildLauncherMemoryMutation,
   buildLauncherTaskMutation,
@@ -44,9 +50,11 @@ import {
   currentContext,
   describeContextForUi,
   optionIdForContext,
+  browserFocusView,
 } from './lib/nd-context-model'
 import type { LauncherHandoffTarget } from '../../shared/quick-launcher'
-import type { NdContext } from '../../shared/nd-context'
+import { DEFAULT_CAPTURE_DELAY_SECONDS, type GlobalShortcutId } from '../../shared/shortcuts'
+import { asNdContext, type NdContext } from '../../shared/nd-context'
 import type { WorkspaceProfile } from '../../shared/workspace-profile'
 import type {
   NdCaptureResultView,
@@ -205,6 +213,69 @@ export default function App() {
   const [captureOverlay, setCaptureOverlay] = useState<{ active: boolean; mode: CaptureOverlayMode } | null>(null)
   const [floatDropdownOpen, setFloatDropdownOpen] = useState(false)
   const [quickLauncherOpen, setQuickLauncherOpen] = useState(false)
+  // Keep-alive header: while a modal dialog is open, the titlebar stays live
+  // above the overlay so company/project/navigation controls keep working.
+  // The quick launcher is a spotlight surface that must keep its normal
+  // click-outside dismissal, so it suspends the keep-alive header.
+  const headerKeepAlive = useModalDialogOpen() && !quickLauncherOpen
+  // Extension keep-alive tabs (browser-style): a tab click reopens that view's
+  // dialog so the backgrounded view — game state included — is docked again.
+  useExtensionKeepAliveReopenHandler((view) => {
+    const request = { extensionId: view.data.extensionId, viewId: view.data.viewId, context: view.data.context }
+    setExtensionViewRequest(request)
+    setSettingsTab('extensions')
+    switchToWorkbench('settings')
+    // A hard-to-reproduce load race right after a browser-focus ping can
+    // swallow the reopen (the dialog never mounts). When a ping was recent,
+    // re-issue the request once after a short settle: the card keys each
+    // request by identity, so a no-op re-issue is harmless. No recent ping
+    // means no race, and a plain user click must never be replayed.
+    if (Date.now() - lastBrowserFocusAt.current < 800) {
+      const request = { extensionId: view.data.extensionId, viewId: view.data.viewId, context: view.data.context }
+      window.setTimeout(() => {
+        if (!document.querySelector('[data-slot="dialog-content"]')) {
+          setExtensionViewRequest({ ...request })
+        }
+      }, 300)
+    }
+  })
+  // Mini Browser actions emit a browser-focus ping: bring the site up right
+  // away, and let the extensions card auto-hide its chrome dialog (the
+  // keep-alive layer keeps it alive behind the surface). The event names the
+  // context that opened the tab, and the site is presented there: Personal
+  // browsing in the Personal space, everything else in the Agent workbench.
+  const [browserFocusNudge, setBrowserFocusNudge] = useState(0)
+  const lastBrowserFocusAt = useRef(0)
+  const [personalPane, setPersonalPane] = useState<PersonalPane>('records')
+  const [personalDialpadOpen, setPersonalDialpadOpen] = useState(true)
+  useEffect(() => window.ndDsh.ndExtensions.onBrowserFocus((focus) => {
+    lastBrowserFocusAt.current = Date.now()
+    const context = asNdContext(focus.context)
+    setBrowserFocusNudge((nudge) => nudge + 1)
+    if (browserFocusView(context) === 'personal') {
+      setPersonalPane('browser')
+      switchToWorkbench('home')
+      return
+    }
+    setAgentPane('browser')
+    switchToWorkbench('agent')
+  }), [])
+  // The embedded browser is one shared native child view, so exactly one
+  // surface may own it: the Agent workbench pane, or the Personal one. The
+  // shell makes that decision in one place so two mounted panes can never
+  // fight over visibility, and a dialog (occlusion) always wins.
+  const nativeOverlayOpen = useNativeViewOcclusion()
+  const browserSurface = view === 'agent' && agentPane === 'browser'
+    ? 'agent'
+    : view === 'home' && personalPane === 'browser'
+      ? 'personal'
+      : null
+  useEffect(() => {
+    // The float overlay owns no surface; letting it claim the shared native
+    // browser view would both reject and fight the full window for it.
+    if (isFloatOverlay) return
+    void window.ndDsh.browser.setVisible(browserSurface !== null && !nativeOverlayOpen).catch(() => undefined)
+  }, [browserSurface, nativeOverlayOpen, isFloatOverlay])
   // PRD 0006: ND Home personal records, extension packages, and the launcher's
   // explicit context selector (Personal by default, independent of the active
   // company/project selection).
@@ -264,23 +335,28 @@ export default function App() {
     return window.ndDsh.window?.onLauncherHandoff?.((target, text, context) => launcherHandoffRef.current(target, text, context))
   }, [isFloatOverlay])
 
+  // The float overlay draws only the pill and the capture surface. It is a
+  // separate sandboxed renderer, and main admits it to window/capture channels
+  // only — so it must never request organization, home, or extension state.
   useEffect(() => {
+    if (isFloatOverlay) return
     let mounted = true
     void window.ndDsh.ndExtensions.state()
       .then((next) => { if (mounted) setNdExtensions(next) })
       .catch(() => undefined)
     const off = window.ndDsh.ndExtensions.onChanged((next) => { if (mounted) setNdExtensions(next) })
     return () => { mounted = false; off() }
-  }, [])
+  }, [isFloatOverlay])
 
   useEffect(() => {
+    if (isFloatOverlay) return
     let mounted = true
     void window.ndDsh.home.state()
       .then((next) => { if (mounted) setHomeState(next) })
       .catch(() => undefined)
     const off = window.ndDsh.home.onChanged((next) => { if (mounted) setHomeState(next) })
     return () => { mounted = false; off() }
-  }, [])
+  }, [isFloatOverlay])
 
   const extensionContextOptions = useMemo(() => contextOptions(orgState), [orgState])
 
@@ -295,13 +371,14 @@ export default function App() {
   }, [quickLauncherOpen])
 
   useEffect(() => {
+    if (isFloatOverlay) return
     const context = contextForOptionId(extensionContextOptions, launcherContextId) ?? { kind: 'personal' as const }
     let mounted = true
     void window.ndDsh.ndExtensions.commands(context)
       .then((next) => { if (mounted) setExtensionCommands(next) })
       .catch(() => { if (mounted) setExtensionCommands([]) })
     return () => { mounted = false }
-  }, [extensionContextOptions, launcherContextId, ndExtensions])
+  }, [extensionContextOptions, launcherContextId, ndExtensions, isFloatOverlay])
 
   const pendingApprovals = ndExtensions?.pendingApprovals.length ?? 0
   const notifiedApprovals = useRef(0)
@@ -334,6 +411,7 @@ export default function App() {
   }, [isFloatOverlay, pendingAppInspect, captureOverlay, floatDropdownOpen, appInspectCountdown])
 
   useEffect(() => {
+    if (isFloatOverlay) return
     let mounted = true
     void window.ndDshOrganization.state()
       .then((next) => { if (mounted) setOrgState(next) })
@@ -345,7 +423,7 @@ export default function App() {
       mounted = false
       off()
     }
-  }, [notify])
+  }, [notify, isFloatOverlay])
 
   const handlePillPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
     // Buttons opt out of the draggable region. Capturing their pointer on the
@@ -407,16 +485,56 @@ export default function App() {
   // Cross-app inspect: after a short countdown (so the user can focus the
   // target app), the trusted main process captures the screen, bridges the
   // screenshot into the ND chat session, and copies it to the clipboard.
+  // Capture shortcuts attach their shot to the composer as an unsent
+  // attachment: the user reviews it, writes a prompt, and sends deliberately.
+  const [queuedCapture, setQueuedCapture] = useState<{ id: string; dataUrl: string } | null>(null)
+  const [captureAttachIntent, setCaptureAttachIntent] = useState(false)
+
+  const queueCaptureAttachment = (shot: ComposerImageAttachment): void => {
+    setQueuedCapture(shot)
+    switchToWorkbench('agent')
+    // The capture happened while ND was out of the way; come back so the user
+    // actually sees the attachment waiting in the composer.
+    void window.ndDsh.window?.setFloatMode?.(false)
+    toast('Capture attached to the chat composer and copied to the clipboard. Nothing sends until you do.', { duration: 5000 })
+  }
+
+  const attachCaptureToChat = async (mode: AppInspectMode, rect?: AppInspectArea): Promise<void> => {
+    try {
+      const shot = await window.ndDsh.capture.forComposer(inspectScope, { mode, ...(rect !== undefined ? { rect } : {}) })
+      const attachment: ComposerImageAttachment = { id: `capture-${Date.now()}`, dataUrl: `data:${shot.mediaType};base64,${shot.data}` }
+      // The overlay frame has no composer; main relays the attachment home.
+      if (isFloatOverlay) {
+        await window.ndDsh.window?.forwardCaptureAttach?.(attachment)
+        return
+      }
+      queueCaptureAttachment(attachment)
+    } catch (cause) {
+      notify(errorMessage(cause))
+    }
+  }
+
+  useEffect(() => window.ndDsh.window?.onCaptureAttach?.((shot) => {
+    queueCaptureAttachment(shot)
+  }))
+
   // In 'self' scope there is nothing to switch to, so capture immediately.
-  const startAppInspect = (mode: AppInspectMode = 'full', rect?: AppInspectArea, scopeOverride?: InspectScope): Promise<AppInspectResult | undefined> => {
+  const startAppInspect = (mode: AppInspectMode = 'full', rect?: AppInspectArea, scopeOverride?: InspectScope, delayOverride?: number, destination: 'agent' | 'attach' = 'agent'): Promise<AppInspectResult | undefined> => {
     if (appInspectCountdown !== null || appInspectInFlight) return Promise.resolve(undefined)
     const targetScope = scopeOverride ?? inspectScope
     const selfScope = targetScope === 'self'
-    let remaining = 3
-    if (!selfScope && mode === 'full') setAppInspectCountdown(remaining)
-    const fire = async (): Promise<AppInspectResult> => {
+    // External full captures count down by default so the user can focus the
+    // target app first; a global hotkey may override that to capture at once.
+    const delay = delayOverride ?? 3
+    let remaining = delay
+    if (!selfScope && mode === 'full' && delay > 0) setAppInspectCountdown(remaining)
+    const fire = async (): Promise<AppInspectResult | undefined> => {
       setAppInspectInFlight(true)
       try {
+        if (destination === 'attach') {
+          await attachCaptureToChat(mode, rect)
+          return undefined
+        }
         const result = await window.ndDsh.capture.inspectApp(true, targetScope, { mode, ...(rect !== undefined ? { rect } : {}) })
         setPendingAppInspect({
           displayLabel: result.displayLabel,
@@ -442,7 +560,7 @@ export default function App() {
         setAppInspectInFlight(false)
       }
     }
-    if (selfScope || mode !== 'full') {
+    if (selfScope || mode !== 'full' || delay <= 0) {
       return fire()
     }
     return new Promise<AppInspectResult | undefined>((resolve) => {
@@ -470,13 +588,29 @@ export default function App() {
     if (appInspectTimer.current !== undefined) clearInterval(appInspectTimer.current)
   }, [])
 
+  // A pending countdown must be cancellable, like the Snipping Tool's delay.
+  useEffect(() => {
+    if (appInspectCountdown === null) return
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      if (appInspectTimer.current !== undefined) clearInterval(appInspectTimer.current)
+      appInspectTimer.current = undefined
+      setAppInspectCountdown(null)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [appInspectCountdown])
+
   useEffect(() => {
     if (!pendingPick) return
     const timeout = window.setTimeout(() => setPendingPick(null), 7_000)
     return () => window.clearTimeout(timeout)
   }, [pendingPick])
 
-  // Keyboard accelerators for the two inspect entry points.
+  // Keyboard accelerators for the two inspect entry points. Where the OS grab
+  // consumes the key this never fires for a bound capture key; where it does
+  // not (Wayland), the dedupe window keeps one press from firing twice.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (!event.altKey || !event.ctrlKey) return
@@ -484,17 +618,78 @@ export default function App() {
       if (key === 'e') {
         event.preventDefault()
         startElementInspect()
-      } else if (key === 'c') {
+      } else if (key === 'c' || key === 'a') {
+        if (Date.now() - lastGlobalCaptureAt.current < 750) return
         event.preventDefault()
-        startAppInspect('full')
-      } else if (key === 'a') {
-        event.preventDefault()
-        openCaptureOverlay('area')
+        if (key === 'c') {
+          void startAppInspect('full', undefined, undefined, undefined, 'attach')
+        } else {
+          setCaptureAttachIntent(true)
+          void openCaptureOverlay('area')
+        }
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   })
+
+  // Global capture hotkeys arrive from main. The float overlay is the only
+  // frame that can cover the whole screen, so the full window enters float
+  // mode and hands the request on; the overlay frame then runs the capture.
+  const lastGlobalCaptureAt = useRef(0)
+
+  const runGlobalCapture = async (action: GlobalShortcutId): Promise<void> => {
+    // One physical press must never run twice: the ready-handoff and the pull
+    // can both deliver, and some platforms do not consume the global key.
+    if (Date.now() - lastGlobalCaptureAt.current < 750) return
+    lastGlobalCaptureAt.current = Date.now()
+    if (isFloatOverlay) {
+      if (action === 'areaCapture') {
+        // A second press mid-snip must not reset an in-progress selection.
+        if (captureOverlay) return
+        setCaptureAttachIntent(true)
+        await openCaptureOverlay('area')
+        return
+      }
+      const delayApi = window.ndDsh.window?.captureDelay
+      const configured = delayApi ? await delayApi().catch(() => undefined) : undefined
+      const delay = action === 'delayedCapture' ? configured ?? DEFAULT_CAPTURE_DELAY_SECONDS : 0
+      await startAppInspect('full', undefined, 'external', delay, 'attach')
+      return
+    }
+    setInspectScope('external')
+    await window.ndDsh.window?.setFloatMode?.(true)
+    const forwarded = await window.ndDsh.window?.forwardCaptureRequest?.(action)
+    if (forwarded && !forwarded.delivered) {
+      notify('The capture overlay could not open. Try again in a moment.')
+    }
+  }
+
+  useEffect(() => {
+    const off = window.ndDsh.window?.onCaptureRequest?.((action) => {
+      void runGlobalCapture(action)
+    })
+    return () => {
+      off?.()
+    }
+  })
+
+  // A request can land while this overlay frame is still booting — in dev the
+  // renderer subscribes after did-finish-load — so main queues it, and this
+  // frame announces readiness on mount to collect whatever is waiting.
+  useEffect(() => {
+    if (!isFloatOverlay) return
+    let mounted = true
+    const bridge = window.ndDsh.window
+    void (async () => {
+      await bridge?.markCaptureReady?.()
+      const queued = await bridge?.pullPendingCapture?.()
+      if (mounted && queued) void runGlobalCapture(queued)
+    })()
+    return () => {
+      mounted = false
+    }
+  }, [isFloatOverlay])
 
   // Element-level inspect: in 'external' scope the picker is injected into
   // an external Electron app over its loopback debug port; in 'self' scope
@@ -874,7 +1069,7 @@ export default function App() {
         const result = await invokeDailyEssentials('quick-note', 'command', context, { text, tags })
         if (handleInvocationFailure(result)) return
         await refreshHome()
-        toast('Note saved to ND Home.')
+        toast('Note saved to Personal.')
       } catch (cause) {
         notify(errorMessage(cause))
       }
@@ -925,7 +1120,7 @@ export default function App() {
         const result = await invokeDailyEssentials('capture-clipboard', 'command', context, {})
         if (handleInvocationFailure(result)) return
         await refreshHome()
-        toast('Clipboard captured into ND Home.')
+        toast('Clipboard captured into Personal.')
       } catch (cause) {
         notify(errorMessage(cause))
       }
@@ -945,6 +1140,37 @@ export default function App() {
 
   const refreshHome = async (): Promise<void> => {
     setHomeState(await window.ndDsh.home.state())
+  }
+
+  /**
+   * Personal browser dialpad: a tile opens a real ND browser tab and the pane
+   * gives the site the space, so the speed dial behaves like a new-tab page.
+   * Links are personal records in ND-managed storage — never company or project
+   * memory.
+   */
+  const openPersonalTab = (url: string): void => {
+    setPersonalPane('browser')
+    setPersonalDialpadOpen(false)
+    void window.ndDsh.browserPlatform.createTab('builtin', url)
+      .then(async (tab) => {
+        await window.ndDsh.browserPlatform.activateTab('builtin', tab.id)
+        await window.ndDsh.browserPlatform.select({ mode: 'tab', targetId: 'builtin', tabId: tab.id })
+      })
+      .catch((cause) => notify(errorMessage(cause)))
+  }
+
+  const savePersonalDialpadLink = (): void => {
+    const url = browserState?.url
+    if (!url) return
+    void window.ndDsh.home.saveLink({ url })
+      .then(setHomeState)
+      .catch((cause) => notify(errorMessage(cause)))
+  }
+
+  const removePersonalDialpadLink = (id: string): void => {
+    void window.ndDsh.home.removeLink(id)
+      .then(setHomeState)
+      .catch((cause) => notify(errorMessage(cause)))
   }
 
   const activeLauncherContext = (): NdContext =>
@@ -995,7 +1221,7 @@ export default function App() {
       case 'capture.area':
         await refreshHome()
         setView('home')
-        notify('Capture saved to ND Home.')
+        notify('Capture saved to Personal.')
         return
       case 'note.create':
       case 'clipboard.read':
@@ -1006,7 +1232,14 @@ export default function App() {
         if (result.opened) notify(`Opened ${String(result.path)}`)
         return
       case 'os.wallpaper.chooseAndSet':
-        if (result.changed) notify('Desktop wallpaper updated.')
+      case 'os.wallpaper.next':
+      case 'os.wallpaper.previous':
+      case 'os.wallpaper.random':
+      case 'os.wallpaper.applySelected':
+        if (result.changed) notify(typeof result.name === 'string' ? `Wallpaper changed to ${result.name}.` : 'Desktop wallpaper updated.')
+        return
+      case 'os.wallpaper.folders.add':
+        if (result.changed) notify(typeof result.folder === 'string' ? `Wallpaper folder set to ${String(result.folder)}.` : 'Wallpaper folder updated.')
         return
       case 'browser.openExternal':
         notify('Opened in your system browser.')
@@ -1072,7 +1305,7 @@ export default function App() {
       if (handleInvocationFailure(result)) return
       await refreshHome()
       setView('home')
-      notify('Capture saved to ND Home.')
+      notify('Capture saved to Personal.')
     } catch (cause) {
       notify(errorMessage(cause))
     } finally {
@@ -1094,7 +1327,7 @@ export default function App() {
       if (handleInvocationFailure(result)) return
       await refreshHome()
       setView('home')
-      notify('Area capture saved to ND Home.')
+      notify('Area capture saved to Personal.')
     } catch (cause) {
       notify(errorMessage(cause))
     } finally {
@@ -1183,7 +1416,7 @@ export default function App() {
   })
 
   const allNavItems: Array<{ id: ProductView; label: string; icon: ReactNode }> = [
-    { id: 'home', label: 'Home', icon: <HomeIcon /> },
+    { id: 'home', label: 'Personal', icon: <HomeIcon /> },
     { id: 'company', label: 'Company', icon: <CompanyIcon /> },
     { id: 'agent', label: 'Agent', icon: <SparkIcon /> },
     { id: 'design', label: 'Design', icon: <PencilIcon /> },
@@ -1317,6 +1550,11 @@ export default function App() {
                 await homeCaptureArea(rect)
                 return
               }
+              if (captureAttachIntent) {
+                setCaptureAttachIntent(false)
+                await startAppInspect(mode === 'area' ? 'area' : 'annotate', rect, undefined, 0, 'attach')
+                return
+              }
               await startAppInspect(mode === 'area' ? 'area' : 'annotate', rect)
             }}
             onClose={() => {
@@ -1339,7 +1577,15 @@ export default function App() {
           UI PREVIEW · DEVELOPMENT FIXTURES · ACTIONS ARE SIMULATED · LAUNCH ELECTRON FOR REAL RUNTIME FEATURES
         </aside>
       ) : null}
-      <header className="app-drag grid grid-cols-[minmax(180px,1fr)_auto_minmax(180px,1fr)] items-center gap-[18px] border-b border-border-soft bg-titlebar pr-[148px] pl-3">
+      <header
+        data-nd-keepalive={headerKeepAlive ? '' : undefined}
+        className={cn(
+          // Left column sizes to content so the keep-alive tabs are not clipped; the right column absorbs the slack
+          // and the nav keeps a content floor so it never shrinks under its buttons.
+          'app-drag grid grid-cols-[minmax(180px,auto)_minmax(min-content,auto)_minmax(180px,1fr)] items-center gap-[18px] border-b border-border-soft bg-titlebar pr-[148px] pl-3',
+          headerKeepAlive && 'pointer-events-auto relative z-[60]',
+        )}
+      >
         <div className="flex min-w-0 flex-col gap-[7px]">
           <div className="flex min-w-0 items-center gap-2">
             <TitlebarIconButton
@@ -1417,9 +1663,9 @@ export default function App() {
             </div>
           </div>
           {orgState ? (
-            <div className="app-no-drag flex items-center gap-[8px]">
-              <label className="flex items-center gap-[5px]">
-                <span className="text-[10px] font-semibold tracking-[0.1em] text-faint">COMPANY</span>
+        <div className="app-no-drag flex min-w-0 items-center gap-[8px] overflow-hidden">
+          <label className="flex items-center gap-[5px]">
+            <span className="text-[10px] font-semibold tracking-[0.1em] text-faint">COMPANY</span>
                 <Select value={company?.id ?? ''} onValueChange={switchCompany}>
                   <SelectTrigger size="sm" aria-label="Switch company" className="h-6! max-w-[220px]! min-w-0 gap-1.5 rounded-md border-border-strong bg-surface-1/50 px-2! text-xs! text-soft [&>svg]:size-3.5">
                     <SelectValue placeholder="No company" />
@@ -1514,10 +1760,11 @@ export default function App() {
                 Manage
               </Button>
               {showGitControls && workspace?.root ? <ProjectGitControls key={`${workspace.projectId ?? 'workspace'}:${workspace.root}:${workspace.binding ?? 'standalone'}`} root={workspace.root} editable={gitEditable} workspaceBinding={workspace.binding} onError={notify} /> : null}
+              <ExtensionKeepAliveTabs organization={orgState} activeContext={currentContext(orgState)} />
             </div>
           ) : null}
         </div>
-        <nav className="app-no-drag flex min-w-0 items-center justify-center" aria-label="ND-DSH navigation">
+        <nav className="app-no-drag flex min-w-0 self-start items-center justify-center pt-[2px]" aria-label="ND-DSH navigation">
           <div className="flex min-w-0 items-center justify-center gap-0.5 rounded-lg border border-border-soft bg-surface-1/70 p-[3px] shadow-[inset_0_1px_0_rgba(255,255,255,0.025),0_4px_14px_rgba(0,0,0,0.12)]">
             {navItems.map((item) => (
               <button
@@ -1618,6 +1865,8 @@ export default function App() {
                   onOpenLink={(url) => void openLink(url)}
                   externalPrompt={externalPrompt}
                   onExternalPromptConsumed={() => setExternalPrompt(null)}
+                  incomingImage={queuedCapture}
+                  onIncomingImageConsumed={() => setQueuedCapture(null)}
                   sessionOpenRequest={sessionOpenRequest}
                   onSessionOpenConsumed={() => setSessionOpenRequest(null)}
                   elementAttachmentVersion={elementAttachmentVersion}
@@ -1632,21 +1881,52 @@ export default function App() {
             </Separator>
             <Panel className="relative min-h-0 min-w-0 overflow-hidden bg-surface-0" minSize={WORKSPACE_MIN_PX}>
               <section aria-hidden={view !== 'home'} className={cn('absolute inset-0 overflow-hidden', view === 'home' ? 'block' : 'hidden')}>
-                <SurfaceErrorBoundary label="Home" resetKey={`home:${homeState?.notes.length ?? 0}`} onError={notify}>
+                <SurfaceErrorBoundary label="Personal" resetKey={`home:${homeState?.notes.length ?? 0}`} onError={notify}>
                   {homeState ? (
-                    <HomeView
-                      state={homeState}
-                      busy={homeBusy}
+                    <PersonalSurface
+                      active={view === 'home'}
+                      pane={personalPane}
+                      onPaneChange={setPersonalPane}
+                      dialpadOpen={personalDialpadOpen}
+                      onDialpadOpenChange={setPersonalDialpadOpen}
+                      dialpad={
+                        <PersonalDialpad
+                          links={homeState.links}
+                          currentUrl={browserState?.url}
+                          busy={homeBusy}
+                          onOpen={openPersonalTab}
+                          onSaveCurrent={savePersonalDialpadLink}
+                          onRemoveLink={removePersonalDialpadLink}
+                          onError={notify}
+                        />
+                      }
+                      state={browserState}
+                      onSnapshot={(result) => {
+                        navigator.clipboard.writeText(result)
+                          .then(() => notify('Browser snapshot copied to the clipboard.'))
+                          .catch(() => notify('Browser snapshot captured, but copying to the clipboard failed.'))
+                      }}
                       onError={notify}
-                      onChanged={refreshHome}
-                      onCaptureScreen={homeCaptureScreen}
-                      onCaptureArea={openLocalAreaCapture}
-                      onCopyCapture={(captureId) => runHomeCaptureAction('capture-copy', captureId)}
-                      onExportCapture={(captureId) => runHomeCaptureAction('capture-export', captureId)}
-                      onAskWithCapture={askWithCapture}
-                      onOpenChat={openSession}
-                      onStartChat={(prompt) => startContextChat(prompt?.trim() || 'Hello ND — this is my personal space.', { kind: 'personal' })}
-                    />
+                      onOpenSettings={() => {
+                        setSettingsTab('general')
+                        setSettingsSubTabs((current) => ({ ...current, general: 'browser' }))
+                        switchToWorkbench('settings')
+                      }}
+                    >
+                      <HomeView
+                        state={homeState}
+                        busy={homeBusy}
+                        onError={notify}
+                        onChanged={refreshHome}
+                        onCaptureScreen={homeCaptureScreen}
+                        onCaptureArea={openLocalAreaCapture}
+                        onCopyCapture={(captureId) => runHomeCaptureAction('capture-copy', captureId)}
+                        onExportCapture={(captureId) => runHomeCaptureAction('capture-export', captureId)}
+                        onAskWithCapture={askWithCapture}
+                        onOpenChat={openSession}
+                        onStartChat={(prompt) => startContextChat(prompt?.trim() || 'Hello ND — this is my personal space.', { kind: 'personal' })}
+                      />
+                    </PersonalSurface>
                   ) : null}
                 </SurfaceErrorBoundary>
               </section>
@@ -1815,6 +2095,13 @@ export default function App() {
                       contexts={extensionContextOptions}
                       requestedView={extensionViewRequest}
                       onRequestedViewHandled={() => setExtensionViewRequest(null)}
+                      browserFocusNudge={browserFocusNudge}
+                      onOpenBrowser={async (tabId) => {
+                        await window.ndDsh.browserPlatform.activateTab('builtin', tabId)
+                        await window.ndDsh.browserPlatform.select({ mode: 'tab', targetId: 'builtin', tabId })
+                        switchToWorkbench('agent')
+                        setAgentPane('browser')
+                      }}
                       onError={notify}
                       onChanged={async () => {
                         setNdExtensions(await window.ndDsh.ndExtensions.state())
@@ -1866,6 +2153,16 @@ export default function App() {
         />
       ) : null}
       <RuntimePrompts onError={notify} organization={orgState} />
+      <ExtensionKeepAliveHost onError={notify} />
+      <ModalInspectDock
+        hidden={captureOverlay !== null}
+        pickDisabled={elementInspectActive}
+        screenshotDisabled={appInspectCountdown !== null || appInspectInFlight}
+        onPickElement={startElementInspect}
+        onScreenshot={() => {
+          void startAppInspect('full')
+        }}
+      />
       {pendingPick ? (
         <div role="dialog" aria-label="Picked element" className="fixed right-4 bottom-[46px] z-[150] flex w-[300px] flex-col gap-2 rounded-[10px] border border-border-strong bg-surface-1 p-3 shadow-[0_14px_40px_rgba(0,0,0,0.5)]">
           <div title={pendingPick.hover} className="flex min-w-0 cursor-help items-center gap-[7px]">
@@ -2001,6 +2298,11 @@ export default function App() {
             if (localCaptureIntent) {
               setLocalCaptureIntent(false)
               await homeCaptureArea(rect)
+              return
+            }
+            if (captureAttachIntent) {
+              setCaptureAttachIntent(false)
+              void startAppInspect(mode === 'area' ? 'area' : 'annotate', rect, undefined, 0, 'attach')
               return
             }
             startAppInspect(mode === 'area' ? 'area' : 'annotate', rect)

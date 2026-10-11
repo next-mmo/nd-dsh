@@ -6,3 +6,21 @@ resolver = "2"
 lto = "thin"
 codegen-units = 16
 strip = "symbols"
+
+# The image codecs are throughput-bound, and `pnpm dev` runs the debug sidecar.
+# Left unoptimized they thumbnail a 4K library ~26x slower than a shipped build
+# (15.8s vs 0.6s for 60 images), which reads as a hang rather than as work.
+# Optimize only these dependencies so ND's own crates keep fast incremental
+# debug builds.
+[profile.dev.package.image]
+opt-level = 2
+[profile.dev.package.zune-jpeg]
+opt-level = 2
+[profile.dev.package.zune-core]
+opt-level = 2
+[profile.dev.package.moxcms]
+opt-level = 2
+[profile.dev.package.png]
+opt-level = 2
+[profile.dev.package.image-webp]
+opt-level = 2

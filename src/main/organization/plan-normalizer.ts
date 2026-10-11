@@ -18,14 +18,18 @@ export interface NormalizedPlan {
  * an optional field; rejecting the whole plan for that leaves the human with
  * nothing. Only a plan with no goal title or no tasks at all is unusable.
  */
-export function normalizeProjectPlan(raw: unknown): NormalizedPlan {
+export function normalizeProjectPlan(raw: unknown, options: { recoverRepeatedLists?: boolean } = {}): NormalizedPlan {
   const adjustments: string[] = []
-  const input = (raw ?? {}) as Partial<ProjectPlanInput>
+  let input = (raw ?? {}) as Partial<ProjectPlanInput>
+  if (options.recoverRepeatedLists) input = recoverRepeatedPlanTasks(input, adjustments)
   const goalTitle = text(input.goal?.title)
   if (!goalTitle) throw new Error('Invalid ND-DSH project plan: the goal needs a title')
   const goalDescription = text(input.goal?.description) || goalTitle
 
   const usedKeys = new Map<string, number>()
+  const reservedKeys = new Set((Array.isArray(input.milestones) ? input.milestones : [])
+    .flatMap((milestone) => Array.isArray(milestone?.tasks) ? milestone.tasks : [])
+    .map((task) => titleKey(text(task?.title).slice(0, MAX_TITLE))))
   const flat: PlannedTask[] = []
   const milestones: ProjectPlanInput['milestones'] = []
   for (const [milestoneIndex, milestoneInput] of (Array.isArray(input.milestones) ? input.milestones : []).entries()) {
@@ -40,11 +44,17 @@ export function normalizeProjectPlan(raw: unknown): NormalizedPlan {
       const key = titleKey(title)
       const seen = usedKeys.get(key) ?? 0
       if (seen > 0) {
-        const renamed = `${title} (${seen + 1})`
+        let suffix = seen + 1
+        let renamed: string
+        do {
+          const ending = ` (${suffix++})`
+          renamed = `${title.slice(0, MAX_TITLE - ending.length)}${ending}`
+        } while (usedKeys.has(titleKey(renamed)) || reservedKeys.has(titleKey(renamed)))
         adjustments.push(`Renamed duplicate task "${title}" to "${renamed}".`)
         title = renamed
       }
       usedKeys.set(key, seen + 1)
+      usedKeys.set(titleKey(title), usedKeys.get(titleKey(title)) ?? 1)
       const task = normalizeTask(taskInput, title, adjustments)
       tasks.push(task)
       flat.push(task)
@@ -68,6 +78,63 @@ export function normalizeProjectPlan(raw: unknown): NormalizedPlan {
     plan: { goal: { title: goalTitle, description: goalDescription }, milestones, ...(memory.length ? { memory } : {}) },
     adjustments,
   }
+}
+
+/**
+ * Only duplicated-list recovery opts into this repair. A model can deliberately
+ * assign same-title or identical tasks in an ordinary plan; retain those by default.
+ * Repeated complete task objects across recovered milestones belong to their final
+ * milestone. Never infer equivalence from just a title, description or write scope.
+ */
+function recoverRepeatedPlanTasks(input: Partial<ProjectPlanInput>, adjustments: string[]): Partial<ProjectPlanInput> {
+  if (!Array.isArray(input.milestones)) return input
+  const locations = new Map<string, { owner: number; counts: Map<number, number> }>()
+  const signature = (task: unknown): string | undefined => {
+    if (!task || typeof task !== 'object' || Array.isArray(task)) return undefined
+    return JSON.stringify(canonicalJson(task))
+  }
+  for (const [index, milestone] of input.milestones.entries()) {
+    for (const task of Array.isArray(milestone?.tasks) ? milestone.tasks : []) {
+      const key = signature(task)
+      if (!key) continue
+      let location = locations.get(key)
+      if (!location) { location = { owner: index, counts: new Map() }; locations.set(key, location) }
+      location.owner = index
+      location.counts.set(index, (location.counts.get(index) ?? 0) + 1)
+    }
+  }
+  const duplicates = new Map([...locations].filter(([, location]) => location.counts.size > 1 && [...location.counts.values()].every((count) => count === 1)))
+  if (!duplicates.size) return input
+  const tasks = input.milestones.flatMap((milestone) => Array.isArray(milestone?.tasks) ? milestone.tasks : [])
+  const hasNumericDependency = tasks.some((task) => Array.isArray(task?.dependsOn) && task.dependsOn.some((reference) =>
+    typeof reference === 'number' || typeof reference === 'string' && /^(?:task\s*#?|t|#)?\s*(\d+)$/i.test(reference.trim()),
+  ))
+  if (hasNumericDependency) throw new Error('Invalid ND-DSH project plan: repeated task lists contain numeric dependencies; use exact task titles so duplicate recovery cannot change their targets')
+  let removed = 0
+  const milestones = input.milestones.map((milestone, index) => {
+    if (!Array.isArray(milestone?.tasks)) return milestone
+    const remaining = milestone.tasks.filter((task) => {
+      const key = signature(task)
+      const duplicate = key ? duplicates.get(key) : undefined
+      if (!duplicate || duplicate.owner === index) return true
+      removed += 1
+      return false
+    })
+    return { ...milestone, tasks: remaining }
+  })
+  adjustments.push(`Recovered ${removed} identical task(s) repeated across milestone lists; retained their final milestone ownership.`)
+  return { ...input, milestones }
+}
+
+function canonicalJson(value: unknown, depth = 0): unknown {
+  if (depth > 128) throw new Error('Invalid ND-DSH project plan: task signature exceeds the nesting limit')
+  if (Array.isArray(value)) return value.map((item) => canonicalJson(item, depth + 1))
+  if (value && typeof value === 'object') {
+    const sorted: Record<string, unknown> = Object.create(null) as Record<string, unknown>
+    for (const key of Object.keys(value).sort()) sorted[key] = canonicalJson((value as Record<string, unknown>)[key], depth + 1)
+    return sorted
+  }
+  return value
 }
 
 function normalizeTask(input: Partial<PlannedTask> | undefined, title: string, adjustments: string[]): PlannedTask {

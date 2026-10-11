@@ -1,0 +1,50 @@
+[
+  {
+    "id": 1,
+    "priority": 2,
+    "action": { "type": "block" },
+    "condition": { "urlFilter": "||youtube.com/pagead/" }
+  },
+  {
+    "id": 2,
+    "priority": 2,
+    "action": { "type": "block" },
+    "condition": { "urlFilter": "||youtube.com/ptracking" }
+  },
+  {
+    "id": 3,
+    "priority": 2,
+    "action": { "type": "block" },
+    "condition": { "urlFilter": "||youtube.com/api/stats/ads" }
+  },
+  {
+    "id": 4,
+    "priority": 2,
+    "action": { "type": "block" },
+    "condition": { "urlFilter": "||youtube.com/get_midroll_info" }
+  },
+  {
+    "id": 5,
+    "priority": 2,
+    "action": { "type": "block" },
+    "condition": { "urlFilter": "||youtube.com/pcs/activeview" }
+  },
+  {
+    "id": 6,
+    "priority": 2,
+    "action": { "type": "block" },
+    "condition": { "urlFilter": "||youtube.com/api/stats/atr" }
+  },
+  {
+    "id": 7,
+    "priority": 2,
+    "action": { "type": "block" },
+    "condition": { "urlFilter": "||youtube.com/ads/" }
+  },
+  {
+    "id": 8,
+    "priority": 2,
+    "action": { "type": "block" },
+    "condition": { "urlFilter": "||youtube-nocookie.com/pagead/" }
+  }
+]

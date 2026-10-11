@@ -1,0 +1,16 @@
+{
+  "name": "@nd-dsh/nd-mini-browser",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "description": "ND Mini Browser \u2014 keep-alive browser chrome over the ND built-in browser, with tabs and quick links.",
+  "engines": {
+    "node": ">=21.0.0"
+  },
+  "scripts": {
+    "verify": "node scripts/typecheck.mjs && node --test \"test/*.test.mjs\" && node scripts/build.mjs",
+    "typecheck": "node scripts/typecheck.mjs",
+    "test": "node --test \"test/*.test.mjs\"",
+    "build": "node scripts/build.mjs"
+  }
+}

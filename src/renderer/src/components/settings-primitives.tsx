@@ -11,9 +11,12 @@ export function SettingsSection({ title, children, className }: { title: string;
   )
 }
 
-export function SettingsRow({ children, className }: { children: ReactNode; className?: string }) {
+export function SettingsRow({ children, className, label }: { children: ReactNode; className?: string; label?: string }) {
   return (
-    <div className={cn('flex min-w-0 items-center justify-between gap-4 rounded-lg border border-border-soft bg-surface-1 px-[13px] py-[11px]', className)}>
+    <div
+      {...(label === undefined ? {} : { role: 'group', 'aria-label': label })}
+      className={cn('flex min-w-0 items-center justify-between gap-4 rounded-lg border border-border-soft bg-surface-1 px-[13px] py-[11px]', className)}
+    >
       {children}
     </div>
   )

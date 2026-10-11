@@ -456,7 +456,8 @@ fn run_owned<S: StdoutSink>(
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-        command.creation_flags(CREATE_NEW_PROCESS_GROUP);
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
     }
 
     let mut child = command
@@ -580,6 +581,34 @@ fn join_reader<S>(handle: JoinHandle<Result<S>>, stream: &str) -> Result<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn git_background_launcher_has_no_windows_console() {
+        let result = exec(
+            GitExecParams {
+                cwd: std::env::temp_dir().display().to_string(),
+                args: vec![
+                    "-NoProfile".to_owned(),
+                    "-NonInteractive".to_owned(),
+                    "-Command".to_owned(),
+                    crate::process::WINDOWS_CONSOLE_PROBE.to_owned(),
+                ],
+                input: None,
+                env: HashMap::new(),
+                max_output_bytes: None,
+                git_path: Some("powershell.exe".to_owned()),
+            },
+            &Interrupt::never(),
+        )
+        .expect("run console probe through actual Git launcher");
+        assert_eq!(result.exit_code, 0, "{}", result.stderr);
+        assert_eq!(
+            result.stdout.trim(),
+            "0",
+            "Git launcher must not create a Windows console"
+        );
+    }
 
     #[test]
     fn parses_porcelain_status_including_rename_order() {

@@ -67,6 +67,8 @@ export function ExtensionSettings({ onError }: { onError(message: string): void 
   const [demoProviderId, setDemoProviderId] = useState('')
   const [demoResult, setDemoResult] = useState<ExtensionDemoResult | null>(null)
   const [detailDraft, setDetailDraft] = useState<DetailDraft | null>(null)
+  const [view, setView] = useState<'overview' | 'routing'>('overview')
+  const isRouting = view === 'routing'
 
   useEffect(() => {
     let mounted = true
@@ -292,12 +294,32 @@ export function ExtensionSettings({ onError }: { onError(message: string): void 
   return (
     <main className="min-h-0 overflow-auto px-[26px] pb-[56px] pt-5">
       <div className="mx-auto w-full max-w-[1040px]">
-        <header className="mb-7">
+        <header className="mb-6">
           <h2 className="m-0 text-[26px] font-semibold tracking-[-0.02em] text-strong">Plugins</h2>
           <p className="mt-1.5 max-w-[720px] text-[11px] leading-5 text-faint">
             Install capabilities once in ND, then route them across ND Harness, Codex, and future coding engines without rebuilding your company setup.
           </p>
         </header>
+
+        <div className="mb-6 flex items-center border-b border-border-soft pb-2.5">
+          <nav role="tablist" aria-label="Plugin sub-tabs" className="flex shrink-0 gap-0.5 rounded-lg border border-border bg-secondary p-[3px]">
+            {([{ id: 'overview', label: 'Overview' }, { id: 'routing', label: 'Routing' }] as const).map(({ id, label }) => (
+              <button
+                key={id}
+                role="tab"
+                type="button"
+                aria-selected={view === id}
+                className={cn(
+                  'rounded-md px-3 py-1 text-[11px] font-semibold transition-colors',
+                  view === id ? 'bg-primary/10 text-primary' : 'text-faint hover:bg-accent hover:text-soft',
+                )}
+                onClick={() => setView(id)}
+              >
+                {label}
+              </button>
+            ))}
+          </nav>
+        </div>
 
         <div className="mb-7 flex flex-wrap items-center justify-between gap-4">
           <nav aria-label="Plugin capability types" className="flex min-w-0 flex-wrap items-center gap-1">
@@ -328,7 +350,7 @@ export function ExtensionSettings({ onError }: { onError(message: string): void 
             <label className="relative block">
               <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-faint" aria-hidden="true" />
               <input
-                aria-label="Search plugins"
+                aria-label={isRouting ? 'Search extensions' : 'Search plugins'}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder={`Search ${SURFACE_TAB_LABEL[surface].toLowerCase()}...`}
@@ -345,20 +367,22 @@ export function ExtensionSettings({ onError }: { onError(message: string): void 
             >
               <RefreshCw className={cn('size-3.5', busy === 'refresh' && 'animate-spin')} aria-hidden="true" />
             </button>
-            <button
-              type="button"
-              aria-label={`Add ${singularSurface(surface)}`}
-              disabled={Boolean(busy)}
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-strong px-3 text-[11px] font-semibold text-background transition-opacity hover:opacity-90 disabled:opacity-50"
-              onClick={() => void addExtension()}
-            >
-              <Plus className="size-3.5" aria-hidden="true" />
-              New
-            </button>
+            {!isRouting ? (
+              <button
+                type="button"
+                aria-label={`Add ${singularSurface(surface)}`}
+                disabled={Boolean(busy)}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-strong px-3 text-[11px] font-semibold text-background transition-opacity hover:opacity-90 disabled:opacity-50"
+                onClick={() => void addExtension()}
+              >
+                <Plus className="size-3.5" aria-hidden="true" />
+                New
+              </button>
+            ) : null}
           </div>
         </div>
 
-        {surface === 'plugin' ? <WorkflowPluginsCard onError={onError} /> : null}
+        {!isRouting && surface === 'plugin' ? <WorkflowPluginsCard onError={onError} /> : null}
 
         <CatalogSection title="Installed" count={installed.length}>
           {busy === 'load' ? (
@@ -431,6 +455,8 @@ export function ExtensionSettings({ onError }: { onError(message: string): void 
 
         {selected ? (
           <div className="mt-9 border-t border-border-soft pt-2">
+            {!isRouting ? (
+            <>
             <SettingsSection title="Configuration">
               <SettingsRow>
                 <div className={rowStack}>
@@ -531,6 +557,23 @@ export function ExtensionSettings({ onError }: { onError(message: string): void 
                 ) : null}
               </SettingsSection>
             ) : null}
+            </>
+            ) : null}
+
+            {isRouting ? (
+            <>
+            <SettingsSection title="Extension">
+              <SettingsRow>
+                <div className={rowStack}>
+                  <div className="flex items-center gap-2">
+                    <strong className={rowTitle}>{selected.name}</strong>
+                    {selected.builtInDemo ? <StatusChip good>Built-in</StatusChip> : <StatusChip>Custom</StatusChip>}
+                  </div>
+                  <span className={rowDesc}>{selected.description}</span>
+                  <code className={rowPathText}>{selected.id}</code>
+                </div>
+              </SettingsRow>
+            </SettingsSection>
 
             <SettingsSection title="Coding engine routes">
               <div className="space-y-1.5">
@@ -589,10 +632,14 @@ export function ExtensionSettings({ onError }: { onError(message: string): void 
                 })}
               </div>
             </SettingsSection>
+            </>
+            ) : null}
 
+            {!isRouting ? (
             <div className="mt-5 flex justify-end">
               <SettingsButton disabled={Boolean(busy)} onClick={() => void reset()}>Reset demo pack</SettingsButton>
             </div>
+            ) : null}
           </div>
         ) : null}
       </div>

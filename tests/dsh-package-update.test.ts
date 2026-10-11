@@ -50,7 +50,7 @@ beforeEach(async () => {
   logs = []
   vi.spyOn(console, 'log').mockImplementation((message) => { logs.push(String(message)) })
   spawnMock.mockImplementation((_command: string, args: string[]) => {
-    const child = Object.assign(new EventEmitter(), { stdout: new PassThrough() })
+    const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough() })
     const npmArgs = args.slice(args.findIndex((arg) => arg === 'view' || arg === 'install'))
     calls.push(npmArgs)
     queueMicrotask(() => {
@@ -73,6 +73,30 @@ afterEach(async () => {
 })
 
 describe('published DSH package updater', () => {
+  it('hides registry and install children without inheriting Windows console descriptors', async () => {
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    spawnMock.mockImplementation((_command: string, args: string[], options: object) => {
+      expect(options).toMatchObject({ windowsHide: true, shell: false, stdio: ['ignore', 'pipe', 'pipe'] })
+      const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough() })
+      queueMicrotask(() => {
+        if (args.includes('view')) child.stdout.end(JSON.stringify(latestVersion))
+        else {
+          installed(String(latestVersion))
+          child.stdout.end('install progress\n')
+        }
+        child.stderr.end('npm diagnostic\n')
+        child.emit('close', 0)
+      })
+      return child
+    })
+    await runInstaller()
+    expect(spawnMock).toHaveBeenCalledTimes(3)
+    expect(stdout).toHaveBeenCalledWith('install progress\n')
+    expect(stdout).not.toHaveBeenCalledWith(JSON.stringify(latestVersion))
+    expect(stderr).toHaveBeenCalledWith(Buffer.from('npm diagnostic\n'))
+  })
+
   it('checks latest and skips all installs for a complete matching runtime', async () => {
     installed()
     const before = readFileSync(packageFile('dsh', 'package.json'), 'utf8')

@@ -1,6 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { runInNewContext } from 'node:vm'
 import { describe, expect, it, vi } from 'vitest'
 import {
   ChatGptWebEngine,
@@ -15,6 +16,28 @@ import {
 } from '../src/main/engines/chatgpt-web/chatgpt-project-binding.js'
 
 describe('ChatGPT Web Git sync helpers', () => {
+  it('captures declared assistant turns and shared completion without a nested author-role node', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nd-chatgpt-dom-'))
+    const engine = new ChatGptWebEngine({ browser: {} as never, git: {} as never, workspace: {} as never, storePath: join(directory, 'sessions.json') })
+    class FakeElement {
+      constructor(readonly role: string, readonly innerText: string) {}
+      getAttribute(attribute: string) { return attribute === 'data-turn' ? this.role : null }
+      querySelector(selector: string) { return selector === 'button[data-testid="copy-turn-action-button"], button[aria-label="Copy response"]' && this.role === 'assistant' ? {} : null }
+    }
+    let nodes = [new FakeElement('user', 'Translate Hello world'), new FakeElement('assistant', 'Hola mundo!')]
+    const cdp = { evaluate: async (script: string) => runInNewContext(script, {
+      location: new URL('https://chatgpt.com/c/test'), HTMLElement: FakeElement,
+      document: { title: 'ChatGPT', querySelectorAll: () => nodes, querySelector: () => null },
+    }) }
+    const internals = engine as unknown as { captureSnapshot: (cdp: unknown) => Promise<{ complete: boolean; turns: Array<{ role: string; text: string }> }> }
+    try {
+      expect(await internals.captureSnapshot(cdp)).toMatchObject({ complete: true, turns: [
+        { role: 'user', text: 'Translate Hello world' }, { role: 'assistant', text: 'Hola mundo!' },
+      ] })
+      nodes = []
+      expect(await internals.captureSnapshot(cdp)).toMatchObject({ complete: false, turns: [] })
+    } finally { await engine.close(); rmSync(directory, { recursive: true, force: true }) }
+  })
   it('keeps chats without a remote independent of Git and preserves the selected branch for Git chats', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'nd-chatgpt-optional-'))
     let remotes: string[] = []

@@ -27,7 +27,7 @@ function formatWhen(at: number): string {
 }
 
 /**
- * ND Home: the personal space that works before any company or project exists.
+ * Personal: the space that works before any company or project exists.
  * Notes, captures, and chats here are personal ND records in ND-managed
  * storage; company/project notes stay in the organization store.
  */
@@ -102,9 +102,9 @@ export function HomeView({
     <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold text-foreground">ND Home</h2>
+          <h2 className="text-lg font-semibold text-foreground">Personal</h2>
           <p className="text-xs text-faint">
-            Personal notes, captures, and chats — stored in ND-managed user storage, independent of any company or project.
+            Notes, captures, and chats — stored in ND-managed user storage, independent of any company or project.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -273,7 +273,7 @@ export function HomeView({
           <DialogHeader>
             <DialogTitle>{preview?.capture.displayLabel} capture</DialogTitle>
             <DialogDescription>
-              This capture is local to ND Home. Nothing is uploaded to a model until you explicitly ask ND about it.
+              This capture is local to Personal. Nothing is uploaded to a model until you explicitly ask ND about it.
             </DialogDescription>
           </DialogHeader>
           {preview ? (

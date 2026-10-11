@@ -2,6 +2,8 @@ import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { promises as fs } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { bundledResourceRoot } from '../app-paths.js'
+import { backgroundProcessEnvironment } from '../core/background-process-environment.js'
 import {
   parseWorkflowDetection,
   parseWorkflowEnvelope,
@@ -91,11 +93,13 @@ export class WorkflowCliClient {
       // process.execPath is the Electron binary inside the packaged app; the
       // env flag makes it behave as plain Node for this child. Under plain
       // Node (tests, CLI) the flag is ignored.
-      const child = this.spawnImpl(process.execPath, argv, {
+      const preload = join(bundledResourceRoot(), 'scripts', 'nd-background-process.cjs')
+      const nodePolicyArgs = process.platform === 'win32' ? ['--require', preload] : []
+      const child = this.spawnImpl(process.execPath, [...nodePolicyArgs, ...argv], {
         cwd: root,
         shell: false,
         windowsHide: true,
-        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+        env: backgroundProcessEnvironment({ ...process.env, ELECTRON_RUN_AS_NODE: '1' }, preload),
       })
       const timer = setTimeout(() => {
         if (settled) return

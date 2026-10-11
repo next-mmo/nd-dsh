@@ -6,6 +6,7 @@ describe('settings route', () => {
     expect(settingsHash('models')).toBe('#/settings?tab=model')
     expect(settingsHash('extensions')).toBe('#/settings?tab=extensions')
     expect(settingsHash('general', 'workspace')).toBe('#/settings?tab=general&subtab=workspace')
+    expect(settingsHash('general', 'shortcuts')).toBe('#/settings?tab=general&subtab=shortcuts')
     expect(settingsHash('capabilities', 'memory')).toBe('#/settings?tab=capabilities&subtab=memory')
   })
 
@@ -14,12 +15,15 @@ describe('settings route', () => {
     expect(settingsTabFromLocation({ hash: '#/settings?tab=capabilities', search: '' })).toBe('capabilities')
     expect(settingsTabFromLocation({ hash: '#/settings?tab=extensions', search: '' })).toBe('extensions')
     expect(settingsTabFromLocation({ hash: '#/settings?tab=workspace', search: '' })).toBe('general')
+    expect(settingsTabFromLocation({ hash: '#/settings?tab=shortcuts', search: '' })).toBe('general')
   })
 
   it('reads general sub-tabs from location with runtime as default', () => {
     expect(generalSubTabFromLocation({ hash: '#/settings?tab=general&subtab=workspace', search: '' })).toBe('workspace')
     expect(generalSubTabFromLocation({ hash: '#/settings?tab=runtime', search: '' })).toBe('runtime')
     expect(generalSubTabFromLocation({ hash: '#/settings?tab=browser', search: '' })).toBe('browser')
+    expect(generalSubTabFromLocation({ hash: '#/settings?tab=shortcuts', search: '' })).toBe('shortcuts')
+    expect(generalSubTabFromLocation({ hash: '#/settings?tab=general&subtab=shortcuts', search: '' })).toBe('shortcuts')
     expect(generalSubTabFromLocation({ hash: '#/settings?tab=about', search: '' })).toBe('about')
     expect(generalSubTabFromLocation({ hash: '#/settings?tab=general', search: '' })).toBe('runtime')
   })

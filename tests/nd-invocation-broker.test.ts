@@ -33,9 +33,12 @@ beforeEach(async () => {
   host = new NativeHostRegistry()
   calls = []
   policyEffect = 'allow'
-  for (const method of ['note.create', 'note.search', 'capture.screen', 'clipboard.read', 'workflow.list', 'os.wallpaper.chooseAndSet'] as const) {
+  for (const method of ['note.create', 'note.search', 'capture.screen', 'clipboard.read', 'workflow.list', 'os.wallpaper.chooseAndSet', 'os.wallpaper.next', 'os.wallpaper.previous', 'os.wallpaper.random', 'os.wallpaper.folders.add', 'os.wallpaper.status', 'os.wallpaper.preview', 'os.wallpaper.applySelected'] as const) {
     host.register(method, async (input, context) => {
       calls.push({ host: method, input, contextKey: context.context.kind })
+      if (method === 'os.wallpaper.status') {
+        return [{ id: 'mountains.jpg', title: 'mountains.jpg', detail: '1024 KB' }]
+      }
       return { ok: true, method }
     })
   }
@@ -130,6 +133,54 @@ describe('InvocationBroker authorization', () => {
       input: {},
     })
     expect(wrongContext).toMatchObject({ ok: false, error: { code: 'denied' } })
+  })
+
+  it('supports wallpaper cycling commands and loads the wallpaper-studio detail view', async () => {
+    await state.setActivation(WALLPAPER_MANAGER_MANIFEST.id, personal, true)
+
+    const next = await broker.invoke({
+      extensionId: WALLPAPER_MANAGER_MANIFEST.id,
+      contributionId: 'next-wallpaper',
+      contributionKind: 'command',
+      context: personal,
+      caller: 'user',
+      input: {},
+    })
+    expect(next.ok).toBe(true)
+    expect(calls.at(-1)?.host).toBe('os.wallpaper.next')
+
+    const setFolder = await broker.invoke({
+      extensionId: WALLPAPER_MANAGER_MANIFEST.id,
+      contributionId: 'set-wallpaper-folder',
+      contributionKind: 'command',
+      context: personal,
+      caller: 'user',
+      input: {},
+    })
+    expect(setFolder.ok).toBe(true)
+    expect(calls.at(-1)?.host).toBe('os.wallpaper.folders.add')
+
+    const previous = await broker.invoke({
+      extensionId: WALLPAPER_MANAGER_MANIFEST.id,
+      contributionId: 'previous-wallpaper',
+      contributionKind: 'command',
+      context: personal,
+      caller: 'user',
+      input: {},
+    })
+    expect(previous.ok).toBe(true)
+    expect(calls.at(-1)?.host).toBe('os.wallpaper.previous')
+
+    const view = await broker.loadView(WALLPAPER_MANAGER_MANIFEST.id, 'wallpaper-studio', personal)
+    expect(view.kind).toBe('detail')
+    expect(view.title).toBe('Wallpaper Studio')
+    expect(view.rows).toHaveLength(1)
+    expect(view.rows[0]?.title).toBe('mountains.jpg')
+    expect(view.actions.map((a) => a.id)).toContain('apply')
+    expect(view.actions.map((a) => a.id)).toContain('prev')
+    expect(view.actions.map((a) => a.id)).toContain('next')
+    expect(view.actions.map((a) => a.id)).toContain('random')
+    expect(view.actions.map((a) => a.id)).toContain('preview')
   })
 
   it('denies an unknown package or contribution', async () => {
@@ -269,4 +320,42 @@ describe('InvocationBroker authorization', () => {
     // host method — which this test registry intentionally does not implement.
     expect(result).toMatchObject({ ok: false, error: { code: 'failed' } })
   })
+
+  it('invokes previous-wallpaper command and prev & preview view actions in personal context', async () => {
+    await state.setActivation(WALLPAPER_MANAGER_MANIFEST.id, personal, true)
+
+    // 1. previous-wallpaper command
+    const cmdResult = await broker.invoke({
+      extensionId: WALLPAPER_MANAGER_MANIFEST.id,
+      contributionId: 'previous-wallpaper',
+      contributionKind: 'command',
+      context: personal,
+      caller: 'user',
+      input: {},
+    })
+    expect(cmdResult).toMatchObject({ ok: true, value: { ok: true, method: 'os.wallpaper.previous' } })
+
+    // 2. prev view action
+    const prevActionResult = await broker.invoke({
+      extensionId: WALLPAPER_MANAGER_MANIFEST.id,
+      contributionId: 'wallpaper-studio',
+      contributionKind: 'view',
+      context: personal,
+      caller: 'user',
+      input: { action: 'prev' },
+    })
+    expect(prevActionResult).toMatchObject({ ok: true, value: { ok: true, method: 'os.wallpaper.previous' } })
+
+    // 3. preview view action
+    const previewActionResult = await broker.invoke({
+      extensionId: WALLPAPER_MANAGER_MANIFEST.id,
+      contributionId: 'wallpaper-studio',
+      contributionKind: 'view',
+      context: personal,
+      caller: 'user',
+      input: { action: 'preview', id: 'lake.png' },
+    })
+    expect(previewActionResult).toMatchObject({ ok: true, value: { ok: true, method: 'os.wallpaper.preview' } })
+  })
 })
+

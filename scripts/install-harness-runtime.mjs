@@ -216,13 +216,19 @@ function run(command, args, cwd, captureOutput = false) {
     const child = spawn(command, args, {
       cwd,
       env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', NO_COLOR: '1' },
-      stdio: captureOutput ? ['ignore', 'pipe', 'inherit'] : 'inherit',
+      // Inherited Windows descriptors make libuv allocate a console even with
+      // windowsHide. Keep this background child piped and forward its logs.
+      stdio: ['ignore', 'pipe', 'pipe'],
       shell: false,
       windowsHide: true,
     })
     let output = ''
     child.stdout?.setEncoding('utf8')
-    child.stdout?.on('data', chunk => { output += chunk })
+    child.stdout?.on('data', chunk => {
+      if (captureOutput) output += chunk
+      else process.stdout.write(chunk)
+    })
+    child.stderr?.on('data', chunk => { process.stderr.write(chunk) })
     child.once('error', reject)
     child.once('close', code => code === 0
       ? resolvePromise(output)

@@ -1,9 +1,7 @@
 import { randomUUID } from 'node:crypto'
-import { execFile } from 'node:child_process'
 import { promises as fs } from 'node:fs'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import process from 'node:process'
-import { promisify } from 'node:util'
 import {
   ND_EXTENSION_MANIFEST_FILENAME,
   compareVersions,
@@ -17,8 +15,8 @@ import type {
   NdPackageSourceView,
 } from '../../shared/nd-invocations.js'
 import { quarantineFile } from '../logging/log-file.js'
-
-const execFileAsync = promisify(execFile)
+import { rawGitExecRunner, type GitExecRunner } from '../git/git-cli.js'
+import { ND_WEBVIEW_MAX_ASSET_FILE_BYTES, ND_WEBVIEW_MAX_ASSET_TOTAL_BYTES } from '../../shared/extension-webview.js'
 
 interface NdPackageRecord {
   manifest: NdExtensionManifest
@@ -51,7 +49,7 @@ export class ExtensionPackageStore {
   private saveChain: Promise<void> = Promise.resolve()
   private value: PackageIndexSnapshot = { version: 1, packages: [] }
 
-  constructor(private readonly rootDir: string) {}
+  constructor(private readonly rootDir: string, private readonly git: GitExecRunner = rawGitExecRunner) {}
 
   async list(): Promise<NdInstalledPackageView[]> {
     await this.load()
@@ -159,7 +157,7 @@ export class ExtensionPackageStore {
     }
     await assertContainedPackage(sourceDir)
 
-    const revision = await gitRevision(sourceDir)
+    const revision = await gitRevision(sourceDir, this.git)
     const source: NdPackageSourceView = {
       kind: sourceDir.includes(`${sep}.git${sep}`) || revision ? 'git' : 'local',
       location: sourceDir,
@@ -323,7 +321,16 @@ export class ExtensionPackageStore {
       permissions: [...record.manifest.permissions],
       settings: structuredClone(record.manifest.settings),
       contributions: counts,
-      views: record.manifest.contributions.views.map((view) => ({ id: view.id, title: view.title })),
+      views: record.manifest.contributions.views.map((view) => ({
+        id: view.id,
+        title: view.title,
+        ...(view.description ? { description: view.description } : {}),
+      })),
+      commands: record.manifest.contributions.commands.map((command) => ({
+        id: command.id,
+        title: command.title,
+        ...(command.description ? { description: command.description } : {}),
+      })),
       hasExecutable: record.manifest.executable !== undefined,
       ...(record.previousVersion ? { previousVersion: record.previousVersion } : {}),
     }
@@ -338,10 +345,12 @@ export function sortPackageViews(views: NdInstalledPackageView[]): NdInstalledPa
 /**
  * Walk the package tree and reject symlinks outright. A symlink could point
  * outside the package root, and following it during the snapshot copy would
- * import content the manifest never declared.
+ * import content the manifest never declared. File sizes are capped so a web
+ * view package cannot smuggle unbounded assets past the installer.
  */
 async function assertContainedPackage(root: string): Promise<void> {
   let visited = 0
+  let totalBytes = 0
   const walk = async (directory: string): Promise<void> => {
     const entries = await fs.readdir(directory, { withFileTypes: true })
     for (const entry of entries) {
@@ -350,18 +359,26 @@ async function assertContainedPackage(root: string): Promise<void> {
       if (entry.name === '.git' || entry.name === 'node_modules') continue
       const absolute = join(directory, entry.name)
       if (entry.isSymbolicLink()) throw new Error(`Package contains a symbolic link (${relative(root, absolute)}); links are not allowed in packages`)
-      if (entry.isDirectory()) await walk(absolute)
+      if (entry.isDirectory()) {
+        await walk(absolute)
+        continue
+      }
+      const size = (await fs.stat(absolute)).size
+      if (size > ND_WEBVIEW_MAX_ASSET_FILE_BYTES) {
+        throw new Error(`Package file ${relative(root, absolute)} exceeds the ${ND_WEBVIEW_MAX_ASSET_FILE_BYTES / (1024 * 1024)} MB per-file cap`)
+      }
+      totalBytes += size
+      if (totalBytes > ND_WEBVIEW_MAX_ASSET_TOTAL_BYTES) {
+        throw new Error(`Package exceeds the ${ND_WEBVIEW_MAX_ASSET_TOTAL_BYTES / (1024 * 1024)} MB total asset cap`)
+      }
     }
   }
   await walk(root)
 }
 
-async function gitRevision(directory: string): Promise<string | undefined> {
+async function gitRevision(directory: string, runGit: GitExecRunner): Promise<string | undefined> {
   try {
-    const { stdout } = await execFileAsync('git', ['-C', directory, 'rev-parse', 'HEAD'], {
-      timeout: GIT_REVISION_TIMEOUT_MS,
-      windowsHide: true,
-    })
+    const { stdout } = await runGit(directory, ['rev-parse', 'HEAD'], { timeoutMs: GIT_REVISION_TIMEOUT_MS })
     const revision = stdout.trim()
     return /^[0-9a-f]{7,64}$/.test(revision) ? revision : undefined
   } catch {

@@ -248,6 +248,7 @@ export class StructuredCliEngine {
     })
     const spawnProcess = this.options.spawnProcess ?? spawn
     const child = spawnCliCommand(spawnProcess, bin, args, {
+      windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'],
       env: engineEnvironment(),
       cwd,

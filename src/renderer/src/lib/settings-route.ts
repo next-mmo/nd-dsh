@@ -1,5 +1,5 @@
 export type SettingsTab = 'general' | 'appearance' | 'models' | 'capabilities' | 'extensions' | 'plugins' | 'engines' | 'presets'
-export type GeneralSubTab = 'runtime' | 'workspace' | 'browser' | 'about'
+export type GeneralSubTab = 'runtime' | 'workspace' | 'browser' | 'shortcuts' | 'about'
 export type CapabilitySubTab = 'engine' | 'memory' | 'context' | 'lifecycle'
 export type EnginesSubTab = 'engines' | 'gateway' | 'tokens'
 
@@ -37,6 +37,7 @@ const QUERY_TAB = new Map<string, SettingsTab>([
   ['workspace', 'general'],
   ['runtime', 'general'],
   ['browser', 'general'],
+  ['shortcuts', 'general'],
   ['about', 'general'],
 ])
 
@@ -44,6 +45,7 @@ const QUERY_SUBTAB = new Map<string, GeneralSubTab>([
   ['workspace', 'workspace'],
   ['runtime', 'runtime'],
   ['browser', 'browser'],
+  ['shortcuts', 'shortcuts'],
   ['about', 'about'],
 ])
 

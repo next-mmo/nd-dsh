@@ -297,7 +297,7 @@ async function pathExists(path: string): Promise<boolean> {
 }
 
 async function git(cwd: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
-  const result = await execFileAsync('git', args, { cwd, encoding: 'utf8', maxBuffer: MAX_GIT_OUTPUT })
+  const result = await execFileAsync('git', args, { cwd, encoding: 'utf8', maxBuffer: MAX_GIT_OUTPUT, windowsHide: true })
   return { stdout: result.stdout, stderr: result.stderr }
 }
 

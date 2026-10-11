@@ -19,10 +19,56 @@ export type OrganizationTeamEventKind =
 export type OrganizationMemberStatus = 'active' | 'inactive'
 export type OrganizationActorKind = 'human' | 'agent' | 'system'
 export type OrganizationMessageKind = 'project' | 'task' | 'review'
+export type OrganizationMessageCategory = 'chat' | 'question' | 'reply' | 'status' | 'handoff'
 export type OrganizationDecisionStatus = 'active' | 'superseded' | 'archived'
 export type OrganizationApprovalStatus = 'pending' | 'approved' | 'changes_requested' | 'rejected' | 'cancelled'
 export type OrganizationApprovalVerdictKind = 'approve' | 'request_changes' | 'reject'
 export type OrganizationApprovalTargetKind = 'task-review' | 'integration' | 'action'
+export type TaskAssigneeKind = 'agent' | 'human'
+
+export type OrganizationAccessRole = 'owner' | 'admin' | 'pm' | 'contributor' | 'reviewer' | 'guest'
+
+export type OrganizationCapability =
+  | 'company.admin'
+  | 'project.manage'
+  | 'task.create'
+  | 'task.assign'
+  | 'task.execute'
+  | 'review.approve'
+  | 'content.write'
+  | 'content.read'
+
+export interface OrganizationProjectGrant {
+  projectId: string
+  role: OrganizationAccessRole
+}
+
+export const ROLE_DEFAULT_CAPABILITIES: Record<OrganizationAccessRole, OrganizationCapability[]> = {
+  owner: ['company.admin', 'project.manage', 'task.create', 'task.assign', 'task.execute', 'review.approve', 'content.write', 'content.read'],
+  admin: ['company.admin', 'project.manage', 'task.create', 'task.assign', 'task.execute', 'review.approve', 'content.write', 'content.read'],
+  pm: ['project.manage', 'task.create', 'task.assign', 'task.execute', 'review.approve', 'content.write', 'content.read'],
+  contributor: ['task.create', 'content.write', 'content.read'],
+  reviewer: ['review.approve', 'content.write', 'content.read'],
+  guest: ['content.read'],
+}
+
+export function resolveMemberCapabilities(member: OrganizationMember, projectId?: string): Set<OrganizationCapability> {
+  let role = member.accessRole ?? 'contributor'
+  if (projectId && member.projectGrants?.length) {
+    const grant = member.projectGrants.find((g) => g.projectId === projectId)
+    if (grant) role = grant.role
+  }
+  const defaults = ROLE_DEFAULT_CAPABILITIES[role] ?? ROLE_DEFAULT_CAPABILITIES.contributor
+  const capabilities = new Set<OrganizationCapability>(defaults)
+  if (member.capabilities) {
+    for (const cap of member.capabilities) capabilities.add(cap)
+  }
+  return capabilities
+}
+
+export function hasMemberCapability(member: OrganizationMember, capability: OrganizationCapability, projectId?: string): boolean {
+  return resolveMemberCapabilities(member, projectId).has(capability)
+}
 
 export type OrganizationRunKind = 'pm-plan' | 'task-execution' | 'task-review'
 export type OrganizationRunStatus = 'running' | 'completed' | 'failed'
@@ -178,6 +224,16 @@ export interface Milestone {
   order: number
 }
 
+export interface OrganizationTaskHandoff {
+  id: string
+  taskId: string
+  timestamp: number
+  fromAssignee?: { kind: TaskAssigneeKind; id: string }
+  toAssignee?: { kind: TaskAssigneeKind; id: string }
+  changedBy: OrganizationActorRef
+  reason: string
+}
+
 export interface OrganizationTask {
   id: string
   companyId: string
@@ -192,14 +248,30 @@ export interface OrganizationTask {
   priority: TaskPriority
   status: TaskStatus
   dependsOn: string[]
+  /** Assignee kind: 'agent' or 'human'. Defaults to 'agent' when assignedAgentId is present. */
+  assigneeKind?: TaskAssigneeKind
   assignedAgentId?: string
+  /** Human member assigned to execute or lead the task. */
+  assignedMemberId?: string
+  /** Human or agent collaborator IDs assisting on the task. */
+  collaboratorIds?: string[]
+  /** Human accountable for the overall delivery/outcome of the task. */
+  accountableMemberId?: string
+  /** Reviewer kind: 'agent' or 'human'. */
+  reviewerKind?: TaskAssigneeKind
   reviewerAgentId?: string
+  /** Human member assigned to review the task. */
+  reviewerMemberId?: string
+  /** Audit log of task ownership changes and handoffs. */
+  handoffs?: OrganizationTaskHandoff[]
   workScopes?: string[]
   evidenceKind?: TaskEvidenceKind
   artifactPaths?: string[]
   executionSessionId?: string
   reviewSessionId?: string
   resultSummary?: string
+  /** Identifies the human submission being reviewed, including non-code work. */
+  humanSubmission?: { id: string; memberId: string; checkpointCommit?: string }
   reviewSummary?: string
   /** Integration is independent from task status so a successful review can remain inspectable when merge-back conflicts. */
   integrationState?: OrganizationIntegrationState
@@ -266,6 +338,9 @@ export interface OrganizationMember {
   displayName: string
   title?: string
   status: OrganizationMemberStatus
+  accessRole?: OrganizationAccessRole
+  capabilities?: OrganizationCapability[]
+  projectGrants?: OrganizationProjectGrant[]
   createdAt: number
   updatedAt: number
 }
@@ -280,11 +355,13 @@ export interface OrganizationMessage {
   companyId: string
   projectId: string
   kind: OrganizationMessageKind
+  category?: OrganizationMessageCategory
   taskId?: string
   replyToId?: string
   author: OrganizationActorRef
   body: string
   mentionActorIds: string[]
+  runId?: string
   createdAt: number
   updatedAt: number
 }
@@ -328,6 +405,17 @@ export interface OrganizationApprovalVerdict {
   createdAt: number
 }
 
+/** Recorded only by ND's trusted machine-verification gate, never worker text. */
+export interface OrganizationRunVerification {
+  status: 'passed' | 'failed' | 'skipped'
+  command?: string
+  cwd?: string
+  checkpointCommit?: string
+  exitCode?: number
+  reason?: string
+  completedAt: number
+}
+
 export interface OrganizationRun {
   id: string
   companyId: string
@@ -344,6 +432,7 @@ export interface OrganizationRun {
   workspaceBranch?: string
   baselineCommit?: string
   checkpointCommit?: string
+  verification?: OrganizationRunVerification
   runtimePermitId?: string
   output?: string
   error?: string
@@ -422,8 +511,8 @@ export type OrganizationMutation =
    */
   | { type: 'project.remove'; id: string }
   | { type: 'team.create'; companyId: string; name: string; purpose: string; roleIds?: string[]; skillIds?: string[] }
-  | { type: 'member.create'; companyId: string; displayName: string; title?: string }
-  | { type: 'member.update'; id: string; patch: Partial<Pick<OrganizationMember, 'displayName' | 'title' | 'status'>> }
+  | { type: 'member.create'; companyId: string; displayName: string; title?: string; accessRole?: OrganizationAccessRole; capabilities?: OrganizationCapability[]; projectGrants?: OrganizationProjectGrant[] }
+  | { type: 'member.update'; id: string; patch: Partial<Pick<OrganizationMember, 'displayName' | 'title' | 'status' | 'accessRole' | 'capabilities' | 'projectGrants'>> }
   | { type: 'role.create'; companyId: string; name: string; responsibility: string; systemPrompt: string; skillIds?: string[]; providerId?: string; modelId?: string }
   | { type: 'role.update'; id: string; patch: Partial<Pick<OrganizationRole, 'name' | 'responsibility' | 'systemPrompt' | 'skillIds' | 'providerId' | 'modelId'>> }
   | { type: 'agent.create'; companyId: string; name: string; roleId: string; teamId?: string; skillIds?: string[]; providerId?: string; modelId?: string }
@@ -432,10 +521,12 @@ export type OrganizationMutation =
   | { type: 'workflow.create'; companyId: string; projectId?: string; name: string; steps: WorkflowStep[] }
   | { type: 'goal.create'; companyId: string; projectId: string; title: string; description: string }
   | { type: 'milestone.create'; projectId: string; title: string; description: string; goalId?: string }
-  | { type: 'task.create'; companyId: string; projectId: string; goalId?: string; milestoneId?: string; title: string; description: string; acceptanceCriteria?: string[]; priority?: TaskPriority; dependsOn?: string[]; assignedAgentId?: string; workScopes?: string[]; evidenceKind?: TaskEvidenceKind; artifactPaths?: string[]; sourceScheduleId?: string; sourceTriggerId?: string; sourceActivityId?: string; requestedSkillIds?: string[] }
-  | { type: 'task.update'; id: string; patch: Partial<Pick<OrganizationTask, 'title' | 'description' | 'acceptanceCriteria' | 'priority' | 'status' | 'dependsOn' | 'assignedAgentId' | 'workScopes' | 'evidenceKind' | 'artifactPaths' | 'milestoneId' | 'requestedSkillIds'>> }
+  | { type: 'task.create'; companyId: string; projectId: string; goalId?: string; milestoneId?: string; title: string; description: string; acceptanceCriteria?: string[]; priority?: TaskPriority; dependsOn?: string[]; assigneeKind?: TaskAssigneeKind; assignedAgentId?: string; assignedMemberId?: string; collaboratorIds?: string[]; accountableMemberId?: string; reviewerKind?: TaskAssigneeKind; reviewerAgentId?: string; reviewerMemberId?: string; workScopes?: string[]; evidenceKind?: TaskEvidenceKind; artifactPaths?: string[]; sourceScheduleId?: string; sourceTriggerId?: string; sourceActivityId?: string; requestedSkillIds?: string[] }
+  | { type: 'task.update'; id: string; patch: Partial<Pick<OrganizationTask, 'title' | 'description' | 'acceptanceCriteria' | 'priority' | 'status' | 'dependsOn' | 'assigneeKind' | 'assignedAgentId' | 'assignedMemberId' | 'collaboratorIds' | 'accountableMemberId' | 'reviewerKind' | 'reviewerAgentId' | 'reviewerMemberId' | 'workScopes' | 'evidenceKind' | 'artifactPaths' | 'milestoneId' | 'requestedSkillIds' | 'resultSummary'>> }
   | { type: 'task.reorder'; projectId: string; milestoneId?: string; taskIds: string[] }
-  | { type: 'collaboration.message.add'; companyId: string; projectId: string; authorMemberId: string; body: string; taskId?: string; replyToId?: string; mentionActorIds?: string[]; kind?: OrganizationMessageKind }
+  | { type: 'task.reassign'; taskId: string; assignee: { kind: TaskAssigneeKind; id: string }; changedByMemberId?: string; reason: string }
+  | { type: 'task.submitWork'; taskId: string; memberId: string; summary: string; artifactPaths?: string[]; checkpointCommit?: string }
+  | { type: 'collaboration.message.add'; companyId: string; projectId: string; authorMemberId?: string; authorAgentId?: string; author?: OrganizationActorRef; body: string; taskId?: string; replyToId?: string; mentionActorIds?: string[]; kind?: OrganizationMessageKind; category?: OrganizationMessageCategory; runId?: string }
   | { type: 'decision.create'; companyId: string; projectId: string; authorMemberId: string; title: string; summary: string; rationale: string; taskId?: string }
   | { type: 'decision.supersede'; id: string; authorMemberId: string; title: string; summary: string; rationale: string }
   | { type: 'approval.request'; companyId: string; projectId: string; requesterMemberId: string; targetKind: OrganizationApprovalTargetKind; targetId: string; taskId?: string; targetRevision?: string }

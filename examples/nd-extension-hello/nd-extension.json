@@ -1,0 +1,55 @@
+{
+  "protocol": "nd.extension/1",
+  "id": "example.hello-notes",
+  "name": "Hello Notes",
+  "description": "Minimal nd.extension/1 sample package. Copy this folder to start your own extension: one launcher command that saves a note, one schema-driven list view over the notes it creates, and one instruction-only skill. Every declared field is consumed by ND, and no executable is required.",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "contexts": ["personal", "company", "project"],
+  "permissions": ["notes.read", "notes.write"],
+  "contributions": {
+    "commands": [
+      {
+        "id": "hello-save",
+        "title": "Save a hello note",
+        "description": "Save the launcher text as a note in the selected context.",
+        "keywords": ["hello", "example", "sample", "note"],
+        "host": "note.create",
+        "contexts": ["personal", "company", "project"]
+      },
+      {
+        "id": "hello-open-notes",
+        "title": "Open hello notes",
+        "description": "Open the sample list view.",
+        "keywords": ["hello", "example", "notes"],
+        "host": "note.search",
+        "openViewId": "hello-notes",
+        "contexts": ["personal", "company", "project"]
+      }
+    ],
+    "views": [
+      {
+        "id": "hello-notes",
+        "title": "Hello notes",
+        "description": "No hello notes yet. Run Save a hello note from the launcher.",
+        "kind": "list",
+        "host": "note.search",
+        "itemTitleKey": "title",
+        "itemBodyKey": "body",
+        "contexts": ["personal", "company", "project"],
+        "actions": [
+          { "id": "hello-note-open", "title": "Open note", "host": "note.open" }
+        ]
+      }
+    ],
+    "skills": [
+      {
+        "id": "hello-notes-walkthrough",
+        "title": "Hello Notes walkthrough",
+        "description": "Instruction-only skill explaining the sample package. No code runs.",
+        "instructions": "Hello Notes is the minimal nd.extension/1 sample. It saves notes with note.create, lists them in a schema-driven view backed by note.search, and opens one with note.open. Explain that an ND extension declares data in nd-extension.json and never ships renderer code: ND renders the view from itemTitleKey and itemBodyKey, and every action runs through the same invocation broker with the same permission and grant checks. To extend this package, add a contribution that references an allowlisted ND host method and declare the permission that method requires.",
+        "contexts": ["personal", "company", "project"]
+      }
+    ]
+  }
+}

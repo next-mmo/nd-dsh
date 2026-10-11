@@ -32,8 +32,11 @@ class FakeStructuredCli {
     this.child = base as unknown as ChildProcess
   }
 
-  spawn(): (file: string, args: string[]) => ChildProcess {
-    return () => this.child
+  spawn(): (file: string, args: string[], options: { windowsHide?: boolean }) => ChildProcess {
+    return (_file, _args, options) => {
+      expect(options.windowsHide).toBe(true)
+      return this.child
+    }
   }
 
   raw(value: string): void {

@@ -77,6 +77,14 @@ The result should feel like ND, not like five products glued together.
 
 ## Competitive thesis
 
+### Grok bot teams — product-owner experience reference
+
+Added **2026-10-09** from the product owner's reported experience: team communication and coordinated parallel work felt effective and resembled a real team carrying out a project. This is experiential design input, not an independently verified assessment of Grok's current features, architecture or comparative quality.
+
+ND should adapt clear teammate communication, visible delegation, progress and parallel coordination to its own managed companies and projects. Feature-for-feature Grok parity is not the target. Human membership, project access, task ownership, delegated administration, budget/policy enforcement, review and audit remain ND-owned domain contracts.
+
+The concrete requirements and acceptance scenarios are in [Human + AI company and project team management](./human-ai-company-team-management.md). Local profile attribution and authenticated remote membership remain separate delivery stages.
+
 The market is validating the category. ND should therefore avoid positioning around features that are becoming table stakes:
 
 - AI teammate;

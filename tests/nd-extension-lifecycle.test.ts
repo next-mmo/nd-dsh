@@ -1,9 +1,10 @@
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { DAILY_ESSENTIALS_MANIFEST } from '../src/shared/builtin-extension-packages.js'
+import type { GitExecRunner } from '../src/main/git/git-cli.js'
 import { ExtensionPackageStore } from '../src/main/extensions/package-store.js'
 import { HomeStore } from '../src/main/home/home-store.js'
 
@@ -64,6 +65,19 @@ describe('ExtensionPackageStore lifecycle', () => {
     const snapshot = await readFile(join(root, 'packages', 'nd.sample', '1.0.0', 'runtime', 'server.mjs'), 'utf8')
     expect(snapshot).toContain('value = 1')
     expect(await store.activeManifest('nd.sample')).toMatchObject({ id: 'nd.sample', version: '1.0.0' })
+  })
+
+  it('reads the package revision through the injected ND Core git runner', async () => {
+    await writePackage(sourceRoot, SAMPLE)
+    const calls: Array<{ cwd: string; args: string[] }> = []
+    const runner: GitExecRunner = async (cwd, args) => {
+      calls.push({ cwd, args })
+      return { exitCode: 0, stdout: `${'b'.repeat(40)}\n`, stderr: '' }
+    }
+    const store = new ExtensionPackageStore(root, runner)
+    const view = await store.installFromDirectory(sourceRoot)
+    expect(view.source).toMatchObject({ kind: 'git', revision: 'b'.repeat(40) })
+    expect(calls).toEqual([{ cwd: resolve(sourceRoot), args: ['rev-parse', 'HEAD'] }])
   })
 
   it('rejects an invalid manifest and never writes a snapshot', async () => {
@@ -196,6 +210,28 @@ describe('HomeStore personal records', () => {
     await home.deleteCapture(capture.id)
     expect(await home.readCapture(capture.id)).toBeNull()
     expect(existsSync(join(homeRoot, 'captures', `${capture.id}.png`))).toBe(false)
+  })
+
+  it('saves dialpad links as personal records and normalizes their address', async () => {
+    const home = new HomeStore(join(root, 'nd-home'))
+    const link = await home.saveLink({ url: 'youtube.com' })
+    expect(link.url).toBe('https://youtube.com/')
+    expect(link.title).toBe('youtube.com')
+
+    // Re-saving the same address refreshes the tile instead of duplicating it.
+    const renamed = await home.saveLink({ url: 'https://youtube.com/', title: 'Videos' })
+    expect(renamed.id).toBe(link.id)
+    expect(renamed.title).toBe('Videos')
+    expect((await home.state()).links).toHaveLength(1)
+
+    await expect(home.saveLink({ url: 'about:blank' })).rejects.toThrow(/http\(s\) address/)
+    await expect(home.saveLink({ url: 'not a website' })).rejects.toThrow()
+
+    const restarted = new HomeStore(join(root, 'nd-home'))
+    expect((await restarted.state()).links.map((item) => item.title)).toEqual(['Videos'])
+
+    await restarted.removeLink(link.id)
+    expect((await restarted.state()).links).toEqual([])
   })
 
   it('gives each personal chat a managed working folder and binds its session id', async () => {

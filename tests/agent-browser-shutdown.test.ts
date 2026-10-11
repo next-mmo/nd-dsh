@@ -38,7 +38,15 @@ describe('AgentBrowserClient shutdown ownership', () => {
 
     try {
       const client = new AgentBrowserClient(9_222, join(root, 'resources', 'app.asar'))
-      expect(client.entryPath).toBe(join(root, 'node_modules', 'agent-browser', 'bin', 'agent-browser.js'))
+      expect(client.entryPath).toBe(process.platform === 'win32'
+        ? join(root, 'scripts', 'nd-agent-browser-cli.mjs')
+        : join(root, 'node_modules', 'agent-browser', 'bin', 'agent-browser.js'))
+      expect(client.environment()).toMatchObject({
+        ND_DSH_AGENT_BROWSER_BIN: process.execPath,
+        ND_DSH_AGENT_BROWSER_ENTRY: client.entryPath,
+        ND_DSH_AGENT_BROWSER_CONFIG: client.configPath,
+        ND_DSH_AGENT_BROWSER_SESSION: client.sessionName,
+      })
     } finally {
       if (previousResourcesPath) Object.defineProperty(process, 'resourcesPath', previousResourcesPath)
       else Reflect.deleteProperty(process, 'resourcesPath')
@@ -237,6 +245,9 @@ describe('AgentBrowserClient shutdown ownership', () => {
 
 describe('agent-browser daemon process matching', () => {
   it('matches the development CLI binary and the packaged entry script', () => {
+    expect(isAgentBrowserDaemonCommand(
+      String.raw`C:\Program Files\ND\resources\node_modules\agent-browser\bin\agent-browser-win32-x64.exe`,
+    )).toBe(true)
     expect(isAgentBrowserDaemonCommand(
       '/repo/node_modules/.pnpm/agent-browser@0.34.0/node_modules/agent-browser/bin/agent-browser-linux-x64',
     )).toBe(true)

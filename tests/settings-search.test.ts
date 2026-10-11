@@ -17,6 +17,12 @@ describe('settings search', () => {
     expect(results.some((entry) => entry.id === 'general-browser-extensions')).toBe(true)
   })
 
+  it('jumps to the shortcuts surface from a hotkey query', () => {
+    const results = searchSettings('hotkey')
+    expect(results[0]?.id).toBe('general-shortcuts')
+    expect(results[0]?.subTab).toBe('shortcuts')
+  })
+
   it('caps results to keep the dropdown scannable', () => {
     expect(searchSettings('e', 3).length).toBeLessThanOrEqual(3)
     expect(SETTINGS_SEARCH_ENTRIES.length).toBeGreaterThan(10)

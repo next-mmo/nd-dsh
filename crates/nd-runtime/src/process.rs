@@ -185,7 +185,9 @@ impl ProcessManager {
         {
             use std::os::windows::process::CommandExt;
             const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-            command.creation_flags(CREATE_NEW_PROCESS_GROUP);
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            // Managed CLI output belongs in ND's pipes, never a desktop console.
+            command.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
         }
 
         let mut child = command
@@ -482,8 +484,11 @@ fn looks_secret(key: &str) -> bool {
 pub fn kill_process_tree(pid: u32) {
     #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         let _ = Command::new("taskkill")
             .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .creation_flags(CREATE_NO_WINDOW)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -496,9 +501,66 @@ pub fn kill_process_tree(pid: u32) {
     }
 }
 
+#[cfg(all(test, windows))]
+pub(crate) const WINDOWS_CONSOLE_PROBE: &str = r#"
+Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class NdConsoleProbe { [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow(); }';
+$result = [NdConsoleProbe]::GetConsoleWindow().ToInt64().ToString();
+if ($env:ND_CONSOLE_PROBE_FILE) { [IO.File]::WriteAllText($env:ND_CONSOLE_PROBE_FILE, $result) };
+Write-Output $result
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn managed_background_process_has_no_windows_console() {
+        let manager = Arc::new(ProcessManager::new(
+            Arc::new(ProtocolWriter::new()),
+            Arc::new(Scheduler::new()),
+        ));
+        let dir = std::env::temp_dir().join(format!("nd-console-probe-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create probe directory");
+        let marker = dir.join("console.txt");
+        manager
+            .spawn(SpawnParams {
+                id: None,
+                permit_id: None,
+                command: "powershell.exe".to_owned(),
+                args: vec![
+                    "-NoProfile".to_owned(),
+                    "-NonInteractive".to_owned(),
+                    "-Command".to_owned(),
+                    WINDOWS_CONSOLE_PROBE.to_owned(),
+                ],
+                cwd: Some(dir.display().to_string()),
+                env: HashMap::from([(
+                    "ND_CONSOLE_PROBE_FILE".to_owned(),
+                    marker.display().to_string(),
+                )]),
+                inherit_env: Some(true),
+                verbatim_args: false,
+            })
+            .expect("spawn managed console probe");
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let mut observed = None;
+        while Instant::now() < deadline {
+            if let Ok(text) = std::fs::read_to_string(&marker)
+                && !text.is_empty()
+            {
+                observed = Some(text);
+                break;
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+        assert_eq!(
+            observed.as_deref(),
+            Some("0"),
+            "background child must not own a Windows console"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn secret_environment_names_are_filtered() {

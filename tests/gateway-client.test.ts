@@ -43,13 +43,40 @@ describe('GatewayClient.rpc', () => {
       expect((await client.rpc('session.models')).ok).toBe(true)
       // Zero-parameter and named-parameter remotes reject the request envelope,
       // so their args are shaped individually.
-      expect((await client.rpc('agentPresets.list')).ok).toBe(true)
+      expect((await client.rpc('agentPreset.list')).ok).toBe(true)
       expect((await client.rpc('settings.update', { ns: 'agent-presets', patch: { default: 'code' } })).ok).toBe(true)
       expect(requests).toEqual([
         { url: '/api/session/list', method: 'session/list', payload: { args: { _request: {} } } },
         { url: '/api/session/modelCatalog', method: 'session/modelCatalog', payload: { args: {} } },
         { url: '/api/agentPresets/list', method: 'agentPresets/list', payload: { args: {} } },
         { url: '/api/settings/update', method: 'settings/update', payload: { args: { ns: 'agent-presets', patch: { default: 'code' } } } },
+      ])
+    } finally {
+      client.close()
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    }
+  })
+
+  it('posts the dotted method name and bare payload before the remote face is negotiated', async () => {
+    const requests: unknown[] = []
+    const server = createServer(async (request, response) => {
+      let body = ''
+      for await (const chunk of request) body += String(chunk)
+      const envelope = JSON.parse(body)
+      requests.push({ url: request.url, method: envelope.method, payload: envelope.payload })
+      response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({
+        type: 'server-response', rpcId: envelope.rpcId, result: { ok: true, value: { presets: [] } },
+      }))
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const client = new GatewayClient(`http://127.0.0.1:${(server.address() as { port: number }).port}`)
+    try {
+      // A dotted-face runtime matches the path against its own route table and
+      // 404s anything else, so the roster's singular wire name is load-bearing:
+      // the plural name reaches no route and the preset panel never loads.
+      expect((await client.rpc('agentPreset.list', {})).ok).toBe(true)
+      expect(requests).toEqual([
+        { url: '/api/agentPreset.list', method: 'agentPreset.list', payload: {} },
       ])
     } finally {
       client.close()

@@ -10,6 +10,24 @@ async function storeFixture(): Promise<OrganizationStore> {
 }
 
 describe('OrganizationStore', () => {
+  it('persists trusted verification metadata independently and rejects writes outside active execution', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'nd-trusted-verification-'))
+    const path = join(directory, 'organization.json')
+    const store = new OrganizationStore(path)
+    const company = (await store.mutate({ type: 'company.create', name: 'Verification', mission: 'Check exact evidence' })).companies[0]!
+    const project = (await store.mutate({ type: 'project.create', companyId: company.id, name: 'Package', objective: 'Ship' })).projects[0]!
+    const task = (await store.mutate({ type: 'task.create', companyId: company.id, projectId: project.id, title: 'Manifest', description: 'Create manifest' })).tasks[0]!
+    const run = await store.beginRun('task-execution', company.id, project.id, 'worker', task.id)
+    const evidence = { status: 'passed' as const, completedAt: 123, command: 'node --test', cwd: '/task', checkpointCommit: 'checkpoint', exitCode: 0 }
+    await store.recordRunVerification(run.id, evidence)
+    evidence.command = 'mutated after recording'
+    await store.completeRun(run.id, 'Untrusted prose '.repeat(5_000))
+    const restored = new OrganizationStore(path)
+    expect((await restored.state()).runs.find((item) => item.id === run.id)?.verification).toMatchObject({ command: 'node --test', checkpointCommit: 'checkpoint', status: 'passed' })
+    await expect(restored.recordRunVerification(run.id, evidence)).rejects.toThrow('active task execution')
+    const review = await restored.beginRun('task-review', company.id, project.id, 'reviewer', task.id)
+    await expect(restored.recordRunVerification(review.id, evidence)).rejects.toThrow('active task execution')
+  })
   it('persists delivery scope and queue order, keeps dependencies authoritative, and waits at milestone completion', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'nd-delivery-scope-'))
     const path = join(dir, 'organization.json')

@@ -97,6 +97,7 @@ export class ExecutionCoordinator {
   }
 
   async acquire(input: RuntimePermitInput): Promise<RuntimePermit> {
+    if (this.closing) throw new Error('Runtime coordinator is closed.')
     if (this.blockedReason) throw new Error(this.blockedReason)
     validatePools(input.pools)
     const id = randomUUID()
@@ -113,6 +114,12 @@ export class ExecutionCoordinator {
       }, 5_000)
       if (!result.granted || !result.permit) {
         throw new RuntimeCapacityError(result.reason ?? 'ND Core runtime capacity is unavailable.')
+      }
+      // Shutdown or a core restart can begin while the grant is in flight.
+      // Do not register an unowned permit after close took its release snapshot.
+      if (this.closing || this.blockedReason) {
+        await this.coreRequest('scheduler.release', { permitId: id }, 5_000)
+        throw new Error(this.closing ? 'Runtime coordinator is closed.' : this.blockedReason)
       }
     } else {
       this.acquireLocal(id, input.pools)
@@ -145,7 +152,8 @@ export class ExecutionCoordinator {
       try {
         return await this.acquire(input)
       } catch (error) {
-        if (!(error instanceof RuntimeCapacityError) || this.blockedReason || this.closing) throw error
+        if (this.closing) throw new Error('Runtime coordinator is closed.')
+        if (!(error instanceof RuntimeCapacityError) || this.blockedReason) throw error
         const remaining = deadline - Date.now()
         if (remaining <= 0) throw error
         await this.waitForCapacityRelease(input, remaining)
@@ -160,6 +168,7 @@ export class ExecutionCoordinator {
    */
   async availability(claims: RuntimePoolClaim[]): Promise<RuntimeAvailability> {
     validatePools(claims)
+    if (this.closing) return { granted: false, reason: 'Runtime coordinator is closed.' }
     if (this.blockedReason) return { granted: false, reason: this.blockedReason }
     if (this.core) {
       let pools: Record<string, number>
@@ -206,6 +215,7 @@ export class ExecutionCoordinator {
   }
 
   async bindSession(permit: RuntimePermit, sessionId: string, runId?: string): Promise<void> {
+    if (this.closing) throw new Error('Runtime coordinator is closed.')
     if (!this.permits.has(permit.id)) throw new Error('Runtime permit is no longer active.')
     if (!sessionId.trim()) throw new Error('Runtime session id is required.')
     const previous = this.sessionPermits.get(sessionId)
@@ -217,6 +227,10 @@ export class ExecutionCoordinator {
         ...(runId ? { runId } : {}),
       }, 5_000)
     }
+    // A release/restart can invalidate this permit while the native bind is
+    // pending. Re-check before publishing a session that no longer owns it.
+    if (this.closing) throw new Error('Runtime coordinator is closed.')
+    if (!this.permits.has(permit.id)) throw new Error('Runtime permit is no longer active.')
     permit.sessionId = sessionId
     this.sessionPermits.set(sessionId, permit.id)
   }

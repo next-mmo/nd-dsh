@@ -138,6 +138,7 @@ export class MiniMaxCliEngine {
     if (session.model) args.push('--model', session.model)
     args.push('--message', `user:${prompt}`)
     const child = spawnCliCommand(this.spawnProcess, bin, args, {
+      windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: engineEnvironment(),
       cwd: process.cwd(),

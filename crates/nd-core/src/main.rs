@@ -1,7 +1,12 @@
 use anyhow::{Context, Result};
 use nd_protocol::errors::{self, CODE_INVALID_PARAMS, CODE_METHOD_FAILED, CODE_RUNTIME_BUSY};
 use nd_protocol::{PROTOCOL_VERSION, ProtocolWriter, read_request};
+use nd_runtime::artifacts;
 use nd_runtime::cache::{self, ResponseCache};
+use nd_runtime::clipboard::{
+    ClipboardManager, ClipboardReadParams, ClipboardUnwatchParams, ClipboardWatchParams,
+    ClipboardWriteTextParams,
+};
 use nd_runtime::deadline::{Deadline, Interrupt, InterruptGuard, InterruptRegistry};
 use nd_runtime::decision::{self, DecisionEvaluateParams};
 use nd_runtime::dispatcher::{DispatchStats, Dispatcher, priority_for_method};
@@ -11,6 +16,7 @@ use nd_runtime::effect_journal::{
 };
 use nd_runtime::evidence::{self, EvidenceParams};
 use nd_runtime::git::{self, GitExecParams, GitLogParams, GitQueryParams};
+use nd_runtime::media;
 use nd_runtime::metrics::{self, MetricsRegistry};
 use nd_runtime::process::{
     CancelParams, CloseStdinParams, ProcessManager, SpawnParams, WriteParams,
@@ -27,6 +33,10 @@ use nd_runtime::terminal::{
     TerminalCloseParams, TerminalCreateParams, TerminalHistoryAppendParams, TerminalManager,
     TerminalResizeParams, TerminalRestartParams, TerminalStateParams, TerminalWriteParams,
 };
+use nd_runtime::vault::{
+    VaultDeleteResult, VaultIdParams, VaultListParams, VaultListResult, VaultRegistry,
+    VaultUpdateParams, VaultWriteParams,
+};
 use nd_runtime::workspace::{
     self, IndexParams, ListParams, ReadParams, WriteParams as WorkspaceWriteParams,
 };
@@ -41,6 +51,8 @@ struct AppState {
     scheduler: Arc<Scheduler>,
     processes: Arc<ProcessManager>,
     terminals: Arc<TerminalManager>,
+    clipboard: Arc<ClipboardManager>,
+    vault: VaultRegistry,
     session_journal: Arc<SessionJournalStore>,
     effect_journal: Arc<EffectJournalStore>,
     metrics: Arc<MetricsRegistry>,
@@ -58,6 +70,12 @@ impl AppState {
             Arc::clone(&scheduler),
         ));
         let terminals = Arc::new(TerminalManager::new(Arc::clone(&writer)));
+        let clipboard_sink =
+            Arc::clone(&writer) as Arc<dyn nd_runtime::clipboard::ClipboardEventSink>;
+        let clipboard = Arc::new(ClipboardManager::new(
+            clipboard_sink,
+            nd_runtime::clipboard::platform_source(),
+        ));
         let session_journal = Arc::new(SessionJournalStore::new(
             DEFAULT_MAX_EVENTS_PER_SESSION,
             DEFAULT_MAX_BYTES_PER_SESSION,
@@ -68,6 +86,8 @@ impl AppState {
             scheduler,
             processes,
             terminals,
+            clipboard,
+            vault: VaultRegistry::new_platform(),
             session_journal,
             effect_journal,
             metrics: Arc::new(MetricsRegistry::new()),
@@ -86,6 +106,9 @@ impl AppState {
         self.interrupts.cancel_all();
         self.terminals.shutdown();
         self.processes.shutdown();
+        // Watcher teardown is joined, not fire-and-forget: no leaked thread or
+        // message-only window survives the sidecar.
+        self.clipboard.shutdown();
     }
 }
 
@@ -187,12 +210,16 @@ fn dispatch(
                     "scheduler",
                     "process",
                     "terminal",
+                    "clipboard",
                     "session-journal",
                     "effect-journal",
                     "decision-kernel",
                     "git",
                     "evidence",
+                    "artifacts",
                     "workspace",
+                    "media",
+                    "vault",
                     "search",
                     "revision",
                     "cache",
@@ -202,6 +229,7 @@ fn dispatch(
                 ],
                 "processCount": state.processes.process_count(),
                 "terminalCount": state.terminals.terminal_count(),
+                "clipboardWatcherCount": state.clipboard.watcher_count(),
                 "workspaceCount": state.metrics.workspace_count(),
                 "pendingRpcCount": dispatch.active + dispatch.queued_high + dispatch.queued_normal + dispatch.queued_background,
             }))
@@ -230,6 +258,7 @@ fn dispatch(
                 "workspaceCount": state.metrics.workspace_count(),
                 "processCount": state.processes.process_count(),
                 "terminalCount": state.terminals.terminal_count(),
+                "clipboardWatcherCount": state.clipboard.watcher_count(),
                 "retainedTerminalCount": state.terminals.retained_terminal_count(),
                 "retainedTerminalBufferBytes": state.terminals.retained_buffer_bytes(),
                 "sessionJournalSessionCount": session_journal.session_count,
@@ -535,10 +564,75 @@ fn dispatch(
             state.metrics.observe_workspace(&params.root);
             to_value(evidence::capture(params, interrupt)?)
         }
+        "workspace.fingerprint-artifacts" => {
+            let params = from_params::<artifacts::ArtifactFingerprintParams>(params)?;
+            state.metrics.observe_workspace(&params.root);
+            to_value(artifacts::fingerprint(params, interrupt)?)
+        }
         "workspace.snapshot" => {
             let params = from_params::<snapshot::SnapshotParams>(params)?;
             state.metrics.observe_workspace(&params.root);
             to_value(snapshot::snapshot(params, interrupt)?)
+        }
+        // Media roots are directories the desktop handed to the sidecar for a
+        // native surface (a wallpaper library), not linked workspaces, so they
+        // deliberately do not feed `observe_workspace`.
+        "media.thumbnails" => {
+            let params = from_params::<media::ThumbnailsParams>(params)?;
+            to_value(media::thumbnails(params, interrupt)?)
+        }
+        "media.set-wallpaper" => {
+            let params = from_params::<media::WallpaperSetParams>(params)?;
+            to_value(media::set_wallpaper(params)?)
+        }
+        "media.key" => {
+            let params = from_params::<media::MediaKeyParams>(params)?;
+            to_value(media::send_media_key(params)?)
+        }
+        // The sidecar owns clipboard read, write, and observation in one
+        // process, which is what makes write-back echo suppression exact.
+        // Watchers exist only in response to `clipboard.watch` from the
+        // desktop and never survive shutdown.
+        "clipboard.watch" => {
+            let params = from_params::<ClipboardWatchParams>(params)?;
+            to_value(state.clipboard.watch(params)?)
+        }
+        "clipboard.unwatch" => {
+            let params = from_params::<ClipboardUnwatchParams>(params)?;
+            to_value(state.clipboard.unwatch(params)?)
+        }
+        "clipboard.read" => {
+            let params = from_params::<ClipboardReadParams>(params)?;
+            to_value(state.clipboard.read(params)?)
+        }
+        "clipboard.write" => {
+            let params = from_params::<ClipboardWriteTextParams>(params)?;
+            to_value(state.clipboard.write_text(params)?)
+        }
+        // Vault files are paths the desktop owns (its own userData), not linked
+        // workspaces, so they deliberately do not feed `observe_workspace`. The
+        // registry serializes load-modify-save per vault path and keeps the
+        // decrypted key in memory only.
+        "vault.list" => {
+            let params = from_params::<VaultListParams>(params)?;
+            let result: VaultListResult = state.vault.list(params)?;
+            to_value(result)
+        }
+        "vault.get" => to_value(state.vault.get(from_params::<VaultIdParams>(params)?)?),
+        "vault.create" => to_value(
+            state
+                .vault
+                .create(from_params::<VaultWriteParams>(params)?)?,
+        ),
+        "vault.update" => to_value(
+            state
+                .vault
+                .update(from_params::<VaultUpdateParams>(params)?)?,
+        ),
+        "vault.delete" => {
+            let result: VaultDeleteResult =
+                state.vault.delete(from_params::<VaultIdParams>(params)?)?;
+            to_value(result)
         }
         other => {
             let _ = request_id;

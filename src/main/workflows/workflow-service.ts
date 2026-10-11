@@ -16,6 +16,7 @@ import {
 import { WorkflowCliClient, WorkflowCliError } from './workflow-cli-client.js'
 import { cloneWorkflowPluginSource, gitProvenance, locatePluginManifest } from './workflow-git.js'
 import type { WorkflowPluginStore } from './workflow-plugin-store.js'
+import type { GitExecRunner } from '../git/git-cli.js'
 
 export interface WorkflowServiceOptions {
   store: WorkflowPluginStore
@@ -25,6 +26,8 @@ export interface WorkflowServiceOptions {
   clock?: () => number
   /** Directory for cloned plugin sources; defaults to a `workflow-plugins` dir next to the store. */
   pluginCacheDir?: string
+  /** nd-core `git.exec` in desktop production; omitted only by suites with a raw test seam. */
+  git?: GitExecRunner
 }
 
 /** Install/enable/refresh pipeline for external workflow plugins (mirror mode pilot). */
@@ -54,7 +57,7 @@ export class WorkflowService {
     if (source.kind === 'local') {
       const manifestPath = await requireLocalManifest(source.path)
       const manifest = parseWorkflowPluginManifest(JSON.parse(await fs.readFile(manifestPath, 'utf8')))
-      const provenance = await gitProvenance(source.path)
+      const provenance = await gitProvenance(source.path, this.options.git)
       await this.options.store.upsertPlugin(manifest, {
         kind: 'local',
         path: resolve(source.path),
@@ -68,7 +71,7 @@ export class WorkflowService {
       const url = requireGitUrl(source.url)
       const ref = source.ref === undefined ? undefined : requireGitRef(source.ref)
       const stagingDir = join(this.cacheRoot(), `.staging-${randomUUID()}`)
-      const clone = await cloneWorkflowPluginSource(url, ref, stagingDir)
+      const clone = await cloneWorkflowPluginSource(url, ref, stagingDir, this.options.git)
       try {
         const manifestPath = await locatePluginManifest(stagingDir)
         if (!manifestPath) throw new Error('The cloned plugin repository does not contain an nd-plugin.json manifest this ND host recognizes')
@@ -146,7 +149,7 @@ export class WorkflowService {
     if (detection.detection?.supported !== true) {
       throw new Error('The workflow plugin did not detect a compatible workflow in this project; run detection for details')
     }
-    const provenance = await gitProvenance(root)
+    const provenance = await gitProvenance(root, this.options.git)
     const now = this.clock()
     const existing = await this.options.store.getBinding(companyId, projectId, plugin.id)
     const workflowContribution = plugin.manifest.contributions.find((item) => item.kind === 'workflow')

@@ -108,7 +108,7 @@ test('Home chat Open selects the bound session in the Agent workbench', async ()
   )
   expect(listed.blank).toBe(true)
 
-  await page.getByRole('navigation', { name: 'ND-DSH navigation' }).getByTitle('Home').click()
+  await page.getByRole('navigation', { name: 'ND-DSH navigation' }).getByTitle('Personal').click()
   const openChat = page.getByRole('button', { name: 'Open', exact: true })
   await expect(openChat).toHaveCount(1)
   await expect(openChat).toBeEnabled()

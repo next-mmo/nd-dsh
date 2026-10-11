@@ -4,6 +4,19 @@ import { join } from 'node:path'
 import process from 'node:process'
 import type { DshSurface, EffectiveTheme, ThemeMode, ThemeState } from '../shared/contracts.js'
 import { DEFAULT_QUICK_LAUNCHER_SHORTCUT_MODE, isQuickLauncherShortcutMode, type QuickLauncherShortcutMode } from '../shared/quick-launcher.js'
+import {
+  asShortcutPlatform,
+  DEFAULT_CAPTURE_DELAY_SECONDS,
+  DEFAULT_GLOBAL_SHORTCUTS,
+  findShortcutConflict,
+  GLOBAL_SHORTCUT_IDS,
+  isCaptureDelaySeconds,
+  isGlobalShortcutId,
+  parseAccelerator,
+  serializeChord,
+  type CaptureDelaySeconds,
+  type GlobalShortcutId,
+} from '../shared/shortcuts.js'
 import { DEFAULT_WORKSPACE_PROFILE, isWorkspaceProfile, type WorkspaceProfile } from '../shared/workspace-profile.js'
 
 const SETTINGS_FILE = 'settings.json'
@@ -15,7 +28,11 @@ interface PersistedSettings {
   permissionMode?: string
   quickLauncherMode?: QuickLauncherShortcutMode
   workspaceProfile?: WorkspaceProfile
+  shortcuts?: Partial<Record<GlobalShortcutId, string>>
+  captureDelaySeconds?: number
 }
+
+export type GlobalShortcutBindings = Record<GlobalShortcutId, string>
 
 export const PERMISSION_MODES = ['read-only', 'workspace-write', 'danger-full-access'] as const
 
@@ -57,6 +74,8 @@ export class ThemeService {
   private permissionModeValue: string
   private quickLauncherModeValue: QuickLauncherShortcutMode
   private workspaceProfileValue: WorkspaceProfile
+  private shortcutsValue: GlobalShortcutBindings
+  private captureDelayValue: CaptureDelaySeconds
   private window: BrowserWindow | undefined
   private setViewBackground: ((color: string) => void) | undefined
   private onChanged: ((state: ThemeState) => void) | undefined
@@ -69,6 +88,8 @@ export class ThemeService {
     this.permissionModeValue = process.env.ND_DSH_PERMISSION_MODE?.trim() || this.readPermissionMode()
     this.quickLauncherModeValue = this.readQuickLauncherMode()
     this.workspaceProfileValue = this.readWorkspaceProfile()
+    this.shortcutsValue = this.readShortcuts()
+    this.captureDelayValue = this.readCaptureDelay()
     if (this.workspaceProfileValue === 'general' && this.surfaceValue === 'dsh') this.surfaceValue = 'workbench'
     nativeTheme.themeSource = this.mode
     nativeTheme.on('updated', () => this.emit())
@@ -138,6 +159,34 @@ export class ThemeService {
     this.quickLauncherModeValue = mode
     this.persist()
     return mode
+  }
+
+  globalShortcuts(): GlobalShortcutBindings {
+    return { ...this.shortcutsValue }
+  }
+
+  /**
+   * Store-only write: shape validation lives here, while the OS-reserved and
+   * registration checks belong to the shortcut registry that owns globalShortcut.
+   */
+  setGlobalShortcut(id: GlobalShortcutId, accelerator: string): GlobalShortcutBindings {
+    if (!isGlobalShortcutId(id)) throw new Error(`Unknown global shortcut: ${String(id)}`)
+    const chord = parseAccelerator(accelerator)
+    if (!chord) throw new Error(`Unsupported shortcut key combination: ${accelerator}`)
+    this.shortcutsValue[id] = serializeChord(chord)
+    this.persist()
+    return this.globalShortcuts()
+  }
+
+  captureDelay(): CaptureDelaySeconds {
+    return this.captureDelayValue
+  }
+
+  setCaptureDelay(seconds: CaptureDelaySeconds): CaptureDelaySeconds {
+    if (!isCaptureDelaySeconds(seconds)) throw new Error(`Unknown capture delay: ${String(seconds)}`)
+    this.captureDelayValue = seconds
+    this.persist()
+    return seconds
   }
 
   windowBackgroundColor(): string {
@@ -233,6 +282,42 @@ export class ThemeService {
     return DEFAULT_QUICK_LAUNCHER_SHORTCUT_MODE
   }
 
+  /**
+   * A stored binding is only honoured if it is still safe on *this* OS. Settings
+   * travel between machines, and a combo that was free on Linux can be a shell
+   * hotkey on Windows; falling back to the default beats grabbing a system key.
+   */
+  private readShortcuts(): GlobalShortcutBindings {
+    const platform = asShortcutPlatform(process.platform)
+    const bindings: GlobalShortcutBindings = { ...DEFAULT_GLOBAL_SHORTCUTS }
+    try {
+      const settings = JSON.parse(readFileSync(this.settingsPath, 'utf8')) as PersistedSettings
+      const stored = settings.shortcuts
+      if (!stored || typeof stored !== 'object') return bindings
+      for (const id of GLOBAL_SHORTCUT_IDS) {
+        const value = stored[id]
+        if (typeof value !== 'string') continue
+        const chord = parseAccelerator(value)
+        if (!chord) continue
+        if (findShortcutConflict(chord, platform)) continue
+        bindings[id] = serializeChord(chord)
+      }
+    } catch {
+      // Missing or unreadable settings keep ND's shipped shortcuts.
+    }
+    return bindings
+  }
+
+  private readCaptureDelay(): CaptureDelaySeconds {
+    try {
+      const settings = JSON.parse(readFileSync(this.settingsPath, 'utf8')) as PersistedSettings
+      if (isCaptureDelaySeconds(settings.captureDelaySeconds)) return settings.captureDelaySeconds
+    } catch {
+      // Missing or unreadable settings keep the default countdown.
+    }
+    return DEFAULT_CAPTURE_DELAY_SECONDS
+  }
+
   private persist(): void {
     try {
       const settings: PersistedSettings = {
@@ -241,6 +326,8 @@ export class ThemeService {
         permissionMode: this.permissionModeValue,
         quickLauncherMode: this.quickLauncherModeValue,
         workspaceProfile: this.workspaceProfileValue,
+        shortcuts: this.shortcutsValue,
+        captureDelaySeconds: this.captureDelayValue,
       }
       writeFileSync(this.settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
     } catch (error) {

@@ -3,7 +3,9 @@ import type { CodingEngineDescriptor } from '../../../shared/contracts'
 import { ND_HARNESS_ENGINE_ID } from '../../../shared/coding-engines'
 import { EngineInstallHelp } from './engine-install-help'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'
+import type { CapabilityDescriptor, CapabilityProviderStatus } from '../../../shared/capabilities'
 import {
+  SettingsButton,
   SettingsRow,
   SettingsSection,
   StatusChip,
@@ -35,6 +37,9 @@ interface EngineSettingsProps {
 
 export function EngineSettings({ onError, subTab: propSubTab, onSelectSubTab }: EngineSettingsProps) {
   const [engines, setEngines] = useState<CodingEngineDescriptor[]>([])
+  const [providers, setProviders] = useState<CapabilityDescriptor[]>([])
+  const [statuses, setStatuses] = useState<Record<string, CapabilityProviderStatus>>({})
+  const [busy, setBusy] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [retrying, setRetrying] = useState(false)
   const [preferredEngine, setPreferredEngine] = useState<string>(() => {
@@ -80,7 +85,14 @@ export function EngineSettings({ onError, subTab: propSubTab, onSelectSubTab }: 
   const refresh = useCallback(async (): Promise<void> => {
     setRetrying(true)
     try {
-      setEngines(await window.ndDsh.engines.list())
+      const [nextEngines, nextProviders, nextStatuses] = await Promise.all([
+        window.ndDsh.engines.list(),
+        window.ndDsh.capabilities.providers().catch(() => []),
+        window.ndDsh.capabilities.statuses().catch(() => ({})),
+      ])
+      setEngines(nextEngines)
+      setProviders(nextProviders)
+      setStatuses(nextStatuses)
     } catch (cause) {
       onError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -92,6 +104,31 @@ export function EngineSettings({ onError, subTab: propSubTab, onSelectSubTab }: 
   useEffect(() => {
     void refresh()
   }, [refresh])
+
+  useEffect(() => {
+    const offStatus = window.ndDsh.capabilities.onStatusChanged((value) => setStatuses(value))
+    return () => offStatus()
+  }, [])
+
+  const runSetup = async (engineId: string): Promise<void> => {
+    if (busy) return
+    setBusy(`setup-${engineId}`)
+    const poll = window.setInterval(() => {
+      void window.ndDsh.capabilities.statuses().then(setStatuses).catch(() => undefined)
+    }, 350)
+    try {
+      await window.ndDsh.capabilities.setup(engineId, {})
+      await window.ndDsh.capabilities.verify(engineId).catch(() => undefined)
+      await window.ndDsh.capabilities.setEnabled(engineId, true).catch(() => undefined)
+      await refresh()
+    } catch (cause) {
+      onError(cause instanceof Error ? cause.message : String(cause))
+      setStatuses(await window.ndDsh.capabilities.statuses().catch(() => statuses))
+    } finally {
+      window.clearInterval(poll)
+      setBusy(null)
+    }
+  }
 
   const [internalSubTab, setInternalSubTab] = useState<EnginesSubTab>(enginesSubTabFromLocation)
   const activeSubTab = propSubTab ?? internalSubTab
@@ -165,28 +202,70 @@ export function EngineSettings({ onError, subTab: propSubTab, onSelectSubTab }: 
               <div className={rowStack}><strong className={rowTitle}>Detecting engines…</strong></div>
             </SettingsRow>
           ) : null}
-          {engines.map((engine) => (
-            <SettingsRow key={engine.id}>
-              <div className={rowStack}>
-                <strong className={rowTitle}>{engine.name}</strong>
-                <span className={rowDesc}>{engine.description}</span>
-                <span className={rowPathText}>{capabilitySummary(engine)}</span>
-                {!engine.available && engine.unavailableReason ? <span className={rowPathText}>{engine.unavailableReason}</span> : null}
-                {!engine.available ? (
-                  <EngineInstallHelp
-                    help={engine.installHelp}
-                    retrying={retrying}
-                    onRetry={() => void refresh()}
-                    onError={onError}
-                  />
-                ) : null}
-              </div>
-              <div className="flex shrink-0 flex-col items-end gap-[3px]">
-                <StatusChip good={engine.available} warn={!engine.available}>{engine.available ? 'Available' : 'Unavailable'}</StatusChip>
-                <span className={rowValueText}>{engine.integration === 'primary' ? 'Primary' : 'Delegated'}</span>
-              </div>
-            </SettingsRow>
-          ))}
+          {engines.map((engine) => {
+            const capabilityProvider = providers.find((p) => p.id === engine.id)
+            const status = statuses[engine.id]
+            const canSetup = Boolean(capabilityProvider?.setup)
+            const isSettingUp = busy === `setup-${engine.id}`
+              || status?.setupState === 'downloading'
+              || status?.setupState === 'installing'
+              || status?.setupState === 'configuring'
+            return (
+              <SettingsRow key={engine.id}>
+                <div className={rowStack}>
+                  <strong className={rowTitle}>{engine.name}</strong>
+                  <span className={rowDesc}>{engine.description}</span>
+                  <span className={rowPathText}>{capabilitySummary(engine)}</span>
+                  {status?.installedVersion ? (
+                    <span className={rowPathText}>Installed {status.installedVersion} in ND managed runtime</span>
+                  ) : null}
+                  {status?.setupError ? (
+                    <span className={rowPathText}>{status.setupError}</span>
+                  ) : null}
+                  {isSettingUp && status?.setupMessage ? (
+                    <span className={rowPathText}>
+                      {status.setupMessage}{status.setupProgress !== undefined ? ` (${status.setupProgress}%)` : ''}
+                    </span>
+                  ) : null}
+                  {!engine.available && engine.unavailableReason ? <span className={rowPathText}>{engine.unavailableReason}</span> : null}
+                  {!engine.available ? (
+                    <EngineInstallHelp
+                      help={engine.installHelp}
+                      retrying={retrying}
+                      onRetry={() => void refresh()}
+                      onError={onError}
+                      canSetup={canSetup}
+                      onSetup={() => void runSetup(engine.id)}
+                      settingUp={isSettingUp}
+                      setupProgress={status?.setupProgress}
+                      setupMessage={status?.setupMessage}
+                    />
+                  ) : null}
+                </div>
+                <div className="flex shrink-0 flex-col items-end gap-[3px]">
+                  <StatusChip good={engine.available} warn={!engine.available}>{engine.available ? 'Available' : 'Unavailable'}</StatusChip>
+                  <span className={rowValueText}>{engine.integration === 'primary' ? 'Primary' : 'Delegated'}</span>
+                  {canSetup ? (
+                    <SettingsButton
+                      disabled={busy !== null}
+                      onClick={() => void runSetup(engine.id)}
+                      className={cn(
+                        engine.available
+                          ? 'px-2 py-0.5 text-[9px] text-faint hover:text-foreground'
+                          : 'border-primary/30 bg-primary/10 px-2.5 py-1 text-[10px] font-semibold text-primary hover:bg-primary/20',
+                      )}
+                    >
+                      {isSettingUp
+                        ? 'Setting up…'
+                        : engine.available
+                          ? 'Reinstall'
+                          : 'Download & Setup'}
+                    </SettingsButton>
+                  ) : null}
+                </div>
+              </SettingsRow>
+            )
+          })}
         </div>
       </SettingsSection>
 

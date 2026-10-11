@@ -4,6 +4,7 @@ import { PassThrough, Writable } from 'node:stream'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
 import { spawn as nodeSpawn } from 'node:child_process'
 import process from 'node:process'
+import { backgroundProcessEnvironment } from './background-process-environment.js'
 import type { CoreClient } from './core-client.js'
 import type { NdCoreEventFrame } from './core-protocol.js'
 import type { ExecutionCoordinator } from '../organization/execution-coordinator.js'
@@ -32,6 +33,7 @@ type SpawnLike = typeof nodeSpawn
 export function createCoreSpawn(
   core: CoreClient,
   coordinator?: Pick<ExecutionCoordinator, 'currentPermitId'>,
+  backgroundPolicyPath?: string,
 ): SpawnLike {
   const spawn = ((
     command: string,
@@ -43,7 +45,7 @@ export function createCoreSpawn(
     const options: SpawnOptions = withArgs
       ? maybeOptions ?? {}
       : (argsOrOptions as SpawnOptions | undefined) ?? {}
-    return new CoreChildProcess(core, coordinator, command, args, options).asChildProcess()
+    return new CoreChildProcess(core, coordinator, command, args, options, backgroundPolicyPath).asChildProcess()
   }) as SpawnLike
   return spawn
 }
@@ -108,6 +110,7 @@ class CoreChildProcess extends EventEmitter {
     command: string,
     args: string[],
     options: SpawnOptions,
+    backgroundPolicyPath?: string,
   ) {
     super()
     this.spawnfile = command
@@ -118,7 +121,10 @@ class CoreChildProcess extends EventEmitter {
     this.disposeExit = core.onEvent<ProcessExitEvent>('process.exit', (frame) => this.onExit(frame))
 
     const environment: Record<string, string> = {}
-    for (const [key, value] of Object.entries(options.env ?? process.env)) {
+    const childEnvironment = backgroundPolicyPath
+      ? backgroundProcessEnvironment(options.env ?? process.env, backgroundPolicyPath)
+      : options.env ?? process.env
+    for (const [key, value] of Object.entries(childEnvironment)) {
       if (typeof value === 'string') environment[key] = value
     }
 

@@ -49,11 +49,11 @@ export function QuickLauncherShortcutSettings({ onError }: { onError(message: st
   }
 
   return (
-    <SettingsSection title="Quick launcher" className="mt-3.5">
+    <SettingsSection title="Quick launcher">
       <SettingsRow>
         <div className={rowStack}>
-          <strong className={rowTitle}>Ctrl+Shift+Space behavior</strong>
-          <span className={rowDesc}>What the global shortcut does from any app. The same press always toggles the surface back off.</span>
+          <strong className={rowTitle}>What the key does</strong>
+          <span className={rowDesc}>The action your quick launcher key runs from any app. The same press always toggles the surface back off.</span>
         </div>
       </SettingsRow>
       <div className="flex gap-1.5" role="radiogroup" aria-label="Quick launcher shortcut mode">

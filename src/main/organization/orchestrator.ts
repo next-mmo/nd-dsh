@@ -8,11 +8,12 @@ import type { EngineSessionRouter } from '../engines/engine-session-router.js'
 import type { HarnessService } from '../harness/harness-service.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
 import type { CoreClient } from '../core/core-client.js'
+import { createCoreArtifactFingerprint } from '../core/core-workspace.js'
 import { taskMetricsRecorder } from '../metrics/task-metrics.js'
 import { isRetryableExecutionFailure, MAX_EXECUTION_ATTEMPTS, retryBackoffMs, stallTimeoutMs } from './execution-reliability.js'
 import type { OrganizationStore } from './store.js'
 import { TaskIntegrationConflictError, TaskWorktreeManager, type TaskWorktree } from './task-worktree.js'
-import { formatVerificationEvidence, runArtifactVerification, runVerification, type VerificationProcessRuntime } from './verification-evidence.js'
+import { formatVerificationEvidence, runArtifactVerification, runVerification, type ArtifactFingerprintRunner, type VerificationProcessRuntime } from './verification-evidence.js'
 import { createCoreEvidenceCapturer, unavailableEvidenceCapturer, type WorkspaceEvidenceCapture, type WorkspaceEvidenceCapturer } from './worktree-evidence.js'
 import { RuntimeCapacityError, type ExecutionCoordinator, type RuntimeAvailability } from './execution-coordinator.js'
 import { normalizeProjectPlan } from './plan-normalizer.js'
@@ -90,6 +91,7 @@ export class OrganizationOrchestrator {
   private pendingFallbackRoutes = new Map<string, ProviderRoute>()
   private canceledSessions = new Set<string>()
   private cancellationFinalizations = new Map<string, Promise<void>>()
+  private interruptionFinalizations = new Map<string, Promise<void>>()
   private lastProgressAt = new Map<string, number>()
   private parallelFillProjects = new Set<string>()
   private stallReconcileBusy = false
@@ -100,6 +102,7 @@ export class OrganizationOrchestrator {
   private readonly decisionSupportReceipts = new Map<string, DecisionSupportReceipt>()
   private readonly taskWorktrees: TaskWorktreeManager
   private readonly captureEvidence: WorkspaceEvidenceCapturer
+  private readonly fingerprintArtifacts: ArtifactFingerprintRunner | undefined
 
   constructor(
     private readonly store: OrganizationStore,
@@ -121,6 +124,7 @@ export class OrganizationOrchestrator {
   ) {
     this.taskWorktrees = taskWorktrees ?? new TaskWorktreeManager()
     this.captureEvidence = core ? createCoreEvidenceCapturer(core) : unavailableEvidenceCapturer
+    this.fingerprintArtifacts = core ? createCoreArtifactFingerprint(core) : undefined
   }
 
   /**
@@ -195,7 +199,9 @@ export class OrganizationOrchestrator {
       throw new Error('Task is outside the selected delivery milestone')
     }
     this.assertPolicy(await this.store.policy(context.company.id, 'task.execute'), explicit, 'task execution')
-    if (!explicit && context.company.autonomyLevel < 3) throw new Error('Autonomy level 3+ is required for automatic execution')
+    if (context.task.assigneeKind === 'human' || (!context.task.assignedAgentId && context.task.assignedMemberId)) {
+      throw new Error('Task is assigned to a human member; submit human work or reassign to an agent before automated execution')
+    }
     if (context.task.status !== 'ready' && context.task.status !== 'blocked') throw new Error(`Task is ${context.task.status}; only ready or blocked tasks can run`)
 
     const state = await this.store.state()
@@ -395,8 +401,9 @@ export class OrganizationOrchestrator {
         })
       }
       const verification = context.task.evidenceKind === 'artifact'
-        ? await runArtifactVerification(context.task.artifactPaths, workspaceRoot)
+        ? await runArtifactVerification(context.task.artifactPaths, workspaceRoot, this.fingerprintArtifacts)
         : await runVerification(context.project.testCommand, workspaceRoot, this.verificationRuntime)
+      await this.store.recordRunVerification(run.id, reviewVerificationMetadata(verification, checkpointHead))
       taskMetricsRecorder()?.noteVerification(sessionId, verification.status, verification.durationMs)
       await this.journalEffect({
         kind: 'verification.receipt',
@@ -498,6 +505,10 @@ export class OrganizationOrchestrator {
     await this.assertTaskRunSlot(context.task.id, context.project.id, Boolean(taskWorktree))
     if (!taskWorktree) await this.prepareWorkspace(context.project.workspacePath)
     const reviewHead = taskWorktree ? await this.taskWorktrees.checkpoint(taskWorktree, context.task.title) : undefined
+    const executionRun = (await this.store.state()).runs
+      .filter((item) => item.taskId === taskId && item.kind === 'task-execution')
+      .sort((left, right) => right.startedAt - left.startedAt)[0]
+    const recordedVerification = recordedReviewVerification(executionRun, reviewHead, taskWorktree?.root ?? context.project.workspacePath, context.project.testCommand)
     const sessionId = await this.createHarnessSession(taskWorktree?.root, `Review · ${context.task.title}`)
     const run = await this.store.beginRun(
       'task-review',
@@ -564,7 +575,7 @@ export class OrganizationOrchestrator {
     }
     try {
       const prompt = appendBrowserAccess(
-        reviewPrompt(context.task, context, taskWorktree, formatDecisionSupportForReviewer(decisionSupport)),
+        reviewPrompt(context.task, context, taskWorktree, formatDecisionSupportForReviewer(decisionSupport), recordedVerification),
         sessionId,
         this.browserAccess,
       )
@@ -636,6 +647,13 @@ export class OrganizationOrchestrator {
     const run = state.runs.find((item) => item.id === runId && item.status === 'running')
     if (!run) throw new Error('Organization run is not active')
     this.canceledSessions.add(run.sessionId)
+    const interruption = this.interruptionFinalizations.get(run.sessionId)
+    if (interruption) {
+      // The engine already ended. Join its in-flight rollback instead of
+      // stopping a replacement runtime or starting another finalization.
+      await interruption
+      return
+    }
     try {
       await this.stopSession(run.sessionId)
     } catch (error) {
@@ -723,9 +741,31 @@ export class OrganizationOrchestrator {
       await cancellation
       return
     }
+    const interruption = this.interruptionFinalizations.get(sessionId)
+    if (interruption) {
+      await interruption
+      return
+    }
+    // Late terminal frames and unrelated personal chats own no organization
+    // run. Its finalizer already released the session; do not release it again.
+    if (!run) {
+      this.lastProgressAt.delete(sessionId)
+      return
+    }
 
     if (frame.kind === 'session-event' && frame.event && run) {
       const data = frame.event.data as Record<string, unknown> | undefined
+      const reason = data?.reason
+      if (frame.event.type === 'turn/end' && reason && typeof reason === 'object' && (reason as Record<string, unknown>).kind === 'interrupted') {
+        if (this.consumeCanceledSession(sessionId)) await this.handleCanceledRun(run, sessionId)
+        else {
+          const detail = (reason as Record<string, unknown>).message
+          const finalization = this.finalizeInterruptedRun(run, sessionId, typeof detail === 'string' ? detail.slice(0, 2_000) : undefined)
+          this.interruptionFinalizations.set(sessionId, finalization)
+          try { await finalization } finally { this.interruptionFinalizations.delete(sessionId) }
+        }
+        return
+      }
       const text = frame.event.type === 'assistant/chunk'
         ? messageText(data?.chunk)
         : frame.event.type === 'assistant/message'
@@ -794,8 +834,9 @@ export class OrganizationOrchestrator {
           })
         }
         const verification = context.task.evidenceKind === 'artifact'
-          ? await runArtifactVerification(context.task.artifactPaths, worktree?.root ?? context.project.workspacePath)
+          ? await runArtifactVerification(context.task.artifactPaths, worktree?.root ?? context.project.workspacePath, this.fingerprintArtifacts)
           : await runVerification(context.project.testCommand, worktree?.root ?? context.project.workspacePath, this.verificationRuntime)
+        await this.store.recordRunVerification(run.id, reviewVerificationMetadata(verification, checkpointHead))
         taskMetricsRecorder()?.noteVerification(sessionId, verification.status, verification.durationMs)
         await this.journalEffect({
           kind: 'verification.receipt',
@@ -931,7 +972,7 @@ export class OrganizationOrchestrator {
         return repaired.json
       })
       if (!extracted) return
-      ;({ plan, adjustments } = normalizeProjectPlan(extracted))
+      ;({ plan, adjustments } = normalizeProjectPlan(extracted, { recoverRepeatedLists: mergedLists > 0 }))
       if (mergedLists) adjustments.unshift(`Merged ${mergedLists} repeated milestone/task list(s) the model wrote as duplicate keys.`)
       this.structuredErrors.delete(sessionId)
     } catch (cause) {
@@ -1056,11 +1097,15 @@ export class OrganizationOrchestrator {
     const active = await this.store.runBySession(run.sessionId)
     if (!active) return false
     const rollback = await this.rollbackExecutionAttempt(run.sessionId)
-    const detail = rollback ? message : `${message}\nRollback failed; automatic retry disabled.`
+    const canceled = this.consumeCanceledSession(run.sessionId)
+    const failure = canceled ? 'Canceled by user before the run completed.' : message
+    if (canceled) taskMetricsRecorder()?.noteCanceled(run.sessionId)
+    const detail = rollback ? failure : `${failure}\nRollback failed; automatic retry disabled.`
     const output = `${this.finalText.get(run.sessionId) ?? ''}${this.routeEvidence(run.sessionId)}` || undefined
     await this.store.completeRun(run.id, output, detail).catch(() => undefined)
     await this.failTask(run.taskId, detail)
-    if (!rollback) return false
+    if (canceled) this.cleanupTaskRouting(run.taskId)
+    if (!rollback || canceled) return false
     const context = await this.store.taskContext(run.taskId)
     const attempts = await this.store.executionAttemptCount(run.taskId)
     const retryable = stalled || isRetryableExecutionFailure(message)
@@ -1080,6 +1125,8 @@ export class OrganizationOrchestrator {
   }
 
   private async handleCanceledRun(run: OrganizationRun, sessionId: string): Promise<void> {
+    const interruption = this.interruptionFinalizations.get(sessionId)
+    if (interruption) return interruption
     const existing = this.cancellationFinalizations.get(sessionId)
     if (existing) return existing
     // The cancel RPC response and engine stop/error events arrive independently.
@@ -1091,6 +1138,30 @@ export class OrganizationOrchestrator {
     } finally {
       this.cancellationFinalizations.delete(sessionId)
     }
+  }
+
+  private async finalizeInterruptedRun(run: OrganizationRun, sessionId: string, reason?: string): Promise<void> {
+    // The journal is authoritative for interruption even when the runtime never
+    // emits the separate running=false status. Ordinary turn/end events are not
+    // terminal at this boundary: structured assistant output can arrive later.
+    if (!(await this.store.runBySession(sessionId))) return
+    if (this.consumeCanceledSession(sessionId)) {
+      await this.finalizeCanceledRun(run, sessionId)
+      return
+    }
+    const message = `Agent turn interrupted before the run completed.${reason?.trim() ? ` ${reason.trim()}` : ''}`
+    if (run.kind === 'task-execution' && run.taskId) {
+      const queued = await this.handleExecutionFailure(run, message)
+      this.cleanupSession(sessionId)
+      if (queued) {
+        await delay(retryBackoffMs(await this.store.executionAttemptCount(run.taskId)))
+        await this.continueProject(run.projectId)
+      }
+      return
+    }
+    await this.store.completeRun(run.id, this.finalText.get(sessionId), message)
+    if (run.kind === 'task-review' && run.taskId) await this.store.clearReviewSession(run.taskId)
+    this.cleanupSession(sessionId)
   }
 
   private async finalizeCanceledRun(run: OrganizationRun, sessionId: string): Promise<void> {
@@ -1264,7 +1335,7 @@ export class OrganizationOrchestrator {
     this.parallelFillProjects.add(projectId)
     try {
       // The bound is an iteration guard, not a capacity decision: it caps how
-      // many candidates one round inspects and how many runs it starts. Every
+      // many runs one round starts. Every
       // dispatch still acquires its own permit, and the availability probe is
       // what ends a round when a pool is full.
       for (let attempt = 0; attempt < MAX_AUTOPILOT_PARALLEL_FILL; attempt += 1) {
@@ -1305,7 +1376,10 @@ export class OrganizationOrchestrator {
    * so a lower-priority task can still proceed.
    */
   private async nextDispatchableTask(projectId: string): Promise<{ task: OrganizationTask | undefined; capacityBound: boolean }> {
-    const candidates = (await this.store.readyTasks(projectId)).slice(0, MAX_AUTOPILOT_PARALLEL_FILL)
+    // The round's dispatch limit must not truncate the readiness scan: a full
+    // role pool can hold an arbitrarily long prefix while another role is free.
+    const allCandidates = await this.store.readyTasks(projectId)
+    const candidates = allCandidates.filter((t) => t.assigneeKind !== 'human' && (t.assignedAgentId || !t.assignedMemberId))
     if (!this.dispatchAvailability) return { task: candidates[0], capacityBound: false }
     let capacityBound = false
     for (const candidate of candidates) {
@@ -1503,7 +1577,7 @@ export class OrganizationOrchestrator {
 function pmPrompt(context: Awaited<ReturnType<OrganizationStore['projectContext']>>): string {
   const roles = context.roles.map((item) => `- ${item.name}: ${item.responsibility}`).join('\n') || '- Software Engineer'
   const teams = context.teams.map((item) => `- ${item.name}: ${item.purpose}`).join('\n') || '- Engineering'
-  return `You are the AI Product Manager for ${context.company.name}.\nMission: ${context.company.mission}\nProject: ${context.project.name}\nObjective: ${context.project.objective}\n\nCreate a practical delivery plan. Organize milestones around small, verifiable user outcomes; the first milestone should deliver the smallest useful MVP slice. ND initially focuses execution on the first milestone and waits for the human to select the next one, so avoid depending on later-milestone work for that first outcome. Respect company/project isolation. Use the existing teams and roles when assigning work. Keep independent work parallel: use dependsOn only for real code/data ordering, never merely to serialize execution. Tests, docs, accessibility, i18n, fixtures and independent components should remain parallel when safe. For each task, declare advisory workScopes when the likely file area is known. Use evidenceKind "artifact" with relative artifactPaths for design, research, or document deliverables that should be verified by produced artifacts instead of a code test command. Return concise reasoning, then exactly one JSON object between <nd-dsh-plan> and </nd-dsh-plan>.\n\nSchema:\n<nd-dsh-plan>{"goal":{"title":"...","description":"..."},"milestones":[{"title":"...","description":"...","tasks":[{"title":"...","description":"...","priority":"medium","acceptanceCriteria":["..."],"dependsOn":["earlier task title"],"role":"Software Engineer","workScopes":["src/feature/**"],"evidenceKind":"code","artifactPaths":[]}]}],"memory":[{"title":"...","content":"...","tags":["plan"]}]}</nd-dsh-plan>\n\nAvailable roles:\n${roles}\nAvailable teams:\n${teams}\nKnown memory:\n${context.memory.map((item) => `- ${item.title}: ${item.content}`).join('\n') || '- none'}\nPolicies:\n${context.policies.map((item) => `- ${item.action}: ${item.effect}`).join('\n')}`
+  return `You are the AI Product Manager for ${context.company.name}.\nMission: ${context.company.mission}\nProject: ${context.project.name}\nObjective: ${context.project.objective}\n\nCreate a practical delivery plan. Organize milestones around small, verifiable user outcomes; the first milestone should deliver the smallest useful MVP slice. ND initially focuses execution on the first milestone and waits for the human to select the next one, so avoid depending on later-milestone work for that first outcome. Respect company/project isolation. Tasks execute in isolated Git worktrees: a task sees integrated predecessors, never unfinished sibling changes. Every code task must pass the configured project verification command in that worktree before review and integration; a later verification task cannot postpone this gate. If tests import files another task creates, declare that authoring task as a dependency, or keep the coupled implementation and tests in one task. Never skip tests or mark code as artifact evidence to bypass verification. Use the existing teams and roles when assigning work. Keep independent work parallel: use dependsOn only for real code/data ordering, never merely to serialize execution. Tests, docs, accessibility, i18n, fixtures and independent components should remain parallel when safe. For each task, declare advisory workScopes for paths this task will create or modify; shared contracts, reference files and read-only inputs do not belong in workScopes. Verification tasks depend on every authoring task whose files their acceptance criteria inspect. Use evidenceKind "artifact" with relative artifactPaths for design, research, or document deliverables that should be verified by produced artifacts instead of a code test command. Return concise reasoning, then exactly one JSON object between <nd-dsh-plan> and </nd-dsh-plan>.\n\nSchema:\n<nd-dsh-plan>{"goal":{"title":"...","description":"..."},"milestones":[{"title":"...","description":"...","tasks":[{"title":"...","description":"...","priority":"medium","acceptanceCriteria":["..."],"dependsOn":["earlier task title"],"role":"Software Engineer","workScopes":["src/feature/**"],"evidenceKind":"code","artifactPaths":[]}]}],"memory":[{"title":"...","content":"...","tags":["plan"]}]}</nd-dsh-plan>\n\nAvailable roles:\n${roles}\nAvailable teams:\n${teams}\nKnown memory:\n${context.memory.map((item) => `- ${item.title}: ${item.content}`).join('\n') || '- none'}\nPolicies:\n${context.policies.map((item) => `- ${item.action}: ${item.effect}`).join('\n')}`
 }
 
 function workerPrompt(
@@ -1531,16 +1605,57 @@ function taskEvidenceInstructions(task: OrganizationTask, project: { testCommand
     return `\nND delivery evidence: artifact.\nRequired artifact paths (relative to the current task workspace):\n${(task.artifactPaths ?? []).map((path) => `- ${path}`).join('\n')}\n${reviewing ? 'Inspect the produced deliverables at these exact paths without editing them.' : 'Produce the deliverables at these exact paths.'} ND checks that every declared artifact exists and records its fingerprint; chat prose or a different output path cannot satisfy this gate. Inspect the content against the acceptance criteria as well. This task uses artifact verification rather than the project test command.\n`
   }
   const command = project.testCommand?.trim()
+  if (reviewing) {
+    return command
+      ? `\nND delivery evidence: code.\nConfigured machine-verification command: ${command}\nUse ND's recorded verification receipt for this exact checkpoint. A configured command or the worker's claim is not proof of a passed check. Do not repeat a passed checkpoint gate merely to confirm it. Failed, missing, skipped, mismatched-command, or mismatched-checkpoint evidence cannot establish PASS; return FAIL with the unresolved evidence requirement. If workspace inspection reveals a concrete concern not covered by the recorded gate, identify that concern and run only the additional check needed within the existing sandbox and policy. Do not request broader permissions to repeat ND's passed check.\n`
+      : '\nND delivery evidence: code.\nNo project machine-verification command is configured. Treat recorded skipped verification as skipped, never as a passing machine check. Inspect the workspace against the acceptance criteria, identify any concrete unresolved verification concern, and report missing evidence honestly. Additional checks must address that concern within the existing sandbox and policy.\n'
+  }
   return command
     ? `\nND delivery evidence: code.\nProject machine-verification command: ${command}\nRun this command in the current task workspace and inspect its result before finishing. ND runs it again as the checkpoint gate; a failing check blocks delivery.\n`
     : '\nND delivery evidence: code.\nNo project machine-verification command is configured; ND will record machine verification as skipped. Run relevant checks and report their actual results, including any checks that could not run.\n'
 }
 
-function reviewPrompt(task: OrganizationTask, context: Awaited<ReturnType<OrganizationStore['taskContext']>>, worktree?: TaskWorktree, decisionSupport = ''): string {
+function reviewVerificationMetadata(evidence: import('./verification-evidence.js').VerificationEvidence, checkpoint?: string): NonNullable<OrganizationRun['verification']> {
+  return {
+    status: evidence.status,
+    completedAt: evidence.completedAt,
+    ...(evidence.command === undefined ? {} : { command: evidence.command }),
+    ...(evidence.cwd === undefined ? {} : { cwd: evidence.cwd }),
+    ...(checkpoint ? { checkpointCommit: checkpoint } : {}),
+    ...(evidence.exitCode === undefined ? {} : { exitCode: evidence.exitCode }),
+    ...(evidence.reason === undefined ? {} : { reason: evidence.reason.slice(0, 2_000) }),
+  }
+}
+
+function recordedReviewVerification(run: OrganizationRun | undefined, checkpoint?: string, cwd?: string, command?: string): string {
+  const evidence = run?.verification
+  const checkpointMatches = Boolean(checkpoint && evidence?.checkpointCommit === checkpoint && run?.checkpointCommit === checkpoint)
+  const cwdMatches = Boolean(cwd && evidence?.cwd === cwd)
+  const commandMatches = Boolean(command?.trim() && evidence?.command === command.trim())
+  const metadata = {
+    executionRunId: run?.id ?? null,
+    executionRunStatus: run?.status ?? 'missing',
+    checkpointCommit: run?.checkpointCommit ?? null,
+    reviewCheckpointCommit: checkpoint ?? null,
+    checkpointMatches,
+    cwdMatches,
+    commandMatches,
+    gateSatisfied: run?.status === 'completed' && evidence?.status === 'passed' && cwdMatches && commandMatches && checkpointMatches,
+    exactCheckpoint: Boolean(checkpoint),
+    status: evidence?.status ?? 'missing',
+    ...(typeof evidence?.command === 'string' ? { command: evidence.command } : {}),
+    ...(typeof evidence?.cwd === 'string' ? { cwd: evidence.cwd } : {}),
+    ...(typeof evidence?.exitCode === 'number' ? { exitCode: evidence.exitCode } : {}),
+    ...(typeof evidence?.reason === 'string' ? { reason: evidence.reason.slice(0, 2_000) } : {}),
+  }
+  return `\nND-recorded checkpoint verification (trusted run metadata, distinct from worker prose):\n${JSON.stringify(metadata)}\nOnly gateSatisfied=true establishes the configured command passed at the exact review checkpoint. Without an exact Git checkpoint, the receipt describes the workspace at verification time and cannot certify unchanged content; report that evidence limitation.\n`
+}
+
+function reviewPrompt(task: OrganizationTask, context: Awaited<ReturnType<OrganizationStore['taskContext']>>, worktree?: TaskWorktree, decisionSupport = '', recordedVerification = ''): string {
   const isolation = worktree
     ? `\nReview the isolated task branch ${worktree.branch} in the current worktree. Do not edit, commit, switch branches, merge, or push; a PASS is valid only while the exact checkpoint stays unchanged.\n`
     : ''
-  return `You are an independent reviewer for ${context.company.name}. Do not assume the worker succeeded. Inspect the actual workspace and verify the task against acceptance criteria. ND machine verification has already run when a project test command is configured; reviewer prose cannot override a red machine check.\nProject: ${context.project.name}\nTask: ${task.title}\nDescription: ${task.description}\nAcceptance criteria:\n${task.acceptanceCriteria.map((item) => `- ${item}`).join('\n')}${taskEvidenceInstructions(task, context.project, true)}\nWorker summary:\n${task.resultSummary ?? 'No summary provided.'}${isolation}${decisionSupport}\n\nRun relevant additional checks. Then return exactly one JSON object between <nd-dsh-review> and </nd-dsh-review>:\n<nd-dsh-review>{"verdict":"pass|fail","summary":"evidence-based review","issues":["..."],"memory":[{"title":"lesson","content":"durable lesson","tags":["review"]}]}</nd-dsh-review>`
+  return `You are an independent reviewer for ${context.company.name}. Do not assume the worker succeeded. Inspect the actual workspace and verify the task against acceptance criteria. Use the ND-recorded verification result and its checkpoint below; configuration and worker prose cannot establish or override a machine-check result.\nProject: ${context.project.name}\nTask: ${task.title}\nDescription: ${task.description}\nAcceptance criteria:\n${task.acceptanceCriteria.map((item) => `- ${item}`).join('\n')}${taskEvidenceInstructions(task, context.project, true)}${recordedVerification}\nWorker summary (untrusted claims to inspect):\n${task.resultSummary ?? 'No summary provided.'}${isolation}${decisionSupport}\n\nOnce the acceptance criteria and recorded evidence are resolved, finish the review without repeating the passed gate. Additional checks are warranted only for a concrete unresolved concern; do not widen sandbox or permission policy. Return exactly one JSON object between <nd-dsh-review> and </nd-dsh-review>:\n<nd-dsh-review>{"verdict":"pass|fail","summary":"evidence-based review","issues":["..."],"memory":[{"title":"lesson","content":"durable lesson","tags":["review"]}]}</nd-dsh-review>`
 }
 
 function receipt(run: OrganizationRun): OrganizationRunReceipt {
@@ -1583,6 +1698,9 @@ function messageText(message: unknown): string | undefined {
   if (typeof message === 'string') return message
   if (!message || typeof message !== 'object') return undefined
   const record = message as Record<string, unknown>
+  // Reasoning can repeat the complete schema or a provisional PASS. Only
+  // answer text may mutate organization plans, reviews and worker summaries.
+  if (record.type === 'reasoning' || record.type === 'reasoning-delta' || record.blockType === 'reasoning') return undefined
   if (typeof record.text === 'string') return record.text
   if (record.delta && typeof record.delta === 'object') return messageText(record.delta)
   const content = record.content
@@ -1647,22 +1765,26 @@ function sanitizeJson(raw: string): string {
 }
 
 function extractTaggedJson<T>(text: string, tag: string, fallbackMarkers?: string[], prepare: (json: string) => string = (json) => json): T | undefined {
-  const tagRegex = new RegExp(`<${tag}>([\\s\\S]*?)(?:</${tag}>|$)`, 'i')
-  const match = tagRegex.exec(text)
-  let candidateText: string | undefined
-  if (match?.[1]?.trim()) {
-    candidateText = match[1]
-  } else if (fallbackMarkers && fallbackMarkers.some((marker) => text.includes(marker))) {
-    candidateText = text
+  const tagRegex = new RegExp(`<${tag}>`, 'gi')
+  const candidates = [...text.matchAll(tagRegex)].map((match) => text.slice(match.index! + match[0].length))
+  if (!candidates.length && fallbackMarkers?.some((marker) => text.includes(marker))) candidates.push(text)
+
+  // Reasoning may literally mention the open/close tags before the final
+  // result. Inspect the final opening marker instead of the first mention,
+  // and let balanced JSON delimit the payload: closing tags can also appear
+  // literally inside valid JSON strings.
+  let parseError: unknown
+  for (const candidateText of candidates.reverse()) {
+    const jsonObject = extractJsonObjectString(candidateText, fallbackMarkers)
+    if (!jsonObject) continue
+    try {
+      return JSON.parse(prepare(sanitizeJson(jsonObject))) as T
+    } catch (cause) {
+      parseError = cause
+    }
   }
-
-  if (!candidateText) return undefined
-
-  const jsonObject = extractJsonObjectString(candidateText, fallbackMarkers)
-  if (!jsonObject) return undefined
-
-  const sanitized = prepare(sanitizeJson(jsonObject))
-  return JSON.parse(sanitized) as T
+  if (parseError) throw parseError
+  return undefined
 }
 
 function delay(ms: number): Promise<void> {

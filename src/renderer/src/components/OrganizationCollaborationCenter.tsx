@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import type {
+  OrganizationAccessRole,
   OrganizationApprovalVerdictKind,
   OrganizationMember,
   OrganizationSnapshot,
   OrganizationTask,
+  TaskAssigneeKind,
 } from '../../../shared/organization'
+import { resolveMemberCapabilities } from '../../../shared/organization'
 import type { OrganizationManagementProjection } from '../../../shared/organization-control'
 import { cn } from '../lib/utils'
 import { Card as UiCard } from './ui/card'
@@ -35,11 +38,26 @@ export function OrganizationCollaborationCenter({ companyId, projectId, onAskAge
   const [management, setManagement] = useState<OrganizationManagementProjection | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [activeMemberId, setActiveMemberId] = useState('')
-  const [memberDraft, setMemberDraft] = useState({ displayName: '', title: '' })
-  const [messageDraft, setMessageDraft] = useState({ body: '', taskId: '' })
+  const [memberDraft, setMemberDraft] = useState<{ displayName: string; title: string; accessRole: OrganizationAccessRole }>({
+    displayName: '',
+    title: '',
+    accessRole: 'contributor',
+  })
+  const [messageDraft, setMessageDraft] = useState<{ body: string; taskId: string; category: 'chat' | 'question' | 'reply' | 'status' | 'handoff' }>({
+    body: '',
+    taskId: '',
+    category: 'chat',
+  })
   const [decisionDraft, setDecisionDraft] = useState({ title: '', summary: '', rationale: '', taskId: '' })
   const [approvalTaskId, setApprovalTaskId] = useState('')
   const [approvalComment, setApprovalComment] = useState('')
+  const [reassigningTaskId, setReassigningTaskId] = useState<string | null>(null)
+  const [reassignTargetKind, setReassignTargetKind] = useState<TaskAssigneeKind>('human')
+  const [reassignTargetId, setReassignTargetId] = useState('')
+  const [reassignReason, setReassignReason] = useState('')
+  const [submittingTaskId, setSubmittingTaskId] = useState<string | null>(null)
+  const [submitSummary, setSubmitSummary] = useState('')
+  const [submitCommit, setSubmitCommit] = useState('')
 
   useEffect(() => {
     let mounted = true
@@ -106,12 +124,15 @@ export function OrganizationCollaborationCenter({ companyId, projectId, onAskAge
     event.preventDefault()
     await act('member-add', async () => {
       const next = await window.ndDshOrganization.mutate({
-        type: 'member.create', companyId, displayName: memberDraft.displayName,
+        type: 'member.create',
+        companyId,
+        displayName: memberDraft.displayName,
+        accessRole: memberDraft.accessRole,
         ...(memberDraft.title.trim() ? { title: memberDraft.title } : {}),
       })
       const created = (next.members ?? []).find((item) => item.companyId === companyId && item.displayName === memberDraft.displayName.trim())
       if (created) setActiveMemberId(created.id)
-      setMemberDraft({ displayName: '', title: '' })
+      setMemberDraft({ displayName: '', title: '', accessRole: 'contributor' })
     })
   }
 
@@ -126,10 +147,53 @@ export function OrganizationCollaborationCenter({ companyId, projectId, onAskAge
         projectId: project.id,
         authorMemberId: activeMember.id,
         body: messageDraft.body,
+        category: messageDraft.category,
         ...(messageDraft.taskId ? { taskId: messageDraft.taskId, kind: 'task' as const } : {}),
         ...(mentionActorIds.length ? { mentionActorIds } : {}),
       })
-      setMessageDraft({ body: '', taskId: messageDraft.taskId })
+      setMessageDraft({ body: '', taskId: messageDraft.taskId, category: 'chat' })
+    })
+  }
+
+  async function reassignTask(taskId: string): Promise<void> {
+    if (!activeMember || !reassignTargetId) return
+    await act(`task-reassign-${taskId}`, async () => {
+      await window.ndDshOrganization.mutate({
+        type: 'task.reassign',
+        taskId,
+        assignee: { kind: reassignTargetKind, id: reassignTargetId },
+        changedByMemberId: activeMember.id,
+        reason: reassignReason.trim() || 'Handoff to team member',
+      })
+      setReassigningTaskId(null)
+      setReassignTargetId('')
+      setReassignReason('')
+    })
+  }
+
+  async function submitWork(taskId: string): Promise<void> {
+    if (!activeMember) return
+    await act(`task-submit-${taskId}`, async () => {
+      await window.ndDshOrganization.mutate({
+        type: 'task.submitWork',
+        taskId,
+        memberId: activeMember.id,
+        summary: submitSummary.trim(),
+        ...(submitCommit.trim() ? { checkpointCommit: submitCommit.trim() } : {}),
+      })
+      setSubmittingTaskId(null)
+      setSubmitSummary('')
+      setSubmitCommit('')
+    })
+  }
+
+  async function startHumanTask(taskId: string): Promise<void> {
+    await act(`task-start-${taskId}`, async () => {
+      await window.ndDshOrganization.mutate({
+        type: 'task.update',
+        id: taskId,
+        patch: { status: 'in_progress' },
+      })
     })
   }
 
@@ -199,12 +263,20 @@ export function OrganizationCollaborationCenter({ companyId, projectId, onAskAge
 
           <div className="max-h-[330px] overflow-auto rounded-md border border-border-soft bg-surface-0 p-2">
             {messages.length ? messages.map((message) => {
-              const author = actorName(message.author.id, members, agents)
+              const { label: author, kind: authorKind } = authorKindLabel(message.author.id, members, agents)
               const task = message.taskId ? tasks.find((item) => item.id === message.taskId) : undefined
               return (
                 <div key={message.id} className="border-b border-border-soft py-2 last:border-b-0">
-                  <div className="flex items-center gap-1.5 text-[11px]">
+                  <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                    <span className="text-xs">{authorKind === 'agent' ? '🤖' : authorKind === 'human' ? '👤' : '⚙️'}</span>
                     <strong className="text-foreground">{author}</strong>
+                    <span className="rounded border border-border-soft bg-secondary px-1 py-0.2 text-[9px] uppercase text-faint">{authorKind}</span>
+                    {message.category && message.category !== 'chat' ? (
+                      <span className="rounded border border-primary/25 bg-primary/10 px-1 py-0.2 font-mono text-[9px] uppercase text-primary">{message.category}</span>
+                    ) : null}
+                    {message.runId ? (
+                      <span className="font-mono text-[9px] text-faint">run #{message.runId.slice(0, 8)}</span>
+                    ) : null}
                     {task ? <span className="rounded border border-border-soft bg-secondary px-1.5 py-0.5 text-faint">{task.title}</span> : <span className="text-faint">project</span>}
                     <span className="ml-auto text-faint">{new Date(message.createdAt).toLocaleString()}</span>
                   </div>
@@ -215,10 +287,17 @@ export function OrganizationCollaborationCenter({ companyId, projectId, onAskAge
           </div>
 
           <form className="mt-2 grid gap-2" onSubmit={(event) => void postMessage(event)}>
-            <div className="grid grid-cols-[180px_1fr] gap-2">
+            <div className="grid grid-cols-[140px_110px_1fr] gap-2">
               <select className={input} value={messageDraft.taskId} onChange={(event) => setMessageDraft((current) => ({ ...current, taskId: event.target.value }))}>
                 <option value="">Project chat</option>
                 {tasks.map((task) => <option key={task.id} value={task.id}>Task · {task.title}</option>)}
+              </select>
+              <select className={input} value={messageDraft.category} onChange={(event) => setMessageDraft((current) => ({ ...current, category: event.target.value as any }))}>
+                <option value="chat">Chat</option>
+                <option value="question">Question</option>
+                <option value="reply">Reply</option>
+                <option value="status">Status</option>
+                <option value="handoff">Handoff</option>
               </select>
               <input className={input} placeholder="Use @Member or @Agent names to mention…" value={messageDraft.body} onChange={(event) => setMessageDraft((current) => ({ ...current, body: event.target.value }))} required />
             </div>
@@ -227,6 +306,103 @@ export function OrganizationCollaborationCenter({ companyId, projectId, onAskAge
               <button className={primaryButton} disabled={busy !== null || !activeMember}>Post</button>
             </div>
           </form>
+        </CollabCard>
+
+        <CollabCard title="Team Tasks & Mixed Handoffs" badge={`${tasks.length} tasks`}>
+          <div className="max-h-[360px] overflow-auto rounded-md border border-border-soft bg-surface-0 p-2">
+            {tasks.length ? tasks.map((task) => {
+              const assigneeHuman = task.assignedMemberId ? members.find((m) => m.id === task.assignedMemberId) : undefined
+              const assigneeAgent = task.assignedAgentId ? agents.find((a) => a.id === task.assignedAgentId) : undefined
+              const accountable = task.accountableMemberId ? members.find((m) => m.id === task.accountableMemberId) : undefined
+              const reviewerHuman = task.reviewerMemberId ? members.find((m) => m.id === task.reviewerMemberId) : undefined
+              const reviewerAgent = task.reviewerAgentId ? agents.find((a) => a.id === task.reviewerAgentId) : undefined
+              const lastHandoff = task.handoffs?.length ? task.handoffs[task.handoffs.length - 1] : undefined
+              const isHumanAssignee = task.assigneeKind === 'human' || Boolean(task.assignedMemberId && !task.assignedAgentId)
+              const isReassigning = reassigningTaskId === task.id
+              const isSubmitting = submittingTaskId === task.id
+
+              return (
+                <div key={task.id} className="border-b border-border-soft py-2.5 last:border-b-0">
+                  <div className="flex flex-wrap items-center justify-between gap-1.5">
+                    <strong className="text-xs text-foreground">{task.title}</strong>
+                    <div className="flex items-center gap-1.5">
+                      <span className="rounded border border-border-soft bg-secondary px-1.5 py-0.5 text-[10px] font-mono uppercase text-faint">{task.priority}</span>
+                      <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-bold uppercase', task.status === 'completed' ? 'border border-primary/25 bg-primary/10 text-primary' : task.status === 'in_progress' ? 'border border-info/25 bg-info/10 text-info' : task.status === 'review' ? 'border border-warning/25 bg-warning/10 text-warning' : 'border border-border-soft bg-secondary text-faint')}>{task.status.replace('_', ' ')}</span>
+                    </div>
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                    <span>
+                      Assignee: {isHumanAssignee ? <span className="font-medium text-foreground">👤 {assigneeHuman?.displayName ?? 'Human member'}</span> : assigneeAgent ? <span className="font-medium text-foreground">🤖 {assigneeAgent.name}</span> : <span className="text-faint">Unassigned</span>}
+                    </span>
+                    {accountable ? (
+                      <span className="text-faint">· Accountable: <span className="text-foreground">👤 {accountable.displayName}</span></span>
+                    ) : null}
+                    {task.reviewerKind === 'human' && reviewerHuman ? (
+                      <span className="text-faint">· Reviewer: <span className="text-foreground">👤 {reviewerHuman.displayName}</span></span>
+                    ) : reviewerAgent ? (
+                      <span className="text-faint">· Reviewer: <span className="text-foreground">🤖 {reviewerAgent.name}</span></span>
+                    ) : null}
+                  </div>
+                  {lastHandoff ? (
+                    <div className="mt-1 rounded bg-secondary/50 px-2 py-1 text-[10px] text-faint">
+                      <span>Handoff: {lastHandoff.fromAssignee?.kind ?? 'agent'} ➔ {lastHandoff.toAssignee?.kind ?? 'human'}</span>
+                      {lastHandoff.reason ? <span className="ml-1 text-soft">({lastHandoff.reason})</span> : null}
+                      <span className="ml-auto float-right">{new Date(lastHandoff.timestamp).toLocaleTimeString()}</span>
+                    </div>
+                  ) : null}
+
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    {isHumanAssignee && task.status === 'ready' ? (
+                      <button className={primaryButton} disabled={busy !== null} onClick={() => void startHumanTask(task.id)}>Start work</button>
+                    ) : null}
+                    {isHumanAssignee && task.status === 'in_progress' ? (
+                      <button className={primaryButton} disabled={busy !== null} onClick={() => { setSubmittingTaskId((curr) => curr === task.id ? null : task.id); setReassigningTaskId(null) }}>
+                        {isSubmitting ? 'Cancel submit' : 'Submit work'}
+                      </button>
+                    ) : null}
+                    <button className={button} disabled={busy !== null} onClick={() => { setReassigningTaskId((curr) => curr === task.id ? null : task.id); setSubmittingTaskId(null); setReassignTargetKind(isHumanAssignee ? 'agent' : 'human'); setReassignTargetId(isHumanAssignee ? (agents[0]?.id ?? '') : (members[0]?.id ?? '')) }}>
+                      {isReassigning ? 'Cancel reassign' : 'Reassign / Handoff'}
+                    </button>
+                  </div>
+
+                  {isSubmitting ? (
+                    <div className="mt-2 grid gap-1.5 rounded-md border border-primary/20 bg-primary/[0.03] p-2">
+                      <span className="text-xs font-medium text-foreground">Submit human work for review</span>
+                      <input className={input} placeholder="Work summary / evidence notes (required)" value={submitSummary} onChange={(e) => setSubmitSummary(e.target.value)} required />
+                      <input className={input} placeholder="Optional checkpoint commit / hash" value={submitCommit} onChange={(e) => setSubmitCommit(e.target.value)} />
+                      <div className="flex justify-end gap-1.5">
+                        <button type="button" className={button} onClick={() => setSubmittingTaskId(null)}>Cancel</button>
+                        <button type="button" className={primaryButton} disabled={busy !== null || !submitSummary.trim()} onClick={() => void submitWork(task.id)}>Confirm submission</button>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {isReassigning ? (
+                    <div className="mt-2 grid gap-1.5 rounded-md border border-border-strong bg-secondary/40 p-2">
+                      <span className="text-xs font-medium text-foreground">Reassign task with audit trail</span>
+                      <div className="grid grid-cols-[130px_1fr] gap-1.5">
+                        <select className={input} value={reassignTargetKind} onChange={(e) => { const k = e.target.value as TaskAssigneeKind; setReassignTargetKind(k); setReassignTargetId(k === 'human' ? (members[0]?.id ?? '') : (agents[0]?.id ?? '')) }}>
+                          <option value="human">👤 Human</option>
+                          <option value="agent">🤖 Agent</option>
+                        </select>
+                        <select className={input} value={reassignTargetId} onChange={(e) => setReassignTargetId(e.target.value)}>
+                          {reassignTargetKind === 'human'
+                            ? members.filter((m) => m.status === 'active').map((m) => <option key={m.id} value={m.id}>{m.displayName} ({m.accessRole ?? 'contributor'})</option>)
+                            : agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)
+                          }
+                        </select>
+                      </div>
+                      <input className={input} placeholder="Reason for handoff (e.g. Domain specialist or escalations)" value={reassignReason} onChange={(e) => setReassignReason(e.target.value)} />
+                      <div className="flex justify-end gap-1.5">
+                        <button type="button" className={button} onClick={() => setReassigningTaskId(null)}>Cancel</button>
+                        <button type="button" className={primaryButton} disabled={busy !== null || !reassignTargetId} onClick={() => void reassignTask(task.id)}>Confirm reassign</button>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              )
+            }) : <Empty text="No project tasks found. Create tasks in the Company Workspace." />}
+          </div>
         </CollabCard>
 
         <CollabCard title="Decisions" badge={`${decisions.filter((item) => item.status === 'active').length} active`}>
@@ -284,7 +460,7 @@ export function OrganizationCollaborationCenter({ companyId, projectId, onAskAge
                   <strong className="text-xs">{taskName(item.taskId, tasks)} · {item.targetKind}</strong>
                   <span className={cn('text-[10px] font-bold uppercase', item.status === 'approved' ? 'text-primary' : item.status === 'pending' ? 'text-warning' : 'text-destructive')}>{item.status.replace('_', ' ')}</span>
                 </div>
-                {item.targetRevision ? <p className="m-0 mt-1 font-mono text-[10px] text-faint">checkpoint {item.targetRevision}</p> : null}
+                {item.targetRevision ? <p className="m-0 mt-1 font-mono text-[10px] text-faint">{item.targetKind === 'task-review' && state?.tasks.find((task) => task.id === item.taskId)?.humanSubmission ? 'submission' : 'checkpoint'} {item.targetRevision}</p> : null}
                 {item.status === 'pending' ? (
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     <button className={primaryButton} disabled={busy !== null || !activeMember} onClick={() => void resolveApproval(item.id, 'approve')}>Approve</button>
@@ -301,9 +477,17 @@ export function OrganizationCollaborationCenter({ companyId, projectId, onAskAge
         <CollabCard title="Local Human Members" badge={String(members.filter((item) => item.status === 'active').length)}>
           <form className="grid gap-2" onSubmit={(event) => void addMember(event)}>
             <input className={input} placeholder="Display name" value={memberDraft.displayName} onChange={(event) => setMemberDraft((current) => ({ ...current, displayName: event.target.value }))} required />
-            <div className="grid grid-cols-[1fr_auto] gap-2">
+            <div className="grid grid-cols-[1fr_110px_auto] gap-2">
               <input className={input} placeholder="Role / title (optional)" value={memberDraft.title} onChange={(event) => setMemberDraft((current) => ({ ...current, title: event.target.value }))} />
-              <button className={primaryButton} disabled={busy !== null}>Add member</button>
+              <select className={input} value={memberDraft.accessRole} onChange={(event) => setMemberDraft((current) => ({ ...current, accessRole: event.target.value as OrganizationAccessRole }))}>
+                <option value="owner">Owner</option>
+                <option value="admin">Admin</option>
+                <option value="pm">PM</option>
+                <option value="contributor">Contributor</option>
+                <option value="reviewer">Reviewer</option>
+                <option value="guest">Guest</option>
+              </select>
+              <button className={primaryButton} disabled={busy !== null}>Add</button>
             </div>
           </form>
           <div className="mt-2 grid gap-1.5">
@@ -325,7 +509,54 @@ function CollabCard({ title, badge, children }: { title: string; badge?: string;
 }
 
 function MemberLine({ member, active, onSelect }: { member: OrganizationMember; active: boolean; onSelect(): void }) {
-  return <button type="button" onClick={onSelect} className={cn('flex items-center justify-between rounded-md border px-2 py-1.5 text-left', active ? 'border-primary/30 bg-primary/[0.06]' : 'border-border-soft bg-surface-0')}><span><strong className="block text-xs">{member.displayName}</strong><span className="text-[10px] text-faint">{member.title ?? 'Team member'}</span></span><span className="text-[10px] uppercase text-faint">{member.status}</span></button>
+  const role = member.accessRole ?? 'contributor'
+  const capabilities = resolveMemberCapabilities(member)
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={cn('flex items-center justify-between rounded-md border px-2 py-1.5 text-left', active ? 'border-primary/30 bg-primary/[0.06]' : 'border-border-soft bg-surface-0')}
+    >
+      <div className="min-w-0">
+        <div className="flex items-center gap-1.5">
+          <strong className="block truncate text-xs">{member.displayName}</strong>
+          <span className={cn('rounded px-1.5 py-0.2 text-[9px] font-bold uppercase tracking-wide', roleBadgeClass(role))}>
+            {role}
+          </span>
+        </div>
+        <span className="text-[10px] text-faint">
+          {member.title ?? 'Team member'} · {capabilities.size} cap{capabilities.size === 1 ? '' : 's'}
+        </span>
+      </div>
+      <span className="text-[10px] uppercase text-faint">{member.status}</span>
+    </button>
+  )
+}
+
+function roleBadgeClass(role: OrganizationAccessRole): string {
+  switch (role) {
+    case 'owner':
+      return 'border border-purple-500/30 bg-purple-500/10 text-purple-400'
+    case 'admin':
+      return 'border border-blue-500/30 bg-blue-500/10 text-blue-400'
+    case 'pm':
+      return 'border border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+    case 'reviewer':
+      return 'border border-amber-500/30 bg-amber-500/10 text-amber-400'
+    case 'guest':
+      return 'border border-border-soft bg-secondary text-muted-foreground'
+    case 'contributor':
+    default:
+      return 'border border-border-strong bg-secondary/80 text-foreground'
+  }
+}
+
+function authorKindLabel(authorId: string, members: OrganizationMember[], agents: Array<{ id: string; name: string }>): { label: string; kind: 'human' | 'agent' | 'system' } {
+  const member = members.find((item) => item.id === authorId)
+  if (member) return { label: member.displayName, kind: 'human' }
+  const agent = agents.find((item) => item.id === authorId)
+  if (agent) return { label: agent.name, kind: 'agent' }
+  return { label: 'System', kind: 'system' }
 }
 
 function Metric({ label, value }: { label: string; value: number }) {

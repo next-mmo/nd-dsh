@@ -6,6 +6,8 @@
  *  Adapted for ND-DSH: VS Code API dependencies removed, ND house style applied.
  *--------------------------------------------------------------------------------------------*/
 
+import { execFile } from 'node:child_process'
+import process from 'node:process'
 import type { CoreClient } from '../core/core-client.js'
 import { isNdCoreDeadlineError } from '../core/core-protocol.js'
 
@@ -163,6 +165,40 @@ export interface GitExecutionResult {
   exitCode: number
   stdout: string
   stderr: string
+}
+
+/**
+ * The nd-core-backed Git execution surface non-GitService subsystems route
+ * through, so a clone, provenance probe, or revision read is executed and
+ * bounded by Rust exactly like the rest of ND's Git work.
+ */
+export type GitExecRunner = (
+  cwd: string,
+  args: string[],
+  options?: GitExecOptions,
+) => Promise<GitExecutionResult>
+
+/**
+ * Test-only seam. Desktop production always passes a real runner (a `GitCli`
+ * bound to `git.exec`); this raw execFile runner exists solely so suites that
+ * have no nd-core sidecar can exercise the pipelines that receive one. It
+ * deliberately mirrors the core path's observable contract: reject on a
+ * non-zero exit, and never prompt for credentials.
+ */
+export const rawGitExecRunner: GitExecRunner = async (cwd, args, options = {}) => {
+  return await new Promise<GitExecutionResult>((resolve, reject) => {
+    const child = execFile('git', args, {
+      cwd,
+      timeout: options.timeoutMs ?? 60_000,
+      maxBuffer: 24 * 1024 * 1024,
+      windowsHide: true,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', ...options.env },
+    }, (error, stdout, stderr) => {
+      if (error) reject(error)
+      else resolve({ exitCode: 0, stdout: stdout.toString(), stderr: stderr.toString() })
+    })
+    if (options.input !== undefined) child.stdin?.end(options.input)
+  })
 }
 
 export interface ParsedGitCommit {

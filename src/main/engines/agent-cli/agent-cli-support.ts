@@ -87,15 +87,18 @@ export function spawnCliCommand(
   args: string[],
   options: Parameters<typeof spawn>[2],
 ): ChildProcess {
+  // This is ND's background CLI boundary, including Windows shell shims.
+  // Keep console policy here so a future caller cannot accidentally opt out.
+  const backgroundOptions = { ...options, windowsHide: true }
   const shimmed = /\.(cmd|bat)$/i.test(bin)
-  if (!shimmed) return spawnProcess(bin, args, options)
+  if (!shimmed) return spawnProcess(bin, args, backgroundOptions)
   const target = resolveShimTarget(bin)
-  if (target) return spawnProcess(target.command, [target.script, ...args], options)
+  if (target) return spawnProcess(target.command, [target.script, ...args], backgroundOptions)
   if (args.some((part) => /[\r\n"&|<>^%!]/.test(part))) {
     throw new Error('Cannot safely pass multi-line or shell-sensitive arguments through unresolved Windows CLI shim: ' + bin)
   }
   const command = [bin, ...args].map((part) => (/[\s"]/.test(part) ? `"${part.replace(/"/g, '""')}"` : part)).join(' ')
-  return spawnProcess('cmd.exe', ['/d', '/s', '/c', command], { ...options, windowsVerbatimArguments: true })
+  return spawnProcess('cmd.exe', ['/d', '/s', '/c', command], { ...backgroundOptions, windowsVerbatimArguments: true })
 }
 
 export function summarize(value: unknown): string {

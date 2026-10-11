@@ -10,6 +10,8 @@ import type { BrowserBounds } from '../../shared/contracts.js'
 import { type DesignFreeformState } from '../../shared/design.js'
 import { ND_PENCIL_HOST_IPC } from '../../shared/nd-pencil-host.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
+import { bundledResourceRoot } from '../app-paths.js'
+import { backgroundProcessEnvironment } from '../core/background-process-environment.js'
 
 const ND_PENCIL_PARTITION = 'nd-dsh-nd-pencil'
 const MAX_BRIDGE_MESSAGE_BYTES = 16 * 1024 * 1024
@@ -727,13 +729,15 @@ async function spawnManagedDaemon(binary: string, allowOrigin: string, filePath?
 
 function runSourceRuntimeSetup(executable: string, buildScript: string, cwd: string): Promise<void> {
   return new Promise<void>((resolvePromise, reject) => {
-    const child = spawn(executable, [buildScript], {
+    const preload = join(bundledResourceRoot(), 'scripts', 'nd-background-process.cjs')
+    const nodePolicyArgs = process.platform === 'win32' ? ['--require', preload] : []
+    const child = spawn(executable, [...nodePolicyArgs, buildScript], {
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
       // Electron is the current executable in development. This runs the fixed,
       // checked-in build script as Node; no renderer-provided command is used.
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      env: backgroundProcessEnvironment({ ...process.env, ELECTRON_RUN_AS_NODE: '1' }, preload),
     })
     let output = ''
     const append = (chunk: string | Buffer): void => {

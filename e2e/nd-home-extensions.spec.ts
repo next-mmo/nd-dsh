@@ -58,8 +58,8 @@ test('ND Home saves a personal note before any company or project exists', async
   const snapshot = await launched.page.evaluate(async () => await (globalThis as NdPlatformWindow).ndDshOrganization.state()) as OrganizationSnapshot
   expect(snapshot.companies).toEqual([])
 
-  await launched.page.getByRole('button', { name: 'Home' }).click()
-  await expect(launched.page.getByText('ND Home').first()).toBeVisible()
+  await launched.page.getByRole('button', { name: 'Personal' }).click()
+  await expect(launched.page.getByRole('heading', { name: 'Personal' })).toBeVisible()
 
   await launched.page.getByPlaceholder('Write a note…').fill('Buy two monitors')
   await launched.page.getByRole('button', { name: 'Save', exact: true }).click()
@@ -68,6 +68,69 @@ test('ND Home saves a personal note before any company or project exists', async
   const state = await homeState()
   expect(state.notes.some((note) => note.title === 'Buy two monitors')).toBe(true)
   expect(state.notes.every((note) => note.contextKey === 'personal')).toBe(true)
+  expect(rendererErrors).toEqual([])
+})
+
+test('the Personal space gives its browser a full-size pane, not a side panel', async () => {
+  const page = launched.page
+  await page.getByLabel('ND-DSH navigation').getByRole('button', { name: 'Personal' }).click()
+
+  const panes = page.getByRole('tablist', { name: 'Personal panes' })
+  await expect(panes).toBeVisible()
+  const browser = page.getByRole('region', { name: 'Personal browser' })
+  await expect(browser).toBeHidden()
+
+  await panes.getByRole('button', { name: 'Browser' }).click()
+  await expect(browser).toBeVisible()
+  // Full size means the pane owns the whole content area, like the Agent
+  // workbench browser — a side panel would be a fraction of it.
+  const viewportWidth = await page.evaluate(() => window.innerWidth)
+  const box = await browser.boundingBox()
+  expect(box, 'personal browser pane has geometry').toBeTruthy()
+  expect(box!.width).toBeGreaterThan(viewportWidth * 0.5)
+
+  // The records pane keeps its state and returns without a reload.
+  await panes.getByRole('button', { name: 'Records' }).click()
+  await expect(browser).toBeHidden()
+  await expect(page.getByRole('heading', { name: 'Personal' })).toBeVisible()
+  expect(rendererErrors).toEqual([])
+})
+
+
+test('the Personal dialpad offers top sites and the user\'s own links', async () => {
+  const page = launched.page
+  await page.getByLabel('ND-DSH navigation').getByRole('button', { name: 'Personal' }).click()
+  await page.getByRole('tablist', { name: 'Personal panes' }).getByRole('button', { name: 'Browser' }).click()
+
+  const dialpad = page.getByRole('region', { name: 'Personal dialpad' })
+  await expect(dialpad).toBeVisible()
+  for (const site of ['Google', 'YouTube', 'Wikipedia']) {
+    await expect(dialpad.getByRole('button', { name: site, exact: true })).toBeVisible()
+  }
+
+  // A saved link is a personal ND record; the tile joins the top sites.
+  await page.evaluate(async () => {
+    await (globalThis as unknown as { ndDsh: { home: { saveLink(input: { url: string; title?: string }): Promise<unknown> } } })
+      .ndDsh.home.saveLink({ url: 'https://example.com/notes', title: 'Notes' })
+  })
+  const savedTile = dialpad.getByRole('button', { name: 'Notes', exact: true })
+  await expect(savedTile).toBeVisible()
+
+  // Removing it from the dialpad deletes the record, not the site.
+  await dialpad.getByRole('button', { name: 'Remove Notes from the dialpad' }).click()
+  await expect(savedTile).toHaveCount(0)
+  const links = await page.evaluate(async () => {
+    const state = await (globalThis as unknown as { ndDsh: { home: { state(): Promise<{ links: unknown[] }> } } }).ndDsh.home.state()
+    return state.links.length
+  })
+  expect(links).toBe(0)
+
+  // The pane strip's Dialpad control puts the speed dial away and back.
+  const panes = page.getByRole('tablist', { name: 'Personal panes' })
+  await panes.getByRole('button', { name: 'Dialpad' }).click()
+  await expect(dialpad).toBeHidden()
+  await panes.getByRole('button', { name: 'Dialpad' }).click()
+  await expect(dialpad).toBeVisible()
   expect(rendererErrors).toEqual([])
 })
 
@@ -123,7 +186,7 @@ test('extension packages install with Personal activation and project-only comma
   // The management surface mirrors the same records.
   await launched.page.getByLabel('ND-DSH navigation').getByRole('button', { name: 'Settings' }).click()
   await launched.page.getByRole('tab', { name: 'Extensions' }).click()
-  await expect(launched.page.getByText('Extension packages')).toBeVisible()
+  await expect(launched.page.getByText('Extension directory')).toBeVisible()
   await expect(launched.page.getByText('Project Workflow', { exact: true })).toBeVisible()
   await expect(launched.page.getByRole('button', { name: new RegExp(`^${COMPANY} · ${PROJECT} ✓$`) })).toBeVisible()
 
@@ -136,9 +199,11 @@ test('Quit Processes appears in Available and installs only on demand', async ()
 
   await launched.page.getByLabel('ND-DSH navigation').getByRole('button', { name: 'Settings' }).click()
   await launched.page.getByRole('tab', { name: 'Extensions' }).click()
+  // The card opens on Installed; an available-only package lives under Discover.
+  await launched.page.getByRole('navigation', { name: 'Extension views' }).getByRole('button', { name: /^Discover/ }).click()
   // Scope to the Quit Processes card row: the plugins catalog below also renders an Install button.
   await launched.page
-    .locator('div.flex-wrap', { hasText: 'Quit Processes' })
+    .locator('article', { hasText: 'Quit Processes' })
     .getByRole('button', { name: 'Install', exact: true })
     .first()
     .click()
@@ -147,6 +212,8 @@ test('Quit Processes appears in Available and installs only on demand', async ()
   await launched.page.evaluate(async () => {
     await (globalThis as NdPlatformWindow).ndDsh.ndExtensions.setActivation('nd.quit-process', { kind: 'personal' }, true)
   })
+  // Its view control lives on the installed card, so leave the Discover list.
+  await launched.page.getByRole('navigation', { name: 'Extension views' }).getByRole('button', { name: /^Installed/ }).click()
   const open = launched.page.getByRole('button', { name: 'Open Running processes' })
   await expect(open).toBeEnabled()
   await open.click()
@@ -154,3 +221,5 @@ test('Quit Processes appears in Available and installs only on demand', async ()
   await expect(launched.page.getByText(/PID \d+ · CPU/).first()).toBeVisible()
   expect(rendererErrors).toEqual([])
 })
+
+

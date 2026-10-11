@@ -1,4 +1,6 @@
 import type { LauncherHandoffTarget, QuickLauncherShortcutMode } from './quick-launcher.js'
+import type { GlobalShortcutId, GlobalShortcutState, CaptureDelaySeconds } from './shortcuts.js'
+import type { NdMediaSessionState } from './media-session.js'
 import type { WorkspaceProfile } from './workspace-profile.js'
 
 export interface BrowserBounds {
@@ -255,6 +257,8 @@ export interface HarnessRunOptions {
   provider?: string
   model?: string
   image?: HarnessRunImage
+  /** User-pasted images riding with this prompt (base64 payloads, no data URL prefix). */
+  images?: HarnessRunImage[]
   permissionMode?: string
   /**
    * Exact working directory for this session/turn. It is used when a session
@@ -402,6 +406,9 @@ export interface AgentPresetSummary {
   description?: string
   order?: number
   broken?: string
+  /** ND product policy marks this preset unselectable for new sessions. */
+  blocked?: boolean
+  blockedReason?: string
 }
 
 export interface SessionEventEnvelope {
@@ -615,6 +622,12 @@ export interface QaOutputChunk {
   text: string
 }
 
+/** A finished capture handed to the chat composer as an unsent attachment. */
+export interface ComposerImageAttachment {
+  id: string
+  dataUrl: string
+}
+
 export interface DesktopApi {
   app: {
     info(): Promise<AppInfo>
@@ -673,6 +686,19 @@ export interface DesktopApi {
   }
   capture: {
     inspectApp(copyToClipboard: boolean, scope?: InspectScope, options?: AppInspectOptions): Promise<AppInspectResult>
+    /**
+     * Capture without touching the session: the bytes come back to the trusted
+     * renderer so a capture can sit in the composer as an unsent attachment.
+     */
+    forComposer(scope?: InspectScope, options?: AppInspectOptions): Promise<{
+      data: string
+      mediaType: 'image/png'
+      width: number
+      height: number
+      displayLabel: string
+      mode: AppInspectMode
+      copiedToClipboard: boolean
+    }>
     inspectElement(scope?: InspectScope): Promise<ExternalElementPickResult>
     stageElement(element: ExternalElementPickView, targetTitle: string, pickId?: string): Promise<ExternalElementAttachmentView[]>
     elementAttachments(): Promise<ExternalElementAttachmentView[]>
@@ -708,7 +734,7 @@ export interface DesktopApi {
     state(): Promise<WorkspaceState>
     pick(): Promise<WorkspaceState>
     /** Native folder picker for form fields; returns the chosen path or null on cancel without touching the active workspace. */
-    pickPath(): Promise<string | null>
+    pickPath(options?: { title?: string | undefined; defaultPath?: string | undefined }): Promise<string | null>
     setRoot(path: string): Promise<WorkspaceState>
     list(relativePath?: string): Promise<WorkspaceEntry[]>
     read(relativePath: string): Promise<WorkspaceFile>
@@ -784,6 +810,14 @@ export interface DesktopApi {
     setProjectBinding(workspaceRoot: string, input: string): Promise<ChatGptProjectBinding>
     clearProjectBinding(workspaceRoot: string): Promise<void>
   }
+  /** OS-style media transport over whatever the embedded browser is playing. */
+  media?: {
+    state(): Promise<NdMediaSessionState | null>
+    onState(listener: (state: NdMediaSessionState | null) => void): () => void
+    playPause(): Promise<{ ok: boolean }>
+    next(): Promise<{ ok: boolean }>
+    previous(): Promise<{ ok: boolean }>
+  }
   window?: {
     setFloatMode(enabled: boolean): Promise<{ float: boolean }>
     resizeFloatWindow(width: number, height: number): Promise<void>
@@ -797,6 +831,25 @@ export interface DesktopApi {
     toggleLauncherPopup?(): Promise<{ visible: boolean }>
     hideLauncherPopup?(): Promise<void>
     handoffLauncherPopup?(target: LauncherHandoffTarget, text?: string, context?: import('./nd-context.js').NdContext): Promise<void>
+    /** A global capture hotkey fired in main; the renderer runs the matching flow. */
+    onCaptureRequest?(listener: (action: GlobalShortcutId) => void): () => void
+    /** Full window asks main to deliver a capture request to the float overlay. */
+    forwardCaptureRequest?(action: GlobalShortcutId): Promise<{ delivered: boolean }>
+    /** Overlay frame collects a capture request queued while it was still loading. */
+    pullPendingCapture?(): Promise<GlobalShortcutId | null>
+    /** Overlay frame announces it can receive capture requests. */
+    markCaptureReady?(): Promise<boolean>
+    /** Overlay frame hands a finished capture back to the window hosting the composer. */
+    forwardCaptureAttach?(shot: ComposerImageAttachment): Promise<boolean>
+    onCaptureAttach?(listener: (shot: ComposerImageAttachment) => void): () => void
+    captureDelay?(): Promise<CaptureDelaySeconds>
+    setCaptureDelay?(seconds: CaptureDelaySeconds): Promise<CaptureDelaySeconds>
+  }
+  /** OS-wide hotkeys. Rebinding is validated in main against keys the operating system reserves. */
+  shortcuts?: {
+    state(): Promise<GlobalShortcutState>
+    /** Pass null to restore the shipped default for that action. */
+    rebind(id: GlobalShortcutId, accelerator: string | null): Promise<GlobalShortcutState>
   }
 }
 
@@ -829,6 +882,11 @@ export const IPC = {
   browserClearAnnotation: 'browser:clear-annotation',
   browserOpenExternal: 'browser:open-external',
   browserStateEvent: 'browser:state-event',
+  mediaState: 'media:state',
+  mediaStateEvent: 'media:state-event',
+  mediaPlayPause: 'media:play-pause',
+  mediaNext: 'media:next',
+  mediaPrevious: 'media:previous',
   workspaceState: 'workspace:state',
   workspacePick: 'workspace:pick',
   workspacePickPath: 'workspace:pick-path',
@@ -856,6 +914,16 @@ export const IPC = {
   surfaceChangedEvent: 'surface:changed',
   workspaceProfileGet: 'workspace-profile:get',
   workspaceProfileSet: 'workspace-profile:set',
+  shortcutsState: 'shortcuts:state',
+  shortcutsRebind: 'shortcuts:rebind',
+  windowCaptureRequestEvent: 'window:capture-request',
+  windowCaptureForward: 'window:capture-forward',
+  windowCaptureReady: 'window:capture-ready',
+  windowCapturePull: 'window:capture-pull',
+  windowCaptureAttach: 'window:capture-attach',
+  windowCaptureAttachEvent: 'window:capture-attach-event',
+  windowCaptureDelay: 'window:capture-delay',
+  windowCaptureDelaySet: 'window:capture-delay:set',
   dshViewSetBounds: 'dsh-view:set-bounds',
   dshViewSetVisible: 'dsh-view:set-visible',
   dshViewReload: 'dsh-view:reload',
@@ -883,6 +951,7 @@ export const IPC = {
   sessionsSetArchived: 'sessions:set-archived',
   sessionsSetArchivedMany: 'sessions:set-archived-many',
   captureInspectApp: 'capture:inspect-app',
+  captureForComposer: 'capture:for-composer',
   captureInspectElement: 'capture:inspect-element',
   captureStageElement: 'capture:stage-element',
   captureElementAttachments: 'capture:element-attachments',

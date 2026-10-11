@@ -75,6 +75,12 @@ A reference feature may be adopted later only if it preserves PRD 0009's local-f
 
 ## 3. Scope boundary
 
+### Human + AI company management direction
+
+The [Human + AI company and project team management plan](../plan/human-ai-company-team-management.md) extends this PRD's product direction with explicit company/project membership, delegated human access, mixed human/agent assignment and governed shared conversation. It incorporates the product owner's Grok bot team experience as inspiration for communication and parallel coordination, adapted to ND's managed company/project model rather than feature-for-feature parity.
+
+These additions are planned requirements, not a claim that the existing local member profiles provide enforced access roles or authenticated multi-user security. Local profile workflow remains within this PRD's one-host boundary; independent remote identities, invitations and transport remain deferred under PRD 0010.
+
 This PRD is **one-host local collaboration**.
 
 Supported conceptually:
@@ -513,6 +519,8 @@ integration.approve
 ```
 
 Default behavior can remain ergonomic locally, but high-risk state changes must be explicit and auditable.
+
+The [human access and delegated administration contract](../plan/human-ai-company-team-management.md#human-access-and-delegated-administration) specifies the planned company/project capability model. A member's title, agent job role, mention or task assignment must never substitute for an access grant. The target permits authorized teammates to collaborate and manage routine work without CEO mediation, while preserving explicit approval for protected actions. Trusted actor resolution and authorization on reads and writes are prerequisites for claiming independent multi-user access.
 
 ## 19. Agent behavior
 

@@ -120,6 +120,36 @@ The final configuration compresses the archive and requires a fresh clean
 candidate run. The builder's bundled 7-Zip inspects the exact embedded payload.
 Artifact hashing uses bounded chunks; the startup deadline remains 240 seconds.
 
+## Continuation on merged main — 2026-10-02
+
+The release and lightweight-payload changes have merged into `main` at
+`3936fef`. Validation continues on `codex/release-0.1.1-validation`. The local
+Harness checkout differed from its recorded provenance, so `dsh:update` synced
+upstream `master` to `639ed0153972` (`0.2.0-rc.2`) and refreshed the gitlink and
+metadata together. No upstream implementation source was changed.
+
+The clean candidate at `2149288` passed static verification, type checking,
+all 1,122 unit tests (nine skipped), Rust core and browser-host gates, the
+26-test browser platform focus, and the production renderer build. Its receipt
+is `e2e-results/beta-automated-2026-10-01T16-42-11-537Z/beta-automated-summary.json`.
+The run finished FAIL during portable staging; packaged smoke, desktop
+acceptance, live journeys, and benchmarks did not run. No current-version
+portable artifact was produced.
+
+The bundler consumed ignored `lib/types` output from the removed upstream
+`settings-file` package, which still imported the old `SettingsProvider` API.
+Upstream's supported cleaner removed 334 generated-output paths, including
+that orphan, and left the upstream source tree clean. ND's build adapter now
+calls that boundary-checked cleaner before the native, host, and client builds
+so submodule updates cannot silently reuse deleted-package output. A fresh
+candidate build must verify the fix; cleanup alone is not packaging evidence.
+
+This host's Node.js installation omitted the redistribution license required
+by release staging. Validation uses the complete official Node.js `24.16.0`
+Windows x64 distribution under ignored `.release/tools`. Both its archive and
+the installed binary were checked against the version's official SHA-256
+manifest; the binary matches. The bundled license requirement remains intact.
+
 ## Release-test hardening
 
 - Launchers accept `ND_DSH_E2E_EXECUTABLE` for a packaged target, reject an invalid

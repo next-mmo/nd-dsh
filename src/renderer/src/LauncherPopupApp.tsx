@@ -146,7 +146,7 @@ export default function LauncherPopupApp(): React.ReactNode {
           return
         }
         hidePopup()
-        toast('Note saved to ND Home.')
+        toast('Note saved to Personal.')
       } catch (cause) {
         notify(errorMessage(cause))
       }
@@ -174,7 +174,7 @@ export default function LauncherPopupApp(): React.ReactNode {
           return
         }
         hidePopup()
-        toast('Clipboard captured into ND Home.')
+        toast('Clipboard captured into Personal.')
       } catch (cause) {
         notify(errorMessage(cause))
       }
@@ -288,15 +288,23 @@ export default function LauncherPopupApp(): React.ReactNode {
         case 'note.search':
         case 'clipboard.read':
           hidePopup()
-          toast('Captured into ND Home.')
+          toast('Captured into Personal.')
           return
         case 'os.openTarget':
           if (value.opened) toast(`Opened ${String(value.path)}`)
           hidePopup()
           return
         case 'os.wallpaper.chooseAndSet':
+        case 'os.wallpaper.next':
+        case 'os.wallpaper.previous':
+        case 'os.wallpaper.random':
+        case 'os.wallpaper.applySelected':
           hidePopup()
-          if (value.changed) toast('Desktop wallpaper updated.')
+          if (value.changed) toast(typeof value.name === 'string' ? `Wallpaper changed to ${value.name}.` : 'Desktop wallpaper updated.')
+          return
+        case 'os.wallpaper.folders.add':
+          hidePopup()
+          if (value.changed) toast(typeof value.folder === 'string' ? `Wallpaper folder set to ${String(value.folder)}.` : 'Wallpaper folder updated.')
           return
         case 'browser.openExternal':
           hidePopup()

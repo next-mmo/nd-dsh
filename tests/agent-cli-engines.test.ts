@@ -1,4 +1,6 @@
 import { EventEmitter } from 'node:events'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { afterAll, describe, expect, it } from 'vitest'
 import type { ChildProcess } from 'node:child_process'
@@ -44,8 +46,9 @@ class FakeCli {
   }
 
   /** Capture the argv of the next spawn and hand back this fake child. */
-  spawn(): (file: string, args: string[]) => ChildProcess {
-    return (file: string, args: string[]) => {
+  spawn(): (file: string, args: string[], options: { windowsHide?: boolean }) => ChildProcess {
+    return (file: string, args: string[], options: { windowsHide?: boolean }) => {
+      expect(options.windowsHide).toBe(true)
       this.argv = [file, ...args]
       return this.child
     }
@@ -447,4 +450,120 @@ describe('PiCodingEngine', () => {
       await engine.close()
     }
   }, 15_000)
+
+  it('injects ND provider credentials and browser session into child process environment', async () => {
+    process.env.ND_DSH_PI_BINARY = process.execPath
+    const cli = new FakeCli()
+    let capturedEnv: NodeJS.ProcessEnv | undefined
+    const spawnProcess = (file: string, args: string[], options: { env?: NodeJS.ProcessEnv; windowsHide?: boolean }) => {
+      capturedEnv = options.env
+      return cli.spawn()(file, args, options)
+    }
+    const mockProviders = {
+      allEnabled: () => [
+        { id: 'deepseek', name: 'DeepSeek', enabled: true, apiKey: 'sk-test-deepseek', baseUrl: 'https://api.deepseek.com', models: [{ id: 'deepseek-chat', context: '1M' }] },
+        { id: 'openai', name: 'OpenAI', enabled: true, apiKey: 'sk-test-openai', baseUrl: 'https://custom.openai.endpoint/v1', models: [{ id: 'gpt-4o', context: '128k' }] },
+      ],
+      enabled: () => ({ id: 'deepseek', name: 'DeepSeek', enabled: true, apiKey: 'sk-test-deepseek', baseUrl: 'https://api.deepseek.com', models: [{ id: 'deepseek-chat', context: '1M' }] }),
+    }
+    const engine = new PiCodingEngine({
+      log: () => {},
+      spawnProcess: spawnProcess as never,
+      providers: () => mockProviders as never,
+    })
+    try {
+      const { sessionId } = await engine.createSession({ cwd: '/workspace' })
+      const run = engine.run('test env injection', { sessionId })
+      await flush()
+      expect(capturedEnv).toBeDefined()
+      expect(capturedEnv?.DEEPSEEK_API_KEY).toBe('sk-test-deepseek')
+      expect(capturedEnv?.OPENAI_API_KEY).toBe('sk-test-openai')
+      expect(capturedEnv?.OPENAI_BASE_URL).toBe('https://custom.openai.endpoint/v1')
+      expect(capturedEnv?.ND_DSH_AGENT_BROWSER_SESSION).toBeDefined()
+
+      const getStateCommand = cli.commands().find((command) => command.type === 'get_state')
+      cli.line({ type: 'response', command: 'get_state', success: true, id: getStateCommand?.id, data: { sessionFile: '/sessions/s1.jsonl', sessionId: 's1' } })
+      await flush()
+
+      const setModelCommand = cli.commands().find((command) => command.type === 'set_model')
+      expect(setModelCommand).toMatchObject({ provider: 'deepseek', modelId: 'deepseek-chat' })
+      cli.line({ type: 'response', command: 'set_model', success: true, id: setModelCommand?.id })
+      await flush()
+
+      const promptCommand = cli.commands().find((command) => command.type === 'prompt')
+      cli.line({ type: 'response', command: 'prompt', success: true, id: promptCommand?.id })
+      cli.line({ type: 'agent_settled' })
+      await run
+    } finally {
+      await engine.close()
+    }
+  }, 15_000)
+
+  it('synchronizes custom OpenAI-compatible providers into models.json and auth.json for Pi', async () => {
+    process.env.ND_DSH_PI_BINARY = process.execPath
+    const cli = new FakeCli()
+    let capturedEnv: NodeJS.ProcessEnv | undefined
+    const spawnProcess = (file: string, args: string[], options: { env?: NodeJS.ProcessEnv; windowsHide?: boolean }) => {
+      capturedEnv = options.env
+      return cli.spawn()(file, args, options)
+    }
+    const customProviders = {
+      allEnabled: () => [
+        {
+          id: 'custom-26c67720',
+          name: 'remote',
+          enabled: true,
+          apiKey: 'sk-remote-test-key',
+          baseUrl: 'https://opencode.ai/zen/go/v1',
+          apiFormat: 'OpenAI compatible (/v1/chat/completions)',
+          models: [{ id: 'mimo-v2.6-flash', context: '1M' }],
+        },
+      ],
+      enabled: () => ({
+        id: 'custom-26c67720',
+        name: 'remote',
+        enabled: true,
+        apiKey: 'sk-remote-test-key',
+        baseUrl: 'https://opencode.ai/zen/go/v1',
+        apiFormat: 'OpenAI compatible (/v1/chat/completions)',
+        models: [{ id: 'mimo-v2.6-flash', context: '1M' }],
+      }),
+    }
+    const engine = new PiCodingEngine({
+      log: () => {},
+      spawnProcess: spawnProcess as never,
+      providers: () => customProviders as never,
+    })
+    try {
+      const { sessionId } = await engine.createSession({ cwd: '/workspace' })
+      const run = engine.run('test custom provider', { sessionId })
+      await flush()
+      expect(capturedEnv?.PI_CODING_AGENT_DIR).toBeDefined()
+      const piDir = capturedEnv!.PI_CODING_AGENT_DIR!
+      const modelsJson = JSON.parse(readFileSync(join(piDir, 'models.json'), 'utf8'))
+      expect(modelsJson.providers['custom-26c67720']).toBeDefined()
+      expect(modelsJson.providers['custom-26c67720'].baseUrl).toBe('https://opencode.ai/zen/go/v1')
+      expect(modelsJson.providers['custom-26c67720'].models[0].id).toBe('mimo-v2.6-flash')
+
+      const authJson = JSON.parse(readFileSync(join(piDir, 'auth.json'), 'utf8'))
+      expect(authJson['custom-26c67720']).toMatchObject({ type: 'api_key', key: 'sk-remote-test-key' })
+
+      const getStateCommand = cli.commands().find((command) => command.type === 'get_state')
+      cli.line({ type: 'response', command: 'get_state', success: true, id: getStateCommand?.id, data: { sessionFile: '/sessions/s2.jsonl', sessionId: 's2' } })
+      await flush()
+
+      const setModelCommand = cli.commands().find((command) => command.type === 'set_model')
+      expect(setModelCommand).toMatchObject({ provider: 'custom-26c67720', modelId: 'mimo-v2.6-flash' })
+      cli.line({ type: 'response', command: 'set_model', success: true, id: setModelCommand?.id })
+      await flush()
+
+      const promptCommand = cli.commands().find((command) => command.type === 'prompt')
+      cli.line({ type: 'response', command: 'prompt', success: true, id: promptCommand?.id })
+      cli.line({ type: 'agent_settled' })
+      await run
+    } finally {
+      await engine.close()
+    }
+  }, 15_000)
 })
+

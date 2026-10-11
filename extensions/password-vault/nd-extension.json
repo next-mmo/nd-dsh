@@ -1,0 +1,46 @@
+{
+  "protocol": "nd.extension/1",
+  "id": "nd.password-vault",
+  "name": "Password Vault",
+  "description": "A local-first vault for passwords, API keys, and other secrets. Entries are encrypted on this device and never leave ND.",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "contexts": ["personal"],
+  "permissions": ["vault.read", "vault.write"],
+  "contributions": {
+    "commands": [
+      {
+        "id": "open-vault",
+        "title": "Password Vault",
+        "keywords": ["password", "vault", "secret", "login", "credential", "1password"],
+        "host": "vault.list",
+        "openViewId": "vault",
+        "contexts": ["personal"]
+      },
+      {
+        "id": "add-entry",
+        "title": "Add Vault Entry",
+        "keywords": ["password", "vault", "add", "save", "secret", "api", "key"],
+        "host": "vault.create",
+        "contexts": ["personal"]
+      }
+    ],
+    "views": [
+      {
+        "id": "vault",
+        "title": "Password Vault",
+        "description": "No entries yet. Run Add Vault Entry in the launcher to save your first password.",
+        "kind": "list",
+        "host": "vault.list",
+        "itemTitleKey": "title",
+        "itemBodyKey": "detail",
+        "contexts": ["personal"],
+        "actions": [
+          { "id": "copy-secret", "title": "Copy secret", "host": "vault.copy" },
+          { "id": "edit", "title": "Edit", "host": "vault.update" },
+          { "id": "delete", "title": "Delete", "host": "vault.delete" }
+        ]
+      }
+    ]
+  }
+}

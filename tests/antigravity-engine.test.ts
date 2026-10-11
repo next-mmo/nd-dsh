@@ -92,7 +92,8 @@ async function makeEngine() {
   const spawned: FakeAgy[] = []
   const engine = new AntigravityEngine({
     log: () => {},
-    spawnProcess: ((command: string, args: readonly string[], options: { cwd?: string }) => {
+    spawnProcess: ((command: string, args: readonly string[], options: { cwd?: string; windowsHide?: boolean }) => {
+      expect(options.windowsHide).toBe(true)
       const fake = new FakeAgy()
       fake.argv = [command, ...args]
       fake.spawnCwd = options?.cwd
@@ -445,7 +446,8 @@ describe('AntigravityEngine', () => {
     let spawnCount = 0
     const engine = new AntigravityEngine({
       log: () => {},
-      spawnProcess: ((_command: string, args: readonly string[]) => {
+      spawnProcess: ((_command: string, args: readonly string[], options: { windowsHide?: boolean }) => {
+        expect(options.windowsHide).toBe(true)
         spawnCount += 1
         expect(args[0]).toBe('models')
         queueMicrotask(() => {

@@ -1,6 +1,6 @@
-import { execFile } from 'node:child_process'
 import { promises as fs } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { rawGitExecRunner, type GitExecRunner } from '../git/git-cli.js'
 
 export interface GitProvenance {
   insideWorkTree: boolean
@@ -13,21 +13,10 @@ export interface GitProvenance {
 const GIT_TIMEOUT_MS = 8_000
 /** A full clone of a real plugin repository routinely outlives the metadata timeout. */
 const GIT_CLONE_TIMEOUT_MS = 5 * 60_000
-const GIT_MAX_OUTPUT = 64 * 1024
 
-function git(dir: string, args: string[], timeoutMs = GIT_TIMEOUT_MS): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile('git', args, {
-      cwd: dir,
-      timeout: timeoutMs,
-      maxBuffer: GIT_MAX_OUTPUT,
-      windowsHide: true,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-    }, (error, stdout) => {
-      if (error) reject(error)
-      else resolve(stdout.toString())
-    })
-  })
+async function gitStdout(runGit: GitExecRunner, dir: string, args: string[], timeoutMs = GIT_TIMEOUT_MS): Promise<string> {
+  const result = await runGit(dir, args, { timeoutMs })
+  return result.stdout
 }
 
 /**
@@ -35,25 +24,25 @@ function git(dir: string, args: string[], timeoutMs = GIT_TIMEOUT_MS): Promise<s
  * revision the reviewed content came from. Provenance is recorded, never
  * trusted — installation validation is the manifest parser's job.
  */
-export async function gitProvenance(dir: string): Promise<GitProvenance> {
+export async function gitProvenance(dir: string, runGit: GitExecRunner = rawGitExecRunner): Promise<GitProvenance> {
   try {
-    const inside = (await git(dir, ['rev-parse', '--is-inside-work-tree'])).trim() === 'true'
+    const inside = (await gitStdout(runGit, dir, ['rev-parse', '--is-inside-work-tree'])).trim() === 'true'
     if (!inside) return { insideWorkTree: false }
     const provenance: GitProvenance = { insideWorkTree: true }
     try {
-      const head = (await git(dir, ['rev-parse', 'HEAD'])).trim()
+      const head = (await gitStdout(runGit, dir, ['rev-parse', 'HEAD'])).trim()
       if (head) provenance.head = head
     } catch { /* detached or unborn HEAD */ }
     try {
-      const branch = (await git(dir, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
+      const branch = (await gitStdout(runGit, dir, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
       if (branch && branch !== 'HEAD') provenance.branch = branch
     } catch { /* ignore */ }
     try {
-      const remote = (await git(dir, ['remote', 'get-url', 'origin'])).trim()
+      const remote = (await gitStdout(runGit, dir, ['remote', 'get-url', 'origin'])).trim()
       if (remote) provenance.remote = remote
     } catch { /* no origin remote */ }
     try {
-      const status = await git(dir, ['status', '--porcelain'])
+      const status = await gitStdout(runGit, dir, ['status', '--porcelain'])
       provenance.dirty = status.trim().length > 0
     } catch { /* ignore */ }
     return provenance
@@ -67,14 +56,19 @@ export async function gitProvenance(dir: string): Promise<GitProvenance> {
  * requested ref when one is pinned. A full clone is used on purpose so any
  * reviewed commit SHA can be checked out deterministically.
  */
-export async function cloneWorkflowPluginSource(url: string, ref: string | undefined, destDir: string): Promise<{ resolvedSha?: string; branch?: string }> {
+export async function cloneWorkflowPluginSource(
+  url: string,
+  ref: string | undefined,
+  destDir: string,
+  runGit: GitExecRunner = rawGitExecRunner,
+): Promise<{ resolvedSha?: string; branch?: string }> {
   const parent = dirname(destDir)
   await fs.mkdir(parent, { recursive: true })
   await fs.rm(destDir, { recursive: true, force: true })
   // Clone from the parent directory: `git clone` creates the destination itself.
-  await git(parent, ['clone', url, destDir], GIT_CLONE_TIMEOUT_MS)
-  if (ref) await git(destDir, ['checkout', '--detach', ref])
-  const provenance = await gitProvenance(destDir)
+  await gitStdout(runGit, parent, ['clone', url, destDir], GIT_CLONE_TIMEOUT_MS)
+  if (ref) await gitStdout(runGit, destDir, ['checkout', '--detach', ref])
+  const provenance = await gitProvenance(destDir, runGit)
   return {
     ...(provenance.head ? { resolvedSha: provenance.head } : {}),
     ...(provenance.branch ? { branch: provenance.branch } : {}),

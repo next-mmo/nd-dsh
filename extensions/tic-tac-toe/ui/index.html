@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <!-- Mirrors the CSP the ND asset server sets on this document; defense in depth. -->
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'none'; script-src nd-extension-ui:; style-src nd-extension-ui: 'unsafe-inline'; img-src nd-extension-ui: data: blob:; font-src nd-extension-ui:; connect-src 'none'; base-uri 'none'; form-action 'none'" />
+  <title>3D Tic-Tac-Toe</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #131519;
+      --panel: #1b1e25;
+      --border: #2a2f3a;
+      --text: #e7e9ee;
+      --faint: #9aa3b2;
+      --accent: #fbbf24;
+      --accent-2: #a78bfa;
+      --win: #4ade80;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 12px 14px;
+      background: var(--bg);
+      color: var(--text);
+      font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+      user-select: none;
+    }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+    .group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .label { font-size: 11px; color: var(--faint); margin-right: 2px; }
+    button {
+      font: inherit;
+      color: var(--text);
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 5px 11px;
+      cursor: pointer;
+    }
+    button:hover { border-color: #3d4452; }
+    button.on { border-color: var(--accent); color: var(--accent); }
+    button:disabled { opacity: 0.45; cursor: default; }
+    #status { min-height: 20px; font-weight: 600; }
+    #board { position: relative; flex: 1; min-height: 240px; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); }
+    #board canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+    #toasts { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); z-index: 3; display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none; }
+    .toast {
+      padding: 6px 14px;
+      border-radius: 999px;
+      background: rgba(27, 30, 37, 0.92);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+      animation: toast-in 180ms ease-out;
+    }
+    .toast.win { border-color: var(--win); color: var(--win); }
+    .toast.loss { border-color: var(--accent-2); color: var(--accent-2); }
+    .toast.leaving { opacity: 0; transform: translateY(4px); transition: opacity 240ms ease, transform 240ms ease; }
+    @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    #fallback { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; color: var(--faint); }
+    #scores { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--faint); }
+    #scores b { color: var(--text); font-variant-numeric: tabular-nums; }
+    #scores .swin b { color: var(--accent); }
+    #scores .sloss b { color: var(--accent-2); }
+    #scores .sdraw b { color: var(--win); }
+    .hint { font-size: 11px; color: var(--faint); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="group" role="group" aria-label="Game mode">
+      <span class="label">Mode</span>
+      <button id="mode-ai" class="on" type="button">VS AI</button>
+      <button id="mode-2p" type="button">2 players</button>
+      <span id="difficulty-group" class="group">
+        <span class="label">AI</span>
+        <button id="diff-hard" class="on" type="button">Hard</button>
+        <button id="diff-easy" type="button">Easy</button>
+      </span>
+    </div>
+    <div class="group">
+      <button id="new-game" type="button">New game</button>
+      <button id="reset-scores" type="button">Reset scores</button>
+    </div>
+  </header>
+
+  <div id="status" role="status" aria-live="polite">Your turn — you are X</div>
+  <div id="board">
+    <div id="toasts" aria-live="polite"></div>
+    <div id="fallback">This device could not create a WebGL context, so the 3D board is unavailable.</div>
+  </div>
+
+  <div id="scores">
+    <span class="swin">X wins <b id="score-wins">—</b></span>
+    <span class="sloss">O wins <b id="score-losses">—</b></span>
+    <span class="sdraw">Draws <b id="score-draws">—</b></span>
+    <span>Win streak <b id="score-streak">—</b></span>
+    <span class="hint">Click a cell or press 1–9 to play</span>
+  </div>
+
+  <script type="module" src="./game.js"></script>
+</body>
+</html>

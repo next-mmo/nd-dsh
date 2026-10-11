@@ -49,7 +49,7 @@ test('product shell boots in General and can enter the Coding workspace', async 
   await expect(general).toHaveAttribute('aria-pressed', 'true')
   await expect(page.getByRole('group', { name: 'Coding surface' })).toHaveCount(0)
   const navigation = page.getByRole('navigation', { name: 'ND-DSH navigation' })
-  for (const label of ['Home', 'Company', 'Agent', 'Design', 'Settings']) {
+  for (const label of ['Personal', 'Company', 'Agent', 'Design', 'Settings']) {
     await expect(navigation.getByTitle(label)).toBeVisible()
   }
   await expect(navigation.getByTitle('QA')).toHaveCount(0)

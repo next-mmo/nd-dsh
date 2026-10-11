@@ -34,6 +34,12 @@ extraResources:
     to: browser-companion
   - from: extensions/quit-process
     to: nd-extensions/quit-process
+  - from: extensions/translate
+    to: nd-extensions/translate
+  - from: extensions/clipboard-history
+    to: nd-extensions/clipboard-history
+  - from: extensions/password-vault
+    to: nd-extensions/password-vault
   - from: .release/harness
     to: vendor/deepseek-harness
   - from: .release/harness/node_modules
@@ -50,6 +56,8 @@ extraResources:
       - nd-extension-mcp.mjs
       - nd-extension-runtime.mjs
       - nd-browser-companion-runtime.mjs
+      - nd-agent-browser-cli.mjs
+      - nd-background-process.cjs
       - register-browser-native-host.mjs
   - from: node_modules/agent-browser
     to: node_modules/agent-browser
@@ -59,8 +67,14 @@ extraResources:
       - '!bin/agent-browser-darwin*'
   - from: resources/browser-extensions
     to: browser-extensions
+    filter:
+      - '**/*'
+      # Chromium's generated rule-set index; it is rebuilt per profile at runtime.
+      - '!**/_metadata/**'
   - from: resources/nd-pencil
     to: nd-pencil
+  - from: resources/nd-bundles
+    to: nd-bundles
   - from: LICENSE
     to: LICENSE.nd-dsh
 

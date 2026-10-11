@@ -1,6 +1,7 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, screen, shell, type IpcMainInvokeEvent } from 'electron'
 import { join } from 'node:path'
 import { CAPABILITIES_IPC, type CapabilityKind, type CapabilityProviderStatus, type CapabilitySubjectType } from '../shared/capabilities.js'
+import { asRunImages } from './run-images.js'
 import type { AppInspectArea, AppInspectMode, AppInspectOptions, BrowserBounds, DshSurface, HarnessRunOptions, InspectScope, ModelProvider, QaSuiteId, ThemeMode } from '../shared/contracts.js'
 import { IPC } from '../shared/contracts.js'
 import { EXTENSIONS_IPC } from '../shared/extensions.js'
@@ -8,14 +9,17 @@ import type { OrganizationMutation, OrganizationSnapshot } from '../shared/organ
 import { USAGE_IPC, summarizeUsage, type UsageAttribution, type UsageScope, type UsageSummary } from '../shared/usage.js'
 import { WORKFLOW_PLUGINS_IPC } from '../shared/workflow-plugins.js'
 import { isLauncherHandoffTarget, isQuickLauncherShortcutMode } from '../shared/quick-launcher.js'
+import { isCaptureDelaySeconds, isGlobalShortcutId, type GlobalShortcutId } from '../shared/shortcuts.js'
 import { isWorkspaceProfile } from '../shared/workspace-profile.js'
 import { asNdContext, isNdContext } from '../shared/nd-context.js'
 import type { LauncherPopupController } from './launcher-popup.js'
+import type { ShortcutRegistry } from './shortcut-registry.js'
 import { projectRoot, presetSourceDir } from './app-paths.js'
 import { NdSkillService } from './skills/nd-skill-service.js'
 import { capturePrimaryDisplay, captureSelfWindow } from './capture/app-capture.js'
 import { describePick, ExternalElementStage, formatExternalElementContext, pickElementInExternalApp, RecentPickStore, type ExternalPick } from './capture/external-inspect.js'
 import type { BrowserController } from './browser/browser-controller.js'
+import type { BrowserPlatformService } from './browser-platform/browser-platform-service.js'
 import type { CapabilityRegistry } from './capabilities/capability-registry.js'
 import type { DshSurfaceController } from './dsh/dsh-surface.js'
 import type { CodingEngineRegistry } from './engines/coding-engine-registry.js'
@@ -36,6 +40,12 @@ import { InvocationBroker } from './extensions/invocation-broker.js'
 import { registerNdExtensionIpc } from './extensions/nd-ipc.js'
 import { HomeStore } from './home/home-store.js'
 import type { GitService } from './git/git-service.js'
+import type { GitExecRunner } from './git/git-cli.js'
+import type { CoreMedia } from './core/core-media.js'
+import type { CoreClipboard } from './core/core-clipboard.js'
+import type { CoreMediaKeys } from './core/core-media-keys.js'
+import type { NdMediaKeyKind } from '../shared/media-session.js'
+import type { CoreVault } from './core/core-vault.js'
 import type { HarnessService } from './harness/harness-service.js'
 import type { ProviderStore } from './providers.js'
 import type { QaService } from './qa/qa-service.js'
@@ -53,7 +63,11 @@ interface IpcDependencies {
   preloadPath: string
   /** Frameless quick launcher popup; its renderer is admitted to launcher-only channels. */
   launcherPopup: LauncherPopupController
+  /** OS-wide hotkeys. Validation and rollback live in the registry, not here. */
+  shortcuts: ShortcutRegistry
   browser: BrowserController
+  /** Multi-tab browser platform, for extension hosts that manage real browser tabs. */
+  browserPlatform?: Pick<BrowserPlatformService, 'createTab' | 'activateTab' | 'closeTab' | 'tabs'>
   dshSurface: DshSurfaceController
   engines: CodingEngineRegistry
   capabilities: CapabilityRegistry
@@ -67,6 +81,16 @@ interface IpcDependencies {
   externalElements: ExternalElementStage
   recentPicks: RecentPickStore
   git: GitService
+  /** nd-core-backed Git for the workflow-plugin and extension-package pipelines. */
+  coreGit?: GitExecRunner
+  /** nd-core-backed native image and wallpaper surface for extensions. */
+  coreMedia?: CoreMedia
+  /** nd-core-backed clipboard read/write/watcher surface for extensions. */
+  coreClipboard?: CoreClipboard
+  /** nd-core-backed OS media transport keys, the launcher transport fallback. */
+  coreMediaKeys?: CoreMediaKeys
+  /** nd-core-backed encrypted local password vault for extensions. */
+  coreVault?: CoreVault
   qa: QaService
   sessionArchive: SessionArchiveStore
   /** ND's durable token accounting, captured from the runtime event stream. */
@@ -81,7 +105,7 @@ interface IpcDependencies {
 
 type Handler = (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown | Promise<unknown>
 
-// The namespace segment is camelCase upstream too (agentPresets.list,
+// The namespace segment is camelCase upstream too (agentPreset.list,
 // settings.update), not lowercase-only.
 const GATEWAY_METHOD_PATTERN = /^[a-z][a-zA-Z0-9]*\.[a-zA-Z][a-zA-Z0-9]*$/
 const GATEWAY_METHOD_MAX_LENGTH = 64
@@ -210,7 +234,11 @@ export function registerIpc(deps: IpcDependencies): () => void {
   // explicitly to a company/project, and mirror repository board state. ND
   // owns identity and authorization; plugins only report read-only state.
   const workflowPluginStore = new WorkflowPluginStore(join(app.getPath('userData'), 'agent-workflow-plugins.json'))
-  const workflowService = new WorkflowService({ store: workflowPluginStore, organization: deps.organizationStore })
+  const workflowService = new WorkflowService({
+    store: workflowPluginStore,
+    organization: deps.organizationStore,
+    ...(deps.coreGit ? { git: deps.coreGit } : {}),
+  })
   const disposeWorkflowIpc = registerWorkflowIpc(deps.window, workflowService)
   workflowPluginStore.setOnChanged((state) => {
     if (!deps.window.isDestroyed()) deps.window.webContents.send(WORKFLOW_PLUGINS_IPC.changedEvent, state)
@@ -222,7 +250,7 @@ export function registerIpc(deps: IpcDependencies): () => void {
   // between surfaces.
   const userDataRoot = app.getPath('userData')
   const homeStore = new HomeStore(join(userDataRoot, 'nd-home'))
-  const packageStore = new ExtensionPackageStore(join(userDataRoot, 'nd-extensions'))
+  const packageStore = new ExtensionPackageStore(join(userDataRoot, 'nd-extensions'), deps.coreGit)
   const invocationState = new InvocationStateStore(userDataRoot)
   const nativeHost = new NativeHostRegistry()
   const invocationBroker = new InvocationBroker({
@@ -261,7 +289,12 @@ export function registerIpc(deps: IpcDependencies): () => void {
     host: nativeHost,
     organization: deps.organizationStore,
     browser: deps.browser,
+    ...(deps.browserPlatform ? { browserPlatform: deps.browserPlatform } : {}),
+    providers: deps.providers,
     workflow: workflowService,
+    ...(deps.coreMedia ? { media: deps.coreMedia } : {}),
+    ...(deps.coreClipboard ? { coreClipboard: deps.coreClipboard } : {}),
+    ...(deps.coreVault ? { coreVault: deps.coreVault } : {}),
     onHomeChanged: () => { void syncHomeSessions() },
   })
   // Personal chats run outside the active workspace but must stay listed in the
@@ -306,6 +339,9 @@ export function registerIpc(deps: IpcDependencies): () => void {
       },
     })
     floatWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+    floatWindow.on('closed', () => {
+      floatCaptureReady = false
+    })
     const currentUrl = deps.window.webContents.getURL()
     if (currentUrl) void floatWindow.loadURL(`${currentUrl.split('#')[0]}#/float`)
     return floatWindow
@@ -417,6 +453,70 @@ export function registerIpc(deps: IpcDependencies): () => void {
     return deps.theme.setQuickLauncherMode(mode)
   })
 
+  // Rebindable OS-wide hotkeys. `rebind` throws with the reason a key was
+  // refused — reserved by the OS, or already owned by another app — and leaves
+  // the previous binding live, so the message can be shown to the user as-is.
+  handle(IPC.shortcutsState, () => deps.shortcuts.state())
+  handle(IPC.shortcutsRebind, (_event, id: unknown, accelerator: unknown) => deps.shortcuts.rebind(id, accelerator))
+
+  // The float overlay reads the delay to run a timed capture; only Settings writes it.
+  handleFloatOverlay(IPC.windowCaptureDelay, () => deps.theme.captureDelay())
+  handle(IPC.windowCaptureDelaySet, (_event, seconds: unknown) => {
+    if (!isCaptureDelaySeconds(seconds)) throw new Error(`Unknown capture delay: ${String(seconds)}`)
+    return deps.theme.setCaptureDelay(seconds)
+  })
+
+  // The full window cannot draw over the screen; the float overlay can. Deliver
+  // the capture request there. Guessing whether the overlay frame has booted is
+  // unreliable (isLoading() is false both before loadURL starts and after it
+  // finishes), so the overlay frame announces readiness and pending requests
+  // are handed over at that point.
+  let pendingCapture: GlobalShortcutId | null = null
+  let floatCaptureReady = false
+  handleFloatOverlay(IPC.windowCaptureReady, (event) => {
+    floatCaptureReady = true
+    if (pendingCapture !== null) {
+      const queued = pendingCapture
+      pendingCapture = null
+      event.sender.send(IPC.windowCaptureRequestEvent, queued)
+    }
+    return true
+  })
+  handleFloatOverlay(IPC.windowCapturePull, () => {
+    const action = pendingCapture
+    pendingCapture = null
+    return action
+  })
+  // The overlay frame captures but the composer lives in the full window, so
+  // the finished attachment is relayed through main after strict validation.
+  handleFloatOverlay(IPC.windowCaptureAttach, (_event, shot: unknown) => {
+    const value = (shot ?? {}) as { id?: unknown; dataUrl?: unknown }
+    if (
+      typeof value.id !== 'string' || value.id.length === 0 || value.id.length > 64
+      || typeof value.dataUrl !== 'string' || value.dataUrl.length > 40_000_000
+      || !value.dataUrl.startsWith('data:image/png;base64,')
+    ) {
+      throw new Error('Malformed capture attachment')
+    }
+    if (deps.window.isDestroyed()) return false
+    deps.window.webContents.send(IPC.windowCaptureAttachEvent, { id: value.id, dataUrl: value.dataUrl })
+    return true
+  })
+  handle(IPC.windowCaptureForward, (_event, action: unknown) => {
+    if (!isGlobalShortcutId(action)) throw new Error(`Unknown capture action: ${String(action)}`)
+    const target = floatWindow
+    if (!target || target.isDestroyed()) {
+      console.warn(`Capture request for ${String(action)} dropped: the capture overlay window is not open`)
+      return { delivered: false }
+    }
+    if (floatCaptureReady && !target.webContents.isLoading()) {
+      target.webContents.send(IPC.windowCaptureRequestEvent, action)
+    } else {
+      pendingCapture = action
+    }
+    return { delivered: true }
+  })
+
   // Popup visibility and handoff: the popup renderer hides itself via Escape
   // or a picked action; the primary renderer may also toggle the popup (tests,
   // and any future in-app affordance for the Raycast-style surface).
@@ -435,6 +535,27 @@ export function registerIpc(deps: IpcDependencies): () => void {
       typeof text === 'string' ? text : undefined,
       isNdContext(context) ? asNdContext(context) : undefined,
     )
+  })
+
+  // OS-style media transport: the row drives the tab ND is playing; when the
+  // page offers no button of its own to press, the OS media key takes over,
+  // which also reaches media playing outside ND like the OS flyout does.
+  const sendMediaKey = async (key: NdMediaKeyKind): Promise<void> => {
+    await deps.coreMediaKeys?.sendKey(key).catch(() => false)
+  }
+  handleLauncherSurface(IPC.mediaState, () => deps.browser.media().state())
+  handleLauncherSurface(IPC.mediaPlayPause, async () => {
+    const result = await deps.browser.media().playPause()
+    if (result === 'none') await sendMediaKey('play-pause')
+    return { ok: true }
+  })
+  handleLauncherSurface(IPC.mediaNext, async () => {
+    if (!(await deps.browser.media().skip('next'))) await sendMediaKey('next')
+    return { ok: true }
+  })
+  handleLauncherSurface(IPC.mediaPrevious, async () => {
+    if (!(await deps.browser.media().skip('previous'))) await sendMediaKey('previous')
+    return { ok: true }
   })
 
   handle(IPC.enginesList, () => deps.engines.list())
@@ -600,6 +721,21 @@ export function registerIpc(deps: IpcDependencies): () => void {
   }
   handleFloatOverlay(IPC.captureInspectApp, inspectApp)
 
+  // Capture for the chat composer: identical pixels to inspect, but instead of
+  // bridging into the session the bytes return to the trusted renderer so the
+  // capture can wait in the composer as an unsent attachment.
+  const captureForComposer = async (_event: IpcMainInvokeEvent, scope: unknown, rawOptions?: unknown) => {
+    const inspectScope = asInspectScope(scope)
+    const options = asInspectOptions(rawOptions)
+    const mode = options?.mode ?? 'full'
+    const capture = inspectScope === 'self'
+      ? await captureSelfWindow(deps.window, options?.rect)
+      : await capturePrimaryDisplay(options?.rect)
+    clipboard.writeImage(nativeImage.createFromBuffer(Buffer.from(capture.data, 'base64')))
+    return { ...capture, mode, copiedToClipboard: true }
+  }
+  handleFloatOverlay(IPC.captureForComposer, captureForComposer)
+
   handle(IPC.browserState, () => deps.browser.state())
   handle(IPC.browserSetBounds, (_event, value) => deps.browser.setBounds(asBounds(value)))
   handle(IPC.browserSetVisible, (_event, visible) => deps.browser.setVisible(Boolean(visible)))
@@ -622,11 +758,12 @@ export function registerIpc(deps: IpcDependencies): () => void {
     await deps.workspaces.openRoot(state.root)
     return state
   })
-  handle(IPC.workspacePickPath, async () => {
+  handle(IPC.workspacePickPath, async (_event, value) => {
     // Form-field helper: choose a folder without switching or pinning the active workspace.
+    const options = value && typeof value === 'object' ? value as { title?: string; defaultPath?: string } : undefined
     const result = await dialog.showOpenDialog({
-      title: 'Choose workspace folder',
-      defaultPath: deps.projectWorkspace.state().root,
+      title: typeof options?.title === 'string' && options.title.trim() ? options.title.trim() : 'Choose workspace folder',
+      defaultPath: typeof options?.defaultPath === 'string' && options.defaultPath.trim() ? options.defaultPath.trim() : deps.projectWorkspace.state().root,
       properties: ['openDirectory', 'createDirectory'],
     })
     const selected = result.filePaths[0]
@@ -1000,6 +1137,7 @@ function asRunOptions(value: unknown): HarnessRunOptions {
   if (workspaceCwd !== undefined && (typeof workspaceCwd !== 'string' || !workspaceCwd.trim() || workspaceCwd.length > 4_096)) {
     throw new Error('workspaceCwd must be a short non-empty path')
   }
+  const images = asRunImages(record.images)
   return {
     ...(typeof skillScope === 'string' ? { skillScope } : {}),
     ...(typeof skillSelectionId === 'string' ? { skillSelectionId } : {}),
@@ -1009,6 +1147,7 @@ function asRunOptions(value: unknown): HarnessRunOptions {
     ...(typeof model === 'string' ? { model: model.trim() } : {}),
     ...(permissionMode !== undefined ? { permissionMode } : {}),
     ...(typeof workspaceCwd === 'string' ? { workspaceCwd: workspaceCwd.trim() } : {}),
+    ...(images !== undefined ? { images } : {}),
   }
 }
 

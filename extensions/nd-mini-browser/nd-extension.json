@@ -1,0 +1,77 @@
+{
+  "protocol": "nd.extension/1",
+  "id": "nd.mini-browser",
+  "name": "ND Mini Browser",
+  "description": "A keep-alive browser dashboard: open, switch, and close many real tabs of the ND built-in browser from a persistent chrome, with quick links and launcher quick-open. The session survives dialog closes, app navigation, and restarts — a sleeping tab resumes by URL.",
+  "version": "0.3.0",
+  "apiVersion": 1,
+  "contexts": ["personal"],
+  "permissions": ["minibrowser.read", "minibrowser.write"],
+  "settings": [],
+  "contributions": {
+    "commands": [
+      {
+        "id": "mini-browser-open",
+        "title": "ND Mini Browser",
+        "description": "Open the mini browser chrome with your tab session and quick links.",
+        "keywords": ["browser", "tabs", "internet", "web", "youtube", "video", "quick open"],
+        "host": "minibrowser.session.list",
+        "openViewId": "mini-browser",
+        "contexts": ["personal"]
+      },
+      {
+        "id": "mini-browser-open-url",
+        "title": "Open in browser tab",
+        "description": "Open the typed website as a new tab of the ND built-in browser — quick open, no chrome needed.",
+        "keywords": ["open", "website", "url", "link", "quick"],
+        "host": "minibrowser.tab.open",
+        "input": [
+          { "id": "text", "title": "Website address", "type": "text", "required": true }
+        ],
+        "contexts": ["personal"]
+      },
+      {
+        "id": "mini-browser-save-link",
+        "title": "Save quick link",
+        "description": "Save the typed website address as a quick link you can open any time.",
+        "keywords": ["save", "bookmark", "quick link", "website", "address"],
+        "host": "minibrowser.link.save",
+        "input": [
+          { "id": "text", "title": "Website address", "type": "text", "required": true }
+        ],
+        "contexts": ["personal"]
+      }
+    ],
+    "views": [
+      {
+        "id": "mini-browser",
+        "title": "Mini Browser",
+        "description": "Your tab session and quick links. Type an address to open a real ND-browser tab; tabs keep running while you work.",
+        "kind": "web",
+        "entry": "ui/index.html",
+        "contexts": ["personal"],
+        "actions": [
+          { "id": "session", "title": "Read the tab session and quick links", "host": "minibrowser.session.list" },
+          { "id": "open", "title": "Open an address in a new tab", "host": "minibrowser.tab.open" },
+          { "id": "activate", "title": "Switch to a tab", "host": "minibrowser.tab.activate" },
+          { "id": "close", "title": "Close a tab", "host": "minibrowser.tab.close" },
+          { "id": "link-save", "title": "Save a quick link", "host": "minibrowser.link.save" },
+          { "id": "link-remove", "title": "Remove a quick link", "host": "minibrowser.link.remove" }
+        ]
+      },
+      {
+        "id": "mini-browser-quick-links",
+        "title": "Quick links",
+        "description": "No saved links yet. Type an address and run Save quick link.",
+        "kind": "list",
+        "host": "minibrowser.link.list",
+        "itemTitleKey": "title",
+        "itemBodyKey": "url",
+        "contexts": ["personal"],
+        "actions": [
+          { "id": "mini-browser-quick-open", "title": "Open link", "host": "minibrowser.tab.open" }
+        ]
+      }
+    ]
+  }
+}

@@ -73,6 +73,17 @@ Installation is local to the user's ND profile and independent of context. Activ
 
 ND Home owns persistent personal notes, capture/artifact references, and explicitly scoped chat records in ND-managed user storage. It is not a synthetic company, project, or a grant over the user's home directory.
 
+**Personal is a place, not an absence.** The product surface for the personal context is labeled **Personal** in navigation, headings, and action results; ND Home remains the name of the personal storage layer. Personal must never be presented as the empty state of a company.
+
+**A surface belongs to exactly one context.** When an extension action makes ND present something — a browser tab, an extension view, a chat — ND presents it in the context that owns it:
+
+- A Personal-owned browser tab surfaces in the Personal space's browser pane at full size — the same pane treatment as the Agent workbench, not a side panel — even while a company or project is the active selection. It must not appear inside a company's or a project's workbench.
+- A company/project-owned tab keeps the company/project workbench.
+- Ownership travels with the event (`browser-focus` carries the owning context). The renderer presents that context; it must not re-derive the context from whatever company or project happens to be selected.
+- Running extension views are labeled with their owning context wherever they are listed, so a Personal view sitting on the company/project row is identifiable as Personal.
+
+The embedded browser profile is shared app-wide, so context labeling — not profile separation — is what currently keeps Personal browsing identifiable. Per-context browser profiles and context-scoped history remain an open isolation item.
+
 An engine requiring a working directory receives a managed per-chat working folder. That path alone is not a sandbox. Enable filesystem/process capabilities only when the adapter can enforce the selected policy.
 
 Bind each chat/run to its initial context and working folder. Switching the active company, project, or launcher context does not rebind existing sessions. Starting a chat in another context creates a separate context-bound session.
@@ -173,6 +184,15 @@ Log action identity, context, decision, timing, and outcome. Do not log raw clip
 Hide ND's capture overlays/popup from the image. Cancellation creates no saved capture or model request. Handle negative monitor coordinates and different display scale factors correctly.
 
 The canonical agent browser remains the visible embedded WebContentsView, with existing browser session/config and policy contracts. Never start a hidden automation browser. Explicit external opening is not an agent browser-control bypass.
+
+### Personal browser dialpad
+
+The Personal space presents the ND browser as its own full-size pane, and that pane opens on a dialpad: ND's top sites (Google, YouTube, Gmail, Maps, Translate, Wikipedia, GitHub, X, Reddit) plus the user's own saved links.
+
+- A tile opens a real tab of the embedded browser and the dialpad gets out of the way; the Dialpad control on the pane strip brings it back.
+- "Save this site" records the current address as a personal ND record in ND-managed user storage — the same store as notes, captures, and chats — and re-saving an address refreshes its tile instead of duplicating it.
+- Saved links are Personal records: they are never written to company or project memory, and removing a tile deletes only the link.
+- Dialpad links belong to the personal context only. The Agent workbench browser stays a work surface without a personal speed dial.
 
 ## 9. Project Workflow pilot
 

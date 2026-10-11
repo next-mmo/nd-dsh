@@ -19,6 +19,7 @@ import { ExtensionSettings } from './ExtensionSettings'
 import { ModelSettings } from './ModelSettings'
 import { PresetSettings } from './PresetSettings'
 import { RuntimeSettings } from './RuntimeSettings'
+import { ShortcutSettings } from './ShortcutSettings'
 import { WorkspaceSettings } from './WorkspaceSettings'
 import { searchSettings, type SettingsSearchEntry } from '../lib/settings-search'
 import { cn } from '../lib/utils'
@@ -69,6 +70,7 @@ const GENERAL_SUB_TABS: { id: GeneralSubTab; label: string }[] = [
   { id: 'runtime', label: 'Runtime' },
   { id: 'workspace', label: 'Workspace' },
   { id: 'browser', label: 'Browser' },
+  { id: 'shortcuts', label: 'Shortcuts' },
   { id: 'about', label: 'About' },
 ]
 
@@ -234,13 +236,14 @@ export function SettingsPane({
               </nav>
             </div>
             <div className="min-h-0 flex-1 overflow-auto px-[26px] pb-[42px] pt-1.5">
-              {activeSubTab === 'runtime' && <RuntimeSettings harness={harness} onError={onError} />}
+              {activeSubTab === 'runtime' && <RuntimeSettings harness={harness} />}
               {activeSubTab === 'workspace' && (
                 <WorkspaceSettings workspace={workspace} onWorkspaceChanged={onWorkspaceChanged} onError={onError} />
               )}
               {activeSubTab === 'browser' && (
                 <BrowserSettings browser={browser} onError={onError} onOpenBrowser={onOpenBrowser} />
               )}
+              {activeSubTab === 'shortcuts' && <ShortcutSettings onError={onError} />}
               {activeSubTab === 'about' && (
                 <AboutSettings workspace={workspace} harness={harness} browser={browser} onError={onError} />
               )}

@@ -329,6 +329,7 @@ export class CodexCliEngine {
     const log = this.options.log ?? ((line: string) => console.warn(line))
     const spawnProcess = this.options.spawnProcess ?? spawn
     const child = spawnProcess(argv[0] as string, argv.slice(1), {
+      windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'],
       env: environment,
       // A process group lets POSIX teardown take the whole tree down; Windows

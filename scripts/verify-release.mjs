@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import { dirname, extname, join, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
-import { assertNoOfficeEngines } from './release-runtime-policy.mjs'
+import { assertNoOfficeEngines, assertTranslateManifest } from './release-runtime-policy.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const configOnly = process.argv.includes('--config-only')
@@ -36,6 +36,8 @@ for (const marker of [
   'to: THIRD_PARTY_NOTICES.nd-dsh.md',
   'from: extensions/browser-companion',
   'to: browser-companion',
+  'from: extensions/translate',
+  'to: nd-extensions/translate',
   'from: node_modules/agent-browser',
   'from: resources/browser-extensions',
   'to: browser-extensions',
@@ -58,6 +60,7 @@ if (/\n\s*- from: package\.json\b/.test(extraResourcesConfig)) {
 verifyProductionRendererIsolation()
 
 if (!configOnly) {
+  await assertTranslateManifest(join(root, 'extensions', 'translate', 'nd-extension.json'))
   await assertNoOfficeEngines(join(root, '.release', 'harness'))
   const requiredFiles = [
     '.release/release-manifest.json',
@@ -68,10 +71,22 @@ if (!configOnly) {
     `.release/nd-browser-host/${process.platform === 'win32' ? 'nd-browser-host.exe' : 'nd-browser-host'}`,
     'extensions/browser-companion/manifest.json',
     'extensions/browser-companion/service-worker.js',
+    'extensions/translate/nd-extension.json',
     'resources/browser-extensions/nd-browser-tools/manifest.json',
     'resources/browser-extensions/nd-browser-tools/popup.html',
     'resources/browser-extensions/nd-browser-tools/popup.js',
+    'resources/browser-extensions/nd-ad-block/manifest.json',
+    'resources/browser-extensions/nd-ad-block/background.js',
+    'resources/browser-extensions/nd-ad-block/rules/ads.json',
+    'resources/browser-extensions/nd-ad-block/rules/youtube.json',
+    'resources/browser-extensions/nd-ad-block/content/youtube-ads.js',
+    'resources/browser-extensions/nd-ad-block/content/youtube-ads-report.js',
+    'resources/browser-extensions/nd-ad-block/content/youtube-ads.css',
+    'resources/browser-extensions/nd-ad-block/popup.html',
+    'resources/browser-extensions/nd-ad-block/popup.js',
     'scripts/nd-browser-companion-runtime.mjs',
+    'scripts/nd-agent-browser-cli.mjs',
+    'scripts/nd-background-process.cjs',
     'scripts/register-browser-native-host.mjs',
     '.release/harness/lib/bin.js',
     '.release/harness/LICENSE',

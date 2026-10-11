@@ -19,14 +19,29 @@ interface EngineInstallHelpProps {
   retrying: boolean
   onRetry(): void
   onError(message: string): void
+  canSetup?: boolean | undefined
+  onSetup?: (() => void) | undefined
+  settingUp?: boolean | undefined
+  setupProgress?: number | undefined
+  setupMessage?: string | undefined
 }
 
 /**
- * Guidance for a third-party CLI engine ND cannot install itself: the official
- * page, a copyable official command, and a re-detect trigger for after the
- * user installs it.
+ * Guidance for a third-party CLI engine: direct automated setup within ND
+ * when an approved package adapter exists, or external install guidance
+ * (official page, copyable official command, and re-detect trigger).
  */
-export function EngineInstallHelp({ help, retrying, onRetry, onError }: EngineInstallHelpProps) {
+export function EngineInstallHelp({
+  help,
+  retrying,
+  onRetry,
+  onError,
+  canSetup,
+  onSetup,
+  settingUp,
+  setupProgress,
+  setupMessage,
+}: EngineInstallHelpProps) {
   const [platform, setPlatform] = useState('')
   const [copied, setCopied] = useState(false)
 
@@ -52,6 +67,17 @@ export function EngineInstallHelp({ help, retrying, onRetry, onError }: EngineIn
 
   return (
     <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1.5">
+      {canSetup && onSetup ? (
+        <SettingsButton
+          disabled={settingUp || retrying}
+          onClick={onSetup}
+          className="border-primary/30 bg-primary/10 px-2.5 py-1 text-[10px] font-semibold text-primary hover:bg-primary/20"
+        >
+          {settingUp
+            ? (setupMessage ? `${setupMessage}${setupProgress !== undefined ? ` (${setupProgress}%)` : ''}` : 'Setting up in ND…')
+            : 'Download & Setup in ND'}
+        </SettingsButton>
+      ) : null}
       {help?.url ? (
         <button
           type="button"

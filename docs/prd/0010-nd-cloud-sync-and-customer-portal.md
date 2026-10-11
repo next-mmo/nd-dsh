@@ -45,6 +45,8 @@ Account
 
 Cloud tenant and ND Company are separate concepts. One tenant may contain multiple ND companies.
 
+Authenticated users must bind to the company/project membership and capability contracts in [Human + AI company and project team management](../plan/human-ai-company-team-management.md). Implement invitations, scoped role grants, delegated administration and revocation over that shared model. Cloud sessions must not trust a selected local profile or caller-supplied member ID as identity, and tenant membership must not implicitly expose every company/project. This remains deferred work after the PRD 0009 local gate.
+
 ## 4. Local-first rule
 
 ND starts and operates from local state. If cloud is unavailable:
@@ -219,6 +221,8 @@ Task/policy/approval state remains server-transactional. CRDT is not required fo
 
 ## 14. Customer Web
 
+The [0054 frontend task](../tasks/0054-human-ai-team-frontend.md) covers Desktop/Customer Web screen reuse, transport adapters, human membership, mixed-team assignment, realtime discussion, review and account/host states. React/TypeScript and existing ND component foundations are the planning baseline; Rust serves the backend. Customer billing UX follows backend entitlements, and staff Admin remains a separate application. This is task planning only; implementation remains on hold.
+
 Primary surfaces may include:
 
 - Overview / Needs You;
@@ -261,6 +265,56 @@ Initial preference:
 - outbox/event stream for realtime;
 - WebSocket/SSE service for client updates;
 - add Redis only when measured fanout/cache needs justify it.
+
+### Rust main server proposal — 2026-10-09
+
+The product owner approved Rust for the hosted server, shared user data and realtime collaboration on **2026-10-09**, with paid hosted accounts later. Approval is for direction and task definition only: **do not code yet**. The [0053 task breakdown](../tasks/0053-rust-hosted-human-ai-team-backend.md) records dependencies and acceptance gates. Exact framework/library versions, deployment, identity/billing providers and schemas remain design decisions; hosted implementation remains behind the local acceptance gate and a later coding instruction.
+
+Start with one modular Rust application service and a background worker from the same codebase. Separate modules by authority, rather than starting with independently deployed microservices:
+
+| Module | Responsibility |
+| --- | --- |
+| Accounts / devices | Authenticated identities, sessions, device enrollment and revocation; integrate a reviewed OAuth/OIDC provider |
+| Membership / policy | Tenant, company and project membership, scoped grants, invitation acceptance and authorization |
+| Collaboration | Durable messages, task discussion, decisions, approval records and authorized history/search |
+| Realtime / sync | Authenticated subscriptions, scoped event delivery, replay cursors, offline reconciliation and connected-host commands |
+| Storage / audit | Database migrations, transactions, attachment metadata, backup/restore and audit records |
+| Usage / entitlements | Tenant subscription mapping, hosted feature grants, seat/storage quotas and usage accounting |
+| Billing adapter | Verified provider events, subscription reconciliation and idempotent entitlement updates; provider remains undecided |
+
+Proposed implementation stack:
+
+- Rust + Tokio + [Axum](https://docs.rs/axum/latest/axum/) for the HTTP service; Axum's [WebSocket support](https://docs.rs/axum/latest/axum/extract/ws/index.html) for bidirectional realtime/host channels.
+- [SQLx PostgreSQL support](https://docs.rs/sqlx/latest/sqlx/postgres/index.html) for transactions and connection pooling against the hosted relational database.
+- PostgreSQL for shared users/memberships, company/project records, messages, decisions/approvals, ordered change/outbox records, subscription metadata and usage counters.
+- S3-compatible object storage for explicitly shared attachments/artifacts; the database stores object metadata and access scope.
+- Local desktop storage remains independent: current organization JSON snapshots, planned transactional SQLite. Hosted storage does not replace offline local operation.
+
+```text
+ND Desktop / Customer Web
+    -> Rust API: identity + membership + policy + hosted entitlement checks
+        -> PostgreSQL: durable shared records + transactional outbox
+        -> object storage: authorized attachments
+        -> worker / WebSocket delivery: persisted events to authorized clients
+
+Connected ND host <-> authenticated outbound channel <-> Rust service
+    -> existing ND runtime permits, leases, workspaces and evidence gates
+
+Billing provider -> verified events -> Rust billing adapter
+    -> subscription metadata -> hosted entitlements / quotas
+```
+
+Commit accepted messages and outbox events transactionally before acknowledging them. Realtime sockets deliver notifications; reconnecting clients recover history through authorized durable queries/cursors. Presence/typing can be ephemeral. Subscription filters must be enforced by the service and re-evaluated after revocation, not trusted from client-supplied room names.
+
+Tenant-owned content must carry its tenant and company/project scope; user identity may span multiple tenants without making their content mutually visible. Apply scoped authorization to API reads, mutations, background jobs, search and object downloads. Define encryption in transit/at rest, backup restore, export/deletion and retention requirements before production storage of customer data. Provider credentials, `.env` files and personal ND Home content stay outside default cloud sync.
+
+Keep the hosted service a separate deployable boundary, preferably in the future `nd-cloud` repository. The existing Rust desktop crates are not already a hosted team backend. Reuse reviewed portable protocol/domain contracts where suitable; do not deploy the privileged desktop `nd-core` RPC surface or bring filesystem, PTY, browser or local credential authority into customer-facing HTTP APIs. Local-only records and execution remain ND-host owned; shared-record writer/revision authority must be finalized as described in the [team management storage review](../plan/human-ai-company-team-management.md#chat-storage-and-shared-backend-review).
+
+Paid hosted accounts follow PRD 0011. Store billing customer/subscription identifiers and entitlement state in ND; use a payment provider for payment collection rather than placing raw card data in ND's application schema. A payment success redirect is not authority to grant service: verify provider events, deduplicate retries and reconcile current subscription state. For example, [Stripe's subscription lifecycle documentation](https://docs.stripe.com/billing/subscriptions/webhooks) describes webhook-based provisioning; Stripe is an example, not a selected provider.
+
+An active subscription does not grant company/project membership. A project role does not bypass hosted feature limits. Nonpayment must not erase customer history or disable promised local-core functionality; define hosted grace, read/export access and retention explicitly before paid launch.
+
+Build order: local durability gate -> authenticated two-person collaboration pilot -> reconnect/revocation/host-offline proof -> hosted quota/usage accounting -> billing and paid entitlements. No hosted services, crates or deployments are created by this proposal.
 
 ## 17. Monetization principle
 

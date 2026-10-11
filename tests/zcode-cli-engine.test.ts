@@ -123,7 +123,10 @@ afterAll(() => {
 async function makeEngine() {
   process.env.ND_DSH_ZCODE_BINARY = process.execPath
   const server = new FakeZcodeServer()
-  const spawnProcess = vi.fn(() => server.child)
+  const spawnProcess = vi.fn((_file: string, _args: string[], options: { windowsHide?: boolean }) => {
+    expect(options.windowsHide).toBe(true)
+    return server.child
+  })
   const engine = new ZcodeCliEngine({
     log: () => {},
     spawnProcess: spawnProcess as never,

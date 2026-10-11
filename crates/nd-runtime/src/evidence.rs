@@ -185,7 +185,7 @@ fn hash_file(path: &Path, max_bytes: u64) -> Result<(String, u64)> {
 
 /// JavaScript's default sort compares UTF-16 code units; receipts recorded by the
 /// earlier TypeScript capture used that order, so the fingerprint must too.
-fn utf16_order(left: &str, right: &str) -> Ordering {
+pub(crate) fn utf16_order(left: &str, right: &str) -> Ordering {
     left.encode_utf16().cmp(right.encode_utf16())
 }
 

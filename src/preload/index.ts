@@ -36,6 +36,7 @@ import {
   type NdInvocationResult,
   type NdScreenRect,
   type NdViewData,
+  type NdBrowserFocusEvent,
 } from '../shared/nd-invocations.js'
 import { USAGE_IPC, type UsageDesktopApi, type UsageScope, type UsageSummary } from '../shared/usage.js'
 import {
@@ -88,6 +89,7 @@ const ndExtensionsApi: NdExtensionsDesktopApi = {
   installLocal: () => ipcRenderer.invoke(ND_EXTENSIONS_IPC.installLocal) as Promise<NdExtensionsStateView | null>,
   installFromPath: (path: string) => ipcRenderer.invoke(ND_EXTENSIONS_IPC.installFromPath, path) as Promise<NdExtensionsStateView>,
   installAvailable: (extensionId: string) => ipcRenderer.invoke(ND_EXTENSIONS_IPC.installAvailable, extensionId) as Promise<NdExtensionsStateView>,
+  exportStarterKit: () => ipcRenderer.invoke(ND_EXTENSIONS_IPC.exportStarterKit) as Promise<{ saved: boolean; path?: string } | null>,
   update: (extensionId: string, sourcePath?: string) => ipcRenderer.invoke(ND_EXTENSIONS_IPC.update, extensionId, sourcePath) as Promise<NdExtensionsStateView>,
   rollback: (extensionId: string) => ipcRenderer.invoke(ND_EXTENSIONS_IPC.rollback, extensionId) as Promise<NdExtensionsStateView>,
   uninstall: (extensionId: string) => ipcRenderer.invoke(ND_EXTENSIONS_IPC.uninstall, extensionId) as Promise<NdExtensionsStateView>,
@@ -97,12 +99,18 @@ const ndExtensionsApi: NdExtensionsDesktopApi = {
   commands: (context) => ipcRenderer.invoke(ND_EXTENSIONS_IPC.commands, context),
   invoke: (request: NdInvocationRequest) => ipcRenderer.invoke(ND_EXTENSIONS_IPC.invoke, request) as Promise<NdInvocationResult>,
   loadView: (extensionId: string, viewId: string, context) => ipcRenderer.invoke(ND_EXTENSIONS_IPC.view, extensionId, viewId, context) as Promise<NdViewData>,
+  closeWebView: (token: string) => ipcRenderer.invoke(ND_EXTENSIONS_IPC.closeWebView, token) as Promise<void>,
   approve: (approvalId: string, remember?: boolean) => ipcRenderer.invoke(ND_EXTENSIONS_IPC.approve, approvalId, remember) as Promise<NdInvocationResult>,
   deny: (approvalId: string) => ipcRenderer.invoke(ND_EXTENSIONS_IPC.deny, approvalId) as Promise<void>,
   onChanged: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, state: NdExtensionsStateView) => listener(state)
     ipcRenderer.on(ND_EXTENSIONS_IPC.changedEvent, handler)
     return () => ipcRenderer.removeListener(ND_EXTENSIONS_IPC.changedEvent, handler)
+  },
+  onBrowserFocus: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, focus: NdBrowserFocusEvent) => listener(focus)
+    ipcRenderer.on(ND_EXTENSIONS_IPC.browserFocusEvent, handler)
+    return () => ipcRenderer.removeListener(ND_EXTENSIONS_IPC.browserFocusEvent, handler)
   },
 }
 
@@ -120,6 +128,8 @@ const homeApi: NdHomeDesktopApi = {
   ensureChat: (context) => ipcRenderer.invoke(ND_HOME_IPC.chatEnsure, context),
   bindChat: (chatId, sessionId) => ipcRenderer.invoke(ND_HOME_IPC.chatBind, chatId, sessionId),
   setChatTitle: (sessionId, title) => ipcRenderer.invoke(ND_HOME_IPC.chatTitle, sessionId, title) as Promise<NdHomeStateView>,
+  saveLink: (input) => ipcRenderer.invoke(ND_HOME_IPC.linkSave, input) as Promise<NdHomeStateView>,
+  removeLink: (id) => ipcRenderer.invoke(ND_HOME_IPC.linkRemove, id) as Promise<NdHomeStateView>,
   revealStorage: () => ipcRenderer.invoke(ND_HOME_IPC.reveal) as Promise<void>,
   onChanged: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, state: NdHomeStateView) => listener(state)
@@ -184,6 +194,37 @@ const api: DesktopApi = {
     toggleLauncherPopup: () => ipcRenderer.invoke(IPC.windowToggleLauncherPopup),
     hideLauncherPopup: () => ipcRenderer.invoke(IPC.windowHideLauncherPopup),
     handoffLauncherPopup: (target, text, context) => ipcRenderer.invoke(IPC.windowLauncherHandoff, target, text, context),
+    onCaptureRequest: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, action: Parameters<typeof listener>[0]) => listener(action)
+      ipcRenderer.on(IPC.windowCaptureRequestEvent, handler)
+      return () => ipcRenderer.removeListener(IPC.windowCaptureRequestEvent, handler)
+    },
+    captureDelay: () => ipcRenderer.invoke(IPC.windowCaptureDelay),
+    setCaptureDelay: (seconds) => ipcRenderer.invoke(IPC.windowCaptureDelaySet, seconds),
+    forwardCaptureRequest: (action) => ipcRenderer.invoke(IPC.windowCaptureForward, action),
+    pullPendingCapture: () => ipcRenderer.invoke(IPC.windowCapturePull),
+    markCaptureReady: () => ipcRenderer.invoke(IPC.windowCaptureReady),
+    forwardCaptureAttach: (shot) => ipcRenderer.invoke(IPC.windowCaptureAttach, shot),
+    onCaptureAttach: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, shot: Parameters<typeof listener>[0]) => listener(shot)
+      ipcRenderer.on(IPC.windowCaptureAttachEvent, handler)
+      return () => ipcRenderer.removeListener(IPC.windowCaptureAttachEvent, handler)
+    },
+  },
+  media: {
+    state: () => ipcRenderer.invoke(IPC.mediaState),
+    onState: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, state: Parameters<typeof listener>[0]) => listener(state)
+      ipcRenderer.on(IPC.mediaStateEvent, handler)
+      return () => ipcRenderer.removeListener(IPC.mediaStateEvent, handler)
+    },
+    playPause: () => ipcRenderer.invoke(IPC.mediaPlayPause),
+    next: () => ipcRenderer.invoke(IPC.mediaNext),
+    previous: () => ipcRenderer.invoke(IPC.mediaPrevious),
+  },
+  shortcuts: {
+    state: () => ipcRenderer.invoke(IPC.shortcutsState),
+    rebind: (id, accelerator) => ipcRenderer.invoke(IPC.shortcutsRebind, id, accelerator),
   },
   providers: {
     list: () => ipcRenderer.invoke(IPC.providersList),
@@ -217,6 +258,7 @@ const api: DesktopApi = {
   },
   capture: {
     inspectApp: (copyToClipboard, scope, options) => ipcRenderer.invoke(IPC.captureInspectApp, copyToClipboard, scope, options),
+    forComposer: (scope, options) => ipcRenderer.invoke(IPC.captureForComposer, scope, options),
     inspectElement: (scope) => ipcRenderer.invoke(IPC.captureInspectElement, scope),
     stageElement: (element, targetTitle, pickId) => ipcRenderer.invoke(IPC.captureStageElement, element, targetTitle, pickId),
     elementAttachments: () => ipcRenderer.invoke(IPC.captureElementAttachments),
@@ -302,7 +344,7 @@ const api: DesktopApi = {
   workspace: {
     state: () => ipcRenderer.invoke(IPC.workspaceState),
     pick: () => ipcRenderer.invoke(IPC.workspacePick),
-    pickPath: () => ipcRenderer.invoke(IPC.workspacePickPath),
+    pickPath: (options) => ipcRenderer.invoke(IPC.workspacePickPath, options),
     setRoot: (path) => ipcRenderer.invoke(IPC.workspaceSetRoot, path),
     list: (relativePath) => ipcRenderer.invoke(IPC.workspaceList, relativePath),
     read: (relativePath) => ipcRenderer.invoke(IPC.workspaceRead, relativePath),

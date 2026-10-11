@@ -1,7 +1,4 @@
-import { createHash } from 'node:crypto'
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
-import { createReadStream } from 'node:fs'
-import { promises as fs } from 'node:fs'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import type { WorktreeGitRunner } from './task-worktree.js'
@@ -10,11 +7,7 @@ const execFileAsync = promisify(execFile)
 const MAX_CAPTURE_CHARS = 32_000
 const DEFAULT_VERIFY_TIMEOUT_MS = 10 * 60 * 1_000
 const MAX_GIT_OUTPUT = 4 * 1024 * 1024
-const MAX_ARTIFACT_FILE_BYTES = 512 * 1024 * 1024
-const MAX_ARTIFACT_TOTAL_BYTES = 1024 * 1024 * 1024
 const MAX_ARTIFACT_COUNT = 1_000
-const MAX_ARTIFACT_ENTRIES = 100_000
-const MAX_ARTIFACT_DEPTH = 128
 
 export interface VerificationEvidence {
   status: 'passed' | 'failed' | 'skipped'
@@ -36,6 +29,12 @@ export interface VerificationProcessRuntime {
   /** Git for the checkpoint capture/restore around the command; nd-core `git.exec` in desktop production. */
   runGit?: WorktreeGitRunner
 }
+
+/** Artifact hashing is nd-core `workspace.fingerprint-artifacts` in desktop production. */
+export type ArtifactFingerprintRunner = (
+  root: string,
+  paths: readonly string[],
+) => Promise<NonNullable<VerificationEvidence['artifacts']>>
 
 /**
  * Run the deterministic project check owned by ND. The reviewer may add
@@ -207,7 +206,16 @@ async function stopVerificationProcess(child: ChildProcess): Promise<void> {
   })
 }
 
-export async function runArtifactVerification(paths: string[] | undefined, cwd: string | undefined): Promise<VerificationEvidence> {
+/**
+ * Artifact tasks are verified by their declared evidence instead of the test
+ * command: every path is fingerprinted by nd-core, and an unavailable, escaped,
+ * or unwired fingerprinter fails the run closed.
+ */
+export async function runArtifactVerification(
+  paths: string[] | undefined,
+  cwd: string | undefined,
+  fingerprintArtifacts?: ArtifactFingerprintRunner,
+): Promise<VerificationEvidence> {
   const startedAt = Date.now()
   if (!cwd) return finish({ status: 'failed', startedAt, reason: 'Artifact verification has no project workspace.' })
   const requestedSet = new Set<string>()
@@ -221,89 +229,18 @@ export async function runArtifactVerification(paths: string[] | undefined, cwd: 
   const requested = [...requestedSet]
   if (!requested.length) return finish({ status: 'failed', cwd, startedAt, reason: 'Artifact task declared no artifact paths.' })
   const root = resolve(cwd)
-  const artifacts: NonNullable<VerificationEvidence['artifacts']> = []
-  let totalBytes = 0
   try {
-    const realRoot = await fs.realpath(root)
+    if (!fingerprintArtifacts) throw new Error('artifact fingerprinting requires ND Core')
     for (const requestedPath of requested) {
       if (isAbsolute(requestedPath)) throw new Error('Artifact path must be relative: ' + requestedPath)
-      const target = resolve(root, requestedPath)
-      const rel = relative(root, target)
+      const rel = relative(root, resolve(root, requestedPath))
       if (rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) throw new Error('Artifact path escapes the task workspace: ' + requestedPath)
-      const realTarget = await fs.realpath(target)
-      const realRelative = relative(realRoot, realTarget)
-      if (realRelative === '..' || realRelative.startsWith('..' + sep) || isAbsolute(realRelative)) {
-        throw new Error('Artifact path resolves outside the task workspace: ' + requestedPath)
-      }
-      const artifact = await fingerprintArtifact(root, target, requestedPath, MAX_ARTIFACT_TOTAL_BYTES - totalBytes)
-      totalBytes += artifact.size
-      artifacts.push(artifact)
     }
+    const artifacts = await fingerprintArtifacts(root, requested)
     return finish({ status: 'passed', cwd, startedAt, artifacts })
   } catch (error) {
-    return finish({ status: 'failed', cwd, startedAt, artifacts, reason: `Artifact verification failed: ${errorMessage(error)}` })
+    return finish({ status: 'failed', cwd, startedAt, reason: `Artifact verification failed: ${errorMessage(error)}` })
   }
-}
-
-async function fingerprintArtifact(
-  root: string,
-  target: string,
-  displayPath: string,
-  maxTotalBytes: number,
-): Promise<NonNullable<VerificationEvidence['artifacts']>[number]> {
-  const stat = await fs.lstat(target)
-  if (stat.isSymbolicLink()) throw new Error('Artifact path may not be a symbolic link: ' + displayPath)
-  const hash = createHash('sha256')
-  let size = 0
-  let entryCount = 0
-  if (stat.isFile()) {
-    if (stat.size > MAX_ARTIFACT_FILE_BYTES) throw new Error(`Artifact file exceeds the ${MAX_ARTIFACT_FILE_BYTES}-byte evidence bound: ${displayPath}`)
-    if (stat.size > maxTotalBytes) throw new Error(`Artifact evidence exceeds the ${MAX_ARTIFACT_TOTAL_BYTES}-byte total evidence bound`)
-    size = await updateHashFromFile(hash, target, Math.min(MAX_ARTIFACT_FILE_BYTES, maxTotalBytes))
-    return { path: displayPath, kind: 'file', size, sha256: hash.digest('hex') }
-  }
-  if (!stat.isDirectory()) throw new Error('Artifact path is not a regular file or directory: ' + displayPath)
-  const walk = async (directory: string, depth: number): Promise<void> => {
-    if (depth > MAX_ARTIFACT_DEPTH) throw new Error(`Artifact directory exceeds the ${MAX_ARTIFACT_DEPTH}-level depth bound`)
-    const entries = []
-    const handle = await fs.opendir(directory)
-    for await (const entry of handle) {
-      entryCount += 1
-      if (entryCount > MAX_ARTIFACT_ENTRIES) {
-        throw new Error(`Artifact directory exceeds the ${MAX_ARTIFACT_ENTRIES}-entry evidence bound`)
-      }
-      entries.push(entry)
-    }
-    entries.sort((a, b) => a.name.localeCompare(b.name))
-    for (const entry of entries) {
-      const candidate = resolve(directory, entry.name)
-      const rel = relative(root, candidate).replaceAll('\\', '/')
-      if (entry.isSymbolicLink()) throw new Error('Artifact directory contains a symbolic link: ' + rel)
-      hash.update(rel + '\0')
-      if (entry.isDirectory()) {
-        await walk(candidate, depth + 1)
-        continue
-      }
-      if (!entry.isFile()) throw new Error('Artifact directory contains an unsupported entry: ' + rel)
-      const fileStat = await fs.lstat(candidate)
-      if (fileStat.size > MAX_ARTIFACT_FILE_BYTES) throw new Error(`Artifact file exceeds the ${MAX_ARTIFACT_FILE_BYTES}-byte evidence bound: ${rel}`)
-      const remainingBytes = Math.min(MAX_ARTIFACT_TOTAL_BYTES, maxTotalBytes) - size
-      if (fileStat.size > remainingBytes) throw new Error(`Artifact directory exceeds the ${MAX_ARTIFACT_TOTAL_BYTES}-byte total evidence bound`)
-      size += await updateHashFromFile(hash, candidate, Math.min(MAX_ARTIFACT_FILE_BYTES, remainingBytes))
-    }
-  }
-  await walk(target, 0)
-  return { path: displayPath, kind: 'directory', size, sha256: hash.digest('hex') }
-}
-
-async function updateHashFromFile(hash: ReturnType<typeof createHash>, path: string, maxBytes: number): Promise<number> {
-  let size = 0
-  for await (const chunk of createReadStream(path)) {
-    size += chunk.length
-    if (size > maxBytes) throw new Error(`Artifact grew beyond its ${maxBytes}-byte evidence bound while hashing: ${path}`)
-    hash.update(chunk)
-  }
-  return size
 }
 
 export function formatVerificationEvidence(evidence: VerificationEvidence): string {
@@ -336,7 +273,7 @@ async function restoreManagedBaseline(cwd: string, baseline: string, runGit: Wor
 }
 
 async function git(cwd: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
-  const result = await execFileAsync('git', args, { cwd, encoding: 'utf8', maxBuffer: MAX_GIT_OUTPUT })
+  const result = await execFileAsync('git', args, { cwd, encoding: 'utf8', maxBuffer: MAX_GIT_OUTPUT, windowsHide: true })
   return { stdout: result.stdout, stderr: result.stderr }
 }
 

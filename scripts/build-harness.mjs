@@ -44,17 +44,24 @@ const harnessEnv = { CI: 'true' }
 
 if (!flags.has('--skip-install')) {
   console.log('\nInstalling the Harness dependency graph...')
-  await run('corepack', ['pnpm', '--dir', harnessRoot, 'install', '--frozen-lockfile'], root, harnessEnv)
+  await run('corepack', ['pnpm', '--dir', harnessRoot, 'install', '--frozen-lockfile'], harnessRoot, harnessEnv)
 }
+
+// Updating the submodule leaves ignored output for packages upstream removed.
+// tsdown's workspace glob can still bundle those obsolete lib/types entries
+// against the new API. Use upstream's boundary-checked cleaner before building
+// either face; it preserves source and refuses unknown files in orphan folders.
+console.log('\nCleaning the Harness generated runtime output...')
+await run('corepack', ['pnpm', '--dir', harnessRoot, 'run', 'clean'], harnessRoot, harnessEnv)
 
 const nativeSystemScript = join(harnessRoot, 'native', 'system', 'scripts', 'build.ts')
 if (existsSync(nativeSystemScript)) {
   console.log('\nBuilding the Harness native system addons...')
-  await run('corepack', ['pnpm', '--dir', harnessRoot, 'run', 'build:native-system'], root, harnessEnv)
+  await run('corepack', ['pnpm', '--dir', harnessRoot, 'run', 'build:native-system'], harnessRoot, harnessEnv)
 }
 
 console.log('\nBuilding the Harness host face...')
-await run('corepack', ['pnpm', '--dir', harnessRoot, 'run', 'build:lib:host'], root, harnessEnv)
+await run('corepack', ['pnpm', '--dir', harnessRoot, 'run', 'build:lib:host'], harnessRoot, harnessEnv)
 
 console.log('\nEmitting the Harness client package graph (without the aggregate client test program)...')
 await emitClientProjectGraph()
@@ -63,7 +70,7 @@ console.log('\nBuilding the Harness client face (bundler pass)...')
 await run(process.execPath, [await tsdownEntry(), '--env.DSH_BUILD_FACE', 'client'], harnessRoot, harnessEnv)
 
 console.log('\nBuilding the Harness web frontend...')
-await run('corepack', ['pnpm', '--dir', harnessRoot, 'run', 'build:web'], root, harnessEnv)
+await run('corepack', ['pnpm', '--dir', harnessRoot, 'run', 'build:web'], harnessRoot, harnessEnv)
 
 const missing = await unbuiltClientEntries()
 if (missing.length > 0) {

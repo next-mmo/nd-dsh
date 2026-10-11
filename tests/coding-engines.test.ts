@@ -144,7 +144,20 @@ describe('coding engine catalog', () => {
     const pi = engines.find((engine) => engine.id === PI_CODING_ENGINE_ID)!
     const cursor = engines.find((engine) => engine.id === CURSOR_CLI_ENGINE_ID)!
     const claude = engines.find((engine) => engine.id === CLAUDE_CODE_CLI_ENGINE_ID)!
-    for (const engine of [pi, cursor, claude]) {
+
+    expect(pi.available).toBe(true)
+    expect(pi.capabilities.workspace).toBe(true)
+    expect(pi.capabilities.filesystem).toBe(true)
+    expect(pi.capabilities.shell).toBe(true)
+    expect(pi.capabilities.streaming).toBe(true)
+    expect(pi.capabilities.browser).toBe(true)
+    expect(pi.capabilities.skills).toBe(true)
+    expect(pi.capabilities.modelProviderRouting).toBe(true)
+    expect(pi.capabilities.humanApprovals).toBe(false)
+    expect(pi.capabilities.persistentSessions).toBe(false)
+    expect(pi.capabilities.mcp).toBe(false)
+
+    for (const engine of [cursor, claude]) {
       expect(engine.available).toBe(true)
       expect(engine.capabilities.workspace).toBe(true)
       expect(engine.capabilities.filesystem).toBe(true)

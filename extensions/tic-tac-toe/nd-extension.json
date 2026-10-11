@@ -1,0 +1,39 @@
+{
+  "protocol": "nd.extension/1",
+  "id": "nd.tic-tac-toe",
+  "name": "ND 3D Tic-Tac-Toe",
+  "description": "Play tic-tac-toe on a 3D board rendered with three.js, on demand from the ND launcher. Ships its own sandboxed UI with a fixed top-down camera: play against a friend or the built-in AI, and keep a persistent scoreboard.",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "contexts": ["personal"],
+  "permissions": ["tictactoe.read", "tictactoe.write"],
+  "settings": [],
+  "contributions": {
+    "commands": [
+      {
+        "id": "play",
+        "title": "Play 3D Tic-Tac-Toe",
+        "description": "Open the 3D tic-tac-toe board.",
+        "keywords": ["game", "tic tac toe", "tictactoe", "3d", "three", "board", "play"],
+        "host": "tictactoe.stats.get",
+        "openViewId": "board",
+        "contexts": ["personal"]
+      }
+    ],
+    "views": [
+      {
+        "id": "board",
+        "title": "3D Tic-Tac-Toe",
+        "description": "The scoreboard shows once you play your first game.",
+        "kind": "web",
+        "entry": "ui/index.html",
+        "contexts": ["personal"],
+        "actions": [
+          { "id": "get", "title": "Read the scoreboard", "host": "tictactoe.stats.get" },
+          { "id": "record", "title": "Record a game result", "host": "tictactoe.stats.record" },
+          { "id": "reset", "title": "Reset the scoreboard", "host": "tictactoe.stats.reset" }
+        ]
+      }
+    ]
+  }
+}

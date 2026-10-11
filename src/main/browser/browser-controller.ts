@@ -19,13 +19,17 @@ import {
   type BrowserTabDescriptor,
 } from '../../shared/browser-platform.js'
 import type { BrowserBounds, BrowserState, UiAnnotation, UiTarget } from '../../shared/contracts.js'
+import type { NdMediaSessionState } from '../../shared/media-session.js'
 import { AgentBrowserClient } from './agent-browser-client.js'
+import { refreshAdBlockPage } from './ad-block-page-refresh.js'
 import { BrowserDownloadManager, type BrowserDownloadAuthorizationRequest } from './browser-download-manager.js'
 import { BrowserHistoryStore } from './browser-history-store.js'
 import { BrowserPermissionStore } from './browser-permission-store.js'
 import { DEFAULT_BROWSER_URL, isAllowedBrowserUrl, normalizeBrowserUrl, sanitizeBrowserUserAgent } from './browser-url.js'
+import { BrowserMediaTracker } from './media-session-tracker.js'
 import { UiAnnotator, type UiAnnotationImage } from './ui-annotator.js'
 import { UiInspector } from './ui-inspector.js'
+import { translatePageReadScript } from './translate-page-reader.js'
 
 export const BUILTIN_BROWSER_TARGET_ID = 'builtin'
 export const BUILTIN_BROWSER_PROFILE_ID = 'builtin:default'
@@ -35,6 +39,8 @@ export interface BrowserControllerOptions {
   reservedOrigin?: () => string | undefined
   dataPath?: string
   extensionRuntimePreload?: string
+  /** Now-playing changes across tabs, for the quick launcher transport row. */
+  onMediaState?: (state: NdMediaSessionState | null) => void
 }
 
 const EXTENSION_RUNTIME_PRELOAD_ID = 'nd-extension-runtime'
@@ -92,6 +98,7 @@ export class BrowserController {
   private readonly historyStore: BrowserHistoryStore
   private readonly permissionStore: BrowserPermissionStore
   private readonly downloads: BrowserDownloadManager
+  private readonly mediaTracker: BrowserMediaTracker
   private readonly reservedOrigin: (() => string | undefined) | undefined
   private readonly extensionRuntimePreload: string | undefined
   private extensionPopup: BrowserExtensionPopupRuntime | undefined
@@ -104,6 +111,7 @@ export class BrowserController {
   private lastBoundTarget: string | undefined
   private destroyPromise: Promise<void> | undefined
   private destroying = false
+  private readonly backgroundAttached = new Set<string>()
 
   constructor(
     private readonly window: BrowserWindow,
@@ -113,6 +121,7 @@ export class BrowserController {
   ) {
     this.reservedOrigin = options.reservedOrigin
     this.extensionRuntimePreload = options.extensionRuntimePreload
+    this.mediaTracker = new BrowserMediaTracker(options.onMediaState ?? (() => undefined))
     this.browserSessionValue = session.fromPartition(BROWSER_PARTITION)
     claimExtensionPopupContext(this)
     if (this.extensionRuntimePreload
@@ -153,8 +162,17 @@ export class BrowserController {
     return this.browserSessionValue
   }
 
+  async refreshAdBlockPages(): Promise<void> {
+    await Promise.all([...this.tabs.values()].map(tab => refreshAdBlockPage(tab.view.webContents)))
+  }
+
   profileId(): string {
     return BUILTIN_BROWSER_PROFILE_ID
+  }
+
+  /** Now-playing tracking and the OS-style transport over playing tabs. */
+  media(): BrowserMediaTracker {
+    return this.mediaTracker
   }
 
   activeTabId(): string {
@@ -375,6 +393,7 @@ export class BrowserController {
     }
     if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close()
     this.tabs.delete(tabId)
+    this.backgroundAttached.delete(tabId)
     this.onTabClosed?.(tabId)
 
     if (this.tabs.size === 0) {
@@ -424,7 +443,12 @@ export class BrowserController {
       width: Math.max(0, Math.round(bounds.width)),
       height: Math.max(0, Math.round(bounds.height)),
     }
-    this.activeTab().view.setBounds(this.bounds)
+    const active = this.activeTab()
+    if (!this.backgroundAttached.has(active.id)) active.view.setBounds(this.bounds)
+    for (const id of this.backgroundAttached) {
+      const tab = this.tabs.get(id)
+      if (tab) tab.view.setBounds(this.visible ? this.bounds : this.backgroundRenderBounds())
+    }
     this.syncExtensionPopupBounds()
   }
 
@@ -540,6 +564,43 @@ export class BrowserController {
     const contents = this.requireTab(tabId).view.webContents
     await this.ensureSemanticDriver(contents)
     return contents.executeJavaScript('window.__ND_BROWSER_BUILTIN_DRIVER__.snapshot()', true)
+  }
+
+  /** Fixed provider DOM reads for ND Translate. No renderer-supplied JavaScript. */
+  async readTranslatePage(tabId: string, provider: import('../../shared/nd-translate.js').NdTranslateProvider): Promise<import('../../shared/nd-translate.js').NdTranslatePage> {
+    const contents = this.requireTab(tabId).view.webContents
+    return contents.executeJavaScript(translatePageReadScript(provider), true) as Promise<import('../../shared/nd-translate.js').NdTranslatePage>
+  }
+
+  /**
+   * Attach a tab offscreen so provider pages keep rendering while the app UI
+   * covers the browser surface. Hidden views report a zero viewport and a
+   * hidden visibility state, which defers provider rendering (Google Translate
+   * never inserts its result span) even though its translation API completes.
+   * Returns a restore callback that reapplies the normal visibility sync.
+   */
+  attachTabForBackgroundRendering(tabId: string): () => void {
+    const tab = this.requireTab(tabId)
+    this.backgroundAttached.add(tabId)
+    tab.view.setVisible(true)
+    tab.view.setBounds(this.backgroundRenderBounds())
+    let restored = false
+    return () => {
+      if (restored) return
+      restored = true
+      this.backgroundAttached.delete(tabId)
+      this.syncViewVisibility()
+    }
+  }
+
+  /** Offscreen but overlapping the window by one pixel: fully offscreen views
+   * are occluded by Chromium, hiding the page and zeroing its viewport, which
+   * makes provider pages defer rendering. The overlap must sit at the window's
+   * own corner — anchoring to the pane rect puts a large slice of the view
+   * inside the window, where it paints over the app UI. */
+  private backgroundRenderBounds(): Rectangle {
+    const content = this.window.getContentBounds()
+    return { x: Math.max(0, content.width - 1), y: Math.max(0, content.height - 1), width: 1280, height: 900 }
   }
 
   async click(tabId: string, ref: string, revision: number): Promise<unknown> {
@@ -818,6 +879,7 @@ export class BrowserController {
       },
     })
     this.installListeners(tab)
+    this.mediaTracker.attach(tab.id, view.webContents)
     return tab
   }
 
@@ -944,6 +1006,13 @@ export class BrowserController {
 
   private syncViewVisibility(): void {
     for (const tab of this.tabs.values()) {
+      if (this.backgroundAttached.has(tab.id)) {
+        // Attached tabs render offscreen while the surface is hidden and fill
+        // the pane when the user opens the browser during a translation.
+        tab.view.setBounds(this.visible ? this.bounds : this.backgroundRenderBounds())
+        tab.view.setVisible(true)
+        continue
+      }
       const active = tab.id === this.activeTabIdValue
       tab.view.setBounds(this.bounds)
       tab.view.setVisible(active && this.visible)
@@ -1183,7 +1252,8 @@ const SEMANTIC_DRIVER_SCRIPT = `(() => {
           type,
           disabled: 'disabled' in element ? Boolean(element.disabled) : undefined,
           href: element instanceof HTMLAnchorElement ? element.href : undefined,
-          sensitive: type === 'password' ? true : undefined
+          sensitive: type === 'password' ? true : undefined,
+          editable: element instanceof HTMLElement && element.isContentEditable ? true : undefined
         };
       });
       return {

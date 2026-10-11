@@ -1,0 +1,64 @@
+{
+  "manifest_version": 3,
+  "name": "ND Ad Block",
+  "version": "1.0.2",
+  "description": "ND's built-in ad and tracker blocker. Enabled by default; turn it off any time in Settings > Browser > Extensions.",
+  "author": "ND",
+  "minimum_chrome_version": "111",
+  "permissions": [
+    "declarativeNetRequest",
+    "storage"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "nd_ads",
+        "enabled": true,
+        "path": "rules/ads.json"
+      },
+      {
+        "id": "nd_youtube",
+        "enabled": true,
+        "path": "rules/youtube.json"
+      }
+    ]
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.youtube.com/*",
+        "*://*.youtube-nocookie.com/*"
+      ],
+      "js": [
+        "content/youtube-ads.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "*://*.youtube.com/*",
+        "*://*.youtube-nocookie.com/*"
+      ],
+      "js": [
+        "content/youtube-ads-report.js"
+      ],
+      "css": [
+        "content/youtube-ads.css"
+      ],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ],
+  "action": {
+    "default_title": "ND Ad Block",
+    "default_popup": "popup.html"
+  }
+}

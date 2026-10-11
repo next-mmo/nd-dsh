@@ -162,6 +162,21 @@
   config:
     default: nd-dsh
 
+# ── cordis preset guard ───────────────────────────────────────────────────────
+
+# The upstream `cordis` preset's cordis_define schema uses JSON Schema `const`
+# ("new" / "existing"), which the nd-router origin's Gemini-dialect translation
+# rejects: the conversion crash surfaces as a Cloudflare 502 with no body, and
+# any request listing the tool fails. Patch rows cannot disable that tool here:
+# it lives nested in the preset-cordis row's `config.plugins`, and the loader
+# only targets nested rows of `group` entries (a whole-config replacement of
+# the upstream preset would fork it and drift on every harness sync).
+#
+# ND guards the product surface instead: the desktop gateway blocks new cordis
+# sessions and cordis-default selection, and the roster marks the preset
+# unavailable (HarnessService preset policy). Existing cordis sessions keep
+# resuming; the durable fix is the router handling `const` server-side.
+
 # ── unified browser capability ────────────────────────────────────────────────
 
 # The model-facing browser namespace is intentionally the stable nd-extensions

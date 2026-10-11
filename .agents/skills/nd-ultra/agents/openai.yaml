@@ -1,0 +1,4 @@
+interface:
+  display_name: "ND Ultra"
+  short_description: "Parallel ND-DSH development with verified integration"
+  default_prompt: "Use $nd-ultra to complete this ND-DSH job: apply the repository guidance, assign independent work with clear ownership, prioritize shared contracts, then integrate and verify the result."

@@ -1,5 +1,5 @@
 import { foldEvent, foldHistory, type HistoryEventEnvelope } from '../../../shared/chat-events'
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react'
 import type {
   CodingEngineDescriptor,
   DshEventFrame,
@@ -15,7 +15,7 @@ import type {
   SessionSummary,
   WorkspaceSuggestion,
 } from '../../../shared/contracts'
-import { ANTIGRAVITY_ENGINE_ID, CHATGPT_WEB_ENGINE_ID, CODEX_CLI_ENGINE_ID, ND_HARNESS_ENGINE_ID, ND_NATIVE_ENGINE_ID, ZCODE_CLI_ENGINE_ID } from '../../../shared/coding-engines'
+import { ANTIGRAVITY_ENGINE_ID, CHATGPT_WEB_ENGINE_ID, CODEX_CLI_ENGINE_ID, ND_HARNESS_ENGINE_ID, ND_NATIVE_ENGINE_ID, PI_CODING_ENGINE_ID, ZCODE_CLI_ENGINE_ID } from '../../../shared/coding-engines'
 import { DisplayGroup, groupEntries, parseFileChanges, toolPreview, type ContextBlock } from '../../../shared/chat-grouping'
 import { filterSessionsInProjectScope, isSessionInProjectScope } from '../../../shared/session-project-scope'
 import { buildSessionTree, type SessionTreeNode } from '../../../shared/session-tree'
@@ -29,6 +29,7 @@ import type { BrowserPlatformState, BrowserSelection } from '../../../shared/bro
 import { openSkillPicker, parseSkillCatalog, skillSelectionScope, type SkillSuggestion } from '../../../shared/skill-catalog'
 import { isVisionModel, resolveModelSelectionDisplay, type ModelCatalogState } from '../lib/model-selection'
 import { archiveableVisibleSessionIds, cleanThreadTitle, nextSessionAfterArchive } from '../../../shared/session-archive-selection'
+import { imageMediaType, isImageDataUrl, MAX_PASTED_IMAGE_BYTES, MAX_PASTED_IMAGES } from '../../../shared/images'
 import { describeAgentError, type AgentErrorRoute } from '../lib/runtime-notices'
 import {
   ArchiveIcon,
@@ -92,6 +93,9 @@ interface ChatPanelProps {
   onOpenFile?(path: string): void
   externalPrompt?: { id: string; text: string } | null
   onExternalPromptConsumed?(): void
+  /** One-shot capture (data URL) from a capture shortcut; attached unsent. */
+  incomingImage?: { id: string; dataUrl: string } | null
+  onIncomingImageConsumed?(): void
   /** One-shot request from another surface (Home, Settings → presets) to select a session. */
   sessionOpenRequest?: { id: string; sessionId: string } | null
   onSessionOpenConsumed?(): void
@@ -135,6 +139,32 @@ const MENTION_MENU_LIMIT = 12
 const SESSION_LIST_TIMEOUT_MS = 10_000
 const SESSION_LIST_TIMEOUT_MESSAGE = 'Timed out waiting for session list'
 
+/**
+ * Sessions sidebar sizing. The sidebar is drag-resizable between the original
+ * fixed width (the floor) and a wide reading width, and the default is ~19%
+ * wider than the old fixed 185px so longer chat titles survive truncation.
+ * The chosen width persists in localStorage across launches.
+ */
+const SESSIONS_SIDEBAR_DEFAULT_PX = 220
+const SESSIONS_SIDEBAR_MIN_PX = 185
+const SESSIONS_SIDEBAR_MAX_PX = 440
+const SESSIONS_SEPARATOR_PX = 5
+/** The chat column keeps at least this width when the sidebar is dragged wide. */
+const CHAT_COLUMN_MIN_PX = 320
+const SESSIONS_SIDEBAR_WIDTH_KEY = 'nd-dsh-sessions-sidebar-width'
+
+function readStoredSessionsWidth(): number {
+  try {
+    const stored = Number(window.localStorage.getItem(SESSIONS_SIDEBAR_WIDTH_KEY))
+    if (Number.isFinite(stored) && stored >= SESSIONS_SIDEBAR_MIN_PX) {
+      return Math.min(Math.round(stored), SESSIONS_SIDEBAR_MAX_PX)
+    }
+  } catch {
+    // localStorage can be unavailable; the default width still applies.
+  }
+  return SESSIONS_SIDEBAR_DEFAULT_PX
+}
+
 type PingEntry = { testing: true } | ProviderPingResult
 type ModelMenuPane = 'root' | 'model' | 'effort'
 
@@ -143,7 +173,7 @@ function fileMentionTag(relativePath: string): string {
   return extension ? extension.toUpperCase().slice(0, 5) : 'FILE'
 }
 
-export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelected, onOpenWorkspace, sessionsCollapsed, sessionProjectScope, projects, onSelectProject, onError, onOpenSettings, onOpenFile, onOpenLink, externalPrompt, onExternalPromptConsumed, sessionOpenRequest, onSessionOpenConsumed, elementAttachmentVersion, onGitEditableChange }: ChatPanelProps) {
+export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelected, onOpenWorkspace, sessionsCollapsed, sessionProjectScope, projects, onSelectProject, onError, onOpenSettings, onOpenFile, onOpenLink, externalPrompt, onExternalPromptConsumed, incomingImage, onIncomingImageConsumed, sessionOpenRequest, onSessionOpenConsumed, elementAttachmentVersion, onGitEditableChange }: ChatPanelProps) {
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [collapsedSessionParents, setCollapsedSessionParents] = useState<Set<string>>(new Set())
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
@@ -157,6 +187,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   const [providerPings, setProviderPings] = useState<Record<string, PingEntry>>({})
   const [permissionMode, setPermissionMode] = useState('workspace-write')
   const [prompt, setPrompt] = useState('')
+  const [pendingImages, setPendingImages] = useState<string[]>([])
   const [harnessSessionsLoaded, setHarnessSessionsLoaded] = useState(false)
   const [sessionListError, setSessionListError] = useState<string | null>(null)
   const sessionListRequestRef = useRef<Promise<void> | null>(null)
@@ -290,7 +321,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
       ? draftEngineId
       : ND_HARNESS_ENGINE_ID
   const onHarnessThread = activeEngineId === ND_HARNESS_ENGINE_ID
-  const supportsEngineModels = activeEngineId === ANTIGRAVITY_ENGINE_ID || activeEngineId === CODEX_CLI_ENGINE_ID || activeEngineId === ZCODE_CLI_ENGINE_ID || activeEngineId === ND_NATIVE_ENGINE_ID
+  const supportsEngineModels = activeEngineId === ANTIGRAVITY_ENGINE_ID || activeEngineId === CODEX_CLI_ENGINE_ID || activeEngineId === ZCODE_CLI_ENGINE_ID || activeEngineId === ND_NATIVE_ENGINE_ID || activeEngineId === PI_CODING_ENGINE_ID
   const engineModel = engineModelSelections[activeEngineId] ?? null
   const setEngineModel = (model: string | null): void => {
     setEngineModelSelections((current) => ({ ...current, [activeEngineId]: model }))
@@ -791,6 +822,13 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
     onExternalPromptConsumed?.()
   }, [externalPrompt, onExternalPromptConsumed])
 
+  // Capture shortcuts attach their shot here; nothing sends until the user does.
+  useEffect(() => {
+    if (!incomingImage) return
+    setPendingImages((images) => [...images, incomingImage.dataUrl])
+    onIncomingImageConsumed?.()
+  }, [incomingImage, onIncomingImageConsumed])
+
   useEffect(() => {
     let mounted = true
     void window.ndDsh.browserPlatform.state()
@@ -1119,17 +1157,40 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
     return () => document.removeEventListener('mousedown', handleOutsideClick)
   }, [])
 
+  const addPastedImages = (files: File[]): void => {
+    const candidates = files.filter((file) => file.type.startsWith('image/')).slice(0, MAX_PASTED_IMAGES)
+    if (candidates.length === 0) return
+    const oversized = candidates.some((file) => file.size > MAX_PASTED_IMAGE_BYTES)
+    void Promise.all(candidates.map((file) => new Promise<string | null>((resolve) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null)
+      reader.onerror = () => resolve(null)
+      reader.readAsDataURL(file)
+    }))).then((results) => {
+      const valid = results.filter((url): url is string => url !== null && isImageDataUrl(url))
+      if (oversized) onError(`Images must be under ${Math.floor(MAX_PASTED_IMAGE_BYTES / 1024 / 1024)} MB each.`)
+      if (valid.length > 0) setPendingImages((prev) => [...prev, ...valid].slice(0, MAX_PASTED_IMAGES))
+    })
+  }
+
   const run = async (): Promise<void> => {
     const input = prompt
-    if (!input.trim() || busy || submitting) return
+    if ((!input.trim() && pendingImages.length === 0) || busy || submitting) return
     const selection = /^\s*\//.test(input) ? selectedSkillScope.current : null
     let selectedScope: string | undefined
     try { selectedScope = skillSelectionScope(selection, skillsScope) } catch (cause) {
       onError(cause instanceof Error ? cause.message : String(cause))
       return
     }
+    const imageOption = pendingImages.length > 0
+      ? { images: pendingImages.map((dataUrl, index) => {
+          const mediaType = imageMediaType(dataUrl) ?? 'image/png'
+          return { data: dataUrl.slice(dataUrl.indexOf(',') + 1), mediaType, name: `pasted-${index + 1}.${mediaType.slice('image/'.length)}` }
+        }) }
+      : {}
     setSubmitting(true)
     setPrompt('')
+    setPendingImages([])
     setMentionCaret(0)
     setMentionDismissed(null)
     // A drafted engine chat has no session yet: the first send creates it on
@@ -1146,7 +1207,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
         : { permissionMode }
     try {
       const catalog = /^\s*\//.test(input) ? await window.ndDsh.skills.catalog(activeProjectId ?? null) : undefined
-      const result = await window.ndDsh.harness.run(input, { ...options, ...(catalog ? { skillScope: selectedScope ?? catalog.scope, ...(selection?.selectionId ? { skillSelectionId: selection.selectionId } : {}) } : {}) })
+      const result = await window.ndDsh.harness.run(input, { ...options, ...imageOption, ...(catalog ? { skillScope: selectedScope ?? catalog.scope, ...(selection?.selectionId ? { skillSelectionId: selection.selectionId } : {}) } : {}) })
       selectedSkillScope.current = null
       setActiveSessionId(result.sessionId)
       if (draftEngine !== null) {
@@ -1399,9 +1460,87 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
     )
   }
 
+  const [sessionsWidth, setSessionsWidth] = useState(readStoredSessionsWidth)
+  const sessionsRowRef = useRef<HTMLDivElement | null>(null)
+  const sessionsAsideRef = useRef<HTMLElement | null>(null)
+  // Width lives on the ref so the drag loop can mutate the pane's inline style
+  // directly (no re-render per pointer move); state mirrors it for ARIA and
+  // re-renders, and mid-drag renders read the ref to avoid snapping back.
+  const sessionsWidthRef = useRef(sessionsWidth)
+  sessionsWidthRef.current = sessionsWidth
+  const sessionsDragRef = useRef<{ pointerId: number; startX: number; startWidth: number; rowWidth: number } | null>(null)
+
+  const clampSessionsWidth = (width: number, rowWidth = sessionsRowRef.current?.getBoundingClientRect().width ?? 0): number => {
+    const roomForSidebar = rowWidth > 0 ? rowWidth - SESSIONS_SEPARATOR_PX - CHAT_COLUMN_MIN_PX : SESSIONS_SIDEBAR_MAX_PX
+    const max = Math.max(SESSIONS_SIDEBAR_MIN_PX, Math.min(SESSIONS_SIDEBAR_MAX_PX, roomForSidebar))
+    return Math.round(Math.min(max, Math.max(SESSIONS_SIDEBAR_MIN_PX, width)))
+  }
+
+  const persistSessionsWidth = (width: number): void => {
+    try {
+      window.localStorage.setItem(SESSIONS_SIDEBAR_WIDTH_KEY, String(width))
+    } catch {
+      // Storage unavailable; the width just resets on the next launch.
+    }
+  }
+
+  const applySessionsWidth = (width: number): void => {
+    const clamped = clampSessionsWidth(width)
+    sessionsWidthRef.current = clamped
+    setSessionsWidth(clamped)
+    persistSessionsWidth(clamped)
+  }
+
+  const beginSessionsResize = (event: PointerEvent<HTMLDivElement>): void => {
+    if (event.button !== 0) return
+    sessionsDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startWidth: sessionsWidthRef.current,
+      rowWidth: sessionsRowRef.current?.getBoundingClientRect().width ?? 0,
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+    // Sweeping the pointer across the page must not select text or flash the cursor.
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }
+
+  const moveSessionsResize = (event: PointerEvent<HTMLDivElement>): void => {
+    const drag = sessionsDragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    const width = clampSessionsWidth(drag.startWidth + (drag.startX - event.clientX), drag.rowWidth)
+    sessionsWidthRef.current = width
+    const aside = sessionsAsideRef.current
+    if (aside) {
+      aside.style.width = `${width}px`
+      aside.style.flexBasis = `${width}px`
+    }
+  }
+
+  const endSessionsResize = (event: PointerEvent<HTMLDivElement>): void => {
+    const drag = sessionsDragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    sessionsDragRef.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+    setSessionsWidth(sessionsWidthRef.current)
+    persistSessionsWidth(sessionsWidthRef.current)
+  }
+
+  const onSessionsResizeKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+    event.preventDefault()
+    applySessionsWidth(sessionsWidthRef.current + (event.key === 'ArrowLeft' ? 1 : -1) * (event.shiftKey ? 48 : 16))
+  }
+
   return (
-    <div className="flex h-full w-full min-h-0 min-w-0 flex-1 flex-row overflow-hidden">
-      <aside className={cn('flex h-full min-h-0 w-[185px] shrink-0 grow-0 basis-[185px] flex-col overflow-hidden border-r border-border-soft bg-sidebar', sessionsCollapsed && 'hidden')}>
+    <div ref={sessionsRowRef} className="flex h-full w-full min-h-0 min-w-0 flex-1 flex-row overflow-hidden">
+      <aside
+        ref={sessionsAsideRef}
+        className={cn('flex h-full min-h-0 shrink-0 grow-0 flex-col overflow-hidden bg-sidebar', sessionsCollapsed && 'hidden')}
+        style={sessionsCollapsed ? undefined : { width: sessionsWidthRef.current, flexBasis: sessionsWidthRef.current }}
+      >
         <div className="px-3 pb-1 pt-2">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -1481,7 +1620,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
           {workspaceSelected ? (
             <div className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium text-foreground [&_svg]:size-3.5 [&_svg]:shrink-0 [&_svg]:text-folder">
               <FolderIcon />
-              <span className="truncate">{workspaceName ?? 'workspace'}</span>
+              <span className="truncate" title={workspaceName ?? 'workspace'}>{workspaceName ?? 'workspace'}</span>
             </div>
           ) : (
             // The boot fallback root is a runtime cwd, not a project. Present an
@@ -1570,6 +1709,27 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
           </button>
         </footer>
       </aside>
+
+      {!sessionsCollapsed ? (
+        <div
+          role="separator"
+          aria-label="Resize sessions sidebar"
+          aria-orientation="vertical"
+          aria-valuemin={SESSIONS_SIDEBAR_MIN_PX}
+          aria-valuemax={SESSIONS_SIDEBAR_MAX_PX}
+          aria-valuenow={sessionsWidth}
+          tabIndex={0}
+          className="relative w-[5px] shrink-0 cursor-col-resize touch-none select-none outline-none before:absolute before:inset-y-0 before:-right-2 before:left-0 before:content-[''] [&_div]:transition-[width,background-color] [&_div]:duration-150 hover:[&_div]:w-0.5 hover:[&_div]:bg-primary focus-visible:[&_div]:w-0.5 focus-visible:[&_div]:bg-primary active:[&_div]:w-0.5 active:[&_div]:bg-primary"
+          onPointerDown={beginSessionsResize}
+          onPointerMove={moveSessionsResize}
+          onPointerUp={endSessionsResize}
+          onPointerCancel={endSessionsResize}
+          onDoubleClick={() => applySessionsWidth(SESSIONS_SIDEBAR_DEFAULT_PX)}
+          onKeyDown={onSessionsResizeKeyDown}
+        >
+          <div className="mx-auto h-full w-px bg-border-strong" />
+        </div>
+      ) : null}
 
       <Dialog open={archiveAllIds !== null} onOpenChange={(open) => { if (!open && !archivingAll) setArchiveAllIds(null) }}>
         <DialogContent>
@@ -1936,6 +2096,24 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
             {composerSkill && selectedSkillScope.current?.owner === skillsScope && prompt.trimStart().startsWith(`/${composerSkill.name} `) ? (
               <div className="mb-1 text-xs"><SkillMessage text={`/${composerSkill.name}`} skill={composerSkill} /></div>
             ) : null}
+            {pendingImages.length > 0 ? (
+              <div className="mb-1.5 flex flex-wrap gap-1.5">
+                {pendingImages.map((image, index) => (
+                  <div key={index} className="relative">
+                    <img src={image} alt={`Pasted image ${index + 1}`} className="h-14 w-14 rounded-md border border-border object-cover" />
+                    <button
+                      type="button"
+                      className="absolute -right-1.5 -top-1.5 grid size-4 place-items-center rounded-full border border-border-strong bg-surface-1 text-faint transition-colors hover:text-foreground"
+                      aria-label={`Remove image ${index + 1}`}
+                      title="Remove this image"
+                      onClick={() => setPendingImages((images) => images.filter((_, item) => item !== index))}
+                    >
+                      <CloseIcon className="size-2.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             <textarea
               ref={textareaRef}
               value={prompt}
@@ -1945,6 +2123,12 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
               }}
               onSelect={(event: ChangeEvent<HTMLTextAreaElement>) => {
                 setMentionCaret(event.target.selectionStart ?? 0)
+              }}
+              onPaste={(event: ClipboardEvent<HTMLTextAreaElement>) => {
+                const items = Array.from(event.clipboardData.items)
+                if (!items.some((item) => item.kind === 'file' && item.type.startsWith('image/'))) return
+                event.preventDefault()
+                addPastedImages(items.map((item) => item.getAsFile()).filter((file): file is File => file !== null))
               }}
               onKeyDown={(event: KeyboardEvent<HTMLTextAreaElement>) => {
                 if (mentionTrigger) {
@@ -2272,7 +2456,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
               ) : (
                 <button
                   className="grid size-[25px] shrink-0 place-items-center rounded-[7px] bg-primary text-primary-foreground transition-[filter] enabled:hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-35 [&_svg]:size-3.5"
-                  disabled={!prompt.trim()}
+                  disabled={!prompt.trim() && pendingImages.length === 0}
                   onClick={() => void run()}
                   title="Send"
                 >
@@ -2324,6 +2508,10 @@ function countRunningSessionDescendants(node: SessionTreeNode, busySessions: Rea
  * `leading` picks the row glyph: a chat bubble for ordinary chats, a circular
  * agent avatar for subagent rows, or none when the parent row's collapse
  * chevron already leads the row.
+ *
+ * Long titles truncate; a "See more" strip appears under the card only when
+ * the title actually overflows and expands it to wrap (with "See less" to
+ * collapse again). Hovering always exposes the full title as a tooltip.
  */
 function SessionCard({ active, busy, title, time, engineChip, cardTitle, archived = false, leading = 'chat', onToggleArchive, onClick }: {
   active: boolean
@@ -2337,17 +2525,37 @@ function SessionCard({ active, busy, title, time, engineChip, cardTitle, archive
   onToggleArchive(): void
   onClick(): void
 }) {
+  const titleRef = useRef<HTMLSpanElement | null>(null)
+  const [titleOverflowing, setTitleOverflowing] = useState(false)
+  const [titleExpanded, setTitleExpanded] = useState(false)
+
+  useEffect(() => {
+    setTitleExpanded(false)
+    const element = titleRef.current
+    if (!element || typeof ResizeObserver === 'undefined') return
+    const checkOverflow = () => setTitleOverflowing(element.scrollWidth > element.clientWidth + 1)
+    checkOverflow()
+    const observer = new ResizeObserver(checkOverflow)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [title])
+
+  const showTitleToggle = titleExpanded || titleOverflowing
+  const tooltip = [cardTitle, title].filter(Boolean).join('\n')
+
   return (
-    <div className="group relative">
+    <div
+      className={cn(
+        'group relative rounded-lg border text-[11px] transition-colors',
+        active
+          ? 'border-border-strong bg-secondary text-foreground shadow-sm'
+          : 'border-border-soft bg-surface-1 text-soft hover:bg-accent hover:text-foreground',
+      )}
+    >
       <button
         type="button"
-        className={cn(
-          'flex w-full items-center justify-between rounded-lg border border-border-soft bg-surface-1 px-2.5 py-1.5 text-left text-[11px] text-soft transition-colors',
-          active
-            ? 'border-border-strong bg-secondary text-foreground shadow-sm'
-            : 'hover:bg-accent hover:text-foreground',
-        )}
-        {...(cardTitle ? { title: cardTitle } : {})}
+        className="flex w-full items-center justify-between px-2.5 py-1.5 text-left"
+        {...(tooltip ? { title: tooltip } : {})}
         onClick={onClick}
       >
         <span className="flex min-w-0 items-center gap-1.5">
@@ -2359,7 +2567,12 @@ function SessionCard({ active, busy, title, time, engineChip, cardTitle, archive
               <SparkIcon className="size-[10px]" />
             </span>
           ) : null}
-          <span className="truncate font-medium">{title}</span>
+          <span
+            ref={titleRef}
+            className={cn('min-w-0 font-medium', titleExpanded ? 'whitespace-pre-wrap break-words' : 'truncate')}
+          >
+            {title}
+          </span>
           {engineChip ? (
             <span className="shrink-0 rounded-md border border-border-soft px-1.5 py-px text-[9px] font-semibold uppercase tracking-[0.04em] text-soft">
               {engineChip}
@@ -2368,6 +2581,18 @@ function SessionCard({ active, busy, title, time, engineChip, cardTitle, archive
         </span>
         <span className="shrink-0 text-[10px] text-faint transition-opacity group-hover:opacity-0">{time}</span>
       </button>
+      {showTitleToggle ? (
+        <button
+          type="button"
+          className="w-full px-2.5 pb-1.5 text-left text-[9px] font-bold uppercase tracking-[0.06em] text-faint transition-colors hover:text-primary"
+          onClick={(event) => {
+            event.stopPropagation()
+            setTitleExpanded((value) => !value)
+          }}
+        >
+          {titleExpanded ? 'See less' : 'See more'}
+        </button>
+      ) : null}
       <button
         type="button"
         title={archived ? 'Unarchive chat' : 'Archive chat'}

@@ -2,6 +2,7 @@ import type { ExternalElementPickResult, ExternalElementPickView } from '../../.
 
 const PICK_TIMEOUT_MS = 60_000
 const HIGHLIGHT_CLASS = 'nd-dsh-self-inspect-hover'
+const ACTIVE_CLASS = 'nd-self-inspect-active'
 
 let cancelActivePick: (() => void) | undefined
 
@@ -14,7 +15,16 @@ export function pickSelfElement(): Promise<ExternalElementPickResult> {
   cancelActivePick?.()
   return new Promise((resolve) => {
     const style = document.createElement('style')
-    style.textContent = `.${HIGHLIGHT_CLASS}{outline:2px solid #4f8cff !important;outline-offset:-1px !important;cursor:crosshair !important}`
+    // Radix modal dialogs lock the page down with `body { pointer-events: none }`
+    // and a full-screen overlay, which makes everything outside the dialog
+    // unhittable for elementFromPoint. While picking, undo that lockdown (the
+    // overlay stays visible but click-through) so the dialog, its backdrop and
+    // the app behind it are all equally inspectable.
+    style.textContent = [
+      `.${HIGHLIGHT_CLASS}{outline:2px solid #4f8cff !important;outline-offset:-1px !important;cursor:crosshair !important}`,
+      `html.${ACTIVE_CLASS} body{pointer-events:auto !important}`,
+      `html.${ACTIVE_CLASS} [data-slot="dialog-overlay"]{pointer-events:none !important}`,
+    ].join('')
     let hovered: Element | null = null
     let settled = false
 
@@ -24,11 +34,13 @@ export function pickSelfElement(): Promise<ExternalElementPickResult> {
     }
     const cleanup = (): void => {
       document.removeEventListener('pointermove', onMove, true)
+      document.removeEventListener('pointerdown', onPointerDown, true)
       document.removeEventListener('click', onClick, true)
       document.removeEventListener('keydown', onKey, true)
       clearTimeout(timer)
       clearHover()
       style.remove()
+      document.documentElement.classList.remove(ACTIVE_CLASS)
       if (cancelActivePick === cancel) cancelActivePick = undefined
     }
     const finish = (result: ExternalElementPickResult): void => {
@@ -75,12 +87,19 @@ export function pickSelfElement(): Promise<ExternalElementPickResult> {
       event.preventDefault()
       cancel()
     }
+    // Hide the pick's pointer presses from Radix's dismiss-on-outside logic so
+    // an open dialog survives being inspected instead of closing mid-pick.
+    const onPointerDown = (event: PointerEvent): void => {
+      event.stopPropagation()
+    }
     const timer = window.setTimeout(cancel, PICK_TIMEOUT_MS)
 
     cancelActivePick = cancel
     document.addEventListener('pointermove', onMove, true)
+    document.addEventListener('pointerdown', onPointerDown, true)
     document.addEventListener('click', onClick, true)
     document.addEventListener('keydown', onKey, true)
+    document.documentElement.classList.add(ACTIVE_CLASS)
     document.head.appendChild(style)
   })
 }

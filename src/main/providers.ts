@@ -94,7 +94,7 @@ function sanitizeProvider(value: unknown, includeLegacySecret = false): ModelPro
   }
 }
 
-function resolveProbeHeaders(headers: Record<string, string> | undefined, baseUrl: string | undefined): Record<string, string> {
+export function resolveProbeHeaders(headers: Record<string, string> | undefined, baseUrl: string | undefined): Record<string, string> {
   const result: Record<string, string> = {}
   if (headers) {
     for (const [key, val] of Object.entries(headers)) {
@@ -276,6 +276,11 @@ export class ProviderStore {
   /** Trusted main-process summary used by runtime status computation. */
   enabled(): ModelProvider | undefined {
     return cloneProviders(this.providers).find((provider) => provider.enabled)
+  }
+
+  /** Trusted main-process list of all enabled providers with decrypted credentials. */
+  allEnabled(): ModelProvider[] {
+    return cloneProviders(this.providers).filter((provider) => provider.enabled)
   }
 
   nativeAgentRoute(providerId?: string, modelId?: string): NativeAgentModelRoute {

@@ -2,6 +2,100 @@ import { describe, expect, it } from 'vitest'
 import { ExecutionCoordinator, RuntimeCapacityError, type CapacityReleaseEvent } from '../src/main/organization/execution-coordinator.js'
 
 describe('ExecutionCoordinator', () => {
+  it('drains 26 independent queued tasks within four permits and preserves each async owner', async () => {
+    const coordinator = new ExecutionCoordinator()
+    let active = 0
+    let peak = 0
+    const completed: string[] = []
+    await Promise.all(Array.from({ length: 26 }, async (_, index) => {
+      const taskId = `task-${index}`
+      const permit = await coordinator.acquireWhenAvailable({
+        kind: 'execution', projectId: 'nd-translate', taskId,
+        pools: [{ key: 'project:nd-translate:execution', limit: 4 }],
+      }, 5_000)
+      try {
+        await coordinator.runWithPermit(permit, async () => {
+          active += 1
+          peak = Math.max(peak, active)
+          await Promise.resolve()
+          expect(coordinator.currentPermit()?.input.taskId).toBe(taskId)
+          completed.push(taskId)
+          active -= 1
+        })
+      } finally {
+        await coordinator.release(permit)
+      }
+    }))
+    expect(peak).toBe(4)
+    expect(new Set(completed).size).toBe(26)
+    expect(coordinator.currentPermit()).toBeUndefined()
+    expect(coordinator.snapshot().activePermits).toBe(0)
+    await coordinator.close()
+  })
+
+  it('rejects fresh and queued dispatch after shutdown starts', async () => {
+    const coordinator = new ExecutionCoordinator()
+    const input = { kind: 'execution' as const, pools: [{ key: 'project:p:execution', limit: 1 }] }
+    await coordinator.acquire(input)
+    const waiting = coordinator.acquireWhenAvailable(input, 1_000)
+    const rejected = expect(waiting).rejects.toThrow(/closed/i)
+    await coordinator.close()
+    await rejected
+    await expect(coordinator.acquire(input)).rejects.toThrow(/closed/i)
+    await expect(coordinator.availability(input.pools)).resolves.toMatchObject({ granted: false, reason: expect.stringMatching(/closed/i) })
+    expect(coordinator.snapshot().activePermits).toBe(0)
+  })
+
+  it('releases a core permit granted while shutdown was in progress', async () => {
+    let grant!: (value: unknown) => void
+    const released: unknown[] = []
+    const core = {
+      request: async (method: string, params: unknown) => {
+        if (method === 'scheduler.acquire') return new Promise((resolve) => { grant = resolve })
+        if (method === 'scheduler.release') released.push(params)
+        return {}
+      },
+      onEvent: () => () => undefined,
+    }
+    const coordinator = new ExecutionCoordinator(core as never)
+    const acquiring = coordinator.acquire({ kind: 'execution', pools: [{ key: 'project:p:execution', limit: 1 }] })
+    const rejected = expect(acquiring).rejects.toThrow(/closed/i)
+    await Promise.resolve()
+    await Promise.resolve()
+    await coordinator.close()
+    grant({ granted: true, permit: { id: 'native-permit' } })
+    await rejected
+    expect(released).toHaveLength(1)
+    expect(coordinator.snapshot().activePermits).toBe(0)
+  })
+
+  it('does not retain a session binding completed after its permit was released', async () => {
+    let finishBind!: () => void
+    let signalBind!: () => void
+    const bindingStarted = new Promise<void>((resolve) => { signalBind = resolve })
+    const core = {
+      request: async (method: string) => {
+        if (method === 'scheduler.acquire') return { granted: true, permit: { id: 'native-permit' } }
+        if (method === 'scheduler.bind') {
+          signalBind()
+          await new Promise<void>((resolve) => { finishBind = resolve })
+        }
+        return {}
+      },
+      onEvent: () => () => undefined,
+    }
+    const coordinator = new ExecutionCoordinator(core as never)
+    const permit = await coordinator.acquire({ kind: 'execution', pools: [{ key: 'project:p:execution', limit: 1 }] })
+    const binding = coordinator.bindSession(permit, 'session-after-close')
+    const rejected = expect(binding).rejects.toThrow(/closed|no longer active/i)
+    await bindingStarted
+    const closing = coordinator.close()
+    finishBind()
+    await rejected
+    await closing
+    expect(coordinator.snapshot()).toMatchObject({ activePermits: 0, sessions: 0 })
+  })
+
   it('acquires all required pools atomically and exposes the active permit to engine spawns', async () => {
     const coordinator = new ExecutionCoordinator()
     const first = await coordinator.acquire({

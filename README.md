@@ -59,13 +59,13 @@ flowchart TB
     EXEC --> WEB[Team / Admin Web Portal]
 ```
 
-The detailed implementation map lives in [`docs/architecture.md`](docs/architecture.md). The core distinction is that **ND Extensions**, **plugins**, **skills**, and **browser extensions are different capability classes** even though they can participate in the same workflows.
+The detailed implementation map lives in [`docs/architecture.md`](docs/architecture.md). The core distinction is that **ND Extensions**, **plugins**, **skills**, and **browser extensions are different capability classes** even though they can participate in the same workflows. To build an ND Extension, start at [`docs/extensions/`](docs/extensions/README.md).
 
 | Concept | ND meaning |
 | --- | --- |
 | **General Workspace** | Non-coding productivity, daily operations, files/folders, browser, knowledge, chat and extensions |
 | **Coding Workspace** | General capabilities plus code, terminal, Git, QA, debug/build/release and coding-engine workflows |
-| **ND Extensions** | Manifest-governed host/app capabilities, commands, typed views and workflows mediated by ND permissions |
+| **ND Extensions** | Manifest-governed host/app capabilities, commands, typed views and workflows mediated by ND permissions — author one with [`docs/extensions/authoring.md`](docs/extensions/authoring.md) |
 | **Plugins** | Third-party integrations/adapters connected through ND capability and permission boundaries |
 | **Skills** | Reusable expert task/context packs that agents can invoke when needed |
 | **Workflow templates** | Reusable task/process patterns with explicit context, approvals and automation rules |
@@ -350,6 +350,9 @@ src/main/extensions/      ND extension packages, lifecycle and trusted invocatio
 src/preload/              trusted renderer bridge
 src/renderer/             ND product UI
 src/shared/               cross-process contracts
+schema/                   nd.extension/1 manifest JSON Schema
+examples/nd-extension-hello/  minimal installable ND extension sample
+docs/extensions/          ND extension authoring guide
 configs/dsh/              ND Harness overlay and agent preset
 .dsh/skills/              repository-local ND skills
 tests/                    product/unit contracts

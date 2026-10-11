@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   asNdContext,
@@ -9,6 +11,8 @@ import {
 } from '../src/shared/nd-context.js'
 import {
   ND_EXTENSION_API_VERSION,
+  ND_EXTENSION_PERMISSIONS,
+  ND_HOST_METHODS,
   manifestPermissionIssues,
   requiredPermissionsForManifest,
   validateNdExtensionManifest,
@@ -71,6 +75,49 @@ describe('extension package manifests', () => {
         host: 'os.wallpaper.chooseAndSet',
         contexts: ['personal'],
       }),
+      expect.objectContaining({
+        id: 'set-wallpaper-folder',
+        host: 'os.wallpaper.folders.add',
+        contexts: ['personal'],
+      }),
+      expect.objectContaining({
+        id: 'previous-wallpaper',
+        host: 'os.wallpaper.previous',
+        contexts: ['personal'],
+      }),
+      expect.objectContaining({
+        id: 'next-wallpaper',
+        host: 'os.wallpaper.next',
+        contexts: ['personal'],
+      }),
+      expect.objectContaining({
+        id: 'random-wallpaper',
+        host: 'os.wallpaper.random',
+        contexts: ['personal'],
+      }),
+      expect.objectContaining({
+        id: 'open-wallpaper-studio',
+        host: 'os.wallpaper.status',
+        openViewId: 'wallpaper-studio',
+        contexts: ['personal'],
+      }),
+    ])
+    expect(WALLPAPER_MANAGER_MANIFEST.contributions.views).toEqual([
+      expect.objectContaining({
+        id: 'wallpaper-studio',
+        kind: 'detail',
+        host: 'os.wallpaper.status',
+        contexts: ['personal'],
+        actions: expect.arrayContaining([
+          expect.objectContaining({ id: 'apply', host: 'os.wallpaper.applySelected' }),
+          expect.objectContaining({ id: 'prev', host: 'os.wallpaper.previous' }),
+          expect.objectContaining({ id: 'next', host: 'os.wallpaper.next' }),
+          expect.objectContaining({ id: 'random', host: 'os.wallpaper.random' }),
+          expect.objectContaining({ id: 'choose', host: 'os.wallpaper.chooseAndSet' }),
+          expect.objectContaining({ id: 'folders-add', host: 'os.wallpaper.folders.add' }),
+          expect.objectContaining({ id: 'preview', host: 'os.wallpaper.preview' }),
+        ]),
+      }),
     ])
   })
 
@@ -78,7 +125,7 @@ describe('extension package manifests', () => {
     expect(PROJECT_WORKFLOW_MANIFEST.contexts).toEqual(['project'])
     for (const view of PROJECT_WORKFLOW_MANIFEST.contributions.views) {
       expect(view.contexts).toEqual(['project'])
-      expect(view.host.startsWith('workflow.')).toBe(true)
+      expect(view.host?.startsWith('workflow.')).toBe(true)
     }
   })
 
@@ -217,5 +264,54 @@ describe('extension package manifests', () => {
     manifest.permissions = manifest.permissions.filter((permission) => permission !== 'capture.screen')
     const issues = manifestPermissionIssues(manifest)
     expect(issues.some((issue) => issue.message.includes('capture.screen'))).toBe(true)
+  })
+})
+
+describe('published JSON schema', () => {
+  it('enumerates exactly the runtime host-method allowlist', () => {
+    // The schema is an authoring mirror the runtime validator never reads, so it
+    // drifts silently: editors and external validators then reject manifests ND
+    // would happily accept. Pinning parity here is what stops that.
+    const schemaPath = join(__dirname, '..', 'schema', 'nd-extension.schema.json')
+    const schema = JSON.parse(readFileSync(schemaPath, 'utf8')) as {
+      $defs?: { hostMethod?: { enum?: string[] } }
+    }
+    const published = schema.$defs?.hostMethod?.enum
+    expect(Array.isArray(published), 'schema must publish a hostMethod enum').toBe(true)
+
+    const allowlist = ND_HOST_METHODS.map((method) => method.id)
+    expect([...published!].sort()).toEqual([...allowlist].sort())
+  })
+
+  it('enumerates exactly the runtime permission set', () => {
+    // Same drift risk as the hostMethod enum: `translate.history` shipped in the
+    // runtime allowlist but was missing here, so editor validation rejected the
+    // ND Translate manifest that the installer accepts.
+    const schemaPath = join(__dirname, '..', 'schema', 'nd-extension.schema.json')
+    const schema = JSON.parse(readFileSync(schemaPath, 'utf8')) as {
+      properties?: { permissions?: { items?: { enum?: string[] } } }
+    }
+    const published = schema.properties?.permissions?.items?.enum
+    expect(Array.isArray(published), 'schema must publish a permissions enum').toBe(true)
+
+    expect([...published!].sort()).toEqual([...ND_EXTENSION_PERMISSIONS].sort())
+  })
+
+  it('maps every published host method to a permission the schema declares', () => {
+    const schemaPath = join(__dirname, '..', 'schema', 'nd-extension.schema.json')
+    const schema = JSON.parse(readFileSync(schemaPath, 'utf8')) as {
+      properties?: { permissions?: { items?: { enum?: string[] } } }
+    }
+    const published = new Set(schema.properties?.permissions?.items?.enum ?? [])
+    for (const method of ND_HOST_METHODS) {
+      expect(published.has(method.permission), `${method.id} needs "${method.permission}" in the schema`).toBe(true)
+    }
+  })
+
+  it('declares a permission for every host method it publishes', () => {
+    for (const method of ND_HOST_METHODS) {
+      expect(method.permission, `${method.id} needs a permission`).toBeTruthy()
+      expect(method.contexts.length, `${method.id} needs at least one context`).toBeGreaterThan(0)
+    }
   })
 })

@@ -54,6 +54,39 @@ export interface WorkspaceFileSystem {
  */
 export const CORE_WORKSPACE_LIST_HARD_MAX = 4096
 
+export interface CoreArtifactFingerprint {
+  path: string
+  kind: 'file' | 'directory'
+  size: number
+  sha256: string
+}
+
+export type CoreArtifactFingerprinter = (
+  root: string,
+  paths: readonly string[],
+) => Promise<CoreArtifactFingerprint[]>
+
+/** Hashing up to 1 GiB of declared artifact evidence is slow but bounded. */
+const CORE_ARTIFACT_FINGERPRINT_TIMEOUT_MS = 10 * 60_000
+
+/**
+ * Artifact receipts are produced by nd-core's `workspace.fingerprint-artifacts`:
+ * the walk, the bounds, and the digest layout live in Rust so the desktop main
+ * process never hashes declared evidence itself.
+ */
+export function createCoreArtifactFingerprint(
+  core: Pick<CoreClient, 'request'>,
+): CoreArtifactFingerprinter {
+  return async (root, paths) => {
+    const result = await core.request<{ artifacts: CoreArtifactFingerprint[] }>(
+      'workspace.fingerprint-artifacts',
+      { root, paths: [...paths] },
+      CORE_ARTIFACT_FINGERPRINT_TIMEOUT_MS,
+    )
+    return result.artifacts
+  }
+}
+
 export function createCoreWorkspaceFileSystem(
   core: Pick<CoreClient, 'request'>,
 ): WorkspaceFileSystem {

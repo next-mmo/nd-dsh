@@ -17,26 +17,76 @@ export type AssistantSegment =
  * Models sometimes write one `"milestones": [...]` entry per milestone (or one
  * `"tasks": [...]` per task) inside the same object. That is valid JSON, but a
  * parser keeps only the last duplicate key and silently drops the rest of the
- * plan, so adjacent repeats are merged into one array before parsing.
+ * plan. Merge arrays in their containing object, including repeats separated
+ * by other fields, without interpreting punctuation inside quoted strings.
  */
 export function mergeRepeatedArrayKeys(json: string, keys: readonly string[]): { json: string; merged: number } {
+  if (json.length > 2_000_000) throw new Error('Structured JSON exceeds the size limit')
+  const mergeKeys = new Set(keys)
   let merged = 0
-  let result = json
-  for (const key of keys) {
-    const name = key.replace(/[.*+?^${}()|[\]\\]/g, '\\const TAGGED_BLOCK_PATTERN')
-    const repeat = `\\s*,\\s*"${name}"\\s*:\\s*\\[`
-    const count = (pattern: RegExp): void => { merged += (result.match(pattern) ?? []).length }
-    const emptyBefore = new RegExp(`\\[\\s*\\]${repeat}`, 'g')
-    count(emptyBefore)
-    result = result.replace(emptyBefore, '[')
-    const emptyAfter = new RegExp(`\\]${repeat}\\s*\\]`, 'g')
-    count(emptyAfter)
-    result = result.replace(emptyAfter, ']')
-    const adjacent = new RegExp(`\\]${repeat}`, 'g')
-    count(adjacent)
-    result = result.replace(adjacent, ',')
+  let cursor = 0
+  const whitespace = (): void => { while (/\s/.test(json[cursor] ?? '') && cursor < json.length) cursor += 1 }
+  const expect = (character: string): void => {
+    whitespace()
+    if (json[cursor] !== character) throw new Error(`Invalid structured JSON at position ${cursor}`)
+    cursor += 1
   }
-  return { json: result, merged }
+  const string = (): string => {
+    const start = cursor
+    expect('"')
+    while (cursor < json.length) {
+      const character = json[cursor++]
+      if (character === '\\') cursor += 1
+      else if (character === '"') return JSON.parse(json.slice(start, cursor)) as string
+    }
+    throw new Error('Unterminated string in structured JSON')
+  }
+  const value = (depth: number): unknown => {
+    if (depth > 128) throw new Error('Structured JSON exceeds the nesting limit')
+    whitespace()
+    if (json[cursor] === '"') return string()
+    if (json[cursor] === '[') {
+      cursor += 1
+      const items: unknown[] = []
+      whitespace()
+      if (json[cursor] === ']') { cursor += 1; return items }
+      for (;;) {
+        items.push(value(depth + 1))
+        whitespace()
+        if (json[cursor] === ']') { cursor += 1; return items }
+        expect(',')
+      }
+    }
+    if (json[cursor] === '{') {
+      cursor += 1
+      // Null prototype preserves JSON keys such as __proto__ as ordinary data.
+      const object: Record<string, unknown> = Object.create(null) as Record<string, unknown>
+      whitespace()
+      if (json[cursor] === '}') { cursor += 1; return object }
+      for (;;) {
+        whitespace()
+        const key = string()
+        expect(':')
+        const next = value(depth + 1)
+        const previous = object[key]
+        if (mergeKeys.has(key) && Array.isArray(previous) && Array.isArray(next)) {
+          for (const item of next) previous.push(item)
+          merged += 1
+        } else object[key] = next
+        whitespace()
+        if (json[cursor] === '}') { cursor += 1; return object }
+        expect(',')
+      }
+    }
+    const start = cursor
+    while (cursor < json.length && !/[\s,}\]]/.test(json[cursor]!)) cursor += 1
+    if (start === cursor) throw new Error(`Invalid structured JSON at position ${cursor}`)
+    return JSON.parse(json.slice(start, cursor)) as unknown
+  }
+  const result = value(0)
+  whitespace()
+  if (cursor !== json.length) throw new Error(`Invalid structured JSON at position ${cursor}`)
+  return { json: merged ? JSON.stringify(result) : json, merged }
 }
 
 const TAGGED_BLOCK_PATTERN = /<(nd-dsh-review|nd-dsh-plan)>\s*([\s\S]*?)\s*<\/\1>/g

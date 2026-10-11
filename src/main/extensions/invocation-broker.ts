@@ -250,7 +250,10 @@ export class InvocationBroker {
     this.pending.delete(approvalId)
     const manifest = await this.deps.packages.activeManifest(pending.request.extensionId)
     if (!manifest) return failure('unavailable', 'The extension package is no longer installed')
-    const contribution = resolveContribution(manifest, pending.request.contributionKind, pending.request.contributionId)
+    // Resolve exactly like invoke() does: a view call may name one of its
+    // actions in the input, and web views only exist through those actions.
+    const pendingActionId = typeof pending.input.action === 'string' ? pending.input.action : undefined
+    const contribution = resolveContribution(manifest, pending.request.contributionKind, pending.request.contributionId, pendingActionId)
     if (!contribution) return failure('invalid', 'The approved contribution no longer exists')
     await this.deps.state.addGrant({
       extensionId: pending.request.extensionId,
@@ -283,7 +286,25 @@ export class InvocationBroker {
     const view = manifest.contributions.views.find((item) => item.id === viewId)
     if (!view) throw new Error(`Unknown view ${viewId} in ${extensionId}`)
     if (!view.contexts.includes(context.kind)) throw new Error(`${manifest.name} views are not available in ${describeContext(context)}`)
-    const workflow = view.host.startsWith('workflow.') ? manifest.contributions.workflows[0] : undefined
+    const actionViews = () => view.actions.map((action) => ({ id: action.id, title: action.title, host: action.host }))
+    if (view.kind === 'web') {
+      // A web view runs no data host: activation is the gate, and its UI talks
+      // to host methods through the invoke path once it is actually open.
+      const activation = await this.deps.state.activation(extensionId, context)
+      if (!activation?.enabled) throw new Error(`Activate ${manifest.name} for ${describeContext(context)} first.`)
+      return {
+        extensionId,
+        viewId: view.id,
+        title: view.title,
+        kind: 'web',
+        context,
+        rows: [],
+        actions: actionViews(),
+        ...(view.description ? { empty: view.description } : {}),
+        ...(view.entry ? { webView: { entry: view.entry } } : {}),
+      }
+    }
+    const workflow = view.host?.startsWith('workflow.') ? manifest.contributions.workflows[0] : undefined
     const result = await this.invoke({
       extensionId,
       contributionId: view.id,
@@ -301,7 +322,7 @@ export class InvocationBroker {
       kind: view.kind,
       context,
       rows,
-      actions: view.actions.map((action) => ({ id: action.id, title: action.title, host: action.host })),
+      actions: actionViews(),
       ...(view.refreshIntervalMs ? { refreshIntervalMs: view.refreshIntervalMs } : {}),
       ...(view.description ? { empty: view.description } : {}),
     }
@@ -479,16 +500,23 @@ function resolveContribution(
     return command ? { kind: 'command', id: command.id, host: command.host, startsAgent: command.startsAgent === true, contexts: command.contexts } : undefined
   }
   if (contributionKind === 'view') {
-    const view = manifest.contributions.views.find((item) => item.id === contributionId)
+    // A call names the view ("board") and optionally one of its actions —
+    // either split ("board" + input.action) or combined ("board:record", the
+    // form stored in pending approvals and re-resolved by approve()).
+    const separator = contributionId.indexOf(':')
+    const viewId = separator === -1 ? contributionId : contributionId.slice(0, separator)
+    const combinedAction = separator === -1 ? undefined : contributionId.slice(separator + 1)
+    const view = manifest.contributions.views.find((item) => item.id === viewId)
     if (!view) return undefined
-    const action = actionId ? view.actions.find((item) => item.id === actionId) : undefined
-    return {
-      kind: 'view',
-      id: action ? `${view.id}:${action.id}` : view.id,
-      host: action?.host ?? view.host,
-      startsAgent: false,
-      contexts: view.contexts,
+    const effectiveActionId = actionId ?? combinedAction
+    const action = effectiveActionId ? view.actions.find((item) => item.id === effectiveActionId) : undefined
+    if (combinedAction !== undefined && !action) return undefined
+    if (action) {
+      return { kind: 'view', id: `${view.id}:${action.id}`, host: action.host, startsAgent: false, contexts: view.contexts }
     }
+    // A web view has no data host of its own; only named actions execute.
+    if (!view.host) return undefined
+    return { kind: 'view', id: view.id, host: view.host, startsAgent: false, contexts: view.contexts }
   }
   if (contributionKind === 'workflow') {
     const workflow = manifest.contributions.workflows.find((item) => item.id === contributionId)
@@ -535,11 +563,11 @@ function workflowOpenCommand(extensionId: string, workflow: NdWorkflowContributi
 }
 
 function toRows(value: unknown, view: NdViewContribution): NdViewRow[] {
-  if (!Array.isArray(value)) return []
+  if (!Array.isArray(value) || !view.itemTitleKey) return []
   return value.flatMap((item, index) => {
     if (!item || typeof item !== 'object') return []
     const record = item as Record<string, unknown>
-    const title = record[view.itemTitleKey]
+    const title = record[view.itemTitleKey!]
     if (typeof title !== 'string' || !title.trim()) return []
     const body = view.itemBodyKey ? record[view.itemBodyKey] : undefined
     return [{
@@ -547,6 +575,8 @@ function toRows(value: unknown, view: NdViewContribution): NdViewRow[] {
       title: title.trim().slice(0, 512),
       ...(typeof body === 'string' && body.trim() ? { body: body.trim().slice(0, 4_000) } : {}),
       ...(typeof record.status === 'string' ? { meta: record.status.slice(0, 64) } : {}),
+      ...(typeof record.thumbnail === 'string' ? { thumbnail: record.thumbnail } : {}),
+      ...(typeof record.path === 'string' ? { path: record.path } : {}),
       ...(record.actionsDisabled === true ? { actionsDisabled: true } : {}),
       ...(record.sortValues && typeof record.sortValues === 'object' && !Array.isArray(record.sortValues)
         ? { sortValues: Object.fromEntries(Object.entries(record.sortValues).filter((entry): entry is [string, number] => typeof entry[1] === 'number' && Number.isFinite(entry[1]))) }

@@ -215,6 +215,11 @@ export function CapabilitySettings({ onError, subTab: propSubTab, onSelectSubTab
                         retrying={retrying}
                         onRetry={() => void refresh()}
                         onError={onError}
+                        canSetup={Boolean(provider.setup)}
+                        onSetup={() => void openSetup(provider)}
+                        settingUp={busy === `setup-${provider.id}`}
+                        setupProgress={status?.setupProgress}
+                        setupMessage={status?.setupMessage}
                       />
                     ) : null}
                     {status?.lastError && (!provider.setup || setupInstalled) ? <span className={rowPathText}>{status.lastError}</span> : null}

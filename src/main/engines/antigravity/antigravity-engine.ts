@@ -188,7 +188,7 @@ export class AntigravityEngine {
     if (!bin) throw new Error('The Antigravity CLI (agy) is not installed. Install it from https://antigravity.google or set ND_DSH_ANTIGRAVITY_BINARY.')
     const models = await new Promise<EngineModelOption[]>((resolve, reject) => {
       const spawnProcess = this.options.spawnProcess ?? spawn
-      const child = spawnProcess(bin, ['models'], { stdio: ['ignore', 'pipe', 'pipe'] })
+      const child = spawnProcess(bin, ['models'], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
       let out = ''
       let err = ''
       const timer = setTimeout(() => {
@@ -390,6 +390,7 @@ export class AntigravityEngine {
     const log = this.options.log ?? ((line: string) => console.warn(line))
     const spawnProcess = this.options.spawnProcess ?? spawn
     const child = spawnProcess(argv[0] as string, argv.slice(1), {
+      windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'],
       env: environment,
       cwd: session.cwd ?? process.cwd(),

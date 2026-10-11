@@ -1,5 +1,6 @@
 import { promises as fs } from 'node:fs'
 import { dirname } from 'node:path'
+import type { spawn } from 'node:child_process'
 import type { CoreClient } from '../core/core-client.js'
 import type { GitService } from '../git/git-service.js'
 import type { TerminalManager } from '../terminal/terminal-manager.js'
@@ -12,6 +13,9 @@ interface PackagedRuntimeSmokeOptions {
   terminal: TerminalManager
   git: GitService
   harness: Pick<HarnessService, 'gatewayRpc' | 'status'>
+  browser: { snapshot(): Promise<unknown> }
+  spawnProcess: typeof spawn
+  codingCliPath: string | undefined
 }
 
 export async function runPackagedRuntimeSmoke(options: PackagedRuntimeSmokeOptions): Promise<void> {
@@ -36,6 +40,14 @@ export async function runPackagedRuntimeSmoke(options: PackagedRuntimeSmokeOptio
     const harness = options.harness.status()
     if (!sessions.ok || (harness.state !== 'ready' && harness.state !== 'running')) throw new Error('Bundled ND agent runtime is not ready.')
     receipt.harness = { state: harness.state, runtimeVersion: harness.runtimeVersion, gatewayResponded: true }
+
+    // Exercise the bundled CLI too: successful gateway and PTY checks do not
+    // cover the browser wrapper's transitive Windows subprocess launch.
+    await options.browser.snapshot()
+    receipt.browser = { snapshotResponded: true }
+
+    if (!options.codingCliPath) throw new Error('Bundled coding CLI is missing.')
+    receipt.codingCli = await codingCliVersion(options)
 
     const session = await options.terminal.create({
       sessionId,
@@ -140,4 +152,27 @@ async function writeReceipt(path: string, receipt: Record<string, unknown>): Pro
   const temporary = path + '.tmp-' + process.pid
   await fs.writeFile(temporary, JSON.stringify(receipt, null, 2) + '\n', 'utf8')
   await fs.rename(temporary, path)
+}
+
+/** A credential-free check of the real provider wrapper through ND Core. */
+async function codingCliVersion(options: PackagedRuntimeSmokeOptions): Promise<{ version: string }> {
+  const cli = options.codingCliPath!
+  const asNode = /\.(?:c?js|mjs)$/i.test(cli)
+  return new Promise((resolve, reject) => {
+    const child = options.spawnProcess(asNode ? process.execPath : cli, asNode ? [cli, '--version'] : ['--version'], {
+      cwd: options.workspaceRoot, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, ...(asNode ? { ELECTRON_RUN_AS_NODE: '1' } : {}) },
+    })
+    let stdout = ''
+    let stderr = ''
+    const timer = setTimeout(() => { child.kill(); reject(new Error('Bundled coding CLI version check timed out.')) }, 20_000)
+    child.stdout?.on('data', (chunk: Buffer) => { stdout = `${stdout}${chunk.toString()}`.slice(-2_000) })
+    child.stderr?.on('data', (chunk: Buffer) => { stderr = `${stderr}${chunk.toString()}`.slice(-2_000) })
+    child.once('error', (error) => { clearTimeout(timer); reject(error) })
+    child.once('close', (code) => {
+      clearTimeout(timer)
+      if (code !== 0 || !/codex/i.test(stdout)) reject(new Error(stderr || 'Bundled coding CLI version check failed.'))
+      else resolve({ version: stdout.trim() })
+    })
+  })
 }

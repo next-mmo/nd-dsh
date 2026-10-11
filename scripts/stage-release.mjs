@@ -74,7 +74,7 @@ if (process.platform !== 'win32') {
 // deploy operation. CI=true is the upstream-supported way to skip git-hook
 // installation inside submodule worktrees.
 console.log('\nInstalling the Harness release dependency graph...')
-await run(corepack, ['pnpm', '--dir', harnessSource, 'install', '--frozen-lockfile'], root, harnessEnv)
+await run(corepack, ['pnpm', '--dir', harnessSource, 'install', '--frozen-lockfile'], harnessSource, harnessEnv)
 
 console.log('\nBuilding the Harness runtime (host, client, and web faces)...')
 await run(process.execPath, [join(root, 'scripts', 'build-harness.mjs'), '--skip-install'], root, harnessEnv)
@@ -100,6 +100,14 @@ console.log(`Included ${runtimePeers.length} upstream runtime peer package(s).`)
 const removedOfficeEngines = await removeOfficeEngines(harnessOutput)
 await assertNoOfficeEngines(harnessOutput)
 console.log(`Removed ${removedOfficeEngines} native Office engine package(s) from the release closure.`)
+const pruned = await pruneHarnessDevelopmentArtifacts(harnessOutput)
+console.log(
+  `Pruned ${pruned.files} development artifact file(s), ${(pruned.bytes / 1_000_000).toFixed(1)} MB, from the release closure.`,
+)
+const unreachable = await pruneUnreachablePackages(harnessOutput)
+console.log(
+  `Pruned ${unreachable.packages.length} unreachable package(s), ${(unreachable.bytes / 1_000_000).toFixed(1)} MB, from the release closure.`,
+)
 await fs.copyFile(join(harnessSource, 'LICENSE'), join(harnessOutput, 'LICENSE'))
 await fs.copyFile(join(harnessSource, 'THIRD_PARTY_NOTICES.md'), join(harnessOutput, 'THIRD_PARTY_NOTICES.md'))
 
@@ -220,7 +228,188 @@ async function deploy(packageName, destination, productionOnly) {
     '--config.inject-workspace-packages=true',
     '--config.node-linker=hoisted',
     'deploy', destination,
-  ], root, harnessEnv)
+  ], harnessSource, harnessEnv)
+}
+
+/**
+ * Drop development-only artifacts from the deployed Harness closure.
+ *
+ * Source maps and TypeScript declarations are never loaded by the running
+ * runtime: Node resolves only the emitted JavaScript entries, and the web
+ * profile serves its own bundle. In a closure this size they are tens of
+ * megabytes of dead weight in every download, so staging removes them here,
+ * before the closure-verification gates run, so a prune that ever broke
+ * resolution would fail the stage instead of shipping.
+ *
+ * Deliberately narrow: only extension-matched files are removed, never
+ * directories, so package layout and native payloads are untouched.
+ */
+async function pruneHarnessDevelopmentArtifacts(closureRoot) {
+  const PRUNED_EXTENSIONS = ['.map', '.d.ts', '.d.mts', '.d.cts', '.tsbuildinfo']
+  let files = 0
+  let bytes = 0
+
+  const walk = async (directory) => {
+    let entries
+    try {
+      entries = await fs.readdir(directory, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      const full = join(directory, entry.name)
+      if (entry.isDirectory()) {
+        await walk(full)
+        continue
+      }
+      if (!entry.isFile()) continue
+      const name = entry.name.toLowerCase()
+      if (!PRUNED_EXTENSIONS.some((extension) => name.endsWith(extension))) continue
+      const stats = await fs.stat(full)
+      await fs.rm(full, { force: true })
+      files += 1
+      bytes += stats.size
+    }
+  }
+
+  await walk(closureRoot)
+  return { files, bytes }
+}
+
+/**
+ * Packages ND proves unreachable from the shipped `web` profile and therefore
+ * refuses to redistribute.
+ *
+ * Evidence gathered against the deployed closure: nothing in the web-app
+ * bundle, the shipped profiles, or any agent preset references the SenseVoice
+ * speech plugin, and its only consumer of `sherpa-onnx-node` is that plugin's
+ * own worker. No remaining package declares any of these names, so removing
+ * them cannot break Node resolution for anything that ships.
+ *
+ * The assertion below keeps that true: if a future Harness sync wires one of
+ * these into the profile or makes another package declare it, staging fails
+ * here with the offending edge named, instead of shipping a runtime that
+ * crashes the first time a user reaches the feature - or silently shipping
+ * tens of megabytes nobody can reach.
+ */
+const PRUNED_UNREACHABLE_PACKAGES = [
+  '@deepseek-ai/dsh-experimental-speech-to-text-sensevoice',
+]
+/** Platform binaries are named `sherpa-onnx-<platform>`; prune the family. */
+const PRUNED_UNREACHABLE_PREFIXES = ['sherpa-onnx-']
+
+async function pruneUnreachablePackages(closureRoot) {
+  const isPruned = (name) =>
+    PRUNED_UNREACHABLE_PACKAGES.includes(name) ||
+    PRUNED_UNREACHABLE_PREFIXES.some((prefix) => name.startsWith(prefix))
+
+  const removed = []
+  let bytes = 0
+
+  const directoryBytes = async (directory) => {
+    let total = 0
+    const walk = async (current) => {
+      for (const entry of await fs.readdir(current, { withFileTypes: true })) {
+        const full = join(current, entry.name)
+        if (entry.isDirectory()) await walk(full)
+        else if (entry.isFile()) total += (await fs.stat(full)).size
+      }
+    }
+    await walk(directory)
+    return total
+  }
+
+  const walkNodeModules = async (nodeModulesDir) => {
+    let entries
+    try {
+      entries = await fs.readdir(nodeModulesDir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      const full = join(nodeModulesDir, entry.name)
+      if (entry.name.startsWith('@')) {
+        for (const scoped of await fs.readdir(full, { withFileTypes: true })) {
+          if (!scoped.isDirectory()) continue
+          const scopedFull = join(full, scoped.name)
+          const scopedName = `${entry.name}/${scoped.name}`
+          if (isPruned(scopedName)) {
+            bytes += await directoryBytes(scopedFull)
+            await fs.rm(scopedFull, { recursive: true, force: true })
+            removed.push(scopedName)
+            continue
+          }
+          await walkNodeModules(join(scopedFull, 'node_modules'))
+        }
+        continue
+      }
+      if (isPruned(entry.name)) {
+        bytes += await directoryBytes(full)
+        await fs.rm(full, { recursive: true, force: true })
+        removed.push(entry.name)
+        continue
+      }
+      await walkNodeModules(join(full, 'node_modules'))
+    }
+  }
+
+  await walkNodeModules(join(closureRoot, 'node_modules'))
+  await assertPrunedPackagesUnreferenced(closureRoot, isPruned)
+  return { packages: removed, bytes }
+}
+
+/**
+ * Fail staging if any package that still ships declares one of the pruned
+ * names, or if shipped ND code still references them. Node resolves by
+ * declared edges, so an undeclared prune is inert; a declared one is a boot
+ * or feature crash waiting for the user to reach it.
+ */
+async function assertPrunedPackagesUnreferenced(closureRoot, isPruned) {
+  const declaredBy = []
+  const walk = async (nodeModulesDir) => {
+    let entries
+    try {
+      entries = await fs.readdir(nodeModulesDir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      const full = join(nodeModulesDir, entry.name)
+      const dirs = entry.name.startsWith('@')
+        ? (await fs.readdir(full, { withFileTypes: true }))
+          .filter((scoped) => scoped.isDirectory())
+          .map((scoped) => ({ name: `${entry.name}/${scoped.name}`, full: join(full, scoped.name) }))
+        : [{ name: entry.name, full }]
+      for (const directory of dirs) {
+        if (isPruned(directory.name)) continue
+        const manifestPath = join(directory.full, 'package.json')
+        let manifest
+        try {
+          manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'))
+        } catch {
+          continue
+        }
+        const edges = {
+          ...manifest.dependencies,
+          ...manifest.optionalDependencies,
+          ...manifest.peerDependencies,
+        }
+        for (const dependency of Object.keys(edges)) {
+          if (isPruned(dependency)) declaredBy.push(`${manifest.name ?? directory.name} -> ${dependency}`)
+        }
+        await walk(join(directory.full, 'node_modules'))
+      }
+    }
+  }
+  await walk(join(closureRoot, 'node_modules'))
+  if (declaredBy.length > 0) {
+    throw new Error(
+      `Refusing to prune unreachable packages: still declared by shipped packages: ${declaredBy.join(', ')}. ` +
+      'Remove the name from PRUNED_UNREACHABLE_PACKAGES if the Harness now wires it into the web profile.',
+    )
+  }
 }
 
 function run(command, args, cwd, env = process.env) {

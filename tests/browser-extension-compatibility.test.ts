@@ -82,15 +82,33 @@ describe('browser extension compatibility analyzer', () => {
     expect(result.notes.join(' ')).toContain('cannot hide open tab URLs and titles')
   })
 
-  it('records MV3 service workers as provisional without automatically rejecting the extension', () => {
+  it('accepts MV3 service workers, which the built-in runtime probe exercises', () => {
     const result = analyzeBrowserExtensionManifest({
       manifest_version: 3,
       name: 'Worker',
       version: '1.0.0',
       background: { service_worker: 'worker.js' },
     })
-    expect(result.status).toBe('limited')
-    expect(result.notes.join(' ')).toContain('provisional')
+    // tests/fixtures/browser-runtime-spike/extensions/mv3-service-worker records
+    // runtime messaging working on this Electron build, so a worker alone no
+    // longer downgrades an extension to limited.
+    expect(result.status).toBe('compatible')
+    expect(result.notes.join(' ')).not.toContain('provisional')
+  })
+
+  it('accepts declarative rules, which the built-in runtime applies', () => {
+    const result = analyzeBrowserExtensionManifest({
+      manifest_version: 3,
+      name: 'Blocklist',
+      version: '1.0.0',
+      permissions: ['declarativeNetRequest', 'storage', 'tabs'],
+      declarative_net_request: {
+        rule_resources: [{ id: 'ads', enabled: true, path: 'rules/ads.json' }],
+      },
+    })
+    expect(result.status).toBe('compatible')
+    expect(result.notes.join(' ')).not.toContain('declarativeNetRequest')
+    expect(result.notes.join(' ')).not.toContain('declarative_net_request')
   })
 })
 

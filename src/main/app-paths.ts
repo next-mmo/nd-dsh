@@ -252,3 +252,17 @@ export function piBinPath(): string | undefined {
     : [join(managed, 'pi'), join(npmBin, 'pi'), join(home, '.local', 'bin', 'pi'), '/usr/local/bin/pi']
   return defaultLocations.map((entry) => resolve(entry)).find((entry) => existsSync(entry))
 }
+
+/**
+ * Root directory where ND maintains Pi coding agent configuration (models.json, auth.json).
+ * Pointed to via PI_CODING_AGENT_DIR so ND models, endpoints, and credentials configure Pi runs.
+ */
+export function managedPiAgentDir(): string {
+  if (process.env.ND_DSH_PI_AGENT_DIR) return resolve(process.env.ND_DSH_PI_AGENT_DIR)
+  try {
+    return resolve(join(app.getPath('userData'), 'runtimes/engine-clis/pi-agent'))
+  } catch {
+    return resolve(join(process.cwd(), '.nd-dsh/pi-agent'))
+  }
+}
+

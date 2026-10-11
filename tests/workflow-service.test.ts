@@ -1,7 +1,8 @@
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { GitExecRunner } from '../src/main/git/git-cli.js'
 import { OrganizationStore } from '../src/main/organization/store.js'
 import { WorkflowPluginStore } from '../src/main/workflows/workflow-plugin-store.js'
 import { WorkflowService } from '../src/main/workflows/workflow-service.js'
@@ -9,6 +10,8 @@ import type { WorkflowPluginManifest } from '../src/shared/workflow-plugins.js'
 import { parseWorkflowPluginManifest } from '../src/shared/workflow-plugins.js'
 
 const tempDirs: string[] = []
+
+vi.mock('electron', () => ({ app: { isPackaged: false, getAppPath: () => process.cwd() } }))
 
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
@@ -146,6 +149,40 @@ describe('WorkflowService', () => {
     expect(refreshed.snapshot?.stale).toBe(false)
     expect(refreshed.snapshot?.tasks.map((task) => task.title)).toEqual(['Bootstrap', 'Dark Mode', 'Express Todo'])
     expect(refreshed.snapshot?.tasks[2]?.humanAcceptance).toBe('accepted by ND')
+  })
+
+  it('routes plugin provenance and clone commands through the injected ND Core git runner', async () => {
+    const fx = await fixture()
+    const cacheDir = join(fx.baseDir, 'runner-cache')
+    const calls: Array<{ cwd: string; args: string[] }> = []
+    const runner: GitExecRunner = async (cwd, args) => {
+      calls.push({ cwd, args })
+      if (args[0] === 'clone') {
+        const dest = args[2]!
+        await mkdir(join(dest, 'nd'), { recursive: true })
+        await writeFile(join(dest, 'nd', 'nd-plugin.json'), JSON.stringify(BUNDLE_MANIFEST), 'utf8')
+        return { exitCode: 0, stdout: '', stderr: '' }
+      }
+      if (args[1] === '--is-inside-work-tree') return { exitCode: 0, stdout: 'true\n', stderr: '' }
+      if (args[1] === 'HEAD') return { exitCode: 0, stdout: `${'a'.repeat(40)}\n`, stderr: '' }
+      if (args[1] === '--abbrev-ref') return { exitCode: 0, stdout: 'main\n', stderr: '' }
+      if (args[1] === '--porcelain') return { exitCode: 0, stdout: '', stderr: '' }
+      throw new Error(`Unexpected git command: ${args.join(' ')}`)
+    }
+    const pluginStore = new WorkflowPluginStore(join(fx.baseDir, 'runner-plugins.json'))
+    const service = new WorkflowService({ store: pluginStore, organization: fx.org, pluginCacheDir: cacheDir, git: runner })
+
+    const bundle = await writePluginBundle(fx.baseDir)
+    await service.install({ kind: 'local', path: bundle })
+    expect(calls[0]).toEqual({ cwd: bundle, args: ['rev-parse', '--is-inside-work-tree'] })
+
+    calls.length = 0
+    const url = 'https://example.invalid/plugin.git'
+    const state = await service.install({ kind: 'git', url })
+    expect(state.plugins[0]?.source).toMatchObject({ kind: 'git', url, resolvedSha: 'a'.repeat(40) })
+    expect(calls[0]?.cwd).toBe(cacheDir)
+    expect(calls[0]?.args.slice(0, 2)).toEqual(['clone', url])
+    expect(calls.some((call) => call.args[1] === '--is-inside-work-tree' && call.cwd.startsWith(cacheDir))).toBe(true)
   })
 
   it('fails enablement without a linked workspace and before detection passes', async () => {

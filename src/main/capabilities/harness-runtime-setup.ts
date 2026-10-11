@@ -11,7 +11,8 @@ import {
   type CapabilityPrerequisiteResult,
   type CapabilitySourceRuntimeSetupDescriptor,
 } from '../../shared/capabilities.js'
-import { codexBinPath, harnessRoot } from '../app-paths.js'
+import { bundledResourceRoot, codexBinPath, harnessRoot } from '../app-paths.js'
+import { backgroundProcessEnvironment } from '../core/background-process-environment.js'
 import type { CapabilitySetupAdapter, CapabilitySetupAdapters, CapabilitySetupProgress } from './capability-registry.js'
 
 const HARNESS_SOURCE_URL = 'https://github.com/deepseek-ai/deepseek-harness'
@@ -177,7 +178,10 @@ function runFixedCommand(command: string, args: readonly string[], cwd: string):
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
-      env: { ...process.env, CI: 'true' },
+      env: backgroundProcessEnvironment(
+        { ...process.env, CI: 'true' },
+        join(bundledResourceRoot(), 'scripts', 'nd-background-process.cjs'),
+      ),
     })
     let output = ''
     const append = (chunk: string | Buffer): void => {

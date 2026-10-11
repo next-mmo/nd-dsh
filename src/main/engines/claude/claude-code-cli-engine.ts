@@ -273,6 +273,7 @@ export class ClaudeCodeCliEngine {
     const log = this.options.log ?? ((line: string) => console.warn(line))
     const spawnProcess = this.options.spawnProcess ?? spawn
     const child = spawnCliCommand(spawnProcess, bin, argv, {
+      windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'],
       env: engineEnvironment(),
       cwd: session.cwd ?? process.cwd(),

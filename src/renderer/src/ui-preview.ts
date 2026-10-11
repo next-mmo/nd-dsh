@@ -594,6 +594,15 @@ const desktopApi: DesktopApi = {
       displayLabel: options?.rect ? `${Math.round(options.rect.width)}x${Math.round(options.rect.height)}` : 'UI preview',
       mode: options?.mode ?? 'full',
     }),
+    forComposer: async (_scope, options) => ({
+      data: '',
+      mediaType: 'image/png' as const,
+      width: Math.round(options?.rect?.width ?? innerWidth),
+      height: Math.round(options?.rect?.height ?? innerHeight),
+      displayLabel: options?.rect ? `${Math.round(options.rect.width)}x${Math.round(options.rect.height)}` : 'UI preview',
+      mode: options?.mode ?? 'full',
+      copiedToClipboard: false,
+    }),
     inspectElement: async () => ({ outcome: 'unreachable', message: 'Element inspection is available in Electron.' }),
     stageElement: async () => [],
     elementAttachments: async () => [],
@@ -618,6 +627,7 @@ const desktopApi: DesktopApi = {
     installLocal: async () => null,
     installFromPath: async () => previewExtensionsState(),
     installAvailable: async () => previewExtensionsState(),
+    exportStarterKit: async () => null,
     update: async () => previewExtensionsState(),
     rollback: async () => previewExtensionsState(),
     uninstall: async () => previewExtensionsState(),
@@ -627,9 +637,11 @@ const desktopApi: DesktopApi = {
     commands: async () => [],
     invoke: async () => ({ ok: false, error: { code: 'unavailable' as const, message: 'Extension actions are unavailable in preview mode.' } }),
     loadView: async (extensionId, viewId, context) => ({ extensionId, viewId, title: 'Preview view', kind: 'list' as const, context, rows: [], actions: [] }),
+    closeWebView: async () => undefined,
     approve: async () => ({ ok: false, error: { code: 'unavailable' as const, message: 'Extension actions are unavailable in preview mode.' } }),
     deny: async () => undefined,
     onChanged: () => () => undefined,
+    onBrowserFocus: () => () => undefined,
   },
   home: {
     state: async () => previewHomeState(),
@@ -660,6 +672,8 @@ const desktopApi: DesktopApi = {
       updatedAt: Date.now(),
     }),
     setChatTitle: async () => previewHomeState(),
+    saveLink: async () => previewHomeState(),
+    removeLink: async () => previewHomeState(),
     revealStorage: async () => undefined,
     onChanged: () => () => undefined,
   },
@@ -982,7 +996,7 @@ function gatewayPreview(method: string) {
   if (method === 'session.create') return Promise.resolve({ ok: true, value: { sessionId: `preview-${Date.now()}` } })
   if (method === 'session.models') return Promise.resolve({ ok: true, value: { current: { provider: 'openai-prod', model: 'gpt-5.6', reasoningEffort: 'high' }, routable: true, groups: [{ id: 'openai-prod', name: 'OpenAI', models: [{ id: 'gpt-5.6', name: 'GPT-5.6', reasoning: { efforts: [{ id: 'medium', name: 'Medium' }, { id: 'high', name: 'High' }], defaultEffort: 'high' } }] }], failures: [] } })
   if (method === 'skill.list') return Promise.resolve({ ok: true, value: { skills: [{ name: 'live-browser', description: 'Inspect and verify the visible application.' }, { name: 'product-review', description: 'Review product changes against acceptance criteria.' }] } })
-  if (method === 'agentPresets.list') return Promise.resolve({ ok: true, value: { presets: [{ id: 'nd-dsh', name: 'ND-DSH', description: 'Full product delivery agent', trust: 'project', isDefault: true }, { id: 'code', name: 'Code', description: 'Plan, tool, check coding mode', trust: 'system' }, { id: 'cordis', name: 'Creator', description: 'Create and refine agent presets', trust: 'system' }] } })
+  if (method === 'agentPreset.list') return Promise.resolve({ ok: true, value: { presets: [{ id: 'nd-dsh', name: 'ND-DSH', description: 'Full product delivery agent', trust: 'user', isDefault: true }, { id: 'code', name: 'Code', description: 'Plan, tool, check coding mode', trust: 'system' }, { id: 'cordis', name: 'Creator', description: 'Create and refine agent presets', trust: 'system', blocked: true, blockedReason: 'Creator mode (cordis) is unavailable in this build: its tool schemas trip a model-provider route defect (HTTP 502).' }] } })
   return Promise.resolve({ ok: true, value: {} })
 }
 
@@ -1016,7 +1030,7 @@ function mutateOrganization(mutation: OrganizationMutation): OrganizationSnapsho
     organization = { ...organization, activeProjectId: id, projects: [...organization.projects, project] }
   } else if (mutation.type === 'project.activate') organization = { ...organization, activeProjectId: mutation.id }
   else if (mutation.type === 'project.update') organization = { ...organization, projects: organization.projects.map((item) => item.id === mutation.id ? { ...item, ...mutation.patch, updatedAt: Date.now() } : item) }
-  else if (mutation.type === 'task.create') organization = { ...organization, tasks: [...organization.tasks, { id, companyId: mutation.companyId, projectId: mutation.projectId, ...(mutation.goalId ? { goalId: mutation.goalId } : {}), ...(mutation.milestoneId ? { milestoneId: mutation.milestoneId } : {}), title: mutation.title, description: mutation.description, acceptanceCriteria: mutation.acceptanceCriteria ?? [], priority: mutation.priority ?? 'medium', status: 'backlog', dependsOn: mutation.dependsOn ?? [], ...(mutation.assignedAgentId ? { assignedAgentId: mutation.assignedAgentId } : {}), createdAt: Date.now(), updatedAt: Date.now() }] }
+  else if (mutation.type === 'task.create') organization = { ...organization, tasks: [...organization.tasks, { id, companyId: mutation.companyId, projectId: mutation.projectId, ...(mutation.goalId ? { goalId: mutation.goalId } : {}), ...(mutation.milestoneId ? { milestoneId: mutation.milestoneId } : {}), title: mutation.title, description: mutation.description, acceptanceCriteria: mutation.acceptanceCriteria ?? [], priority: mutation.priority ?? 'medium', status: 'backlog', dependsOn: mutation.dependsOn ?? [], ...(mutation.assignedAgentId ? { assignedAgentId: mutation.assignedAgentId } : {}), ...(mutation.assignedMemberId ? { assignedMemberId: mutation.assignedMemberId } : {}), assigneeKind: mutation.assigneeKind ?? (mutation.assignedMemberId ? 'human' : 'agent'), createdAt: Date.now(), updatedAt: Date.now() }] }
   else if (mutation.type === 'task.update') organization = { ...organization, tasks: organization.tasks.map((item) => item.id === mutation.id ? { ...item, ...mutation.patch, updatedAt: Date.now() } : item) }
   else if (mutation.type === 'role.update') organization = { ...organization, roles: organization.roles.map((item) => item.id === mutation.id ? { ...item, ...mutation.patch } : item) }
   else if (mutation.type === 'agent.update') organization = { ...organization, agents: organization.agents.map((item) => item.id === mutation.id ? { ...item, ...mutation.patch } : item) }
@@ -1036,5 +1050,6 @@ function previewHomeState() {
     notes: [],
     captures: [],
     chats: [],
+    links: [],
   }
 }

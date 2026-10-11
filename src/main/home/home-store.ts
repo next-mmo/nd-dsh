@@ -7,9 +7,12 @@ import type {
   NdCaptureResultView,
   NdHomeCaptureView,
   NdHomeChatView,
+  NdHomeLinkView,
   NdHomeNoteView,
   NdHomeStateView,
 } from '../../shared/nd-invocations.js'
+import { dialpadSiteLabel } from '../../shared/personal-dialpad.js'
+import { DEFAULT_BROWSER_URL, isAllowedBrowserUrl, normalizeBrowserUrl } from '../browser/browser-url.js'
 import { quarantineFile } from '../logging/log-file.js'
 
 interface HomeSnapshot {
@@ -17,12 +20,15 @@ interface HomeSnapshot {
   notes: NdHomeNoteView[]
   captures: NdHomeCaptureView[]
   chats: NdHomeChatView[]
+  links: NdHomeLinkView[]
 }
 
 const NOTE_BODY_MAX = 64_000
 const NOTE_TITLE_MAX = 160
 const MAX_NOTES = 5_000
 const MAX_CAPTURES = 500
+const MAX_LINKS = 120
+const LINK_TITLE_MAX = 120
 const CAPTURE_NAME_MAX = 128
 
 /**
@@ -36,7 +42,7 @@ export class HomeStore {
   private loaded = false
   private loadPromise: Promise<void> | undefined
   private saveChain: Promise<void> = Promise.resolve()
-  private value: HomeSnapshot = { version: 1, notes: [], captures: [], chats: [] }
+  private value: HomeSnapshot = { version: 1, notes: [], captures: [], chats: [], links: [] }
   private onChanged: ((state: NdHomeStateView) => void) | undefined
 
   constructor(private readonly rootDir: string) {}
@@ -61,6 +67,7 @@ export class HomeStore {
       notes: [...this.value.notes].sort((left, right) => right.updatedAt - left.updatedAt),
       captures: [...this.value.captures].sort((left, right) => right.createdAt - left.createdAt),
       chats: [...this.value.chats].sort((left, right) => right.updatedAt - left.updatedAt),
+      links: [...this.value.links].sort((left, right) => right.addedAt - left.addedAt),
     }
   }
 
@@ -238,6 +245,36 @@ export class HomeStore {
     await this.persistAndEmit()
   }
 
+  /**
+   * Personal browser dialpad: one saved one-click site. The address is
+   * normalized the same way the browser's own address bar normalizes input, and
+   * re-saving an address refreshes its tile instead of adding a second one.
+   */
+  async saveLink(input: { url: string; title?: string }): Promise<NdHomeLinkView> {
+    await this.load()
+    const url = normalizeBrowserUrl(input.url)
+    if (!isAllowedBrowserUrl(url) || url === DEFAULT_BROWSER_URL) {
+      throw new Error('A dialpad link needs an http(s) address')
+    }
+    const title = dialpadSiteLabel(url, input.title).slice(0, LINK_TITLE_MAX)
+    const existing = this.value.links.find((link) => link.url === url)
+    if (existing) {
+      existing.title = title
+      await this.persistAndEmit()
+      return existing
+    }
+    const link: NdHomeLinkView = { id: randomUUID(), url, title, addedAt: Date.now() }
+    this.value.links = [link, ...this.value.links].slice(0, MAX_LINKS)
+    await this.persistAndEmit()
+    return link
+  }
+
+  async removeLink(id: string): Promise<void> {
+    await this.load()
+    this.value.links = this.value.links.filter((link) => link.id !== id)
+    await this.persistAndEmit()
+  }
+
   private async load(): Promise<void> {
     if (this.loaded) return
     if (this.loadPromise) return this.loadPromise
@@ -256,6 +293,7 @@ export class HomeStore {
         notes: Array.isArray(record.notes) ? record.notes.filter(isNoteRecord) : [],
         captures: Array.isArray(record.captures) ? record.captures.filter(isCaptureRecord) : [],
         chats: Array.isArray(record.chats) ? record.chats.filter(isChatRecord) : [],
+        links: Array.isArray(record.links) ? record.links.filter(isLinkRecord) : [],
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
@@ -263,7 +301,7 @@ export class HomeStore {
         // copy; keep the unreadable file aside for recovery instead.
         await quarantineFile(this.filePath(), error)
       }
-      this.value = { version: 1, notes: [], captures: [], chats: [] }
+      this.value = { version: 1, notes: [], captures: [], chats: [], links: [] }
     }
     this.loaded = true
   }
@@ -317,4 +355,10 @@ function isChatRecord(value: unknown): value is NdHomeChatView {
   if (!value || typeof value !== 'object') return false
   const record = value as Record<string, unknown>
   return typeof record.chatId === 'string' && typeof record.workDir === 'string' && typeof record.context === 'object'
+}
+
+function isLinkRecord(value: unknown): value is NdHomeLinkView {
+  if (!value || typeof value !== 'object') return false
+  const record = value as Record<string, unknown>
+  return typeof record.id === 'string' && typeof record.url === 'string' && typeof record.addedAt === 'number'
 }

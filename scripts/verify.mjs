@@ -335,7 +335,10 @@ function relativeImports(content) {
 }
 
 function resolveLocalImport(importer, specifier) {
-  const base = resolve(dirname(importer), specifier)
+  // Vite import queries (`?raw`, `?url`, `?inline`) are bundler directives, not
+  // part of the path; the file behind them still has to exist on disk.
+  const [pathPart] = specifier.split('?')
+  const base = resolve(dirname(importer), pathPart)
   const candidates = [base]
   if (base.endsWith('.js')) candidates.push(base.slice(0, -3) + '.ts', base.slice(0, -3) + '.tsx')
   if (!extname(base)) {

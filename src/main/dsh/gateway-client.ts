@@ -719,15 +719,25 @@ function translateFrame(message: ServerRequestFrame): DshEventFrame | undefined 
 const REMOTE_ARGS: Record<string, (payload: unknown) => unknown> = {
   'session.list': (payload) => ({ _request: payload }),
   'session.models': () => ({}),
-  'agentPresets.list': () => ({}),
+  'agentPreset.list': () => ({}),
   'settings.update': (payload) => payload,
   // The result endpoint takes the fully-shaped result as its args, not a
   // request wrapper.
   '$events/result': (payload) => payload,
 }
 
+/**
+ * Remote-face paths that are not the dotted name with its dot slashed. The
+ * preset roster is served as `agentPreset.list` on the dotted face, while the
+ * remote face names the endpoint after its plural service namespace.
+ */
+const REMOTE_ENDPOINTS: Record<string, string> = {
+  'session.models': 'session/modelCatalog',
+  'agentPreset.list': 'agentPresets/list',
+}
+
 function remoteRequest(method: string, payload: unknown): { method: string; payload: unknown } {
-  const endpoint = method === 'session.models' ? 'session/modelCatalog' : method.replace('.', '/')
+  const endpoint = REMOTE_ENDPOINTS[method] ?? method.replace('.', '/')
   const toArgs = REMOTE_ARGS[method] ?? ((request: unknown) => ({ request }))
   return { method: endpoint, payload: { args: toArgs(payload) } }
 }

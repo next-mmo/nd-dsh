@@ -87,6 +87,10 @@ The entitlement service should unlock hosted capabilities such as:
 
 Local-core capabilities are intrinsic to the local product and are not remotely revocable.
 
+The [Rust main server proposal](0010-nd-cloud-sync-and-customer-portal.md#rust-main-server-proposal--2026-10-09) places hosted usage, subscription mapping and entitlement enforcement in bounded server modules. Start with tenant-level subscription records and explicit user/seat mappings so a team plan can cover several humans without merging billing identity with project authority. Exact billing units, plans and provider remain open decisions.
+
+Paid status and access permissions are separate checks: an active plan never grants project membership, and a role never bypasses hosted quotas. Verified, deduplicated billing events plus provider-state reconciliation update entitlements. Define grace periods, hosted read/export access and retention after downgrade/nonpayment before paid launch; never use subscription changes to delete local data or revoke free local-core capabilities.
+
 Bad model:
 
 ```text

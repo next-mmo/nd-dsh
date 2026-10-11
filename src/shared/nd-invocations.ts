@@ -48,6 +48,17 @@ export interface NdPendingApprovalView {
   requestedAt: number
 }
 
+/**
+ * A real browser tab was opened or focused by an ND context. The tab belongs to
+ * exactly that context, so the shell presents it there: Personal browsing is
+ * Personal, never a company's or a project's.
+ */
+export interface NdBrowserFocusEvent {
+  url: string
+  tabId?: string
+  context: NdContext
+}
+
 export interface NdCommandView {
   extensionId: string
   contributionId: string
@@ -72,20 +83,33 @@ export interface NdViewRow {
   title: string
   body?: string
   meta?: string
+  thumbnail?: string
+  path?: string
   actionsDisabled?: boolean
   sortValues?: Record<string, number>
+}
+
+export interface NdWebViewData {
+  /** Package-relative UI entry from the manifest's web-view contribution. */
+  entry: string
+  /** Attached by main for the renderer: the token-scoped asset URL to load. */
+  url?: string
+  /** Opaque serving token; revoke it when the hosting dialog closes. */
+  token?: string
 }
 
 export interface NdViewData {
   extensionId: string
   viewId: string
   title: string
-  kind: 'list' | 'detail'
+  kind: 'list' | 'detail' | 'web'
   context: NdContext
   rows: NdViewRow[]
   actions: NdViewActionView[]
   refreshIntervalMs?: number
   empty?: string
+  /** Present only for `kind: 'web'` views. */
+  webView?: NdWebViewData
 }
 
 export type NdPackageSourceKind = 'builtin' | 'local' | 'git'
@@ -120,7 +144,9 @@ export interface NdInstalledPackageView {
   settings: NdPackageSettingField[]
   contributions: NdContributionCounts
   /** Typed views this package offers, in manifest order. */
-  views: Array<{ id: string; title: string }>
+  views: Array<{ id: string; title: string; description?: string }>
+  /** Command contributions with display metadata, in manifest order. */
+  commands: Array<{ id: string; title: string; description?: string }>
   hasExecutable: boolean
   previousVersion?: string
 }
@@ -177,6 +203,7 @@ export interface NdAvailablePackageView {
   description: string
   version: string
   permissions: NdExtensionPermission[]
+  commands: Array<{ id: string; title: string; description?: string }>
   installed: boolean
   available: boolean
 }
@@ -213,11 +240,21 @@ export interface NdHomeChatView {
   updatedAt: number
 }
 
+/** One saved dialpad link of the Personal browser. */
+export interface NdHomeLinkView {
+  id: string
+  url: string
+  title: string
+  addedAt: number
+}
+
 export interface NdHomeStateView {
   storageRoot: string
   notes: NdHomeNoteView[]
   captures: NdHomeCaptureView[]
   chats: NdHomeChatView[]
+  /** Saved Personal browser dialpad links, newest first. */
+  links: NdHomeLinkView[]
 }
 
 export interface NdCaptureResultView {
@@ -250,6 +287,11 @@ export interface NdExtensionsDesktopApi {
   installLocal(): Promise<NdExtensionsStateView | null>
   installFromPath(path: string): Promise<NdExtensionsStateView>
   installAvailable(extensionId: string): Promise<NdExtensionsStateView>
+  /**
+   * Builds the extension starter kit (a complete, installable sample package)
+   * and saves it as a ZIP through a native save dialog. Null when cancelled.
+   */
+  exportStarterKit(): Promise<{ saved: boolean; path?: string } | null>
   update(extensionId: string, sourcePath?: string): Promise<NdExtensionsStateView>
   rollback(extensionId: string): Promise<NdExtensionsStateView>
   uninstall(extensionId: string): Promise<NdExtensionsStateView>
@@ -259,9 +301,13 @@ export interface NdExtensionsDesktopApi {
   commands(context: NdContext): Promise<NdCommandView[]>
   invoke(request: NdInvocationRequest): Promise<NdInvocationResult>
   loadView(extensionId: string, viewId: string, context: NdContext): Promise<NdViewData>
+  /** Invalidates the asset-serving token of a closed web-view dialog. */
+  closeWebView(token: string): Promise<void>
   approve(approvalId: string, remember?: boolean): Promise<NdInvocationResult>
   deny(approvalId: string): Promise<void>
   onChanged(listener: (state: NdExtensionsStateView) => void): () => void
+  /** The host opened or focused a real browser tab: the app surfaces it in the tab's own context. */
+  onBrowserFocus(listener: (focus: NdBrowserFocusEvent) => void): () => void
 }
 
 export interface NdHomeDesktopApi {
@@ -279,6 +325,9 @@ export interface NdHomeDesktopApi {
   ensureChat(context: NdContext): Promise<NdHomeChatView>
   bindChat(chatId: string, sessionId: string): Promise<NdHomeChatView>
   setChatTitle(sessionId: string, title: string): Promise<NdHomeStateView>
+  /** Personal browser dialpad: the user's own one-click sites. */
+  saveLink(input: { url: string; title?: string }): Promise<NdHomeStateView>
+  removeLink(id: string): Promise<NdHomeStateView>
   revealStorage(): Promise<void>
   onChanged(listener: (state: NdHomeStateView) => void): () => void
 }
@@ -288,6 +337,7 @@ export const ND_EXTENSIONS_IPC = {
   installLocal: 'nd-ext:install-local',
   installFromPath: 'nd-ext:install-path',
   installAvailable: 'nd-ext:install-available',
+  exportStarterKit: 'nd-ext:export-starter-kit',
   update: 'nd-ext:update',
   rollback: 'nd-ext:rollback',
   uninstall: 'nd-ext:uninstall',
@@ -297,9 +347,11 @@ export const ND_EXTENSIONS_IPC = {
   commands: 'nd-ext:commands',
   invoke: 'nd-ext:invoke',
   view: 'nd-ext:view',
+  closeWebView: 'nd-ext:webview:close',
   approve: 'nd-ext:approve',
   deny: 'nd-ext:deny',
   changedEvent: 'nd-ext:changed',
+  browserFocusEvent: 'nd-ext:browser-focus',
 } as const
 
 export const ND_HOME_IPC = {
@@ -316,6 +368,8 @@ export const ND_HOME_IPC = {
   chatEnsure: 'nd-home:chat:ensure',
   chatBind: 'nd-home:chat:bind',
   chatTitle: 'nd-home:chat:title',
+  linkSave: 'nd-home:link:save',
+  linkRemove: 'nd-home:link:remove',
   reveal: 'nd-home:reveal',
   changedEvent: 'nd-home:changed',
 } as const

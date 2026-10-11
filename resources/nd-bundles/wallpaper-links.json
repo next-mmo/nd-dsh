@@ -1,0 +1,30 @@
+{
+  "schema": "nd.wallpaper-links/1",
+  "name": "ND Curated Wallpaper Links",
+  "description": "Read-only wallpaper links curated by ND and shipped with the app. Discovery downloads an image only when you apply or preview it; small covers stream in for the grid.",
+  "links": [
+    { "url": "https://picsum.photos/id/1015/3840/2160", "thumb": "https://picsum.photos/id/1015/480/270", "title": "River valley" },
+    { "url": "https://picsum.photos/id/1016/3840/2160", "thumb": "https://picsum.photos/id/1016/480/270", "title": "Canyon walls" },
+    { "url": "https://picsum.photos/id/1018/3840/2160", "thumb": "https://picsum.photos/id/1018/480/270", "title": "Mountain pass" },
+    { "url": "https://picsum.photos/id/1019/3840/2160", "thumb": "https://picsum.photos/id/1019/480/270", "title": "Lakeside dusk" },
+    { "url": "https://picsum.photos/id/1020/3840/2160", "thumb": "https://picsum.photos/id/1020/480/270", "title": "Bear in the woods" },
+    { "url": "https://picsum.photos/id/1024/3840/2160", "thumb": "https://picsum.photos/id/1024/480/270", "title": "Bald eagle" },
+    { "url": "https://picsum.photos/id/1025/3840/2160", "thumb": "https://picsum.photos/id/1025/480/270", "title": "Pug portrait" },
+    { "url": "https://picsum.photos/id/1035/3840/2160", "thumb": "https://picsum.photos/id/1035/480/270", "title": "Misty peaks" },
+    { "url": "https://picsum.photos/id/1036/3840/2160", "thumb": "https://picsum.photos/id/1036/480/270", "title": "Alpine night" },
+    { "url": "https://picsum.photos/id/1039/3840/2160", "thumb": "https://picsum.photos/id/1039/480/270", "title": "Waterfall" },
+    { "url": "https://picsum.photos/id/1043/3840/2160", "thumb": "https://picsum.photos/id/1043/480/270", "title": "City lights" },
+    { "url": "https://picsum.photos/id/1044/3840/2160", "thumb": "https://picsum.photos/id/1044/480/270", "title": "Autumn road" },
+    { "url": "https://picsum.photos/id/1050/3840/2160", "thumb": "https://picsum.photos/id/1050/480/270", "title": "Lanterns" }
+  ],
+  "collections": [
+    { "id": "col-a5489346b2ce", "name": "Car", "createdAt": 1791275921908, "entries": [
+      { "kind": "link", "ref": "https://images7.alphacoders.com/134/thumb-1920-1348364.jpeg", "title": "thumb-1920-1348364.jpeg", "id": "b6fc642b91f13e60" },
+      { "kind": "link", "ref": "https://images4.alphacoders.com/658/thumb-1920-658896.jpg", "title": "thumb-1920-658896.jpg", "id": "5759426acb057915" },
+      { "kind": "link", "ref": "https://images3.alphacoders.com/135/thumb-1920-1359033.png", "title": "thumb-1920-1359033.png", "id": "ae72f5617385a9a7" }
+    ] },
+    { "id": "col-29f72c7a91ea", "name": "Natural", "createdAt": 1791276712546, "entries": [
+
+    ] }
+  ]
+}

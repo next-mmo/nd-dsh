@@ -30,10 +30,17 @@ export const ND_EXTENSION_PERMISSIONS = [
   'clipboard.write',
   'browser.navigate',
   'browser.openExternal',
+  'translate.history',
   'os.launch',
   'os.wallpaper.write',
   'process.read',
   'process.quit',
+  'vault.read',
+  'vault.write',
+  'tictactoe.read',
+  'tictactoe.write',
+  'minibrowser.read',
+  'minibrowser.write',
   'chat.start',
   'workflow.read',
 ] as const
@@ -65,11 +72,73 @@ export const ND_HOST_METHODS = [
   { id: 'capture.export', title: 'Export a capture', permission: 'capture.read', contexts: ['personal', 'company', 'project'], sensitive: false },
   { id: 'clipboard.read', title: 'Read the clipboard', permission: 'clipboard.read', contexts: ['personal', 'company', 'project'], sensitive: true },
   { id: 'clipboard.write', title: 'Write the clipboard', permission: 'clipboard.write', contexts: ['personal', 'company', 'project'], sensitive: false },
+  { id: 'clipboard.history.list', title: 'List recorded clipboard history', permission: 'clipboard.read', contexts: ['personal'], sensitive: true },
+  { id: 'clipboard.history.get', title: 'Read a recorded clipboard entry', permission: 'clipboard.read', contexts: ['personal'], sensitive: true },
+  { id: 'clipboard.history.pin', title: 'Pin or unpin a clipboard history entry', permission: 'clipboard.read', contexts: ['personal'], sensitive: false },
+  { id: 'clipboard.history.delete', title: 'Delete a clipboard history entry', permission: 'clipboard.read', contexts: ['personal'], sensitive: true },
+  { id: 'clipboard.history.clear', title: 'Clear clipboard history', permission: 'clipboard.read', contexts: ['personal'], sensitive: true },
+  { id: 'clipboard.history.copyAgain', title: 'Copy a history entry back to the clipboard', permission: 'clipboard.write', contexts: ['personal'], sensitive: false },
+  { id: 'vault.list', title: 'List saved vault entries', permission: 'vault.read', contexts: ['personal'], sensitive: false },
+  { id: 'vault.get', title: 'Read a vault entry including its secret', permission: 'vault.read', contexts: ['personal'], sensitive: true },
+  { id: 'vault.create', title: 'Save a new vault entry', permission: 'vault.write', contexts: ['personal'], sensitive: false },
+  { id: 'vault.update', title: 'Edit a vault entry', permission: 'vault.write', contexts: ['personal'], sensitive: false },
+  { id: 'vault.delete', title: 'Delete a vault entry', permission: 'vault.write', contexts: ['personal'], sensitive: true },
+  { id: 'vault.copy', title: 'Copy a vault secret to the clipboard', permission: 'vault.read', contexts: ['personal'], sensitive: true },
+  { id: 'tictactoe.stats.get', title: 'Read the 3D Tic-Tac-Toe scoreboard', permission: 'tictactoe.read', contexts: ['personal'], sensitive: false },
+  { id: 'tictactoe.stats.record', title: 'Record a 3D Tic-Tac-Toe result', permission: 'tictactoe.write', contexts: ['personal'], sensitive: false },
+  { id: 'tictactoe.stats.reset', title: 'Reset the 3D Tic-Tac-Toe scoreboard', permission: 'tictactoe.write', contexts: ['personal'], sensitive: false },
+  { id: 'minibrowser.session.list', title: 'List the Mini ND Browser session', permission: 'minibrowser.read', contexts: ['personal'], sensitive: false },
+  { id: 'minibrowser.link.list', title: 'List Mini ND Browser quick links', permission: 'minibrowser.read', contexts: ['personal'], sensitive: false },
+  { id: 'minibrowser.tab.open', title: 'Open a browser tab in the ND browser', permission: 'minibrowser.write', contexts: ['personal'], sensitive: false },
+  { id: 'minibrowser.tab.activate', title: 'Activate a browser tab in the ND browser', permission: 'minibrowser.write', contexts: ['personal'], sensitive: false },
+  { id: 'minibrowser.tab.close', title: 'Close a browser tab in the ND browser', permission: 'minibrowser.write', contexts: ['personal'], sensitive: false },
+  { id: 'minibrowser.link.save', title: 'Save a quick link for the Mini ND Browser', permission: 'minibrowser.write', contexts: ['personal'], sensitive: false },
+  { id: 'minibrowser.link.remove', title: 'Remove a quick link from the Mini ND Browser', permission: 'minibrowser.write', contexts: ['personal'], sensitive: false },
   { id: 'browser.openUrl', title: 'Open a website', permission: 'browser.navigate', contexts: ['personal', 'company', 'project'], sensitive: false },
+  { id: 'browser.translate', title: 'Translate text in the ND browser', permission: 'browser.navigate', contexts: ['personal', 'company', 'project'], sensitive: false },
+  { id: 'browser.translate.history', title: 'Read translation history', permission: 'translate.history', contexts: ['personal', 'company', 'project'], sensitive: false },
+  { id: 'browser.translate.history.clear', title: 'Clear translation history', permission: 'translate.history', contexts: ['personal', 'company', 'project'], sensitive: false },
   { id: 'browser.search', title: 'Search the web', permission: 'browser.navigate', contexts: ['personal', 'company', 'project'], sensitive: false },
   { id: 'browser.openExternal', title: 'Open in the system browser', permission: 'browser.openExternal', contexts: ['personal', 'company', 'project'], sensitive: false },
   { id: 'os.openTarget', title: 'Open an app, file, or folder', permission: 'os.launch', contexts: ['personal', 'company', 'project'], sensitive: false },
   { id: 'os.wallpaper.chooseAndSet', title: 'Choose and set desktop wallpaper', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: true },
+  { id: 'os.wallpaper.next', title: 'Cycle to next wallpaper', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: true },
+  { id: 'os.wallpaper.previous', title: 'Cycle to previous wallpaper', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: true },
+  { id: 'os.wallpaper.random', title: 'Set random wallpaper', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: true },
+  { id: 'os.wallpaper.folders.list', title: 'List linked wallpaper folders and play sources', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: false },
+  { id: 'os.wallpaper.folders.add', title: 'Link a wallpaper folder', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: false },
+  { id: 'os.wallpaper.folders.remove', title: 'Remove a linked wallpaper folder', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: false },
+  { id: 'os.wallpaper.playSources.set', title: 'Choose which folders and collections rotation plays', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: false },
+  { id: 'os.wallpaper.status', title: 'Read wallpaper status and library', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: false },
+  { id: 'os.wallpaper.thumbnails', title: 'Render wallpaper thumbnails', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: false },
+  { id: 'os.wallpaper.preview', title: 'Preview wallpaper image', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: false },
+  { id: 'os.wallpaper.applySelected', title: 'Apply selected wallpaper', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: true },
+  { id: 'os.wallpaper.links.list', title: 'List wallpaper links', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: false },
+  { id: 'os.wallpaper.links.add', title: 'Save a remote image link', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: false },
+  { id: 'os.wallpaper.links.remove', title: 'Remove a wallpaper link', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: false },
+  { id: 'os.wallpaper.links.apply', title: 'Set a linked image as the wallpaper', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: true },
+  { id: 'os.wallpaper.links.save', title: 'Save a curated link to your own list', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: false },
+  { id: 'os.wallpaper.links.next', title: 'Play the next saved link as wallpaper', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: true },
+  { id: 'os.wallpaper.links.random', title: 'Play a random saved link as wallpaper', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: true },
+  { id: 'os.wallpaper.collections.list', title: 'List wallpaper collections', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: false },
+  { id: 'os.wallpaper.collections.create', title: 'Create a wallpaper collection', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: false },
+  { id: 'os.wallpaper.collections.delete', title: 'Delete a wallpaper collection', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: false },
+  { id: 'os.wallpaper.collections.add', title: 'Save images into collections', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: false },
+  { id: 'os.wallpaper.collections.removeEntry', title: 'Remove an image from a collection', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: false },
+  { id: 'os.wallpaper.collections.apply', title: 'Set a collection image as the wallpaper', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: true },
+  { id: 'os.wallpaper.collections.next', title: 'Play the next image in a collection', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: true },
+  { id: 'os.wallpaper.collections.random', title: 'Play a random image from a collection', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: true },
+  { id: 'os.wallpaper.collections.rotate', title: 'Point auto-rotation at a collection', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: false },
+  { id: 'os.wallpaper.collections.preview', title: 'Preview a collection image', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: false },
+  { id: 'os.wallpaper.collections.thumbnails', title: 'Render collection thumbnails', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: false },
+  { id: 'os.wallpaper.links.preview', title: 'Preview a linked image', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: false },
+  { id: 'os.wallpaper.links.thumbnails', title: 'Render linked image thumbnails', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: false },
+  { id: 'os.wallpaper.links.import', title: 'Import wallpaper links from a file', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: false },
+  { id: 'os.wallpaper.links.export', title: 'Export wallpaper links to a file', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: false },
+  // Dev-only curation of the shipped ND bundle; packaged builds refuse in main.
+  { id: 'os.wallpaper.bundle.add', title: 'Add a link to the ND bundle (dev builds)', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: true },
+  { id: 'os.wallpaper.bundle.update', title: 'Edit an ND bundle link (dev builds)', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: true },
+  { id: 'os.wallpaper.bundle.remove', title: 'Remove an ND bundle link (dev builds)', permission: 'os.wallpaper.write', contexts: ['personal'], sensitive: true },
   { id: 'process.list', title: 'List running processes', permission: 'process.read', contexts: ['personal'], sensitive: false },
   { id: 'process.quit', title: 'Quit a process', permission: 'process.quit', contexts: ['personal'], sensitive: true },
   { id: 'process.forceQuit', title: 'Force quit a process', permission: 'process.quit', contexts: ['personal'], sensitive: true },
@@ -111,16 +180,25 @@ export interface NdViewActionContribution {
   host: NdHostMethod
 }
 
-/** Typed view descriptions rendered by ND; packages never supply their own UI code. */
+/**
+ * Typed view descriptions rendered by ND; list/detail packages never supply
+ * their own UI code. A `web` view is the one sandboxed exception: the package
+ * ships static UI assets under `entry`, which ND renders in an iframe with no
+ * same-origin and no Node, and every privileged operation still flows through
+ * the brokered host methods below.
+ */
 export interface NdViewContribution {
   id: string
   title: string
   description?: string
   contexts: NdContextKind[]
-  kind: 'list' | 'detail'
-  host: NdHostMethod
-  itemTitleKey: string
+  kind: 'list' | 'detail' | 'web'
+  /** Data host for list/detail views; web views use their actions instead. */
+  host?: NdHostMethod
+  itemTitleKey?: string
   itemBodyKey?: string
+  /** Web views only: package-relative path to the UI entry HTML file. */
+  entry?: string
   /** Refresh only while this view is open; useful for live native lists. */
   refreshIntervalMs?: number
   actions: NdViewActionContribution[]
@@ -263,7 +341,7 @@ export function requiredPermissionsForManifest(manifest: NdExtensionManifest): N
   const required = new Set<NdExtensionPermission>()
   for (const command of manifest.contributions.commands) required.add(ndHostMethod(command.host)!.permission)
   for (const view of manifest.contributions.views) {
-    required.add(ndHostMethod(view.host)!.permission)
+    if (view.host) required.add(ndHostMethod(view.host)!.permission)
     for (const action of view.actions) required.add(ndHostMethod(action.host)!.permission)
   }
   if (manifest.contributions.workflows.length > 0) required.add('workflow.read')
@@ -449,7 +527,7 @@ function contributionsValue(
     views: arrayOf(record.views, 'contributions.views', issues, (item, path) => {
       const id = contributionId(item.id, path, seen, issues)
       const contexts = contextKinds(item.contexts, `${path}.contexts`, issues, { required: false })
-      const kind = item.kind === 'detail' ? 'detail' as const : 'list' as const
+      const kind = item.kind === 'web' ? 'web' as const : item.kind === 'detail' ? 'detail' as const : 'list' as const
       const actions = arrayOf(item.actions, `${path}.actions`, issues, (action, actionPath) => ({
         id: contributionId(action.id, actionPath, seen, issues),
         title: text(action.title, `${actionPath}.title`, 128, undefined, issues),
@@ -459,16 +537,26 @@ function contributionsValue(
       if (refreshIntervalMs !== undefined && (!Number.isInteger(refreshIntervalMs) || (refreshIntervalMs as number) < 2_000 || (refreshIntervalMs as number) > 60_000)) {
         issues.push({ path: `${path}.refreshIntervalMs`, message: 'refreshIntervalMs must be an integer from 2000 to 60000' })
       }
+      // Web views ship their own static UI, so host/itemTitleKey make no sense;
+      // list and detail views keep the original required shape.
+      const host = kind === 'web'
+        ? (item.host === undefined || item.host === null ? undefined : hostMethodValue(item.host, `${path}.host`, issues))
+        : hostMethodValue(item.host, `${path}.host`, issues)
+      const itemTitleKey = kind === 'web'
+        ? undefined
+        : text(item.itemTitleKey, `${path}.itemTitleKey`, 64, undefined, issues)
+      const entry = kind === 'web' ? webviewEntryPath(item.entry, `${path}.entry`, issues) : undefined
       return {
         id,
         title: text(item.title, `${path}.title`, 128, undefined, issues),
         kind,
-        host: hostMethodValue(item.host, `${path}.host`, issues),
-        itemTitleKey: text(item.itemTitleKey, `${path}.itemTitleKey`, 64, undefined, issues),
+        ...(host ? { host } : {}),
+        ...(itemTitleKey ? { itemTitleKey } : {}),
         contexts: narrowContexts(contexts, defaultContexts, `${path}.contexts`, issues),
         actions,
         ...(typeof refreshIntervalMs === 'number' && Number.isInteger(refreshIntervalMs) && refreshIntervalMs >= 2_000 && refreshIntervalMs <= 60_000 ? { refreshIntervalMs } : {}),
-        ...(typeof item.itemBodyKey === 'string' && item.itemBodyKey.trim() ? { itemBodyKey: item.itemBodyKey.trim().slice(0, 64) } : {}),
+        ...(kind !== 'web' && typeof item.itemBodyKey === 'string' && item.itemBodyKey.trim() ? { itemBodyKey: item.itemBodyKey.trim().slice(0, 64) } : {}),
+        ...(entry ? { entry } : {}),
         ...(typeof item.description === 'string' && item.description.trim() ? { description: item.description.trim().slice(0, 500) } : {}),
       }
     }),
@@ -509,7 +597,7 @@ function validateHostContexts(contributions: NdPackageContributions, issues: NdV
   }
 
   for (const [index, view] of contributions.views.entries()) {
-    const hosts = [view.host, ...view.actions.map((action) => action.host)]
+    const hosts = [...(view.host ? [view.host] : []), ...view.actions.map((action) => action.host)]
     for (const host of hosts) {
       const descriptor = ndHostMethod(host)
       if (!descriptor) continue
@@ -592,6 +680,35 @@ function hostMethodValue(value: unknown, path: string, issues: NdValidationIssue
     return 'note.create'
   }
   return value
+}
+
+const WEBVIEW_ENTRY_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/
+
+/**
+ * Web-view entry paths must stay inside the package: relative, forward slashes
+ * only, no traversal segments, and always the UI entry HTML document. Serving
+ * re-checks containment against the installed snapshot at request time.
+ */
+function webviewEntryPath(value: unknown, path: string, issues: NdValidationIssue[]): string | undefined {
+  if (typeof value !== 'string' || !value.trim()) {
+    issues.push({ path, message: `${path} is required for a web view (the package UI entry, e.g. "ui/index.html")` })
+    return undefined
+  }
+  const entry = value.trim()
+  if (
+    entry.length > 256
+    || !WEBVIEW_ENTRY_PATTERN.test(entry)
+    || entry.endsWith('/')
+    || entry.split('/').some((segment) => segment === '.' || segment === '..')
+  ) {
+    issues.push({ path, message: `${path} must be a relative path inside the package, e.g. "ui/index.html"` })
+    return undefined
+  }
+  if (!entry.toLowerCase().endsWith('.html')) {
+    issues.push({ path, message: `${path} must point at an .html document` })
+    return undefined
+  }
+  return entry
 }
 
 /** Contributions may narrow the package's declared contexts but never widen them. */

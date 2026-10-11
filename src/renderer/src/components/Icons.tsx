@@ -25,6 +25,9 @@ export const FilesIcon = (props: IconProps) => (
 export const BrowserIcon = (props: IconProps) => (
   <IconBase {...props}><rect x="2.75" y="4" width="18.5" height="16" rx="2" /><path d="M2.75 8.25h18.5" /><path d="M6 6.15h.01M9 6.15h.01" /></IconBase>
 )
+export const GridIcon = (props: IconProps) => (
+  <IconBase {...props}><rect x="3.5" y="3.5" width="7" height="7" rx="1.5" /><rect x="13.5" y="3.5" width="7" height="7" rx="1.5" /><rect x="3.5" y="13.5" width="7" height="7" rx="1.5" /><rect x="13.5" y="13.5" width="7" height="7" rx="1.5" /></IconBase>
+)
 export const ChatIcon = (props: IconProps) => (
   <IconBase {...props}><path d="M4 4h16v12H8l-4 4z" /><path d="M8 8h8M8 12h5" /></IconBase>
 )

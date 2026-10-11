@@ -6,7 +6,9 @@ import type {
   Company,
   MemoryEntry,
   OrganizationActivity,
+  OrganizationActorRef,
   OrganizationAgent,
+  OrganizationMember,
   OrganizationMutation,
   OrganizationPolicy,
   OrganizationRole,
@@ -15,6 +17,7 @@ import type {
   OrganizationSkill,
   OrganizationSnapshot,
   OrganizationTask,
+  OrganizationTaskHandoff,
   OrganizationTeamEventKind,
   OrganizationWorkflow,
   Project,
@@ -89,6 +92,8 @@ export class OrganizationStore {
       case 'milestone.create': this.createMilestone(mutation); break
       case 'task.create': this.createTask(mutation); break
       case 'task.update': this.updateTask(mutation.id, mutation.patch); break
+      case 'task.reassign': this.reassignTask(mutation); break
+      case 'task.submitWork': this.submitTaskWork(mutation); break
       case 'collaboration.message.add': this.addCollaborationMessage(mutation); break
       case 'decision.create': this.createDecision(mutation); break
       case 'decision.supersede': this.supersedeDecision(mutation); break
@@ -143,19 +148,21 @@ export class OrganizationStore {
     await this.save()
   }
 
-  async taskContext(taskId: string): Promise<{ task: OrganizationTask; project: Project; company: Company; agent?: OrganizationAgent; role?: OrganizationRole; skills: OrganizationSkill[]; memory: MemoryEntry[]; policies: OrganizationPolicy[] }> {
+  async taskContext(taskId: string): Promise<{ task: OrganizationTask; project: Project; company: Company; agent?: OrganizationAgent; role?: OrganizationRole; member?: OrganizationMember; accountableMember?: OrganizationMember; skills: OrganizationSkill[]; memory: MemoryEntry[]; policies: OrganizationPolicy[] }> {
     await this.load()
     const task = this.task(taskId)
     const project = this.project(task.projectId)
     const company = this.company(task.companyId)
     const agent = task.assignedAgentId ? this.value.agents.find((item) => item.id === task.assignedAgentId) : undefined
     const role = agent ? this.value.roles.find((item) => item.id === agent.roleId) : undefined
+    const member = task.assignedMemberId ? this.value.members?.find((item) => item.id === task.assignedMemberId) : undefined
+    const accountableMember = task.accountableMemberId ? this.value.members?.find((item) => item.id === task.accountableMemberId) : undefined
     const teamSkills = this.value.teams.find((item) => item.id === agent?.teamId)?.skillIds ?? []
     const ids = new Set([...(agent?.skillIds ?? []), ...(role?.skillIds ?? []), ...teamSkills, ...(task.requestedSkillIds ?? [])])
     const skills = this.value.skills.filter((skill) => skill.scope === 'builtin' || ids.has(skill.id) || skill.companyId === company.id || skill.projectId === project.id)
     const memory = this.value.memory.filter((entry) => entry.companyId === company.id && (!entry.projectId || entry.projectId === project.id)).slice(-30)
     const policies = this.value.policies.filter((item) => item.companyId === company.id)
-    return { task: clone(task), project: clone(project), company: clone(company), ...(agent ? { agent: clone(agent) } : {}), ...(role ? { role: clone(role) } : {}), skills: clone(skills), memory: clone(memory), policies: clone(policies) }
+    return { task: clone(task), project: clone(project), company: clone(company), ...(agent ? { agent: clone(agent) } : {}), ...(role ? { role: clone(role) } : {}), ...(member ? { member: clone(member) } : {}), ...(accountableMember ? { accountableMember: clone(accountableMember) } : {}), skills: clone(skills), memory: clone(memory), policies: clone(policies) }
   }
 
   async projectContext(projectId: string): Promise<{ project: Project; company: Company; agents: OrganizationAgent[]; roles: OrganizationRole[]; teams: Team[]; memory: MemoryEntry[]; policies: OrganizationPolicy[] }> {
@@ -290,6 +297,15 @@ export class OrganizationStore {
     await this.save()
   }
 
+  /** Main-process gate metadata. Deliberately absent from renderer mutations. */
+  async recordRunVerification(runId: string, evidence: NonNullable<OrganizationRun['verification']>): Promise<void> {
+    await this.load()
+    const run = must(this.value.runs.find((item) => item.id === runId), 'Organization run')
+    if (run.kind !== 'task-execution' || run.status !== 'running') throw new Error('Verification requires an active task execution')
+    run.verification = clone(evidence)
+    await this.save()
+  }
+
   /**
    * A desktop restart means no in-memory Harness turn can still be running.
    * Convert persisted running receipts into explicit failed/interrupted work so
@@ -341,6 +357,7 @@ export class OrganizationStore {
     await this.load()
     const task = this.task(taskId)
     task.status = 'in_progress'; task.executionSessionId = sessionId; delete task.reviewSessionId; delete task.blockedReason
+    delete task.humanSubmission
     task.integrationState = 'pending'; delete task.integrationSummary; delete task.integratedHead
     task.updatedAt = Date.now()
     this.setAgent(task.assignedAgentId, 'working', task.id, sessionId)
@@ -595,7 +612,7 @@ export class OrganizationStore {
     this.seedAgent(id, 'Builder', engineerRole.id, engineeringTeam.id)
     this.seedAgent(id, 'Reviewer', reviewerRole.id, qualityTeam.id)
     this.seedAgent(id, 'Researcher', researcherRole.id, qualityTeam.id)
-    this.value.members.push({ id: randomUUID(), companyId: id, displayName: 'Owner', title: 'Workspace Owner', status: 'active', createdAt: now, updatedAt: now })
+    this.value.members.push({ id: randomUUID(), companyId: id, displayName: 'Owner', title: 'Workspace Owner', status: 'active', accessRole: 'owner', createdAt: now, updatedAt: now })
     this.value.workflows.push(defaultWorkflow(id)); this.value.policies.push(...defaultPolicies(id))
     this.activity(id, undefined, 'company.created', `Created ${company.name} with a default AI workforce and safety policy.`)
   }
@@ -776,6 +793,11 @@ export class OrganizationStore {
     if (input.goalId && !this.value.goals.some((goal) => goal.id === input.goalId && goal.projectId === project.id)) throw new Error('Goal does not belong to this project')
     if (milestone && input.goalId && input.goalId !== milestone.goalId) throw new Error('Task goal does not match milestone')
     if (input.assignedAgentId && !this.value.agents.some((item) => item.id === input.assignedAgentId && item.companyId === input.companyId)) throw new Error('Assigned agent crosses company boundary')
+    if (input.assignedMemberId && !this.value.members.some((item) => item.id === input.assignedMemberId && item.companyId === input.companyId && item.status === 'active')) throw new Error('Assigned member crosses company boundary')
+    if (input.accountableMemberId && !this.value.members.some((item) => item.id === input.accountableMemberId && item.companyId === input.companyId && item.status === 'active')) throw new Error('Accountable member crosses company boundary')
+    if (input.reviewerMemberId && !this.value.members.some((item) => item.id === input.reviewerMemberId && item.companyId === input.companyId && item.status === 'active')) throw new Error('Reviewer member crosses company boundary')
+    if (input.reviewerAgentId && !this.value.agents.some((item) => item.id === input.reviewerAgentId && item.companyId === input.companyId)) throw new Error('Reviewer agent crosses company boundary')
+    for (const collaboratorId of input.collaboratorIds ?? []) this.assertActorInCompany(collaboratorId, input.companyId)
     for (const dependency of input.dependsOn ?? []) if (!this.value.tasks.some((item) => item.id === dependency && item.projectId === input.projectId)) throw new Error('Task dependency crosses project boundary')
     for (const skillId of input.requestedSkillIds ?? []) {
       const skill = this.value.skills.find((item) => item.id === skillId)
@@ -787,10 +809,41 @@ export class OrganizationStore {
       ? this.value.tasks.find((item) => item.sourceTriggerId === input.sourceTriggerId && item.sourceActivityId === input.sourceActivityId)
       : undefined
     if (duplicateTrigger) return
-    const agent = input.assignedAgentId ? this.value.agents.find((item) => item.id === input.assignedAgentId) : this.pickAgent(input.companyId)
+
+    const isHuman = input.assigneeKind === 'human' || Boolean(input.assignedMemberId)
+    const agent = !isHuman
+      ? (input.assignedAgentId ? this.value.agents.find((item) => item.id === input.assignedAgentId) : this.pickAgent(input.companyId))
+      : undefined
     if (agent?.teamId && !project.teamIds.includes(agent.teamId)) project.teamIds.push(agent.teamId)
     const now = Date.now()
-    this.value.tasks.push({ id: randomUUID(), companyId: input.companyId, projectId: input.projectId, title: clean(input.title), description: clean(input.description), acceptanceCriteria: input.acceptanceCriteria?.map(clean).filter(Boolean) ?? ['Requested outcome is implemented and verified.'], priority: input.priority ?? 'medium', status: 'backlog', dependsOn: input.dependsOn ?? [], ...((milestone?.goalId ?? input.goalId) ? { goalId: milestone?.goalId ?? input.goalId } : {}), ...(milestone ? { milestoneId: milestone.id } : {}), ...(agent ? { assignedAgentId: agent.id } : {}), ...taskExecutionHints(input), ...(input.sourceScheduleId ? { sourceScheduleId: clean(input.sourceScheduleId) } : {}), ...(input.sourceTriggerId ? { sourceTriggerId: clean(input.sourceTriggerId) } : {}), ...(input.sourceActivityId ? { sourceActivityId: clean(input.sourceActivityId) } : {}), ...(input.requestedSkillIds?.length ? { requestedSkillIds: [...new Set(input.requestedSkillIds)] } : {}), createdAt: now, updatedAt: now })
+    this.value.tasks.push({
+      id: randomUUID(),
+      companyId: input.companyId,
+      projectId: input.projectId,
+      title: clean(input.title),
+      description: clean(input.description),
+      acceptanceCriteria: input.acceptanceCriteria?.map(clean).filter(Boolean) ?? ['Requested outcome is implemented and verified.'],
+      priority: input.priority ?? 'medium',
+      status: 'backlog',
+      dependsOn: input.dependsOn ?? [],
+      assigneeKind: isHuman ? 'human' : 'agent',
+      ...(isHuman && input.assignedMemberId ? { assignedMemberId: input.assignedMemberId } : {}),
+      ...(agent ? { assignedAgentId: agent.id } : {}),
+      ...(input.collaboratorIds?.length ? { collaboratorIds: [...new Set(input.collaboratorIds)] } : {}),
+      ...(input.accountableMemberId ? { accountableMemberId: input.accountableMemberId } : {}),
+      ...(input.reviewerKind ? { reviewerKind: input.reviewerKind } : {}),
+      ...(input.reviewerMemberId ? { reviewerMemberId: input.reviewerMemberId } : {}),
+      ...(input.reviewerAgentId ? { reviewerAgentId: input.reviewerAgentId } : {}),
+      ...((milestone?.goalId ?? input.goalId) ? { goalId: milestone?.goalId ?? input.goalId } : {}),
+      ...(milestone ? { milestoneId: milestone.id } : {}),
+      ...taskExecutionHints(input),
+      ...(input.sourceScheduleId ? { sourceScheduleId: clean(input.sourceScheduleId) } : {}),
+      ...(input.sourceTriggerId ? { sourceTriggerId: clean(input.sourceTriggerId) } : {}),
+      ...(input.sourceActivityId ? { sourceActivityId: clean(input.sourceActivityId) } : {}),
+      ...(input.requestedSkillIds?.length ? { requestedSkillIds: [...new Set(input.requestedSkillIds)] } : {}),
+      createdAt: now,
+      updatedAt: now,
+    })
     this.refreshProject(input.projectId)
   }
   private updateTask(id: string, patch: Extract<OrganizationMutation, { type: 'task.update' }>['patch']): void {
@@ -800,7 +853,15 @@ export class OrganizationStore {
     const milestone = patch.milestoneId ? this.assertMilestoneProject(patch.milestoneId, task.projectId) : undefined
     if (patch.milestoneId !== undefined && patch.milestoneId !== (task.milestoneId ?? '') && (task.status === 'in_progress' || task.status === 'review')) throw new Error('Cannot move a task to another milestone while it is in progress or review')
     if (patch.assignedAgentId && !this.value.agents.some((item) => item.id === patch.assignedAgentId && item.companyId === task.companyId)) throw new Error('Assigned agent crosses company boundary')
-    if (patch.assignedAgentId && patch.assignedAgentId !== task.assignedAgentId && (task.status === 'in_progress' || task.status === 'review')) {
+    if (patch.assignedMemberId && !this.value.members.some((item) => item.id === patch.assignedMemberId && item.companyId === task.companyId && item.status === 'active')) throw new Error('Assigned member crosses company boundary')
+    if (patch.accountableMemberId && !this.value.members.some((item) => item.id === patch.accountableMemberId && item.companyId === task.companyId && item.status === 'active')) throw new Error('Accountable member crosses company boundary')
+    if (patch.reviewerMemberId && !this.value.members.some((item) => item.id === patch.reviewerMemberId && item.companyId === task.companyId && item.status === 'active')) throw new Error('Reviewer member crosses company boundary')
+    if (patch.reviewerAgentId && !this.value.agents.some((item) => item.id === patch.reviewerAgentId && item.companyId === task.companyId)) throw new Error('Reviewer agent crosses company boundary')
+    for (const collaboratorId of patch.collaboratorIds ?? []) this.assertActorInCompany(collaboratorId, task.companyId)
+    const changesAssignee = (patch.assignedAgentId !== undefined && patch.assignedAgentId !== task.assignedAgentId)
+      || (patch.assignedMemberId !== undefined && patch.assignedMemberId !== task.assignedMemberId)
+      || (patch.assigneeKind !== undefined && patch.assigneeKind !== task.assigneeKind)
+    if (changesAssignee && (task.status === 'in_progress' || task.status === 'review' || this.value.runs.some((run) => run.taskId === task.id && run.status === 'running'))) {
       throw new Error('Cannot reassign a task while it is in progress or review')
     }
     for (const dependency of patch.dependsOn ?? []) if (!this.value.tasks.some((item) => item.id === dependency && item.projectId === task.projectId)) throw new Error('Task dependency crosses project boundary')
@@ -828,6 +889,93 @@ export class OrganizationStore {
     if (patch.milestoneId === '') delete task.milestoneId
     if (task.status !== 'blocked') delete task.blockedReason
     task.updatedAt = Date.now()
+    this.refreshProject(task.projectId)
+  }
+
+  private reassignTask(input: Extract<OrganizationMutation, { type: 'task.reassign' }>): void {
+    const task = this.task(input.taskId)
+    if (task.status === 'in_progress' || task.status === 'review' || this.value.runs.some((run) => run.taskId === task.id && run.status === 'running')) {
+      throw new Error('Cannot reassign a task while it is in progress or review')
+    }
+    const reason = clean(input.reason)
+    if (!reason) throw new Error('A reason is required when reassigning a task')
+    const fromAssignee = task.assigneeKind === 'human' && task.assignedMemberId
+      ? { kind: 'human' as const, id: task.assignedMemberId }
+      : task.assignedAgentId
+        ? { kind: 'agent' as const, id: task.assignedAgentId }
+        : undefined
+    const changedBy: OrganizationActorRef = input.changedByMemberId
+      ? { kind: 'human', id: this.member(input.changedByMemberId, task.companyId).id }
+      : { kind: 'system', id: 'system' }
+
+    if (input.assignee.kind === 'human') {
+      const member = this.member(input.assignee.id, task.companyId)
+      task.assigneeKind = 'human'
+      task.assignedMemberId = member.id
+      delete task.assignedAgentId
+    } else {
+      const agent = must(this.value.agents.find((item) => item.id === input.assignee.id && item.companyId === task.companyId), 'Organization agent')
+      task.assigneeKind = 'agent'
+      task.assignedAgentId = agent.id
+      delete task.assignedMemberId
+    }
+
+    const handoff: OrganizationTaskHandoff = {
+      id: randomUUID(),
+      taskId: task.id,
+      timestamp: Date.now(),
+      ...(fromAssignee ? { fromAssignee } : {}),
+      toAssignee: { kind: input.assignee.kind, id: input.assignee.id },
+      changedBy,
+      reason,
+    }
+    delete task.humanSubmission
+    if (!task.handoffs) task.handoffs = []
+    task.handoffs.push(handoff)
+    task.updatedAt = Date.now()
+    const targetName = input.assignee.kind === 'human'
+      ? this.value.members.find((m) => m.id === input.assignee.id)?.displayName ?? 'Human member'
+      : this.value.agents.find((a) => a.id === input.assignee.id)?.name ?? 'AI agent'
+    this.activity(task.companyId, task.projectId, 'task.reassigned', `Reassigned “${task.title}” to ${targetName}: ${reason}`)
+    this.refreshProject(task.projectId)
+  }
+
+  private submitTaskWork(input: Extract<OrganizationMutation, { type: 'task.submitWork' }>): void {
+    const task = this.task(input.taskId)
+    const member = this.member(input.memberId, task.companyId)
+    if (task.assigneeKind !== 'human' || task.assignedMemberId !== member.id) throw new Error('Only the assigned human member can submit work')
+    if (task.status !== 'in_progress' && task.status !== 'ready') throw new Error('Human work can only be submitted for a ready or in progress task')
+    if (this.value.runs.some((run) => run.taskId === task.id && run.status === 'running')) throw new Error('Cannot submit human work while an automated run is active')
+    const summary = clean(input.summary)
+    if (!summary) throw new Error('Work submission requires a summary of delivered outcomes')
+    const artifacts = input.artifactPaths ? normalizeArtifactPaths(input.artifactPaths) : undefined
+    const checkpointCommit = input.checkpointCommit?.trim()
+    task.humanSubmission = { id: randomUUID(), memberId: member.id, ...(checkpointCommit ? { checkpointCommit } : {}) }
+    this.cancelStaleApprovals(task.id, task.humanSubmission.id)
+    task.resultSummary = summary
+    if (artifacts) {
+      task.artifactPaths = artifacts
+      if (task.artifactPaths.length) task.evidenceKind = 'artifact'
+    }
+    const hasReviewer = Boolean(task.reviewerMemberId || task.reviewerAgentId)
+    task.status = hasReviewer ? 'review' : 'completed'
+    task.updatedAt = Date.now()
+    if (hasReviewer && task.reviewerMemberId) {
+      this.value.approvalRequests.push({
+        id: randomUUID(),
+        companyId: task.companyId,
+        projectId: task.projectId,
+        taskId: task.id,
+        targetKind: 'task-review',
+        targetId: task.id,
+        targetRevision: task.humanSubmission.id,
+        requestedBy: { kind: 'human', id: member.id },
+        requiredApproverKind: 'human',
+        status: 'pending',
+        createdAt: Date.now(),
+      })
+    }
+    this.activity(task.companyId, task.projectId, 'task.submitted', `${member.displayName} submitted work for “${task.title}”.`)
     this.refreshProject(task.projectId)
   }
   private addMemory(input: { companyId: string; projectId?: string; title: string; content: string; tags?: string[]; source: MemoryEntry['source']; type?: string }): void { this.company(input.companyId); const now = Date.now(); this.value.memory.push({ id: randomUUID(), companyId: input.companyId, ...(input.projectId ? { projectId: input.projectId } : {}), title: clean(input.title), content: clean(input.content), tags: input.tags?.map(clean).filter(Boolean) ?? [], source: input.source, createdAt: now, updatedAt: now }) }
@@ -871,16 +1019,26 @@ export class OrganizationStore {
   private createMember(input: Extract<OrganizationMutation, { type: 'member.create' }>): void {
     this.company(input.companyId)
     const now = Date.now()
+    if (input.projectGrants) {
+      for (const grant of input.projectGrants) {
+        if (!this.value.projects.some((p) => p.id === grant.projectId && p.companyId === input.companyId)) {
+          throw new Error('Project grant crosses company boundary')
+        }
+      }
+    }
     this.value.members.push({
       id: randomUUID(),
       companyId: input.companyId,
       displayName: clean(input.displayName),
       ...(input.title?.trim() ? { title: input.title.trim().slice(0, 120) } : {}),
       status: 'active',
+      accessRole: input.accessRole ?? 'contributor',
+      ...(input.capabilities?.length ? { capabilities: [...new Set(input.capabilities)] } : {}),
+      ...(input.projectGrants?.length ? { projectGrants: input.projectGrants } : {}),
       createdAt: now,
       updatedAt: now,
     })
-    this.activity(input.companyId, undefined, 'member.created', `Added local member “${input.displayName.trim()}”.`)
+    this.activity(input.companyId, undefined, 'member.created', `Added local member “${input.displayName.trim()}” (${input.accessRole ?? 'contributor'}).`)
   }
 
   private updateMember(id: string, patch: Extract<OrganizationMutation, { type: 'member.update' }>['patch']): void {
@@ -891,6 +1049,16 @@ export class OrganizationStore {
       else delete member.title
     }
     if (patch.status !== undefined) member.status = patch.status
+    if (patch.accessRole !== undefined) member.accessRole = patch.accessRole
+    if (patch.capabilities !== undefined) member.capabilities = [...new Set(patch.capabilities)]
+    if (patch.projectGrants !== undefined) {
+      for (const grant of patch.projectGrants) {
+        if (!this.value.projects.some((p) => p.id === grant.projectId && p.companyId === member.companyId)) {
+          throw new Error('Project grant crosses company boundary')
+        }
+      }
+      member.projectGrants = patch.projectGrants
+    }
     member.updatedAt = Date.now()
     this.activity(member.companyId, undefined, 'member.updated', `Updated local member “${member.displayName}”.`)
   }
@@ -898,7 +1066,16 @@ export class OrganizationStore {
   private addCollaborationMessage(input: Extract<OrganizationMutation, { type: 'collaboration.message.add' }>): void {
     const project = this.project(input.projectId)
     if (project.companyId !== input.companyId) throw new Error('Collaboration message crosses company boundary')
-    const member = this.member(input.authorMemberId, input.companyId)
+    const author: OrganizationActorRef = input.author
+      ?? (input.authorMemberId ? { kind: 'human' as const, id: this.member(input.authorMemberId, input.companyId).id } : undefined)
+      ?? (input.authorAgentId ? { kind: 'agent' as const, id: input.authorAgentId } : undefined)
+      ?? { kind: 'system' as const, id: 'system' }
+    if (author.kind === 'human') {
+      this.member(author.id, input.companyId)
+    } else if (author.kind === 'agent') {
+      const agent = this.value.agents.find((item) => item.id === author.id && item.companyId === input.companyId)
+      if (!agent) throw new Error('Agent author crosses company boundary')
+    }
     const task = input.taskId ? this.task(input.taskId) : undefined
     if (task && task.projectId !== input.projectId) throw new Error('Collaboration task crosses project boundary')
     if (input.replyToId) {
@@ -914,15 +1091,20 @@ export class OrganizationStore {
       companyId: input.companyId,
       projectId: input.projectId,
       kind: input.kind ?? (input.taskId ? 'task' : 'project'),
+      ...(input.category ? { category: input.category } : {}),
       ...(input.taskId ? { taskId: input.taskId } : {}),
       ...(input.replyToId ? { replyToId: input.replyToId } : {}),
-      author: { kind: 'human', id: member.id },
+      author,
       body,
       mentionActorIds,
+      ...(input.runId ? { runId: clean(input.runId) } : {}),
       createdAt: now,
       updatedAt: now,
     })
-    this.activity(input.companyId, input.projectId, 'collaboration.message', `${member.displayName} posted ${input.taskId ? 'a task comment' : 'a project message'}.`)
+    const authorName = author.kind === 'human'
+      ? this.value.members.find((m) => m.id === author.id)?.displayName ?? 'Human member'
+      : this.value.agents.find((a) => a.id === author.id)?.name ?? 'Agent'
+    this.activity(input.companyId, input.projectId, 'collaboration.message', `${authorName} posted ${input.taskId ? 'a task comment' : 'a project message'}.`)
   }
 
   private createDecision(input: Extract<OrganizationMutation, { type: 'decision.create' }>): void {
@@ -1015,11 +1197,14 @@ export class OrganizationStore {
     if (request.status !== 'pending') throw new Error('Approval request is no longer pending')
     const member = this.member(input.actorMemberId, request.companyId)
     const approvalTask = request.taskId ? this.task(request.taskId) : undefined
+    if (request.targetKind === 'task-review' && approvalTask?.humanSubmission && approvalTask.reviewerMemberId !== member.id) throw new Error('Only the assigned human reviewer can resolve this submission')
     if (request.targetKind === 'integration' && approvalTask?.integrationState === 'integrated') {
       throw new Error('Integration approval is no longer actionable because the checkpoint has already been integrated.')
     }
     if (request.taskId && request.targetRevision) {
-      const current = this.latestCheckpoint(request.taskId)
+      const current = request.targetKind === 'task-review' && approvalTask?.humanSubmission
+        ? approvalTask.humanSubmission.id
+        : this.latestCheckpoint(request.taskId)
       if (current !== request.targetRevision) {
         throw new Error(`Approval target is stale: expected checkpoint ${request.targetRevision}, current checkpoint is ${current ?? 'unavailable'}`)
       }
@@ -1029,7 +1214,12 @@ export class OrganizationStore {
     request.resolvedAt = Date.now()
     if (request.taskId) {
       const task = approvalTask ?? this.task(request.taskId)
-      if (input.verdict === 'request_changes') {
+      if (input.verdict === 'approve' && request.targetKind === 'task-review' && task.humanSubmission && task.status === 'review') {
+        task.status = 'completed'
+        task.reviewSummary = input.comment?.trim().slice(0, 20_000) || 'Approved by the assigned human reviewer.'
+        task.updatedAt = request.resolvedAt
+        this.refreshProject(task.projectId)
+      } else if (input.verdict === 'request_changes') {
         task.status = 'ready'
         task.integrationState = 'pending'
         delete task.integrationSummary

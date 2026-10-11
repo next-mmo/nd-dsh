@@ -10,7 +10,8 @@ import {
   type CapabilityPackageSetupDescriptor,
   type CapabilityPrerequisiteResult,
 } from '../../shared/capabilities.js'
-import { managedEngineBinRoot } from '../app-paths.js'
+import { bundledResourceRoot, managedEngineBinRoot } from '../app-paths.js'
+import { backgroundProcessEnvironment } from '../core/background-process-environment.js'
 import type { CapabilitySetupAdapter, CapabilitySetupAdapters, CapabilitySetupProgress } from './capability-registry.js'
 
 type FixedCommandRunner = (command: string, args: readonly string[], cwd: string) => Promise<string>
@@ -235,7 +236,10 @@ function runFixedCommand(command: string, args: readonly string[], cwd: string):
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
-      env: { ...process.env, CI: 'true' },
+      env: backgroundProcessEnvironment(
+        { ...process.env, CI: 'true' },
+        join(bundledResourceRoot(), 'scripts', 'nd-background-process.cjs'),
+      ),
     })
     let output = ''
     const append = (chunk: string | Buffer): void => {

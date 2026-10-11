@@ -144,7 +144,10 @@ async function makeEngine(accountResult?: Record<string, unknown>) {
   const server = new FakeAppServer(accountResult)
   const engine = new CodexCliEngine({
     log: () => {},
-    spawnProcess: (() => server.child) as never,
+    spawnProcess: ((_file: string, _args: string[], options: { windowsHide?: boolean }) => {
+      expect(options.windowsHide).toBe(true)
+      return server.child
+    }) as never,
   })
   const frames: DshEventFrame[] = []
   engine.setEmitter((frame) => frames.push(frame))

@@ -456,7 +456,7 @@ fn relative_to_root(root: &Path, target: &Path) -> String {
     }
 }
 
-fn validate_relative(path: &str) -> Result<PathBuf> {
+pub(crate) fn validate_relative(path: &str) -> Result<PathBuf> {
     if path.len() > MAX_PATH_LENGTH {
         bail!("workspace path is too long");
     }

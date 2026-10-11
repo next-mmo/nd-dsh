@@ -1,5 +1,5 @@
 import 'dotenv/config'
-import { app, BrowserWindow, crashReporter, dialog, globalShortcut, Menu, screen, type MenuItemConstructorOptions } from 'electron'
+import { app, BrowserWindow, crashReporter, dialog, Menu, protocol, screen, type MenuItemConstructorOptions } from 'electron'
 import { createServer } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
 import process from 'node:process'
@@ -8,11 +8,14 @@ import { ND_ORG_MEMORY_ID, ND_WORKSPACE_CONTEXT_ID } from '../shared/capabilitie
 import { workerAssignableCodingEngines } from '../shared/coding-engines.js'
 import { IPC, type DshEventFrame } from '../shared/contracts.js'
 import { DESIGN_IPC } from '../shared/design.js'
+import { ND_WEBVIEW_SCHEME_PRIVILEGES } from '../shared/extension-webview.js'
 import { ORGANIZATION_IPC, type OrganizationSnapshot } from '../shared/organization.js'
 import { throttleLatest } from './latest-value-throttle.js'
 import { TERMINAL_IPC } from '../shared/terminal.js'
 import { resolveShortcutBehavior } from '../shared/quick-launcher.js'
-import { bundledResourceRoot, projectRoot } from './app-paths.js'
+import type { GlobalShortcutId } from '../shared/shortcuts.js'
+import { bundledResourceRoot, codexBinPath, presetSourceDir, projectRoot } from './app-paths.js'
+
 import { BrowserController } from './browser/browser-controller.js'
 import { BrowserCompanionService } from './browser-companion/browser-companion-service.js'
 import { registerBrowserCompanionIpc } from './browser-companion/ipc.js'
@@ -30,6 +33,10 @@ import { CoreClient } from './core/core-client.js'
 import { createCoreSpawn, stopCoreManagedChildProcess } from './core/core-child-process.js'
 import { createCorePtySpawner } from './core/core-pty.js'
 import { CoreSessionJournalStore } from './core/core-session-journal.js'
+import { createCoreMedia } from './core/core-media.js'
+import { createCoreClipboard } from './core/core-clipboard.js'
+import { createCoreMediaKeys } from './core/core-media-keys.js'
+import { createCoreVault } from './core/core-vault.js'
 import { createCoreWorkspaceFileSystem } from './core/core-workspace.js'
 import { createCoreWorktreeGit } from './core/core-worktree-git.js'
 import { DesignService } from './design/design-service.js'
@@ -48,9 +55,11 @@ import { NdNativeToolBroker } from './engines/nd-native/nd-native-tool-broker.js
 import { PiCodingEngine } from './engines/pi/pi-coding-engine.js'
 import { ZcodeCliEngine } from './engines/zcode/zcode-cli-engine.js'
 import { GitService } from './git/git-service.js'
+import { GitCli } from './git/git-cli.js'
 import { HarnessService } from './harness/harness-service.js'
 import { registerIpc } from './ipc.js'
 import { createLauncherPopup } from './launcher-popup.js'
+import { ShortcutRegistry } from './shortcut-registry.js'
 import { setTaskMetricsRecorder, taskMetricsRecorder, TaskMetricsRecorder } from './metrics/task-metrics.js'
 import { OrganizationApprovalGate } from './organization/approval-gate.js'
 import { createDecisionSupportFromEnv } from './organization/decision-support-config.js'
@@ -113,6 +122,10 @@ let localRuntime: LocalRuntimeService | undefined
 let shutdownStarted = false
 const closingServices = new Set<Promise<void>>()
 
+// Must run before app ready: the extension web-view asset scheme parses as a
+// standard, secure URL but deliberately supports no fetch API and no CORS.
+protocol.registerSchemesAsPrivileged([{ scheme: ND_WEBVIEW_SCHEME_PRIVILEGES.scheme, privileges: { ...ND_WEBVIEW_SCHEME_PRIVILEGES.privileges } }])
+
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 if (!hasSingleInstanceLock) app.quit()
 
@@ -172,6 +185,27 @@ function showQuickLauncher(): void {
   }
   showMainWindowAndOpenLauncher()
 }
+
+/**
+ * Ask the primary renderer to run a capture flow. The window is deliberately
+ * left alone: raising ND here would put ND itself into the screenshot.
+ */
+function requestCapture(action: GlobalShortcutId): void {
+  const window = mainWindow
+  if (!window || window.isDestroyed()) return
+  window.webContents.send(IPC.windowCaptureRequestEvent, action)
+}
+
+/** Owns every OS-wide hotkey; bindings come from the user's persisted settings. */
+const shortcutRegistry = new ShortcutRegistry({
+  store: theme,
+  handlers: {
+    quickLauncher: showQuickLauncher,
+    areaCapture: () => requestCapture('areaCapture'),
+    fullCapture: () => requestCapture('fullCapture'),
+    delayedCapture: () => requestCapture('delayedCapture'),
+  },
+})
 
 app.on('second-instance', () => {
   showMainWindowAndOpenLauncher()
@@ -271,6 +305,11 @@ async function createWindow(cdpPort: number): Promise<void> {
     reservedOrigin,
     dataPath: userData,
     extensionRuntimePreload: join(currentDirectory, '../preload/extension-runtime.cjs'),
+    onMediaState: (state) => {
+      if (!window.isDestroyed()) window.webContents.send(IPC.mediaStateEvent, state)
+      const popup = launcherPopup.window()
+      if (popup && !popup.isDestroyed()) popup.webContents.send(IPC.mediaStateEvent, state)
+    },
   })
   activeBrowser = browser
   const browserCompanion = new BrowserCompanionService({
@@ -318,10 +357,11 @@ async function createWindow(cdpPort: number): Promise<void> {
         console.error('ND Core restarted, but organization reconciliation failed; dispatch remains blocked:', error)
       })
   })
-  const engineSpawn = createCoreSpawn(core, executionCoordinator)
+  const backgroundPolicyPath = join(bundledResourceRoot(), 'scripts', 'nd-background-process.cjs')
+  const engineSpawn = createCoreSpawn(core, executionCoordinator, backgroundPolicyPath)
   // Project dev servers and machine verification are ND-owned system work,
   // not engine children: keep them Rust-owned without inheriting a worker permit.
-  const unscopedCoreSpawn = createCoreSpawn(core)
+  const unscopedCoreSpawn = createCoreSpawn(core, undefined, backgroundPolicyPath)
   const git = new GitService(workspace, { core })
   const harnessJournal = new CoreSessionJournalStore(core)
   const directEngineJournal = new CoreSessionJournalStore(core, {
@@ -340,7 +380,12 @@ async function createWindow(cdpPort: number): Promise<void> {
   activeAntigravityEngine = antigravityEngine
   const zcodeEngine = new ZcodeCliEngine({ log: (line) => console.log(line), spawnProcess: engineSpawn })
   activeZcodeEngine = zcodeEngine
-  const piEngine = new PiCodingEngine({ log: (line) => console.log(line), spawnProcess: engineSpawn })
+  const piEngine = new PiCodingEngine({
+    log: (line) => console.log(line),
+    spawnProcess: engineSpawn,
+    providers: () => providers,
+    skillsDir: () => presetSourceDir(),
+  })
   activePiEngine = piEngine
   const cursorEngine = new CursorCliEngine({ log: (line) => console.log(line), spawnProcess: engineSpawn })
   activeCursorEngine = cursorEngine
@@ -438,7 +483,12 @@ async function createWindow(cdpPort: number): Promise<void> {
   const qa = new QaService({ spawnProcess: unscopedCoreSpawn, stopProcess: stopCoreManagedChildProcess })
   activeQa = qa
   qa.setProjectRoot(workspace.state().root)
-  const disposeIpc = registerIpc({ window, preloadPath: preload, launcherPopup, browser, dshSurface, engines, engineRouter, nativeToolBroker: nativeBroker, harness, projectWorkspace, workspaces, theme, providers, externalElements, recentPicks, git, qa, sessionArchive, usageLedger, capabilities, organizationStore })
+  const coreGit = new GitCli({ core })
+  const coreMedia = createCoreMedia(core)
+  const coreClipboard = createCoreClipboard(core)
+  const coreMediaKeys = createCoreMediaKeys(core)
+  const coreVault = createCoreVault(core)
+  const disposeIpc = registerIpc({ window, preloadPath: preload, launcherPopup, shortcuts: shortcutRegistry, browser, browserPlatform, dshSurface, engines, engineRouter, nativeToolBroker: nativeBroker, harness, projectWorkspace, workspaces, theme, providers, externalElements, recentPicks, git, coreGit: coreGit.exec.bind(coreGit), coreMedia, coreClipboard, coreMediaKeys, coreVault, qa, sessionArchive, usageLedger, capabilities, organizationStore })
   if (nativeAgent.ready()) void nativeAgent.start().catch((error) => {
     console.warn('ND Agent private runtime could not initialize:', error instanceof Error ? error.message : String(error))
   })
@@ -636,6 +686,10 @@ async function createWindow(cdpPort: number): Promise<void> {
   if (rendererUrl) await window.loadURL(rendererUrl)
   else await window.loadFile(rendererFile)
   markStartup('renderer-loaded')
+  // Hotkeys go live as soon as the window exists. createWindow still runs a long
+  // benchmark tail afterwards, and a launcher key that only works once startup
+  // benchmarks finish is a key that appears broken.
+  shortcutRegistry.sync()
 
   await browser.initialize(startUrl).catch((error) => {
     console.warn('Initial browser navigation failed:', error)
@@ -703,6 +757,9 @@ async function createWindow(cdpPort: number): Promise<void> {
         terminal: terminalManager,
         git,
         harness,
+        browser,
+        spawnProcess: unscopedCoreSpawn,
+        codingCliPath: codexBinPath(),
       })
       console.log('Packaged runtime smoke passed.')
       setTimeout(() => app.quit(), 25)
@@ -843,10 +900,6 @@ if (hasSingleInstanceLock) {
     await app.whenReady()
     markStartup('app-ready')
     await createWindow(cdpPort)
-    const quickLauncherRegistered = globalShortcut.register('CommandOrControl+Shift+Space', showQuickLauncher)
-    if (!quickLauncherRegistered) {
-      console.warn('ND Quick Launcher global shortcut is unavailable: CommandOrControl+Shift+Space')
-    }
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) void createWindow(cdpPort).catch(reportFatalStartupError)
     })
@@ -854,7 +907,7 @@ if (hasSingleInstanceLock) {
 }
 
 app.on('will-quit', () => {
-  globalShortcut.unregisterAll()
+  shortcutRegistry.dispose()
 })
 
 app.on('before-quit', (event) => {

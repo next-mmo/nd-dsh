@@ -1,5 +1,6 @@
 import { app } from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
+import { backgroundProcessEnvironment } from '../core/background-process-environment.js'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, promises as fs } from 'node:fs'
 import { join } from 'node:path'
@@ -37,6 +38,114 @@ const READY_POLL_MS = 300
 const UI_CONTEXT_MARKER = '\n\n[ND-DSH LIVE UI CONTEXT]'
 
 /**
+ * ND owns the product's agent identity, so every session runs the shipped
+ * ND preset. The runtime applies its persisted settings AFTER the ND patch
+ * overlay, so the overlay's own `default:` row cannot beat a stale persisted
+ * selection; the launch-time write below keeps the product preset
+ * authoritative. `ND_DSH_PRESET` is a developer override (preset validation).
+ */
+export const ND_DSH_PRESET_ID = process.env.ND_DSH_PRESET ?? 'nd-dsh'
+
+/**
+ * Rewrite the runtime settings.yaml so `agent-presets.default` is the given
+ * preset id. Returns the updated text and whether anything changed.
+ */
+export function withDefaultPreset(settings: string, presetId: string): { content: string; changed: boolean } {
+  const eol = settings.includes('\r\n') ? '\r\n' : '\n'
+  const lines = settings.split(/\r?\n/)
+  let sectionIndex = -1
+  for (let i = 0; i < lines.length; i++) {
+    if (/^agent-presets:\s*$/.test(lines[i]!)) {
+      sectionIndex = i
+      break
+    }
+  }
+  if (sectionIndex < 0) {
+    const trimmed = settings.trimEnd()
+    return { content: `${trimmed}${trimmed.length > 0 ? eol + eol : ''}agent-presets:${eol}  default: ${presetId}${eol}`, changed: true }
+  }
+  for (let i = sectionIndex + 1; i < lines.length; i++) {
+    if (/^\S/.test(lines[i]!)) break
+    const match = /^(\s*)default:\s*(\S*)\s*$/.exec(lines[i]!)
+    if (match) {
+      // Both groups are unconditional in the pattern, so a match always fills them.
+      if (match[2]! === presetId) return { content: settings, changed: false }
+      lines[i] = `${match[1]!}default: ${presetId}`
+      return { content: lines.join(eol), changed: true }
+    }
+  }
+  lines.splice(sectionIndex + 1, 0, `  default: ${presetId}`)
+  return { content: lines.join(eol), changed: true }
+}
+
+async function enforceRuntimePreset(dshHome: string): Promise<void> {
+  const settingsPath = join(dshHome, 'settings.yaml')
+  let existing: string
+  try {
+    existing = await fs.readFile(settingsPath, 'utf8')
+  } catch (err) {
+    // Nothing persisted yet: no stale selection to beat the overlay default.
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return
+    throw err
+  }
+  const { content, changed } = withDefaultPreset(existing, ND_DSH_PRESET_ID)
+  if (changed) await fs.writeFile(settingsPath, content, 'utf8')
+}
+
+/**
+ * Product guard for the upstream `cordis` preset. Its cordis_define tool
+ * schema uses JSON Schema `const`, which the nd-router origin rejects with a
+ * Cloudflare 502 on every request listing the tool. Patch layers cannot
+ * disable the tool (preset-nested plugin rows are not patch-addressable), so
+ * ND blocks the selection surface instead: no new cordis sessions, no cordis
+ * default, and the roster marks the preset unavailable. Existing cordis
+ * sessions keep resuming; the durable fix is router-side `const` support.
+ */
+export const BLOCKED_PRESET_ID = 'cordis'
+export const PRESET_BLOCK_REASON = 'Creator mode (cordis) is unavailable in this build: its tool schemas trip a model-provider route defect (HTTP 502). Existing cordis sessions keep resuming.'
+
+function blockedPresetResult(): GatewayRpcResult {
+  return { ok: false, error: { code: 'agent-preset/blocked', message: PRESET_BLOCK_REASON } }
+}
+
+/**
+ * Reject product calls that would start a new session on the blocked preset or
+ * make it the default. Returns the closed result, or undefined to allow the
+ * call through to the runtime.
+ */
+export function blockPresetSelection(method: string, payload: unknown): GatewayRpcResult | undefined {
+  if (method === 'session.create') {
+    const agentPreset = (payload as { agentPreset?: unknown } | undefined)?.agentPreset
+    return agentPreset === BLOCKED_PRESET_ID ? blockedPresetResult() : undefined
+  }
+  if (method === 'settings.update') {
+    const record = payload as { ns?: unknown; patch?: unknown } | undefined
+    if (record?.ns === 'agent-presets') {
+      const patch = record.patch as { default?: unknown } | undefined
+      if (patch?.default === BLOCKED_PRESET_ID) return blockedPresetResult()
+    }
+  }
+  return undefined
+}
+
+/**
+ * Mark the blocked preset's roster rows so the UI can disable selection and
+ * explain why. The runtime payload otherwise passes through untouched.
+ */
+export function annotatePresetRoster(result: GatewayRpcResult): GatewayRpcResult {
+  if (!result.ok || !result.value || typeof result.value !== 'object') return result
+  const value = result.value as { presets?: unknown }
+  if (!Array.isArray(value.presets)) return result
+  let changed = false
+  const presets = value.presets.map((row) => {
+    if (!row || typeof row !== 'object' || (row as { id?: unknown }).id !== BLOCKED_PRESET_ID) return row
+    changed = true
+    return { ...row, blocked: true, blockedReason: PRESET_BLOCK_REASON }
+  })
+  return changed ? { ...result, value: { ...value, presets } } : result
+}
+
+/**
  * Main-process image attachment for prompts (cross-app screen capture).
  * Bytes stay in the trusted main process; the renderer only triggers it.
  */
@@ -53,7 +162,10 @@ export class HarnessService {
   private activeSessionId: string | undefined
   private statusValue: HarnessStatus
   private startPromise: Promise<GatewayClient> | undefined
+  private startPromiseGeneration: number | undefined
   private stopping = false
+  private runtimeGeneration = 0
+  private readonly expectedChildExits = new WeakSet<ChildProcess>()
   private canceledSessions = new Set<string>()
   private readonly runningSessions = new Set<string>()
   private providerRevisionAtStart = -1
@@ -180,6 +292,7 @@ export class HarnessService {
     const textContent = [{ type: 'text', text: runtimePrompt }]
     const images = [
       ...(promptImage ? [promptImage] : []),
+      ...(options?.images ?? []),
       ...stagedElements.flatMap((item) => (item.screenshot ? [{ data: item.screenshot.data, mediaType: item.screenshot.mediaType, name: item.screenshot.name }] : [])),
     ]
     const content = [
@@ -260,6 +373,10 @@ export class HarnessService {
       if (method === 'session.list') return { ok: true, value: { items: [] } }
       this.workspace.assertUsable()
     }
+    // Preset policy fails closed before the runtime is even started: a blocked
+    // selection must not boot the runtime just to be rejected.
+    const blocked = blockPresetSelection(method, payload)
+    if (blocked) return blocked
     // Creating a session is a launch-policy boundary just like run(): if the
     // Token Saver switch changed, rebuild the runtime before that new session.
     let started = await this.ensureStarted(method === 'session.create')
@@ -297,6 +414,7 @@ export class HarnessService {
     }
     if (method === 'session.history') return sanitizeHistoryResult(result)
     if (method === 'session.list') return this.annotateArchivedSessions(result)
+    if (method === 'agentPreset.list') return annotatePresetRoster(result)
     if (method === 'session.models' && result.ok && result.value && typeof result.value === 'object') {
       return { ...result, value: restrictDeepSeekCatalog(result.value as SessionModels, this.providers.list()) }
     }
@@ -416,13 +534,20 @@ export class HarnessService {
   /** Tear down the runtime subprocess (app shutdown / workspace change / provider refresh). */
   async close(): Promise<void> {
     this.stopping = true
+    this.runtimeGeneration += 1
     this.eventHub.detach()
     const child = this.child
+    if (child) this.expectedChildExits.add(child)
     const gateway = this.gateway
     this.child = undefined
     this.gateway = undefined
     this.baseUrl = undefined
+    // Retire only the generation captured above. A new launch can publish a
+    // replacement while this method waits for the old process to exit.
+    this.activeSessionId = undefined
+    this.runningSessions.clear()
     gateway?.close()
+    this.updateStatus('stopped')
     if (child && child.exitCode === null && child.signalCode === null) {
       await new Promise<void>((resolve) => {
         const timer = setTimeout(() => {
@@ -447,9 +572,6 @@ export class HarnessService {
         }
       })
     }
-    this.activeSessionId = undefined
-    this.runningSessions.clear()
-    this.updateStatus('stopped')
   }
 
   private async ensureStarted(refreshLaunchPolicy = false): Promise<GatewayClient> {
@@ -465,21 +587,39 @@ export class HarnessService {
       await this.close()
     }
     if (this.gateway) return this.gateway
-    if (this.startPromise) return this.startPromise
+    if (this.startPromise) {
+      const pending = this.startPromise
+      if (this.startPromiseGeneration === this.runtimeGeneration) return pending
+      const requestedGeneration = this.runtimeGeneration
+      // A request made after close belongs to the new workspace generation.
+      // Wait only for the canceled launch to settle, then admit one fresh boot;
+      // ordinary same-generation startup errors are never blindly retried.
+      await pending.catch(() => undefined)
+      if (this.runtimeGeneration !== requestedGeneration) throw new Error('ND runtime startup was canceled')
+      return this.ensureStarted(refreshLaunchPolicy)
+    }
+    const startGeneration = this.runtimeGeneration
+    this.startPromiseGeneration = startGeneration
     this.startPromise = this.start()
       .catch(async (cause: unknown) => {
-        const stoppedExternally = this.stopping
+        const stoppedExternally = this.stopping || this.runtimeGeneration !== startGeneration
         const error = cause instanceof Error ? cause : new Error(String(cause))
 
         // A child can be alive without ever exposing a usable HTTP/RPC
         // gateway. Tear that partial launch down before clearing startPromise
         // so a later retry cannot inherit the failed process or its port.
-        await this.close()
-        if (!stoppedExternally) this.updateStatus('error', error.message)
+        // A close that invalidated this launch already retired its generation.
+        // Its late rejection must not close a newer workspace or bump that
+        // workspace's generation again.
+        if (this.runtimeGeneration === startGeneration) {
+          await this.close()
+          if (!stoppedExternally) this.updateStatus('error', error.message)
+        }
         throw error
       })
       .finally(() => {
         this.startPromise = undefined
+        this.startPromiseGeneration = undefined
       })
     return this.startPromise
   }
@@ -513,15 +653,26 @@ export class HarnessService {
 
   private async start(attempt = 0): Promise<GatewayClient> {
     this.workspace.assertUsable()
+    const generation = this.runtimeGeneration
+    const assertCurrentLaunch = (child?: ChildProcess, gateway?: GatewayClient): void => {
+      if (this.runtimeGeneration !== generation || this.stopping || (child && this.child !== child)) {
+        // Authentication can create a local client after close has already
+        // retired this launch, before that client was published to the service.
+        if (gateway && this.gateway !== gateway) gateway.close()
+        throw new Error('ND runtime startup was canceled')
+      }
+    }
     // close() marks the current child as expected-to-stop; a fresh child must
     // return to normal unexpected-exit detection.
     this.stopping = false
     await this.browser.ensureAgentReady()
+    assertCurrentLaunch()
 
     // The MCP server reads AGENT_BROWSER_CONFIG at startup; the file must
     // exist before the child spawns or the server starts with no pinned
     // session and the agent sees "No active sessions yet" on its first call.
     await this.browser.assertAgentConfigReady()
+    assertCurrentLaunch()
 
     const cliBin = harnessCliBinPath()
     const patchPath = dshPatchPath()
@@ -534,11 +685,16 @@ export class HarnessService {
     const workspaceRoot = this.workspace.state().root
     const dshHome = join(app.getPath('userData'), 'dsh-home')
     await fs.mkdir(join(dshHome, '.agent-presets'), { recursive: true })
+    assertCurrentLaunch()
     // Upstream heals the flat module fallback only for its own dependency
     // closure; ND-inserted entries need their links staged before boot.
     ensureProfilePluginLinks(dshHome, harnessRoot())
     // The nd-dsh preset ships with the desktop; a fresh copy keeps it current.
     await fs.cp(presetsDir, join(dshHome, '.agent-presets'), { recursive: true, force: true })
+    // Persisted runtime settings outrank the ND patch overlay; pin the product
+    // preset so a stale persisted selection cannot silently change sessions.
+    await enforceRuntimePreset(dshHome)
+    assertCurrentLaunch()
 
     const providerRevision = this.providers.revision()
     const tokenSaverEnabled = this.tokenSaverEnabled()
@@ -546,6 +702,7 @@ export class HarnessService {
     const deepseekProvider = this.providers.list().find((item) => item.id === 'deepseek')
     const deepseekEnabled = deepseekProvider?.enabled === true
     const port = await pickFreePort()
+    assertCurrentLaunch()
     const environment: NodeJS.ProcessEnv = {
       ...process.env,
       ...providerRuntime.environment,
@@ -564,6 +721,7 @@ export class HarnessService {
     delete environment.ELECTRON_RUN_AS_NODE
 
     this.updateStatus('starting')
+    assertCurrentLaunch()
     const child = spawn(harnessNodeBinPath(), [
       cliBin,
       '--profile', 'web',
@@ -572,7 +730,8 @@ export class HarnessService {
       '--port', String(port),
     ], {
       cwd: harnessRoot(),
-      env: environment,
+      env: backgroundProcessEnvironment(environment, join(bundledResourceRoot(), 'scripts', 'nd-background-process.cjs')),
+      windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'],
     })
     this.child = child
@@ -596,24 +755,19 @@ export class HarnessService {
       childError = `${childError}${chunk}`.slice(-16_384)
     })
     child.once('exit', (code, signal) => {
-      const wasExpected = this.stopping
-      const gateway = this.gateway
-      this.child = undefined
-      this.gateway = undefined
-      this.baseUrl = undefined
-      gateway?.close()
-      const reason = wasExpected ? undefined : `Runtime exited (${signal ?? String(code ?? 'unknown')}): ${childError.split(/\r?\n/).at(-1) ?? ''}`.trim()
-      console.log(`ND-DSH runtime child exited: ${new Date().toISOString()} code=${String(code)} signal=${String(signal)} expectedStop=${String(wasExpected)}`)
-      this.updateStatus(wasExpected ? 'stopped' : 'error', wasExpected ? undefined : reason)
+      this.handleChildExit(child, code, signal, childError)
     })
 
     const rootStatus = await this.waitUntilReady(child, baseUrl, () => childError, () => childOutput)
+    assertCurrentLaunch(child)
     let authenticatedUrl = rootStatus === 401
       ? await this.waitForAuthenticatedUrl(child, baseUrl, () => childOutput, () => childError)
       : undefined
+    assertCurrentLaunch(child)
     let gateway = authenticatedUrl
       ? await GatewayClient.authenticate(authenticatedUrl)
       : new GatewayClient(baseUrl)
+    assertCurrentLaunch(child, gateway)
     // The static frontend becomes reachable before the /api route tree has
     // finished mounting. Do not mistake that short-lived HTTP 404 for a port
     // collision and kill the healthy child before it can accept session RPCs.
@@ -622,20 +776,61 @@ export class HarnessService {
       gateway = await GatewayClient.authenticate(authenticatedUrl)
       return gateway
     })
+    assertCurrentLaunch(child, gateway)
     // Approval and question asks arrive without a session id on the remote
     // face; attribute them to the session this service is running so the
     // renderer can render an answerable card (and only that).
     gateway.setWaterfallSessionResolver(() => this.activeSessionId)
-    gateway.openEvents((frame) => this.handleEvent(frame))
     this.gateway = gateway
     this.baseUrl = baseUrl
+    gateway.openEvents((frame) => this.handleGatewayEvent(child, gateway, frame))
     this.eventHub.attach(gateway)
     this.providerRevisionAtStart = providerRevision
     this.tokenSaverEnabledAtStart = tokenSaverEnabled
     await this.syncGatewayWorkspaceLabel(gateway, workspaceRoot)
+    assertCurrentLaunch(child, gateway)
     this.updateStatus('ready')
     this.onGatewayReady?.(authenticatedUrl ?? baseUrl)
     return gateway
+  }
+
+  /** An old child's delayed exit must never tear down its replacement. */
+  private handleChildExit(child: ChildProcess, code: number | null, signal: NodeJS.Signals | null, childError: string): void {
+    if (this.child !== child) return
+    const wasExpected = this.expectedChildExits.has(child)
+    const interruptedSessionIds = wasExpected ? [] : [...this.runningSessions]
+    const gateway = this.gateway
+    const reason = `Runtime exited (${signal ?? String(code ?? 'unknown')}): ${childError.split(/\r?\n/).at(-1) ?? ''}`.trim()
+    // Retire this generation before external listeners can trigger recovery.
+    // Cancellation intent remains available to the organization finalizer.
+    this.child = undefined
+    this.gateway = undefined
+    this.baseUrl = undefined
+    this.activeSessionId = undefined
+    this.runningSessions.clear()
+    this.eventHub.detach()
+    gateway?.close()
+    console.log(`ND-DSH runtime child exited: ${new Date().toISOString()} code=${String(code)} signal=${String(signal)} expectedStop=${String(wasExpected)}`)
+    this.updateStatus(wasExpected ? 'stopped' : 'error', wasExpected ? undefined : reason)
+    for (const sessionId of interruptedSessionIds) {
+      try {
+        // This adapter notification is live control-plane evidence, not an
+        // invented entry in the upstream session journal or a completed turn.
+        this.onEvent?.({
+          kind: 'session-event',
+          sessionId,
+          event: { type: 'turn/end', seq: 0, time: Date.now(), data: { reason: { kind: 'interrupted', message: reason } } },
+          meta: { source: 'nd-harness-adapter' },
+        })
+      } catch (cause) {
+        console.error(`ND runtime interruption notification failed for ${sessionId}:`, cause)
+      }
+    }
+  }
+
+  private handleGatewayEvent(child: ChildProcess, gateway: GatewayClient, frame: DshEventFrame): void {
+    if (this.child !== child || this.gateway !== gateway) return
+    this.handleEvent(frame)
   }
 
   private async syncGatewayWorkspaceLabel(gateway: GatewayClient, workspaceRoot: string): Promise<void> {

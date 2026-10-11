@@ -9,6 +9,12 @@ const DOCUMENTED_PERMISSION_APIS = new Set([
   'webRequestBlocking',
 ])
 
+// Not in Electron's documented subset, but measured working in ND's own browser
+// runtime: declarative rules load, enable, and block requests.
+const RUNTIME_VERIFIED_PERMISSION_APIS = new Set([
+  'declarativeNetRequest',
+])
+
 const DOCUMENTED_MANIFEST_KEYS = new Set([
   'name',
   'version',
@@ -22,6 +28,10 @@ const DOCUMENTED_MANIFEST_KEYS = new Set([
   'manifest_version',
   'background',
   'minimum_chrome_version',
+])
+
+const RUNTIME_VERIFIED_MANIFEST_KEYS = new Set([
+  'declarative_net_request',
 ])
 
 // Metadata does not itself require a Chrome extension API implementation.
@@ -60,12 +70,14 @@ export function analyzeBrowserExtensionManifest(manifest: Record<string, unknown
   const unknownPermissions = permissions
     .filter((permission) => !isHostPattern(permission))
     .filter((permission) => !DOCUMENTED_PERMISSION_APIS.has(permission))
+    .filter((permission) => !RUNTIME_VERIFIED_PERMISSION_APIS.has(permission))
   if (unknownPermissions.length > 0) {
     notes.push(`Electron does not document support for permission APIs: ${unique(unknownPermissions).join(', ')}.`)
   }
 
   const functionalKeys = Object.keys(manifest)
     .filter((key) => !DOCUMENTED_MANIFEST_KEYS.has(key))
+    .filter((key) => !RUNTIME_VERIFIED_MANIFEST_KEYS.has(key))
     .filter((key) => !PASSIVE_METADATA_KEYS.has(key))
     .filter((key) => !ND_HOSTED_ACTION_KEYS.has(key))
 
@@ -75,11 +87,6 @@ export function analyzeBrowserExtensionManifest(manifest: Record<string, unknown
 
   if (!permissions.includes('tabs')) {
     notes.push('ND cannot hide open tab URLs and titles from this extension: Electron returns them from chrome.tabs.query without the tabs permission.')
-  }
-
-  const background = objectValue(manifest.background)
-  if (manifestVersion === 3 && typeof background?.service_worker === 'string') {
-    notes.push('MV3 background service workers are treated as provisional until the runtime probe passes on this Electron build.')
   }
 
   const action = objectValue(manifest.action)
