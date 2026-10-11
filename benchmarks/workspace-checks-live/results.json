@@ -1,0 +1,148 @@
+{
+  "date": "2026-10-02",
+  "timezone": "Asia/Phnom_Penh",
+  "task": "Workspace Checks MCP extension with requested child delegation",
+  "trialsPerRunner": 1,
+  "coreModified": false,
+  "producerArtifactRepairs": 0,
+  "nd": {
+    "model": "ag/gemini-3.8-flash-medium",
+    "outcome": "finished",
+    "buildWallMs": 475667.7313,
+    "score": 90,
+    "maxScore": 100,
+    "checksPassed": 17,
+    "checksTotal": 19,
+    "fullVerificationPassed": false,
+    "verificationWallMs": 458.6044,
+    "childCount": 2,
+    "bothChildrenRunningObserved": true,
+    "exactChildExecutionIntervals": null,
+    "parentToolCalls": 103,
+    "parentModelMessages": 103,
+    "toolCounts": {
+      "glob": 22,
+      "read": 21,
+      "todo_write": 3,
+      "pwsh": 21,
+      "subagent": 2,
+      "list_agents": 31,
+      "job_list": 1,
+      "send_message": 2
+    },
+    "failures": [
+      {
+        "label": "Escaping package symlink denied",
+        "error": "Environment could not create symlink; behavior unverified: EPERM",
+        "points": 5
+      },
+      {
+        "label": "Clear native install, separate registration, trust and on-demand usage",
+        "error": "Incomplete setup documentation",
+        "points": 5
+      }
+    ],
+    "files": [
+      {
+        "path": "extensions/nd-workspace-checks/mcp-server.mjs",
+        "sha256": "1e6e08477233ea31a848e2d6816c94dc0f190fedb13a3584cad0537e863dcf6a"
+      },
+      {
+        "path": "extensions/nd-workspace-checks/nd-extension.json",
+        "sha256": "f11a6cd5298b16ce45f42dae1ada0727dfd204d3acec4f6734eb5bfb5b18c5c9"
+      },
+      {
+        "path": "extensions/nd-workspace-checks/nd-extension.example.json",
+        "sha256": "0d792b5898f2dbc891bfb96eea961b5e6c5dbe8dd08a0b71373839cd5a388768"
+      },
+      {
+        "path": "extensions/nd-workspace-checks/README.md",
+        "sha256": "8a336ec756ad777ca925e7a058d6e45832b655fbd9ad26595a18df3cebba9d0d"
+      }
+    ]
+  },
+  "gpt": {
+    "runner": "Codex CLI",
+    "requestedModel": "gpt-6-astra",
+    "outcome": "blocked-before-model-execution",
+    "attemptWallMs": 787834.2188,
+    "modelExecutionObserved": false,
+    "artifactsDelivered": false,
+    "score": null,
+    "reason": "Windows sandbox socket access error 10013 connecting to OpenAI; operator stopped network reconnect loop.",
+    "retry": "Automatic approval review rejected network retry because workspace payload and OpenAI destination need explicit user approval.",
+    "childCount": null,
+    "savedConfigurationChanged": false
+  },
+  "liveSpeedRatio": null,
+  "liveWinner": null,
+  "scope": "Two different product routes/default model stacks, one requested delegated parent build. No matched delegation-off baseline and no verified live speed winner. CLI launch failed before model execution.",
+  "multitasking": {
+    "source": "fresh runtime benchmark with deterministic offline CLI fixture",
+    "timestamp": "2026-10-02T04:50:40.624Z",
+    "modelLatencyIncluded": false,
+    "acceptanceChecks": 136,
+    "deviations": [],
+    "sequential": {
+      "tasks": 4,
+      "spanMs": 9988,
+      "sumTaskWallMs": 7762,
+      "meanTaskWallMs": 1940.5,
+      "speedup": 0.7771325590708851,
+      "peakConcurrency": 1,
+      "samples": 4,
+      "completed": 4,
+      "completionRate": 1,
+      "modelRoundTrips": 3,
+      "toolCalls": 3,
+      "ipcCrossings": 22
+    },
+    "parallel": {
+      "tasks": 4,
+      "spanMs": 2398,
+      "sumTaskWallMs": 9050,
+      "meanTaskWallMs": 2262.5,
+      "speedup": 3.773978315262719,
+      "peakConcurrency": 4,
+      "samples": 4,
+      "completed": 4,
+      "completionRate": 1,
+      "modelRoundTrips": 3,
+      "toolCalls": 3,
+      "ipcCrossings": 22
+    },
+    "overflow": {
+      "tasks": 5,
+      "spanMs": 9948,
+      "sumTaskWallMs": 23089,
+      "meanTaskWallMs": 4617.8,
+      "speedup": 2.3209690390028146,
+      "peakConcurrency": 4,
+      "samples": 5,
+      "completed": 5,
+      "completionRate": 1,
+      "modelRoundTrips": 3,
+      "toolCalls": 3,
+      "ipcCrossings": 22
+    },
+    "sequentialToParallelBatchRatio": 4.165137614678899,
+    "expectedVerifiedTasks": 19,
+    "attempts": 22,
+    "sandboxAttempt": "Timed out at 180 seconds before producing a receipt; retry with Windows process access completed all scenarios."
+  },
+  "usefulExtension": {
+    "id": "nd-task-results",
+    "tests": 30,
+    "nativeInstalled": true,
+    "legacyMcpRegistered": true,
+    "gatewayCallPassed": true,
+    "profile": "existing isolated ND benchmark profile"
+  },
+  "validation": {
+    "verify": "passed",
+    "typecheck": "passed",
+    "build": "passed",
+    "test": "Full suite: 1139 passed, 9 skipped, 6 Windows process tests failed under sandbox. All 12 tests in those two files passed on rerun with OS inventory access. Final ND Task Results suite: 30 passed.",
+    "nativeManifests": "ND Task Results and ND Workspace Checks passed production manifest validation."
+  }
+}

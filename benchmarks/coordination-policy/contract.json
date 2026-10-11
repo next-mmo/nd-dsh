@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "pairs": 5,
+  "requirementsSha256": "884b71825a0bdec2984ae08ba9c29dfe9ef95194f72945866d4467b985dae86e",
+  "frozenScorerSha256": "2d6ab1ff7d78f9a3364e3bbc87d24fca1298e27b043b37c84b1fed6b7df981d4",
+  "scorerSha256": "eb02b801cfcea03cb743abb19a5fe2ab33bb02582cf443966c7feaaa262f8396",
+  "policySha256": "68ed212bb07fae27a9ad45dd0c2ac4e1f91e8b66131b753179b365b136f736da",
+  "presetSourceSha256": "a4236128277c864386aa1736098f0f63c4684594b32a71a228a214dbabd699c0",
+  "model": "existing ND default; fixed after preflight",
+  "threshold": 0.2,
+  "maxRoutinePolls": 4,
+  "sourceAdjustment": "scorer artifact/fixture root only",
+  "defaultChanged": false
+}

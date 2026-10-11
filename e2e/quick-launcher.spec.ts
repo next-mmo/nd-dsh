@@ -198,6 +198,10 @@ test('launcher popup window toggles like Raycast and creates a task without open
   const popupPromise = launched.app.waitForEvent('window')
   await page.evaluate(() => (globalThis as LauncherDesktopWindow).ndDsh.window?.toggleLauncherPopup?.())
   const popup = await popupPromise
+  popup.on('pageerror', (error) => rendererErrors.push(`popup pageerror: ${error.message}`))
+  popup.on('console', (message) => {
+    if (message.type() === 'error') rendererErrors.push(`popup console: ${message.text()}`)
+  })
   await expect.poll(() => popup.url()).toContain('#/launcher')
 
   const dialog = popup.getByRole('dialog', { name: 'ND Quick Launcher' })
@@ -214,12 +218,11 @@ test('launcher popup window toggles like Raycast and creates a task without open
   await popupInput.fill('Launcher E2E popup task')
   await dialog.getByText(/Create task · Launcher E2E popup task/).click()
   await expect(popup.getByText('Tasks need a project context. Pick one in Context first.')).toBeVisible()
+  expect(await popup.evaluate(() => document.hasFocus())).toBe(true)
   expect((await state()).tasks.find((item) => item.title === 'Launcher E2E popup task')).toBeUndefined()
 
-  // The picked action hides the popup, so reopen it, clear the query to reveal
-  // the Context group, and pick the project context everything else follows.
+  // Failed validation keeps the popup focused so the user can correct context.
   const contextLabel = `${COMPANY_B} · ${PROJECT_B}`
-  await page.evaluate(() => (globalThis as LauncherDesktopWindow).ndDsh.window?.toggleLauncherPopup?.())
   await expect(dialog).toBeVisible()
   await popupInput.fill('')
   await dialog.getByText(contextLabel, { exact: true }).first().click()

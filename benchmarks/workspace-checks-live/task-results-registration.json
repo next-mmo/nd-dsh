@@ -1,0 +1,20 @@
+{
+  "id": "nd-task-results",
+  "nativeInstalled": true,
+  "legacyMcpRegistered": true,
+  "gatewayCallPassed": true,
+  "totals": {
+    "executionTasks": 22,
+    "verifiedCompleted": 19,
+    "failed": 2,
+    "canceled": 1,
+    "interrupted": 0,
+    "unverified": 0,
+    "unfinished": 0,
+    "completionRate": 0.8636363636363636,
+    "samples": 22
+  },
+  "checkedAt": "2026-10-02T04:55:13.044Z",
+  "profile": "existing isolated ND profile from previous benchmark",
+  "workspaceBound": "C:\\Users\\MT-Staff\\Documents\\GitHub\\nd-dsh"
+}

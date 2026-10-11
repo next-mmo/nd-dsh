@@ -1,0 +1,9 @@
+{
+  "requirementsSha256": "884b71825a0bdec2984ae08ba9c29dfe9ef95194f72945866d4467b985dae86e",
+  "trialsPerRunner": 1,
+  "repairsAllowed": false,
+  "coreChangesAllowed": false,
+  "execution": "concurrent paired products, shared host",
+  "independentBatch": "separate runtime fixture benchmark; not a live product throughput comparison",
+  "scorerSha256": "2d6ab1ff7d78f9a3364e3bbc87d24fca1298e27b043b37c84b1fed6b7df981d4"
+}

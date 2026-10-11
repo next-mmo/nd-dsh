@@ -1,0 +1,2488 @@
+{
+  "schemaVersion": 1,
+  "benchmark": "nd-coordination-policy",
+  "policy": "foreground-v1",
+  "generatedAt": "2026-10-02T08:50:54.153Z",
+  "fixturePreflight": {
+    "symlink": "unavailable",
+    "code": "EPERM",
+    "limitation": "Frozen safety check will be unverified; no verified speed ranking or default promotion."
+  },
+  "pairs": [
+    {
+      "pair": 1,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline": {
+        "arm": "baseline",
+        "pair": 1,
+        "outcome": "completed",
+        "startedAt": "2026-10-02T06:47:23.836Z",
+        "route": {
+          "provider": "custom-c026b3be",
+          "model": "ag/gemini-3.8-flash-medium"
+        },
+        "preset": "nd-coordination-baseline",
+        "promptSha256": "dcba9cbdc6b176cc4d06451426bca77c200c20c2ad8c1aa7c0dcb80e1ab197ba",
+        "setupWallMs": 252.21349999999995,
+        "modelCacheState": "unavailable",
+        "childExecutionOverlapVerified": true,
+        "exactChildExecutionIntervals": [
+          [
+            {
+              "startedAt": 1790923765313,
+              "finishedAt": 1790924033447
+            }
+          ],
+          [
+            {
+              "startedAt": 1790923765323,
+              "finishedAt": 1790923969643
+            }
+          ]
+        ],
+        "workspace": "C:\\Users\\MT-Staff\\Documents\\GitHub\\nd-dsh\\scratch\\coordination-policy\\pair-1-baseline\\nd-workspace",
+        "sessionId": "session-55d7d9a4-81ea-4d60-bad7-d3686652b364",
+        "executionWallMs": 501941.5991,
+        "metrics": {
+          "parentModelMessages": 64,
+          "parentToolCalls": 67,
+          "toolCounts": {
+            "glob": 12,
+            "read": 22,
+            "skill": 2,
+            "todo_write": 3,
+            "subagent": 2,
+            "list_agents": 12,
+            "pwsh": 13,
+            "edit": 1
+          },
+          "statusPolls": 12,
+          "childCount": 2,
+          "foregroundDelegationSpans": [],
+          "peakDelegationCalls": null,
+          "exactChildExecutionIntervals": null,
+          "childModelCalls": null,
+          "integrationWallMs": null,
+          "integrationTimingBasis": "unavailable",
+          "overlapBasis": "observed foreground tool occupancy; exact child execution intervals unavailable"
+        },
+        "verificationWallMs": 685.0040999999619,
+        "verification": {
+          "passed": false,
+          "score": null,
+          "reason": "Verifier did not produce a result (exit 1)"
+        },
+        "totalWallMs": 502879.1678,
+        "finishedAt": "2026-10-02T06:55:46.699Z",
+        "verificationRecovery": {
+          "scorerVersion": "1.0",
+          "contractHash": "4df403697f5700099f168f9b72b0db4178e1bb20e99f351dc7edd37f43ff3b20",
+          "side": "nd",
+          "id": "nd-workspace-checks",
+          "score": 85,
+          "maxScore": 100,
+          "passed": false,
+          "checks": [
+            {
+              "group": "packaging",
+              "label": "Native production validation and assigned identity",
+              "points": 8,
+              "passed": true,
+              "wallMs": 339.7442
+            },
+            {
+              "group": "packaging",
+              "label": "Actual executable and disabled legacy registration",
+              "points": 7,
+              "passed": true,
+              "wallMs": 1.530300000000011
+            },
+            {
+              "group": "protocol",
+              "label": "Initialize and requested protocol version",
+              "points": 4,
+              "passed": true,
+              "wallMs": 1.8000999999999863
+            },
+            {
+              "group": "protocol",
+              "label": "Notification has no reply; ping works",
+              "points": 3,
+              "passed": true,
+              "wallMs": 0.4105000000000132
+            },
+            {
+              "group": "protocol",
+              "label": "Both real tools and object schemas",
+              "points": 4,
+              "passed": true,
+              "wallMs": 0.32929999999998927
+            },
+            {
+              "group": "protocol",
+              "label": "Unknown tool isError and method -32601",
+              "points": 4,
+              "passed": true,
+              "wallMs": 0.671100000000024
+            },
+            {
+              "group": "protocol",
+              "label": "Malformed line recovery and clean stdout",
+              "points": 5,
+              "passed": true,
+              "wallMs": 13.113699999999994
+            },
+            {
+              "group": "data",
+              "label": "Exact deterministic script inventory including inert command text",
+              "points": 10,
+              "passed": true,
+              "wallMs": 1.255299999999977
+            },
+            {
+              "group": "data",
+              "label": "Four ordered availability checks; no inferred verification result",
+              "points": 5,
+              "passed": true,
+              "wallMs": 1.4284999999999854
+            },
+            {
+              "group": "data",
+              "label": "Missing package and missing scripts are honest",
+              "points": 5,
+              "passed": true,
+              "wallMs": 10.266300000000001
+            },
+            {
+              "group": "data",
+              "label": "Malformed JSON, package and script types are explicit errors",
+              "points": 5,
+              "passed": true,
+              "wallMs": 9.724499999999978
+            },
+            {
+              "group": "safety",
+              "label": "Reject caller arguments for both tools",
+              "points": 5,
+              "passed": false,
+              "error": "Accepted arguments null",
+              "wallMs": 1.54910000000001
+            },
+            {
+              "group": "safety",
+              "label": "Explicit absolute workspace overrides cwd once",
+              "points": 5,
+              "passed": true,
+              "wallMs": 74.67860000000002
+            },
+            {
+              "group": "safety",
+              "label": "Commands never execute and reads/exports do not write",
+              "points": 5,
+              "passed": true,
+              "wallMs": 4.5248000000000275
+            },
+            {
+              "group": "safety",
+              "label": "Input over 1 MiB rejected",
+              "points": 5,
+              "passed": true,
+              "wallMs": 10.652399999999943
+            },
+            {
+              "group": "safety",
+              "label": "Escaping package symlink denied",
+              "points": 5,
+              "passed": false,
+              "error": "Environment could not create symlink; behavior unverified: EPERM",
+              "wallMs": 7.813499999999976
+            },
+            {
+              "group": "export",
+              "label": "Useful Markdown inventory, availability and missing-file warning",
+              "points": 5,
+              "passed": true,
+              "wallMs": 5.930999999999926
+            },
+            {
+              "group": "export",
+              "label": "Fresh reads update both tools without restart",
+              "points": 5,
+              "passed": true,
+              "wallMs": 3.1726999999999634
+            },
+            {
+              "group": "documentation",
+              "label": "Clear native install, separate registration, trust and on-demand usage",
+              "points": 5,
+              "passed": false,
+              "error": "Incomplete setup documentation",
+              "wallMs": 0.5905999999999949
+            }
+          ],
+          "verificationWallMs": 509.5149,
+          "verifiedAt": "2026-10-02T07:06:02.497Z",
+          "fixture": "C:\\Users\\MT-Staff\\Documents\\GitHub\\nd-dsh\\scratch\\coordination-policy\\pair-1-baseline\\nd-verify Unicode 日本語 GVlMqa",
+          "artifact": "C:\\Users\\MT-Staff\\Documents\\GitHub\\nd-dsh\\scratch\\coordination-policy\\pair-1-baseline\\nd-workspace\\extension",
+          "repairs": 0,
+          "reason": "Requirements companion restored; verifier rerun without output repair, outside original timing window. Original verification failure retained."
+        },
+        "childEvidence": {
+          "children": [
+            {
+              "child": 1,
+              "available": true,
+              "intervals": [
+                {
+                  "startedAt": 1790923765313,
+                  "finishedAt": 1790924033447
+                }
+              ],
+              "unfinished": false,
+              "terminalOutcomes": [
+                "completed"
+              ],
+              "modelMessages": 43,
+              "toolCalls": 42
+            },
+            {
+              "child": 2,
+              "available": true,
+              "intervals": [
+                {
+                  "startedAt": 1790923765323,
+                  "finishedAt": 1790923969643
+                }
+              ],
+              "unfinished": false,
+              "terminalOutcomes": [
+                "completed"
+              ],
+              "modelMessages": 27,
+              "toolCalls": 26
+            }
+          ],
+          "verified": true,
+          "peakConcurrency": 2,
+          "basis": "workspace- and parent-attributed child turn/start and turn/end events in durable journals"
+        },
+        "inputSnapshotAfterSha256": "277fbb7d50fb7c603ad1f4901273081474da201579307461ca104b68c0d3d976",
+        "inputSnapshotVerification": "post-run equality only; start hash unavailable"
+      },
+      "candidate": {
+        "arm": "candidate",
+        "pair": 1,
+        "outcome": "completed",
+        "startedAt": "2026-10-02T06:55:46.715Z",
+        "route": {
+          "provider": "custom-c026b3be",
+          "model": "ag/gemini-3.8-flash-medium"
+        },
+        "preset": "nd-coordination-candidate",
+        "promptSha256": "dcba9cbdc6b176cc4d06451426bca77c200c20c2ad8c1aa7c0dcb80e1ab197ba",
+        "setupWallMs": 162.8810999999987,
+        "modelCacheState": "unavailable",
+        "childExecutionOverlapVerified": true,
+        "exactChildExecutionIntervals": [
+          [
+            {
+              "startedAt": 1790924231468,
+              "finishedAt": 1790924325466
+            }
+          ],
+          [
+            {
+              "startedAt": 1790924231480,
+              "finishedAt": 1790924531424
+            }
+          ],
+          [
+            {
+              "startedAt": 1790924556404,
+              "finishedAt": 1790924566875
+            }
+          ]
+        ],
+        "workspace": "C:\\Users\\MT-Staff\\Documents\\GitHub\\nd-dsh\\scratch\\coordination-policy\\pair-1-candidate\\nd-workspace",
+        "sessionId": "session-5d99f364-c345-4a2c-aeab-6b94bd86f481",
+        "executionWallMs": 583210.7607,
+        "metrics": {
+          "parentModelMessages": 42,
+          "parentToolCalls": 42,
+          "toolCounts": {
+            "todo_write": 5,
+            "glob": 5,
+            "read": 16,
+            "subagent": 3,
+            "pwsh": 10,
+            "edit": 3
+          },
+          "statusPolls": 0,
+          "childCount": 3,
+          "foregroundDelegationSpans": [
+            {
+              "startedAt": 1790924231420,
+              "finishedAt": 1790924325481
+            },
+            {
+              "startedAt": 1790924231422,
+              "finishedAt": 1790924531455
+            },
+            {
+              "startedAt": 1790924556357,
+              "finishedAt": 1790924566911
+            }
+          ],
+          "peakDelegationCalls": 2,
+          "exactChildExecutionIntervals": null,
+          "childModelCalls": null,
+          "integrationWallMs": 161714,
+          "integrationTimingBasis": "last foreground delegation result to parent terminal; includes final review and tests",
+          "overlapBasis": "observed foreground tool occupancy; exact child execution intervals unavailable"
+        },
+        "verificationWallMs": 684.5503000000026,
+        "verification": {
+          "passed": false,
+          "score": 90,
+          "checks": [
+            {
+              "label": "Native production validation and assigned identity",
+              "passed": true,
+              "points": 8
+            },
+            {
+              "label": "Actual executable and disabled legacy registration",
+              "passed": true,
+              "points": 7
+            },
+            {
+              "label": "Initialize and requested protocol version",
+              "passed": true,
+              "points": 4
+            },
+            {
+              "label": "Notification has no reply; ping works",
+              "passed": true,
+              "points": 3
+            },
+            {
+              "label": "Both real tools and object schemas",
+              "passed": true,
+              "points": 4
+            },
+            {
+              "label": "Unknown tool isError and method -32601",
+              "passed": true,
+              "points": 4
+            },
+            {
+              "label": "Malformed line recovery and clean stdout",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Exact deterministic script inventory including inert command text",
+              "passed": true,
+              "points": 10
+            },
+            {
+              "label": "Four ordered availability checks; no inferred verification result",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Missing package and missing scripts are honest",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Malformed JSON, package and script types are explicit errors",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Reject caller arguments for both tools",
+              "passed": false,
+              "error": "Accepted arguments null",
+              "points": 5
+            },
+            {
+              "label": "Explicit absolute workspace overrides cwd once",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Commands never execute and reads/exports do not write",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Input over 1 MiB rejected",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Escaping package symlink denied",
+              "passed": false,
+              "error": "Environment could not create symlink; behavior unverified: EPERM",
+              "points": 5
+            },
+            {
+              "label": "Useful Markdown inventory, availability and missing-file warning",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Fresh reads update both tools without restart",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Clear native install, separate registration, trust and on-demand usage",
+              "passed": true,
+              "points": 5
+            }
+          ]
+        },
+        "totalWallMs": 584059.0798,
+        "finishedAt": "2026-10-02T07:05:30.760Z",
+        "childEvidence": {
+          "children": [
+            {
+              "child": 1,
+              "available": true,
+              "intervals": [
+                {
+                  "startedAt": 1790924231468,
+                  "finishedAt": 1790924325466
+                }
+              ],
+              "unfinished": false,
+              "terminalOutcomes": [
+                "max-tokens"
+              ],
+              "modelMessages": 9,
+              "toolCalls": 8
+            },
+            {
+              "child": 2,
+              "available": true,
+              "intervals": [
+                {
+                  "startedAt": 1790924231480,
+                  "finishedAt": 1790924531424
+                }
+              ],
+              "unfinished": false,
+              "terminalOutcomes": [
+                "completed"
+              ],
+              "modelMessages": 50,
+              "toolCalls": 49
+            },
+            {
+              "child": 3,
+              "available": true,
+              "intervals": [
+                {
+                  "startedAt": 1790924556404,
+                  "finishedAt": 1790924566875
+                }
+              ],
+              "unfinished": false,
+              "terminalOutcomes": [
+                "completed"
+              ],
+              "modelMessages": 2,
+              "toolCalls": 1
+            }
+          ],
+          "verified": true,
+          "peakConcurrency": 2,
+          "basis": "workspace- and parent-attributed child turn/start and turn/end events in durable journals"
+        },
+        "inputSnapshotAfterSha256": "277fbb7d50fb7c603ad1f4901273081474da201579307461ca104b68c0d3d976",
+        "inputSnapshotVerification": "post-run equality only; start hash unavailable"
+      }
+    },
+    {
+      "pair": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "candidate": {
+        "arm": "candidate",
+        "pair": 2,
+        "outcome": "completed",
+        "startedAt": "2026-10-02T07:05:30.779Z",
+        "route": {
+          "provider": "custom-c026b3be",
+          "model": "ag/gemini-3.8-flash-medium"
+        },
+        "preset": "nd-coordination-candidate",
+        "promptSha256": "dcba9cbdc6b176cc4d06451426bca77c200c20c2ad8c1aa7c0dcb80e1ab197ba",
+        "setupWallMs": 118.1347999998834,
+        "modelCacheState": "unavailable",
+        "childExecutionOverlapVerified": true,
+        "exactChildExecutionIntervals": [
+          [
+            {
+              "startedAt": 1790924829088,
+              "finishedAt": 1790924905640
+            }
+          ],
+          [
+            {
+              "startedAt": 1790924935631,
+              "finishedAt": 1790924958301
+            }
+          ],
+          [
+            {
+              "startedAt": 1790924935698,
+              "finishedAt": 1790924955475
+            }
+          ]
+        ],
+        "workspace": "C:\\Users\\MT-Staff\\Documents\\GitHub\\nd-dsh\\scratch\\coordination-policy\\pair-2-candidate\\nd-workspace",
+        "sessionId": "session-0c5befde-bf09-4962-be71-7a65f2e6af13",
+        "executionWallMs": 406050.3056000001,
+        "metrics": {
+          "parentModelMessages": 43,
+          "parentToolCalls": 43,
+          "toolCounts": {
+            "glob": 6,
+            "read": 13,
+            "todo_write": 5,
+            "pwsh": 10,
+            "subagent": 3,
+            "edit": 5,
+            "write": 1
+          },
+          "statusPolls": 0,
+          "childCount": 3,
+          "foregroundDelegationSpans": [
+            {
+              "startedAt": 1790924829015,
+              "finishedAt": 1790924905706
+            },
+            {
+              "startedAt": 1790924935438,
+              "finishedAt": 1790924955497
+            },
+            {
+              "startedAt": 1790924935440,
+              "finishedAt": 1790924958312
+            }
+          ],
+          "peakDelegationCalls": 2,
+          "exactChildExecutionIntervals": null,
+          "childModelCalls": null,
+          "integrationWallMs": 176355,
+          "integrationTimingBasis": "last foreground delegation result to parent terminal; includes final review and tests",
+          "overlapBasis": "observed foreground tool occupancy; exact child execution intervals unavailable"
+        },
+        "verificationWallMs": 592.3848000001162,
+        "verification": {
+          "passed": false,
+          "score": 90,
+          "checks": [
+            {
+              "label": "Native production validation and assigned identity",
+              "passed": true,
+              "points": 8
+            },
+            {
+              "label": "Actual executable and disabled legacy registration",
+              "passed": true,
+              "points": 7
+            },
+            {
+              "label": "Initialize and requested protocol version",
+              "passed": true,
+              "points": 4
+            },
+            {
+              "label": "Notification has no reply; ping works",
+              "passed": true,
+              "points": 3
+            },
+            {
+              "label": "Both real tools and object schemas",
+              "passed": true,
+              "points": 4
+            },
+            {
+              "label": "Unknown tool isError and method -32601",
+              "passed": true,
+              "points": 4
+            },
+            {
+              "label": "Malformed line recovery and clean stdout",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Exact deterministic script inventory including inert command text",
+              "passed": true,
+              "points": 10
+            },
+            {
+              "label": "Four ordered availability checks; no inferred verification result",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Missing package and missing scripts are honest",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Malformed JSON, package and script types are explicit errors",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Reject caller arguments for both tools",
+              "passed": false,
+              "error": "Accepted arguments null",
+              "points": 5
+            },
+            {
+              "label": "Explicit absolute workspace overrides cwd once",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Commands never execute and reads/exports do not write",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Input over 1 MiB rejected",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Escaping package symlink denied",
+              "passed": false,
+              "error": "Environment could not create symlink; behavior unverified: EPERM",
+              "points": 5
+            },
+            {
+              "label": "Useful Markdown inventory, availability and missing-file warning",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Fresh reads update both tools without restart",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Clear native install, separate registration, trust and on-demand usage",
+              "passed": true,
+              "points": 5
+            }
+          ]
+        },
+        "totalWallMs": 406761.55649999995,
+        "finishedAt": "2026-10-02T07:12:17.523Z",
+        "childEvidence": {
+          "children": [
+            {
+              "child": 1,
+              "available": true,
+              "intervals": [
+                {
+                  "startedAt": 1790924829088,
+                  "finishedAt": 1790924905640
+                }
+              ],
+              "unfinished": false,
+              "terminalOutcomes": [
+                "max-tokens"
+              ],
+              "modelMessages": 7,
+              "toolCalls": 6
+            },
+            {
+              "child": 2,
+              "available": true,
+              "intervals": [
+                {
+                  "startedAt": 1790924935631,
+                  "finishedAt": 1790924958301
+                }
+              ],
+              "unfinished": false,
+              "terminalOutcomes": [
+                "completed"
+              ],
+              "modelMessages": 2,
+              "toolCalls": 4
+            },
+            {
+              "child": 3,
+              "available": true,
+              "intervals": [
+                {
+                  "startedAt": 1790924935698,
+                  "finishedAt": 1790924955475
+                }
+              ],
+              "unfinished": false,
+              "terminalOutcomes": [
+                "completed"
+              ],
+              "modelMessages": 3,
+              "toolCalls": 2
+            }
+          ],
+          "verified": true,
+          "peakConcurrency": 2,
+          "basis": "workspace- and parent-attributed child turn/start and turn/end events in durable journals"
+        },
+        "inputSnapshotAfterSha256": "277fbb7d50fb7c603ad1f4901273081474da201579307461ca104b68c0d3d976",
+        "inputSnapshotVerification": "post-run equality only; start hash unavailable"
+      },
+      "baseline": {
+        "arm": "baseline",
+        "pair": 2,
+        "outcome": "blocked",
+        "startedAt": "2026-10-02T07:20:55.377Z",
+        "route": {
+          "provider": "custom-c026b3be",
+          "model": "ag/gemini-3.8-flash-medium"
+        },
+        "preset": "nd-coordination-baseline",
+        "promptSha256": "dcba9cbdc6b176cc4d06451426bca77c200c20c2ad8c1aa7c0dcb80e1ab197ba",
+        "inputSnapshotSha256": "277fbb7d50fb7c603ad1f4901273081474da201579307461ca104b68c0d3d976",
+        "setupWallMs": 1959.6921999999977,
+        "modelCacheState": "unavailable",
+        "childExecutionOverlapVerified": false,
+        "exactChildExecutionIntervals": [
+          [
+            {
+              "startedAt": 1790925770765,
+              "finishedAt": 1790925930786
+            },
+            {
+              "startedAt": 1790925939089,
+              "finishedAt": 1790926202206
+            }
+          ],
+          []
+        ],
+        "workspace": "C:\\Users\\MT-Staff\\Documents\\GitHub\\nd-dsh\\scratch\\coordination-policy\\pair-2-baseline-attempt-2\\nd-workspace",
+        "trialDir": "C:\\Users\\MT-Staff\\Documents\\GitHub\\nd-dsh\\scratch\\coordination-policy\\pair-2-baseline-attempt-2",
+        "attempt": 2,
+        "sessionId": "session-61ae58ae-c57c-44ba-b6de-9a18886a2280",
+        "executionWallMs": 256224.06560000003,
+        "metrics": {
+          "parentModelMessages": 32,
+          "parentToolCalls": 32,
+          "toolCounts": {
+            "glob": 6,
+            "read": 10,
+            "todo_write": 1,
+            "subagent": 2,
+            "list_agents": 9,
+            "pwsh": 3,
+            "job_list": 1
+          },
+          "statusPolls": 10,
+          "childCount": 2,
+          "foregroundDelegationSpans": [],
+          "peakDelegationCalls": null,
+          "exactChildExecutionIntervals": null,
+          "childModelCalls": null,
+          "integrationWallMs": null,
+          "integrationTimingBasis": "unavailable",
+          "overlapBasis": "observed foreground tool occupancy; exact child execution intervals unavailable"
+        },
+        "error": "TypeError: Cannot read properties of undefined (reading 'events')\n    at <anonymous>:1:65\n    at <anonymous>:1:131",
+        "totalWallMs": 261235.58969999998,
+        "finishedAt": "2026-10-02T07:25:16.549Z",
+        "childEvidence": {
+          "children": [
+            {
+              "child": 1,
+              "available": true,
+              "intervals": [
+                {
+                  "startedAt": 1790925770765,
+                  "finishedAt": 1790925930786
+                },
+                {
+                  "startedAt": 1790925939089,
+                  "finishedAt": 1790926202206
+                }
+              ],
+              "unfinished": false,
+              "terminalOutcomes": [
+                "max-tokens",
+                "completed"
+              ],
+              "modelMessages": 31,
+              "toolCalls": 29
+            },
+            {
+              "child": 2,
+              "available": true,
+              "intervals": [],
+              "unfinished": true,
+              "terminalOutcomes": [],
+              "modelMessages": 44,
+              "toolCalls": 44
+            }
+          ],
+          "verified": false,
+          "peakConcurrency": null,
+          "basis": "workspace- and parent-attributed child turn/start and turn/end events in durable journals"
+        },
+        "inputSnapshotAfterSha256": "277fbb7d50fb7c603ad1f4901273081474da201579307461ca104b68c0d3d976",
+        "inputSnapshotVerification": "passed"
+      },
+      "attempts": [
+        {
+          "arm": "baseline",
+          "pair": 2,
+          "outcome": "interrupted",
+          "startedAt": "2026-10-02T07:12:17.538Z",
+          "route": {
+            "provider": "custom-c026b3be",
+            "model": "ag/gemini-3.8-flash-medium"
+          },
+          "preset": "nd-coordination-baseline",
+          "promptSha256": "dcba9cbdc6b176cc4d06451426bca77c200c20c2ad8c1aa7c0dcb80e1ab197ba",
+          "setupWallMs": 106.57469999999739,
+          "modelCacheState": "unavailable",
+          "childExecutionOverlapVerified": false,
+          "exactChildExecutionIntervals": [
+            [],
+            []
+          ],
+          "workspace": "C:\\Users\\MT-Staff\\Documents\\GitHub\\nd-dsh\\scratch\\coordination-policy\\pair-2-baseline\\nd-workspace",
+          "sessionId": "session-c02b1221-305e-4cd6-8c31-baa90aee4598",
+          "executionWallMs": 140131.08120000013,
+          "metrics": {
+            "parentModelMessages": 22,
+            "parentToolCalls": 23,
+            "toolCounts": {
+              "glob": 2,
+              "read": 10,
+              "todo_write": 2,
+              "pwsh": 2,
+              "subagent": 2,
+              "list_agents": 4,
+              "job_list": 1
+            },
+            "statusPolls": 5,
+            "childCount": 2,
+            "foregroundDelegationSpans": [],
+            "peakDelegationCalls": null,
+            "exactChildExecutionIntervals": null,
+            "childModelCalls": null,
+            "integrationWallMs": null,
+            "integrationTimingBasis": "unavailable",
+            "overlapBasis": "observed foreground tool occupancy; exact child execution intervals unavailable"
+          },
+          "interruption": "Observer/app connection lost; execution completion and total timing unavailable.",
+          "recordedAt": "2026-10-02T07:20:55.265Z",
+          "totalWallMs": null,
+          "childEvidence": {
+            "children": [
+              {
+                "child": 1,
+                "available": true,
+                "intervals": [],
+                "unfinished": true,
+                "terminalOutcomes": [],
+                "modelMessages": 8,
+                "toolCalls": 8
+              },
+              {
+                "child": 2,
+                "available": true,
+                "intervals": [],
+                "unfinished": true,
+                "terminalOutcomes": [],
+                "modelMessages": 4,
+                "toolCalls": 4
+              }
+            ],
+            "verified": false,
+            "peakConcurrency": null,
+            "basis": "workspace- and parent-attributed child turn/start and turn/end events in durable journals"
+          },
+          "inputSnapshotAfterSha256": "277fbb7d50fb7c603ad1f4901273081474da201579307461ca104b68c0d3d976",
+          "inputSnapshotVerification": "post-run equality only; start hash unavailable"
+        }
+      ]
+    },
+    {
+      "pair": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline": {
+        "arm": "baseline",
+        "pair": 3,
+        "outcome": "completed",
+        "startedAt": "2026-10-02T07:49:32.933Z",
+        "route": {
+          "provider": "custom-c026b3be",
+          "model": "ag/gemini-3.8-flash-medium"
+        },
+        "preset": "nd-coordination-baseline",
+        "promptSha256": "dcba9cbdc6b176cc4d06451426bca77c200c20c2ad8c1aa7c0dcb80e1ab197ba",
+        "inputSnapshotSha256": "277fbb7d50fb7c603ad1f4901273081474da201579307461ca104b68c0d3d976",
+        "setupWallMs": 420.54929999999877,
+        "modelCacheState": "unavailable",
+        "childExecutionOverlapVerified": true,
+        "exactChildExecutionIntervals": [
+          [
+            {
+              "startedAt": 1790927471791,
+              "finishedAt": 1790927529556
+            },
+            {
+              "startedAt": 1790927547295,
+              "finishedAt": 1790927836803
+            }
+          ],
+          [
+            {
+              "startedAt": 1790927482486,
+              "finishedAt": 1790927914329
+            }
+          ]
+        ],
+        "workspace": "C:\\Users\\MT-Staff\\Documents\\GitHub\\nd-dsh\\scratch\\coordination-policy\\pair-3-baseline-attempt-2\\nd-workspace",
+        "trialDir": "C:\\Users\\MT-Staff\\Documents\\GitHub\\nd-dsh\\scratch\\coordination-policy\\pair-3-baseline-attempt-2",
+        "attempt": 2,
+        "sessionId": "session-7f1b727f-7ff8-41c9-ada9-804766d26f71",
+        "executionWallMs": 692189.8254999999,
+        "metrics": {
+          "parentModelMessages": 78,
+          "parentToolCalls": 77,
+          "toolCounts": {
+            "glob": 15,
+            "read": 20,
+            "pwsh": 21,
+            "subagent": 2,
+            "list_agents": 15,
+            "todo_write": 3,
+            "send_message": 1
+          },
+          "statusPolls": 15,
+          "childCount": 2,
+          "foregroundDelegationSpans": [],
+          "peakDelegationCalls": null,
+          "exactChildExecutionIntervals": null,
+          "childModelCalls": null,
+          "integrationWallMs": null,
+          "integrationTimingBasis": "unavailable",
+          "overlapBasis": "observed foreground tool occupancy; exact child execution intervals unavailable"
+        },
+        "childEvidence": {
+          "children": [
+            {
+              "child": 1,
+              "available": true,
+              "intervals": [
+                {
+                  "startedAt": 1790927471791,
+                  "finishedAt": 1790927529556
+                },
+                {
+                  "startedAt": 1790927547295,
+                  "finishedAt": 1790927836803
+                }
+              ],
+              "unfinished": false,
+              "terminalOutcomes": [
+                "max-tokens",
+                "completed"
+              ],
+              "modelMessages": 30,
+              "toolCalls": 28
+            },
+            {
+              "child": 2,
+              "available": true,
+              "intervals": [
+                {
+                  "startedAt": 1790927482486,
+                  "finishedAt": 1790927914329
+                }
+              ],
+              "unfinished": false,
+              "terminalOutcomes": [
+                "completed"
+              ],
+              "modelMessages": 46,
+              "toolCalls": 45
+            }
+          ],
+          "verified": true,
+          "peakConcurrency": 2,
+          "basis": "workspace- and parent-attributed child turn/start and turn/end events in durable journals"
+        },
+        "verificationWallMs": 721.7796999999555,
+        "verification": {
+          "passed": false,
+          "score": 85,
+          "checks": [
+            {
+              "label": "Native production validation and assigned identity",
+              "passed": true,
+              "points": 8
+            },
+            {
+              "label": "Actual executable and disabled legacy registration",
+              "passed": true,
+              "points": 7
+            },
+            {
+              "label": "Initialize and requested protocol version",
+              "passed": true,
+              "points": 4
+            },
+            {
+              "label": "Notification has no reply; ping works",
+              "passed": true,
+              "points": 3
+            },
+            {
+              "label": "Both real tools and object schemas",
+              "passed": true,
+              "points": 4
+            },
+            {
+              "label": "Unknown tool isError and method -32601",
+              "passed": true,
+              "points": 4
+            },
+            {
+              "label": "Malformed line recovery and clean stdout",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Exact deterministic script inventory including inert command text",
+              "passed": true,
+              "points": 10
+            },
+            {
+              "label": "Four ordered availability checks; no inferred verification result",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Missing package and missing scripts are honest",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Malformed JSON, package and script types are explicit errors",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Reject caller arguments for both tools",
+              "passed": false,
+              "error": "Accepted arguments null",
+              "points": 5
+            },
+            {
+              "label": "Explicit absolute workspace overrides cwd once",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Commands never execute and reads/exports do not write",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Input over 1 MiB rejected",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Escaping package symlink denied",
+              "passed": false,
+              "error": "Environment could not create symlink; behavior unverified: EPERM",
+              "points": 5
+            },
+            {
+              "label": "Useful Markdown inventory, availability and missing-file warning",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Fresh reads update both tools without restart",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Clear native install, separate registration, trust and on-demand usage",
+              "passed": false,
+              "error": "Incomplete setup documentation",
+              "points": 5
+            }
+          ]
+        },
+        "totalWallMs": 693332.7713,
+        "finishedAt": "2026-10-02T08:01:06.194Z",
+        "inputSnapshotAfterSha256": "277fbb7d50fb7c603ad1f4901273081474da201579307461ca104b68c0d3d976",
+        "inputSnapshotVerification": "passed"
+      },
+      "attempts": [
+        {
+          "arm": "baseline",
+          "pair": 3,
+          "outcome": "interrupted",
+          "startedAt": "2026-10-02T07:25:16.608Z",
+          "route": {
+            "provider": "custom-c026b3be",
+            "model": "ag/gemini-3.8-flash-medium"
+          },
+          "preset": "nd-coordination-baseline",
+          "promptSha256": "dcba9cbdc6b176cc4d06451426bca77c200c20c2ad8c1aa7c0dcb80e1ab197ba",
+          "inputSnapshotSha256": "277fbb7d50fb7c603ad1f4901273081474da201579307461ca104b68c0d3d976",
+          "setupWallMs": 251.38809999998193,
+          "modelCacheState": "unavailable",
+          "childExecutionOverlapVerified": false,
+          "exactChildExecutionIntervals": [
+            [
+              {
+                "startedAt": 1790925996829,
+                "finishedAt": 1790926139981
+              }
+            ],
+            []
+          ],
+          "workspace": "C:\\Users\\MT-Staff\\Documents\\GitHub\\nd-dsh\\scratch\\coordination-policy\\pair-3-baseline\\nd-workspace",
+          "trialDir": "C:\\Users\\MT-Staff\\Documents\\GitHub\\nd-dsh\\scratch\\coordination-policy\\pair-3-baseline",
+          "attempt": 1,
+          "sessionId": "session-05616735-ed41-4417-ba75-dbcadb881541",
+          "executionWallMs": 304097.5053,
+          "metrics": {
+            "parentModelMessages": 41,
+            "parentToolCalls": 41,
+            "toolCounts": {
+              "glob": 9,
+              "read": 10,
+              "todo_write": 1,
+              "subagent": 2,
+              "list_agents": 13,
+              "pwsh": 6
+            },
+            "statusPolls": 13,
+            "childCount": 2,
+            "foregroundDelegationSpans": [],
+            "peakDelegationCalls": null,
+            "exactChildExecutionIntervals": null,
+            "childModelCalls": null,
+            "integrationWallMs": null,
+            "integrationTimingBasis": "unavailable",
+            "overlapBasis": "observed foreground tool occupancy; exact child execution intervals unavailable"
+          },
+          "interruption": "Observer/app connection lost; execution completion and total timing unavailable.",
+          "recordedAt": "2026-10-02T07:49:32.811Z",
+          "totalWallMs": null,
+          "childEvidence": {
+            "children": [
+              {
+                "child": 1,
+                "available": true,
+                "intervals": [
+                  {
+                    "startedAt": 1790925996829,
+                    "finishedAt": 1790926139981
+                  }
+                ],
+                "unfinished": false,
+                "terminalOutcomes": [
+                  "max-tokens"
+                ],
+                "modelMessages": 9,
+                "toolCalls": 8
+              },
+              {
+                "child": 2,
+                "available": true,
+                "intervals": [],
+                "unfinished": true,
+                "terminalOutcomes": [],
+                "modelMessages": 29,
+                "toolCalls": 29
+              }
+            ],
+            "verified": false,
+            "peakConcurrency": null,
+            "basis": "workspace- and parent-attributed child turn/start and turn/end events in durable journals"
+          },
+          "inputSnapshotAfterSha256": "277fbb7d50fb7c603ad1f4901273081474da201579307461ca104b68c0d3d976",
+          "inputSnapshotVerification": "passed"
+        }
+      ],
+      "candidate": {
+        "arm": "candidate",
+        "pair": 3,
+        "outcome": "completed",
+        "startedAt": "2026-10-02T08:01:06.238Z",
+        "route": {
+          "provider": "custom-c026b3be",
+          "model": "ag/gemini-3.8-flash-medium"
+        },
+        "preset": "nd-coordination-candidate",
+        "promptSha256": "dcba9cbdc6b176cc4d06451426bca77c200c20c2ad8c1aa7c0dcb80e1ab197ba",
+        "inputSnapshotSha256": "277fbb7d50fb7c603ad1f4901273081474da201579307461ca104b68c0d3d976",
+        "setupWallMs": 175.62109999998938,
+        "modelCacheState": "unavailable",
+        "childExecutionOverlapVerified": true,
+        "exactChildExecutionIntervals": [
+          [
+            {
+              "startedAt": 1790928151968,
+              "finishedAt": 1790928204038
+            }
+          ],
+          [
+            {
+              "startedAt": 1790928151986,
+              "finishedAt": 1790928466174
+            }
+          ],
+          [
+            {
+              "startedAt": 1790928476332,
+              "finishedAt": 1790928744672
+            }
+          ]
+        ],
+        "workspace": "C:\\Users\\MT-Staff\\Documents\\GitHub\\nd-dsh\\scratch\\coordination-policy\\pair-3-candidate\\nd-workspace",
+        "trialDir": "C:\\Users\\MT-Staff\\Documents\\GitHub\\nd-dsh\\scratch\\coordination-policy\\pair-3-candidate",
+        "attempt": 1,
+        "sessionId": "session-362cd07f-421c-4c26-b73e-349e4ee04ea5",
+        "executionWallMs": 959903.2292000001,
+        "metrics": {
+          "parentModelMessages": 47,
+          "parentToolCalls": 47,
+          "toolCounts": {
+            "glob": 3,
+            "read": 19,
+            "todo_write": 4,
+            "subagent": 3,
+            "grep": 1,
+            "edit": 6,
+            "pwsh": 11
+          },
+          "statusPolls": 0,
+          "childCount": 3,
+          "foregroundDelegationSpans": [
+            {
+              "startedAt": 1790928151899,
+              "finishedAt": 1790928204061
+            },
+            {
+              "startedAt": 1790928151900,
+              "finishedAt": 1790928466185
+            },
+            {
+              "startedAt": 1790928476293,
+              "finishedAt": 1790928744711
+            }
+          ],
+          "peakDelegationCalls": 2,
+          "exactChildExecutionIntervals": null,
+          "childModelCalls": null,
+          "integrationWallMs": 279940,
+          "integrationTimingBasis": "last foreground delegation result to parent terminal; includes final review and tests",
+          "overlapBasis": "observed foreground tool occupancy; exact child execution intervals unavailable"
+        },
+        "childEvidence": {
+          "children": [
+            {
+              "child": 1,
+              "available": true,
+              "intervals": [
+                {
+                  "startedAt": 1790928151968,
+                  "finishedAt": 1790928204038
+                }
+              ],
+              "unfinished": false,
+              "terminalOutcomes": [
+                "max-tokens"
+              ],
+              "modelMessages": 5,
+              "toolCalls": 4
+            },
+            {
+              "child": 2,
+              "available": true,
+              "intervals": [
+                {
+                  "startedAt": 1790928151986,
+                  "finishedAt": 1790928466174
+                }
+              ],
+              "unfinished": false,
+              "terminalOutcomes": [
+                "completed"
+              ],
+              "modelMessages": 38,
+              "toolCalls": 38
+            },
+            {
+              "child": 3,
+              "available": true,
+              "intervals": [
+                {
+                  "startedAt": 1790928476332,
+                  "finishedAt": 1790928744672
+                }
+              ],
+              "unfinished": false,
+              "terminalOutcomes": [
+                "completed"
+              ],
+              "modelMessages": 31,
+              "toolCalls": 30
+            }
+          ],
+          "verified": true,
+          "peakConcurrency": 2,
+          "basis": "workspace- and parent-attributed child turn/start and turn/end events in durable journals"
+        },
+        "verificationWallMs": 805.3955000001006,
+        "verification": {
+          "passed": false,
+          "score": 90,
+          "checks": [
+            {
+              "label": "Native production validation and assigned identity",
+              "passed": true,
+              "points": 8
+            },
+            {
+              "label": "Actual executable and disabled legacy registration",
+              "passed": true,
+              "points": 7
+            },
+            {
+              "label": "Initialize and requested protocol version",
+              "passed": true,
+              "points": 4
+            },
+            {
+              "label": "Notification has no reply; ping works",
+              "passed": true,
+              "points": 3
+            },
+            {
+              "label": "Both real tools and object schemas",
+              "passed": true,
+              "points": 4
+            },
+            {
+              "label": "Unknown tool isError and method -32601",
+              "passed": true,
+              "points": 4
+            },
+            {
+              "label": "Malformed line recovery and clean stdout",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Exact deterministic script inventory including inert command text",
+              "passed": true,
+              "points": 10
+            },
+            {
+              "label": "Four ordered availability checks; no inferred verification result",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Missing package and missing scripts are honest",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Malformed JSON, package and script types are explicit errors",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Reject caller arguments for both tools",
+              "passed": false,
+              "error": "Accepted arguments null",
+              "points": 5
+            },
+            {
+              "label": "Explicit absolute workspace overrides cwd once",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Commands never execute and reads/exports do not write",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Input over 1 MiB rejected",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Escaping package symlink denied",
+              "passed": false,
+              "error": "Environment could not create symlink; behavior unverified: EPERM",
+              "points": 5
+            },
+            {
+              "label": "Useful Markdown inventory, availability and missing-file warning",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Fresh reads update both tools without restart",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Clear native install, separate registration, trust and on-demand usage",
+              "passed": true,
+              "points": 5
+            }
+          ]
+        },
+        "totalWallMs": 960884.8072999999,
+        "finishedAt": "2026-10-02T08:17:07.080Z",
+        "inputSnapshotAfterSha256": "277fbb7d50fb7c603ad1f4901273081474da201579307461ca104b68c0d3d976",
+        "inputSnapshotVerification": "passed"
+      }
+    },
+    {
+      "pair": 4,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "candidate": {
+        "arm": "candidate",
+        "pair": 4,
+        "outcome": "completed",
+        "startedAt": "2026-10-02T08:17:07.139Z",
+        "route": {
+          "provider": "custom-c026b3be",
+          "model": "ag/gemini-3.8-flash-medium"
+        },
+        "preset": "nd-coordination-candidate",
+        "promptSha256": "dcba9cbdc6b176cc4d06451426bca77c200c20c2ad8c1aa7c0dcb80e1ab197ba",
+        "inputSnapshotSha256": "277fbb7d50fb7c603ad1f4901273081474da201579307461ca104b68c0d3d976",
+        "setupWallMs": 154.08889999985695,
+        "modelCacheState": "unavailable",
+        "childExecutionOverlapVerified": true,
+        "exactChildExecutionIntervals": [
+          [
+            {
+              "startedAt": 1790929105279,
+              "finishedAt": 1790929510534
+            }
+          ],
+          [
+            {
+              "startedAt": 1790929105289,
+              "finishedAt": 1790929333633
+            }
+          ]
+        ],
+        "workspace": "C:\\Users\\MT-Staff\\Documents\\GitHub\\nd-dsh\\scratch\\coordination-policy\\pair-4-candidate\\nd-workspace",
+        "trialDir": "C:\\Users\\MT-Staff\\Documents\\GitHub\\nd-dsh\\scratch\\coordination-policy\\pair-4-candidate",
+        "attempt": 1,
+        "sessionId": "session-4f727a5e-03d4-4027-b37f-db19a91fbd1a",
+        "executionWallMs": 699672.8673,
+        "metrics": {
+          "parentModelMessages": 44,
+          "parentToolCalls": 44,
+          "toolCounts": {
+            "glob": 3,
+            "read": 21,
+            "todo_write": 5,
+            "subagent": 2,
+            "pwsh": 13
+          },
+          "statusPolls": 0,
+          "childCount": 2,
+          "foregroundDelegationSpans": [
+            {
+              "startedAt": 1790929105207,
+              "finishedAt": 1790929333646
+            },
+            {
+              "startedAt": 1790929105210,
+              "finishedAt": 1790929510547
+            }
+          ],
+          "peakDelegationCalls": 2,
+          "exactChildExecutionIntervals": null,
+          "childModelCalls": null,
+          "integrationWallMs": 215101,
+          "integrationTimingBasis": "last foreground delegation result to parent terminal; includes final review and tests",
+          "overlapBasis": "observed foreground tool occupancy; exact child execution intervals unavailable"
+        },
+        "childEvidence": {
+          "children": [
+            {
+              "child": 1,
+              "available": true,
+              "intervals": [
+                {
+                  "startedAt": 1790929105279,
+                  "finishedAt": 1790929510534
+                }
+              ],
+              "unfinished": false,
+              "terminalOutcomes": [
+                "completed"
+              ],
+              "modelMessages": 44,
+              "toolCalls": 43
+            },
+            {
+              "child": 2,
+              "available": true,
+              "intervals": [
+                {
+                  "startedAt": 1790929105289,
+                  "finishedAt": 1790929333633
+                }
+              ],
+              "unfinished": false,
+              "terminalOutcomes": [
+                "completed"
+              ],
+              "modelMessages": 20,
+              "toolCalls": 19
+            }
+          ],
+          "verified": true,
+          "peakConcurrency": 2,
+          "basis": "workspace- and parent-attributed child turn/start and turn/end events in durable journals"
+        },
+        "verificationWallMs": 641.0861999997869,
+        "verification": {
+          "passed": false,
+          "score": 85,
+          "checks": [
+            {
+              "label": "Native production validation and assigned identity",
+              "passed": true,
+              "points": 8
+            },
+            {
+              "label": "Actual executable and disabled legacy registration",
+              "passed": true,
+              "points": 7
+            },
+            {
+              "label": "Initialize and requested protocol version",
+              "passed": true,
+              "points": 4
+            },
+            {
+              "label": "Notification has no reply; ping works",
+              "passed": true,
+              "points": 3
+            },
+            {
+              "label": "Both real tools and object schemas",
+              "passed": true,
+              "points": 4
+            },
+            {
+              "label": "Unknown tool isError and method -32601",
+              "passed": true,
+              "points": 4
+            },
+            {
+              "label": "Malformed line recovery and clean stdout",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Exact deterministic script inventory including inert command text",
+              "passed": true,
+              "points": 10
+            },
+            {
+              "label": "Four ordered availability checks; no inferred verification result",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Missing package and missing scripts are honest",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Malformed JSON, package and script types are explicit errors",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Reject caller arguments for both tools",
+              "passed": false,
+              "error": "Accepted arguments null",
+              "points": 5
+            },
+            {
+              "label": "Explicit absolute workspace overrides cwd once",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Commands never execute and reads/exports do not write",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Input over 1 MiB rejected",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Escaping package symlink denied",
+              "passed": false,
+              "error": "Environment could not create symlink; behavior unverified: EPERM",
+              "points": 5
+            },
+            {
+              "label": "Useful Markdown inventory, availability and missing-file warning",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Fresh reads update both tools without restart",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Clear native install, separate registration, trust and on-demand usage",
+              "passed": false,
+              "error": "Incomplete setup documentation",
+              "points": 5
+            }
+          ]
+        },
+        "totalWallMs": 700468.5739999998,
+        "finishedAt": "2026-10-02T08:28:47.551Z",
+        "inputSnapshotAfterSha256": "277fbb7d50fb7c603ad1f4901273081474da201579307461ca104b68c0d3d976",
+        "inputSnapshotVerification": "passed"
+      },
+      "baseline": {
+        "arm": "baseline",
+        "pair": 4,
+        "outcome": "completed",
+        "startedAt": "2026-10-02T08:28:47.594Z",
+        "route": {
+          "provider": "custom-c026b3be",
+          "model": "ag/gemini-3.8-flash-medium"
+        },
+        "preset": "nd-coordination-baseline",
+        "promptSha256": "dcba9cbdc6b176cc4d06451426bca77c200c20c2ad8c1aa7c0dcb80e1ab197ba",
+        "inputSnapshotSha256": "277fbb7d50fb7c603ad1f4901273081474da201579307461ca104b68c0d3d976",
+        "setupWallMs": 140.95250000013039,
+        "modelCacheState": "unavailable",
+        "childExecutionOverlapVerified": true,
+        "exactChildExecutionIntervals": [
+          [
+            {
+              "startedAt": 1790929789614,
+              "finishedAt": 1790929863064
+            },
+            {
+              "startedAt": 1790929889750,
+              "finishedAt": 1790930148191
+            }
+          ],
+          [
+            {
+              "startedAt": 1790929789627,
+              "finishedAt": 1790930716951
+            }
+          ]
+        ],
+        "workspace": "C:\\Users\\MT-Staff\\Documents\\GitHub\\nd-dsh\\scratch\\coordination-policy\\pair-4-baseline\\nd-workspace",
+        "trialDir": "C:\\Users\\MT-Staff\\Documents\\GitHub\\nd-dsh\\scratch\\coordination-policy\\pair-4-baseline",
+        "attempt": 1,
+        "sessionId": "session-e9c46549-4046-4a50-8f04-947a2e1b1975",
+        "executionWallMs": 478987.35950000025,
+        "metrics": {
+          "parentModelMessages": 69,
+          "parentToolCalls": 71,
+          "toolCounts": {
+            "glob": 12,
+            "todo_write": 2,
+            "read": 16,
+            "subagent": 2,
+            "list_agents": 15,
+            "pwsh": 21,
+            "job_list": 1,
+            "send_message": 2
+          },
+          "statusPolls": 16,
+          "childCount": 2,
+          "foregroundDelegationSpans": [],
+          "peakDelegationCalls": null,
+          "exactChildExecutionIntervals": null,
+          "childModelCalls": null,
+          "integrationWallMs": null,
+          "integrationTimingBasis": "unavailable",
+          "overlapBasis": "observed foreground tool occupancy; exact child execution intervals unavailable"
+        },
+        "childEvidence": {
+          "children": [
+            {
+              "child": 1,
+              "available": true,
+              "intervals": [
+                {
+                  "startedAt": 1790929789614,
+                  "finishedAt": 1790929863064
+                },
+                {
+                  "startedAt": 1790929889750,
+                  "finishedAt": 1790930148191
+                }
+              ],
+              "unfinished": false,
+              "terminalOutcomes": [
+                "max-tokens",
+                "completed"
+              ],
+              "modelMessages": 33,
+              "toolCalls": 31
+            },
+            {
+              "child": 2,
+              "available": true,
+              "intervals": [
+                {
+                  "startedAt": 1790929789627,
+                  "finishedAt": 1790930716951
+                }
+              ],
+              "unfinished": false,
+              "terminalOutcomes": [
+                "completed"
+              ],
+              "modelMessages": 68,
+              "toolCalls": 67
+            }
+          ],
+          "verified": true,
+          "peakConcurrency": 2,
+          "basis": "workspace- and parent-attributed child turn/start and turn/end events in durable journals"
+        },
+        "verificationWallMs": 584.0659000002779,
+        "verification": {
+          "passed": false,
+          "score": 85,
+          "checks": [
+            {
+              "label": "Native production validation and assigned identity",
+              "passed": true,
+              "points": 8
+            },
+            {
+              "label": "Actual executable and disabled legacy registration",
+              "passed": true,
+              "points": 7
+            },
+            {
+              "label": "Initialize and requested protocol version",
+              "passed": true,
+              "points": 4
+            },
+            {
+              "label": "Notification has no reply; ping works",
+              "passed": true,
+              "points": 3
+            },
+            {
+              "label": "Both real tools and object schemas",
+              "passed": true,
+              "points": 4
+            },
+            {
+              "label": "Unknown tool isError and method -32601",
+              "passed": true,
+              "points": 4
+            },
+            {
+              "label": "Malformed line recovery and clean stdout",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Exact deterministic script inventory including inert command text",
+              "passed": true,
+              "points": 10
+            },
+            {
+              "label": "Four ordered availability checks; no inferred verification result",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Missing package and missing scripts are honest",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Malformed JSON, package and script types are explicit errors",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Reject caller arguments for both tools",
+              "passed": false,
+              "error": "Accepted arguments null",
+              "points": 5
+            },
+            {
+              "label": "Explicit absolute workspace overrides cwd once",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Commands never execute and reads/exports do not write",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Input over 1 MiB rejected",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Escaping package symlink denied",
+              "passed": false,
+              "error": "Environment could not create symlink; behavior unverified: EPERM",
+              "points": 5
+            },
+            {
+              "label": "Useful Markdown inventory, availability and missing-file warning",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Fresh reads update both tools without restart",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Clear native install, separate registration, trust and on-demand usage",
+              "passed": false,
+              "error": "Incomplete setup documentation",
+              "points": 5
+            }
+          ]
+        },
+        "totalWallMs": 479712.79169999994,
+        "finishedAt": "2026-10-02T08:36:47.265Z",
+        "inputSnapshotAfterSha256": "277fbb7d50fb7c603ad1f4901273081474da201579307461ca104b68c0d3d976",
+        "inputSnapshotVerification": "passed"
+      }
+    },
+    {
+      "pair": 5,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline": {
+        "arm": "baseline",
+        "pair": 5,
+        "outcome": "completed",
+        "startedAt": "2026-10-02T08:36:47.307Z",
+        "route": {
+          "provider": "custom-c026b3be",
+          "model": "ag/gemini-3.8-flash-medium"
+        },
+        "preset": "nd-coordination-baseline",
+        "promptSha256": "dcba9cbdc6b176cc4d06451426bca77c200c20c2ad8c1aa7c0dcb80e1ab197ba",
+        "inputSnapshotSha256": "277fbb7d50fb7c603ad1f4901273081474da201579307461ca104b68c0d3d976",
+        "setupWallMs": 129.13299999991432,
+        "modelCacheState": "unavailable",
+        "childExecutionOverlapVerified": true,
+        "exactChildExecutionIntervals": [
+          [
+            {
+              "startedAt": 1790930312296,
+              "finishedAt": 1790930654900
+            }
+          ],
+          [
+            {
+              "startedAt": 1790930312307,
+              "finishedAt": 1790930657499
+            }
+          ]
+        ],
+        "workspace": "C:\\Users\\MT-Staff\\Documents\\GitHub\\nd-dsh\\scratch\\coordination-policy\\pair-5-baseline\\nd-workspace",
+        "trialDir": "C:\\Users\\MT-Staff\\Documents\\GitHub\\nd-dsh\\scratch\\coordination-policy\\pair-5-baseline",
+        "attempt": 1,
+        "sessionId": "session-63db6773-12b8-4e5a-aaf2-0f53acd7d8d7",
+        "executionWallMs": 545380.2906,
+        "metrics": {
+          "parentModelMessages": 71,
+          "parentToolCalls": 71,
+          "toolCounts": {
+            "glob": 11,
+            "read": 21,
+            "skill": 1,
+            "pwsh": 20,
+            "todo_write": 3,
+            "subagent": 2,
+            "list_agents": 12,
+            "edit": 1
+          },
+          "statusPolls": 12,
+          "childCount": 2,
+          "foregroundDelegationSpans": [],
+          "peakDelegationCalls": null,
+          "exactChildExecutionIntervals": null,
+          "childModelCalls": null,
+          "integrationWallMs": null,
+          "integrationTimingBasis": "unavailable",
+          "overlapBasis": "observed foreground tool occupancy; exact child execution intervals unavailable"
+        },
+        "childEvidence": {
+          "children": [
+            {
+              "child": 1,
+              "available": true,
+              "intervals": [
+                {
+                  "startedAt": 1790930312296,
+                  "finishedAt": 1790930654900
+                }
+              ],
+              "unfinished": false,
+              "terminalOutcomes": [
+                "completed"
+              ],
+              "modelMessages": 34,
+              "toolCalls": 34
+            },
+            {
+              "child": 2,
+              "available": true,
+              "intervals": [
+                {
+                  "startedAt": 1790930312307,
+                  "finishedAt": 1790930657499
+                }
+              ],
+              "unfinished": false,
+              "terminalOutcomes": [
+                "completed"
+              ],
+              "modelMessages": 36,
+              "toolCalls": 35
+            }
+          ],
+          "verified": true,
+          "peakConcurrency": 2,
+          "basis": "workspace- and parent-attributed child turn/start and turn/end events in durable journals"
+        },
+        "verificationWallMs": 650.1798000000417,
+        "verification": {
+          "passed": false,
+          "score": 90,
+          "checks": [
+            {
+              "label": "Native production validation and assigned identity",
+              "passed": true,
+              "points": 8
+            },
+            {
+              "label": "Actual executable and disabled legacy registration",
+              "passed": true,
+              "points": 7
+            },
+            {
+              "label": "Initialize and requested protocol version",
+              "passed": true,
+              "points": 4
+            },
+            {
+              "label": "Notification has no reply; ping works",
+              "passed": true,
+              "points": 3
+            },
+            {
+              "label": "Both real tools and object schemas",
+              "passed": true,
+              "points": 4
+            },
+            {
+              "label": "Unknown tool isError and method -32601",
+              "passed": true,
+              "points": 4
+            },
+            {
+              "label": "Malformed line recovery and clean stdout",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Exact deterministic script inventory including inert command text",
+              "passed": true,
+              "points": 10
+            },
+            {
+              "label": "Four ordered availability checks; no inferred verification result",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Missing package and missing scripts are honest",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Malformed JSON, package and script types are explicit errors",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Reject caller arguments for both tools",
+              "passed": false,
+              "error": "Accepted arguments null",
+              "points": 5
+            },
+            {
+              "label": "Explicit absolute workspace overrides cwd once",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Commands never execute and reads/exports do not write",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Input over 1 MiB rejected",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Escaping package symlink denied",
+              "passed": false,
+              "error": "Environment could not create symlink; behavior unverified: EPERM",
+              "points": 5
+            },
+            {
+              "label": "Useful Markdown inventory, availability and missing-file warning",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Fresh reads update both tools without restart",
+              "passed": true,
+              "points": 5
+            },
+            {
+              "label": "Clear native install, separate registration, trust and on-demand usage",
+              "passed": true,
+              "points": 5
+            }
+          ]
+        },
+        "totalWallMs": 546160.2080999999,
+        "finishedAt": "2026-10-02T08:45:53.427Z",
+        "inputSnapshotAfterSha256": "277fbb7d50fb7c603ad1f4901273081474da201579307461ca104b68c0d3d976",
+        "inputSnapshotVerification": "passed"
+      },
+      "candidate": {
+        "arm": "candidate",
+        "pair": 5,
+        "outcome": "blocked",
+        "startedAt": "2026-10-02T08:45:53.475Z",
+        "route": {
+          "provider": "custom-c026b3be",
+          "model": "ag/gemini-3.8-flash-medium"
+        },
+        "preset": "nd-coordination-candidate",
+        "promptSha256": "dcba9cbdc6b176cc4d06451426bca77c200c20c2ad8c1aa7c0dcb80e1ab197ba",
+        "inputSnapshotSha256": "277fbb7d50fb7c603ad1f4901273081474da201579307461ca104b68c0d3d976",
+        "setupWallMs": 131.68820000020787,
+        "modelCacheState": "unavailable",
+        "childExecutionOverlapVerified": true,
+        "exactChildExecutionIntervals": [
+          [
+            {
+              "startedAt": 1790930849075,
+              "finishedAt": 1790930947087
+            }
+          ],
+          [
+            {
+              "startedAt": 1790930849085,
+              "finishedAt": 1790931054139
+            }
+          ]
+        ],
+        "workspace": "C:\\Users\\MT-Staff\\Documents\\GitHub\\nd-dsh\\scratch\\coordination-policy\\pair-5-candidate\\nd-workspace",
+        "trialDir": "C:\\Users\\MT-Staff\\Documents\\GitHub\\nd-dsh\\scratch\\coordination-policy\\pair-5-candidate",
+        "attempt": 1,
+        "sessionId": "session-b9dc8528-2f5c-49fb-8c6c-29f835a59177",
+        "executionWallMs": 297549.2426999998,
+        "metrics": {
+          "parentModelMessages": 15,
+          "parentToolCalls": 16,
+          "toolCounts": {
+            "glob": 2,
+            "read": 9,
+            "skill": 1,
+            "todo_write": 2,
+            "subagent": 2
+          },
+          "statusPolls": 0,
+          "childCount": 2,
+          "foregroundDelegationSpans": [
+            {
+              "startedAt": 1790930849033,
+              "finishedAt": 1790930947103
+            }
+          ],
+          "peakDelegationCalls": 1,
+          "exactChildExecutionIntervals": null,
+          "childModelCalls": null,
+          "integrationWallMs": null,
+          "integrationTimingBasis": "last foreground delegation result to parent terminal; includes final review and tests",
+          "overlapBasis": "observed foreground tool occupancy; exact child execution intervals unavailable"
+        },
+        "error": "TypeError: Cannot read properties of undefined (reading 'events')\n    at <anonymous>:1:65\n    at <anonymous>:1:131",
+        "totalWallMs": 300722.747,
+        "finishedAt": "2026-10-02T08:50:54.152Z",
+        "childEvidence": {
+          "children": [
+            {
+              "child": 1,
+              "available": true,
+              "intervals": [
+                {
+                  "startedAt": 1790930849075,
+                  "finishedAt": 1790930947087
+                }
+              ],
+              "unfinished": false,
+              "terminalOutcomes": [
+                "max-tokens"
+              ],
+              "modelMessages": 8,
+              "toolCalls": 7
+            },
+            {
+              "child": 2,
+              "available": true,
+              "intervals": [
+                {
+                  "startedAt": 1790930849085,
+                  "finishedAt": 1790931054139
+                }
+              ],
+              "unfinished": false,
+              "terminalOutcomes": [
+                "aborted"
+              ],
+              "modelMessages": 35,
+              "toolCalls": 35
+            }
+          ],
+          "verified": true,
+          "peakConcurrency": 2,
+          "basis": "workspace- and parent-attributed child turn/start and turn/end events in durable journals"
+        },
+        "inputSnapshotAfterSha256": "277fbb7d50fb7c603ad1f4901273081474da201579307461ca104b68c0d3d976",
+        "inputSnapshotVerification": "passed"
+      }
+    }
+  ],
+  "acceptance": {
+    "status": "inconclusive",
+    "completedPairs": 5,
+    "eligiblePairs": 0,
+    "baselineMedianMs": null,
+    "candidateMedianMs": null,
+    "relativeImprovement": null,
+    "qualityPassed": false,
+    "pollingPassed": false,
+    "overlapPassed": false,
+    "passed": false,
+    "promoteDefault": false,
+    "reason": "Five fully verified pairs with matching input hashes, prompt and route required; blocked/unverified/unmatched runs are excluded."
+  },
+  "defaultChanged": false,
+  "recovery": {
+    "time": "2026-10-02T07:21:22.936Z",
+    "observerExit": {
+      "code": 1,
+      "message": "Unsettled top-level await after observer connection loss; renderer CDP endpoint unavailable"
+    },
+    "firstRecovery": {
+      "outcome": "blocked",
+      "reason": "Isolated ND failed to load local renderer under sandbox OS access; ERR_FAILED"
+    },
+    "secondRecovery": {
+      "outcome": "ready",
+      "osAccessRetry": true,
+      "model": "ag/gemini-3.8-flash-medium",
+      "defaultUnchanged": true
+    },
+    "sourceChanges": {
+      "observer": "Close/error now rejects pending requests; bounded fetch and request deadlines",
+      "runner": "Explicit resume preserves interrupted attempts, frozen contract must match, retry uses fresh session/workspace"
+    }
+  },
+  "attemptCount": 12,
+  "descriptive": {
+    "baseline": {
+      "completedRuns": 4,
+      "unverifiedMedianTotalMs": 524519.6879499999,
+      "medianParentModelMessages": 70,
+      "medianStatusPolls": 13.5,
+      "verifiedSpeedClaim": false
+    },
+    "candidate": {
+      "completedRuns": 4,
+      "unverifiedMedianTotalMs": 642263.8268999999,
+      "medianParentModelMessages": 43.5,
+      "medianStatusPolls": 0,
+      "verifiedSpeedClaim": false
+    }
+  },
+  "faultCases": {
+    "scenario": "conflicting proposed ownership and unsuccessful common verification",
+    "startedAt": "2026-10-02T08:54:29.058Z",
+    "performanceSample": false,
+    "promptSha256": "a0967e524650a4f629b054a8f374ab70495c64ba989f49e5ac6ba69dd83a9000",
+    "route": {
+      "provider": "custom-c026b3be",
+      "model": "ag/gemini-3.8-flash-medium"
+    },
+    "sessionId": "session-992e3a5d-c205-4236-9196-3e33882c37fb",
+    "metrics": {
+      "parentModelMessages": 10,
+      "parentToolCalls": 12,
+      "toolCounts": {
+        "glob": 2,
+        "read": 6,
+        "subagent": 2,
+        "pwsh": 2
+      },
+      "statusPolls": 0,
+      "childCount": 2,
+      "foregroundDelegationSpans": [
+        {
+          "startedAt": 1790931284268,
+          "finishedAt": 1790931292042
+        },
+        {
+          "startedAt": 1790931284270,
+          "finishedAt": 1790931292583
+        }
+      ],
+      "peakDelegationCalls": 2,
+      "exactChildExecutionIntervals": null,
+      "childModelCalls": null,
+      "integrationWallMs": 38975,
+      "integrationTimingBasis": "last foreground delegation result to parent terminal; includes final review and tests",
+      "overlapBasis": "observed foreground tool occupancy; exact child execution intervals unavailable"
+    },
+    "childEvidence": {
+      "children": [
+        {
+          "child": 1,
+          "available": true,
+          "intervals": [
+            {
+              "startedAt": 1790931284331,
+              "finishedAt": 1790931292572
+            }
+          ],
+          "unfinished": false,
+          "terminalOutcomes": [
+            "completed"
+          ],
+          "modelMessages": 3,
+          "toolCalls": 2
+        },
+        {
+          "child": 2,
+          "available": true,
+          "intervals": [
+            {
+              "startedAt": 1790931284341,
+              "finishedAt": 1790931292029
+            }
+          ],
+          "unfinished": false,
+          "terminalOutcomes": [
+            "completed"
+          ],
+          "modelMessages": 3,
+          "toolCalls": 2
+        }
+      ],
+      "verified": true,
+      "peakConcurrency": 2,
+      "basis": "workspace- and parent-attributed child turn/start and turn/end events in durable journals"
+    },
+    "checks": {
+      "sharedFilePreserved": true,
+      "frozenVerifierPreserved": true,
+      "separateChildDeliverables": false,
+      "exactlyTwoChildren": true,
+      "actualChildOverlap": true,
+      "commonVerificationInvoked": true,
+      "failureReported": true
+    },
+    "outcome": "failed",
+    "finishedAt": "2026-10-02T08:55:33.166Z"
+  },
+  "repositoryVerification": {
+    "recordedAt": "2026-10-02T08:58:35.976Z",
+    "verify": {
+      "exitCode": 0
+    },
+    "typecheck": {
+      "exitCode": 0
+    },
+    "test": {
+      "exitCode": 0,
+      "passed": 1179,
+      "skipped": 9,
+      "passedFiles": 150,
+      "skippedFiles": 5
+    },
+    "build": {
+      "exitCode": 0
+    },
+    "earlierRestrictedTestRun": {
+      "passed": 1161,
+      "failed": 6,
+      "skipped": 9,
+      "affectedFileRetryPassed": 12
+    },
+    "upstreamPatched": false,
+    "published": false
+  },
+  "faultRetest": {
+    "fixtureVersion": 2,
+    "scenario": "conflicting proposed ownership and unsuccessful common verification",
+    "startedAt": "2026-10-02T09:03:05.604Z",
+    "performanceSample": false,
+    "promptSha256": "0eed199c4f7856a82294e58e91e4a91906576f3cae6031b643fb644bdf3250dc",
+    "route": {
+      "provider": "custom-c026b3be",
+      "model": "ag/gemini-3.8-flash-medium"
+    },
+    "sessionId": "session-2de34be3-70d2-44fb-ab58-141adc3ba0b6",
+    "metrics": {
+      "parentModelMessages": 8,
+      "parentToolCalls": 11,
+      "toolCounts": {
+        "glob": 1,
+        "read": 6,
+        "subagent": 2,
+        "pwsh": 2
+      },
+      "statusPolls": 0,
+      "childCount": 2,
+      "foregroundDelegationSpans": [
+        {
+          "startedAt": 1790931802755,
+          "finishedAt": 1790931811865
+        },
+        {
+          "startedAt": 1790931802758,
+          "finishedAt": 1790931813141
+        }
+      ],
+      "peakDelegationCalls": 2,
+      "exactChildExecutionIntervals": null,
+      "childModelCalls": null,
+      "integrationWallMs": 34449,
+      "integrationTimingBasis": "last foreground delegation result to parent terminal; includes final review and tests",
+      "overlapBasis": "observed foreground tool occupancy; exact child execution intervals unavailable"
+    },
+    "childEvidence": {
+      "children": [
+        {
+          "child": 1,
+          "available": true,
+          "intervals": [
+            {
+              "startedAt": 1790931802824,
+              "finishedAt": 1790931811838
+            }
+          ],
+          "unfinished": false,
+          "terminalOutcomes": [
+            "completed"
+          ],
+          "modelMessages": 3,
+          "toolCalls": 2
+        },
+        {
+          "child": 2,
+          "available": true,
+          "intervals": [
+            {
+              "startedAt": 1790931802836,
+              "finishedAt": 1790931813111
+            }
+          ],
+          "unfinished": false,
+          "terminalOutcomes": [
+            "completed"
+          ],
+          "modelMessages": 3,
+          "toolCalls": 2
+        }
+      ],
+      "verified": true,
+      "peakConcurrency": 2,
+      "basis": "workspace- and parent-attributed child turn/start and turn/end events in durable journals"
+    },
+    "checks": {
+      "sharedFilePreserved": true,
+      "frozenVerifierPreserved": true,
+      "separateChildDeliverables": true,
+      "exactlyTwoChildren": true,
+      "actualChildOverlap": true,
+      "commonVerificationInvoked": true,
+      "failureReported": true
+    },
+    "outcome": "passed",
+    "finishedAt": "2026-10-02T09:04:09.541Z"
+  }
+}

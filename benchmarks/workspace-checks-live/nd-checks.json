@@ -1,0 +1,151 @@
+{
+  "scorerVersion": "1.0",
+  "contractHash": "ce4caebbbfad68c134937ccb9ec0825241c30322c3322e6c6ea75e79aa7de318",
+  "side": "nd",
+  "id": "nd-workspace-checks",
+  "score": 90,
+  "maxScore": 100,
+  "passed": false,
+  "checks": [
+    {
+      "group": "packaging",
+      "label": "Native production validation and assigned identity",
+      "points": 8,
+      "passed": true,
+      "wallMs": 324.0312
+    },
+    {
+      "group": "packaging",
+      "label": "Actual executable and disabled legacy registration",
+      "points": 7,
+      "passed": true,
+      "wallMs": 1.467299999999966
+    },
+    {
+      "group": "protocol",
+      "label": "Initialize and requested protocol version",
+      "points": 4,
+      "passed": true,
+      "wallMs": 1.7858999999999696
+    },
+    {
+      "group": "protocol",
+      "label": "Notification has no reply; ping works",
+      "points": 3,
+      "passed": true,
+      "wallMs": 0.5225000000000364
+    },
+    {
+      "group": "protocol",
+      "label": "Both real tools and object schemas",
+      "points": 4,
+      "passed": true,
+      "wallMs": 0.5698999999999614
+    },
+    {
+      "group": "protocol",
+      "label": "Unknown tool isError and method -32601",
+      "points": 4,
+      "passed": true,
+      "wallMs": 0.9253999999999678
+    },
+    {
+      "group": "protocol",
+      "label": "Malformed line recovery and clean stdout",
+      "points": 5,
+      "passed": true,
+      "wallMs": 1.6447000000000003
+    },
+    {
+      "group": "data",
+      "label": "Exact deterministic script inventory including inert command text",
+      "points": 10,
+      "passed": true,
+      "wallMs": 0.7398000000000025
+    },
+    {
+      "group": "data",
+      "label": "Four ordered availability checks; no inferred verification result",
+      "points": 5,
+      "passed": true,
+      "wallMs": 0.6306999999999903
+    },
+    {
+      "group": "data",
+      "label": "Missing package and missing scripts are honest",
+      "points": 5,
+      "passed": true,
+      "wallMs": 8.522299999999973
+    },
+    {
+      "group": "data",
+      "label": "Malformed JSON, package and script types are explicit errors",
+      "points": 5,
+      "passed": true,
+      "wallMs": 9.103499999999997
+    },
+    {
+      "group": "safety",
+      "label": "Reject caller arguments for both tools",
+      "points": 5,
+      "passed": true,
+      "wallMs": 1.9828999999999724
+    },
+    {
+      "group": "safety",
+      "label": "Explicit absolute workspace overrides cwd once",
+      "points": 5,
+      "passed": true,
+      "wallMs": 65.63439999999997
+    },
+    {
+      "group": "safety",
+      "label": "Commands never execute and reads/exports do not write",
+      "points": 5,
+      "passed": true,
+      "wallMs": 3.413400000000024
+    },
+    {
+      "group": "safety",
+      "label": "Input over 1 MiB rejected",
+      "points": 5,
+      "passed": true,
+      "wallMs": 4.26849999999996
+    },
+    {
+      "group": "safety",
+      "label": "Escaping package symlink denied",
+      "points": 5,
+      "passed": false,
+      "error": "Environment could not create symlink; behavior unverified: EPERM",
+      "wallMs": 8.151399999999967
+    },
+    {
+      "group": "export",
+      "label": "Useful Markdown inventory, availability and missing-file warning",
+      "points": 5,
+      "passed": true,
+      "wallMs": 4.243600000000015
+    },
+    {
+      "group": "export",
+      "label": "Fresh reads update both tools without restart",
+      "points": 5,
+      "passed": true,
+      "wallMs": 2.074700000000007
+    },
+    {
+      "group": "documentation",
+      "label": "Clear native install, separate registration, trust and on-demand usage",
+      "points": 5,
+      "passed": false,
+      "error": "Incomplete setup documentation",
+      "wallMs": 0.49589999999994916
+    }
+  ],
+  "verificationWallMs": 458.6044,
+  "verifiedAt": "2026-10-02T04:53:38.320Z",
+  "fixture": "C:\\Users\\MT-Staff\\Documents\\GitHub\\nd-dsh\\scratch\\workspace-checks-benchmark\\nd-verify Unicode 日本語 JIfJUu",
+  "artifact": "C:\\Users\\MT-Staff\\Documents\\GitHub\\nd-dsh\\scratch\\workspace-checks-benchmark\\nd-workspace\\extension",
+  "repairs": 0
+}

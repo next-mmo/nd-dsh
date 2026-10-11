@@ -1,0 +1,12 @@
+{
+  "id": "gpt-project-brief",
+  "name": "GPT Project Brief",
+  "description": "Read-only on-demand Git and task briefs for a startup-bound repository.",
+  "surface": "mcp",
+  "runtime": "node /ABSOLUTE/PATH/TO/extension/mcp-server.mjs --workspace /ABSOLUTE/PATH/TO/REPOSITORY",
+  "enabled": false,
+  "version": "1.0.0",
+  "instructions": "Call project_brief for fresh JSON evidence or project_brief_export for fresh Markdown text. Optional filter: all, changes, open, blocked. Workspace is fixed at startup; do not send root/path/workspace arguments. Preserve warnings and errors. Do not infer test results or causes of blockers. Select the GPT Project Brief server by its gpt-project-brief identity when another package has similarly named tools.",
+  "engineRoutes": [],
+  "providerRoutes": []
+}

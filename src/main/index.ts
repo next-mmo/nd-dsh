@@ -843,6 +843,7 @@ async function createWindow(cdpPort: number): Promise<void> {
   })
 
   window.on('closed', () => {
+    launcherPopup.dispose()
     organizationStore.setOnChanged(undefined)
     broadcastOrganization.cancel()
     workspace.setStateListener(undefined)

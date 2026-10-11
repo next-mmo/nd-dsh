@@ -1,0 +1,421 @@
+{
+  "children": [
+    {
+      "label": "Implement mcp-server.mjs",
+      "createdAt": 1790916410680
+    },
+    {
+      "label": "Packaging, docs and tests",
+      "createdAt": 1790916410684
+    }
+  ],
+  "statusSnapshots": [
+    {
+      "time": 1790916417346,
+      "states": [
+        {
+          "label": "Implement mcp-server.mjs",
+          "state": "running"
+        },
+        {
+          "label": "Packaging, docs and tests",
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "time": 1790916422950,
+      "states": [
+        {
+          "label": "Implement mcp-server.mjs",
+          "state": "running"
+        },
+        {
+          "label": "Packaging, docs and tests",
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "time": 1790916430387,
+      "states": [
+        {
+          "label": "Implement mcp-server.mjs",
+          "state": "running"
+        },
+        {
+          "label": "Packaging, docs and tests",
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "time": 1790916434962,
+      "states": [
+        {
+          "label": "Implement mcp-server.mjs",
+          "state": "running"
+        },
+        {
+          "label": "Packaging, docs and tests",
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "time": 1790916441631,
+      "states": [
+        {
+          "label": "Implement mcp-server.mjs",
+          "state": "running"
+        },
+        {
+          "label": "Packaging, docs and tests",
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "time": 1790916451188,
+      "states": [
+        {
+          "label": "Implement mcp-server.mjs",
+          "state": "running"
+        },
+        {
+          "label": "Packaging, docs and tests",
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "time": 1790916453164,
+      "states": [
+        {
+          "label": "Implement mcp-server.mjs",
+          "state": "running"
+        },
+        {
+          "label": "Packaging, docs and tests",
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "time": 1790916457687,
+      "states": [
+        {
+          "label": "Implement mcp-server.mjs",
+          "state": "running"
+        },
+        {
+          "label": "Packaging, docs and tests",
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "time": 1790916462358,
+      "states": [
+        {
+          "label": "Implement mcp-server.mjs",
+          "state": "running"
+        },
+        {
+          "label": "Packaging, docs and tests",
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "time": 1790916471474,
+      "states": [
+        {
+          "label": "Implement mcp-server.mjs",
+          "state": "running"
+        },
+        {
+          "label": "Packaging, docs and tests",
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "time": 1790916477922,
+      "states": [
+        {
+          "label": "Implement mcp-server.mjs",
+          "state": "running"
+        },
+        {
+          "label": "Packaging, docs and tests",
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "time": 1790916495575,
+      "states": [
+        {
+          "label": "Implement mcp-server.mjs",
+          "state": "running"
+        },
+        {
+          "label": "Packaging, docs and tests",
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "time": 1790916503910,
+      "states": [
+        {
+          "label": "Implement mcp-server.mjs",
+          "state": "running"
+        },
+        {
+          "label": "Packaging, docs and tests",
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "time": 1790916513345,
+      "states": [
+        {
+          "label": "Implement mcp-server.mjs",
+          "state": "running"
+        },
+        {
+          "label": "Packaging, docs and tests",
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "time": 1790916521143,
+      "states": [
+        {
+          "label": "Implement mcp-server.mjs",
+          "state": "running"
+        },
+        {
+          "label": "Packaging, docs and tests",
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "time": 1790916529093,
+      "states": [
+        {
+          "label": "Implement mcp-server.mjs",
+          "state": "running"
+        },
+        {
+          "label": "Packaging, docs and tests",
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "time": 1790916540055,
+      "states": [
+        {
+          "label": "Implement mcp-server.mjs",
+          "state": "ready"
+        },
+        {
+          "label": "Packaging, docs and tests",
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "time": 1790916550138,
+      "states": [
+        {
+          "label": "Implement mcp-server.mjs",
+          "state": "running"
+        },
+        {
+          "label": "Packaging, docs and tests",
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "time": 1790916555445,
+      "states": [
+        {
+          "label": "Implement mcp-server.mjs",
+          "state": "running"
+        },
+        {
+          "label": "Packaging, docs and tests",
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "time": 1790916560999,
+      "states": [
+        {
+          "label": "Implement mcp-server.mjs",
+          "state": "running"
+        },
+        {
+          "label": "Packaging, docs and tests",
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "time": 1790916576759,
+      "states": [
+        {
+          "label": "Implement mcp-server.mjs",
+          "state": "running"
+        },
+        {
+          "label": "Packaging, docs and tests",
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "time": 1790916583917,
+      "states": [
+        {
+          "label": "Implement mcp-server.mjs",
+          "state": "running"
+        },
+        {
+          "label": "Packaging, docs and tests",
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "time": 1790916591822,
+      "states": [
+        {
+          "label": "Implement mcp-server.mjs",
+          "state": "running"
+        },
+        {
+          "label": "Packaging, docs and tests",
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "time": 1790916596431,
+      "states": [
+        {
+          "label": "Implement mcp-server.mjs",
+          "state": "running"
+        },
+        {
+          "label": "Packaging, docs and tests",
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "time": 1790916619597,
+      "states": [
+        {
+          "label": "Implement mcp-server.mjs",
+          "state": "ready"
+        },
+        {
+          "label": "Packaging, docs and tests",
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "time": 1790916630060,
+      "states": [
+        {
+          "label": "Implement mcp-server.mjs",
+          "state": "ready"
+        },
+        {
+          "label": "Packaging, docs and tests",
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "time": 1790916634298,
+      "states": [
+        {
+          "label": "Implement mcp-server.mjs",
+          "state": "ready"
+        },
+        {
+          "label": "Packaging, docs and tests",
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "time": 1790916637033,
+      "states": [
+        {
+          "label": "Implement mcp-server.mjs",
+          "state": "ready"
+        },
+        {
+          "label": "Packaging, docs and tests",
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "time": 1790916653846,
+      "states": [
+        {
+          "label": "Implement mcp-server.mjs",
+          "state": "ready"
+        },
+        {
+          "label": "Packaging, docs and tests",
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "time": 1790916658849,
+      "states": [
+        {
+          "label": "Implement mcp-server.mjs",
+          "state": "ready"
+        },
+        {
+          "label": "Packaging, docs and tests",
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "time": 1790916676223,
+      "states": [
+        {
+          "label": "Implement mcp-server.mjs",
+          "state": "ready"
+        },
+        {
+          "label": "Packaging, docs and tests",
+          "state": "ready"
+        }
+      ]
+    }
+  ],
+  "bothRunningObserved": true,
+  "pollCalls": 31,
+  "exactChildExecutionIntervals": null,
+  "limitation": "Durable child history was unavailable through the current ND session.history bridge; parent catalog and list_agents snapshots establish actual children and sampled simultaneous running, but not exact durations."
+}

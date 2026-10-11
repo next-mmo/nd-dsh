@@ -1,0 +1,62 @@
+{
+  "protocol": "nd.extension/1",
+  "id": "nd-workspace-checks",
+  "name": "ND Workspace Checks",
+  "description": "Inspect available package.json scripts and check tasks without executing them, and export findings for handoffs.",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "contexts": [
+    "personal",
+    "company",
+    "project"
+  ],
+  "permissions": [],
+  "settings": [],
+  "executable": {
+    "kind": "mcp-stdio",
+    "command": "node",
+    "args": [
+      "mcp-server.mjs"
+    ],
+    "env": {}
+  },
+  "contributions": {
+    "tools": [
+      {
+        "id": "workspace-checks",
+        "title": "Workspace Checks",
+        "description": "Inspect available package.json scripts and check tasks without executing them.",
+        "toolName": "workspace_checks",
+        "contexts": [
+          "personal",
+          "company",
+          "project"
+        ]
+      },
+      {
+        "id": "workspace-checks-export",
+        "title": "Workspace Checks Export",
+        "description": "Export available package.json scripts and verification checks as Markdown.",
+        "toolName": "workspace_checks_export",
+        "contexts": [
+          "personal",
+          "company",
+          "project"
+        ]
+      }
+    ],
+    "skills": [
+      {
+        "id": "workspace-checks-skill",
+        "title": "Workspace Checks Skill",
+        "description": "Safely inspect package scripts and verification checks without running code.",
+        "instructions": "Use workspace_checks to inspect package.json scripts and check targets before attempting builds or tests. Use workspace_checks_export for formatted handoffs. Never execute arbitrary or untrusted package scripts directly.",
+        "contexts": [
+          "personal",
+          "company",
+          "project"
+        ]
+      }
+    ]
+  }
+}

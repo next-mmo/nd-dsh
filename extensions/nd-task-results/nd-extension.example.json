@@ -1,0 +1,21 @@
+{
+  "id": "nd-task-results",
+  "name": "ND Task Results",
+  "description": "Read local verified task receipts and measured overlap with a separate MCP server registration.",
+  "version": "1.0.0",
+  "surface": "mcp",
+  "enabled": false,
+  "runtime": {
+    "kind": "mcp-stdio",
+    "command": "node",
+    "args": [
+      "/ABSOLUTE/PATH/TO/nd-task-results/mcp-server.mjs",
+      "--workspace",
+      "/ABSOLUTE/PATH/TO/PROJECT"
+    ],
+    "env": {}
+  },
+  "instructions": "Use task_results for verified task outcomes and observed overlap, and task_results_export for Markdown. Replace both absolute path placeholders before enabling this MCP registration in Settings > Agent capabilities > MCP Servers. Native extension installation alone does not register this server. Offline fixture timings exclude model latency, and concurrency does not establish child subagents.",
+  "engineRoutes": [],
+  "providerRoutes": []
+}

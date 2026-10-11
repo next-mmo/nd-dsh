@@ -1,0 +1,16 @@
+{
+  "id": "nd-project-brief",
+  "name": "ND Project Brief",
+  "version": "1.0.0",
+  "surface": "mcp",
+  "enabled": false,
+  "runtime": "node",
+  "command": "node",
+  "args": [
+    "/ABSOLUTE/PATH/TO/extension/mcp-server.mjs"
+  ],
+  "serverPath": "/ABSOLUTE/PATH/TO/extension/mcp-server.mjs",
+  "instructions": "Use project_brief to inspect Git status changes, check project tasks in .project-brief/tasks.json, identify blocked work, and generate deterministic next actions. Use project_brief_export to generate clean Markdown summaries for standups and handoffs. Replace /ABSOLUTE/PATH/TO/extension/mcp-server.mjs with the actual absolute path to mcp-server.mjs on your system.",
+  "engineRoutes": {},
+  "providerRoutes": {}
+}

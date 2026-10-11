@@ -1,0 +1,141 @@
+{
+  "side": "nd",
+  "id": "nd-project-brief",
+  "score": 95,
+  "maxScore": 100,
+  "passed": false,
+  "checks": [
+    {
+      "group": "packaging",
+      "label": "Native manifest validates and has correct identity",
+      "points": 5,
+      "passed": true
+    },
+    {
+      "group": "packaging",
+      "label": "Real executable, documentation, and MCP registration template",
+      "points": 5,
+      "passed": false,
+      "error": "Invalid MCP registration template"
+    },
+    {
+      "group": "packaging",
+      "label": "Installs in actual ND through existing package API",
+      "points": 5,
+      "passed": true
+    },
+    {
+      "group": "protocol",
+      "label": "Initialization and version handshake",
+      "points": 4,
+      "passed": true
+    },
+    {
+      "group": "protocol",
+      "label": "Ping",
+      "points": 2,
+      "passed": true
+    },
+    {
+      "group": "protocol",
+      "label": "Both real tools advertised",
+      "points": 3,
+      "passed": true
+    },
+    {
+      "group": "protocol",
+      "label": "Unknown tool and RPC method return explicit errors",
+      "points": 2,
+      "passed": true
+    },
+    {
+      "group": "protocol",
+      "label": "Invalid filter returns explicit MCP error",
+      "points": 2,
+      "passed": true
+    },
+    {
+      "group": "protocol",
+      "label": "Malformed line recovery and clean JSON stdout",
+      "points": 2,
+      "passed": true
+    },
+    {
+      "group": "git",
+      "label": "Exact real Git statuses including spaces and Unicode",
+      "points": 15,
+      "passed": true
+    },
+    {
+      "group": "git",
+      "label": "Rename old path is consumed without duplicate entries",
+      "points": 5,
+      "passed": true
+    },
+    {
+      "group": "tasks",
+      "label": "Default non-done tasks and actual source evidence",
+      "points": 5,
+      "passed": true
+    },
+    {
+      "group": "tasks",
+      "label": "Changes/open/blocked filters",
+      "points": 5,
+      "passed": true
+    },
+    {
+      "group": "tasks",
+      "label": "Evidence-derived next actions with blocked task first",
+      "points": 5,
+      "passed": true
+    },
+    {
+      "group": "tasks",
+      "label": "Missing and malformed task sources are honest",
+      "points": 5,
+      "passed": true
+    },
+    {
+      "group": "safety",
+      "label": "Tool arguments cannot switch bound workspace",
+      "points": 5,
+      "passed": true
+    },
+    {
+      "group": "safety",
+      "label": "Escaping task-source junction is denied",
+      "points": 5,
+      "passed": true
+    },
+    {
+      "group": "safety",
+      "label": "Brief and export do not mutate Git or tasks",
+      "points": 5,
+      "passed": true
+    },
+    {
+      "group": "export",
+      "label": "Useful Markdown with identity, changes, tasks and actions",
+      "points": 5,
+      "passed": true
+    },
+    {
+      "group": "export",
+      "label": "Fresh reads after edits without server restart",
+      "points": 5,
+      "passed": true
+    },
+    {
+      "group": "documentation",
+      "label": "Documented on-demand install and real task source",
+      "points": 5,
+      "passed": true
+    }
+  ],
+  "verificationWallMs": 5022.4723,
+  "verifiedAt": "2026-10-02T04:00:28.088Z",
+  "fixture": "C:\\Users\\MT-Staff\\Documents\\GitHub\\nd-dsh\\scratch\\project-brief-benchmark\\nd-verify-vpLbvn",
+  "artifact": "C:\\Users\\MT-Staff\\Documents\\GitHub\\nd-dsh\\scratch\\project-brief-benchmark\\nd-workspace\\extension",
+  "repairs": 0
+}

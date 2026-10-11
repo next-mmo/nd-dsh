@@ -1,0 +1,18 @@
+{
+  "id": "nd-workspace-checks",
+  "name": "ND Workspace Checks",
+  "description": "Read-only workspace checks and package.json script inventory for handoffs.",
+  "surface": "mcp",
+  "version": "1.0.0",
+  "enabled": false,
+  "runtime": {
+    "kind": "mcp-stdio",
+    "command": "node",
+    "args": [
+      "/ABSOLUTE/PATH/TO/mcp-server.mjs"
+    ],
+    "env": {}
+  },
+  "engineRoutes": [],
+  "providerRoutes": []
+}

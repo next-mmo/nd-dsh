@@ -20,6 +20,7 @@ const required = [
   'configs/dsh/nd-dsh.patch.yml',
   'configs/dsh/agent-presets/nd-dsh/preset.yml',
   'configs/dsh/agent-presets/nd-dsh/agent.cordis.yml',
+  'configs/dsh/agent-presets/nd-dsh/coordination-policy.md',
   'configs/dsh/agent-presets/nd-dsh/skills/live-browser/SKILL.md',
   '.dsh/skills/live-browser/SKILL.md',
   'docs/architecture.md',

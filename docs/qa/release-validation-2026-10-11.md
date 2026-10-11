@@ -46,7 +46,7 @@ is clean; ND does not patch upstream runtime implementation.
 | --- | --- |
 | `pnpm verify` | Passed; product, Harness, ND Pencil and VS Code Git boundaries |
 | `pnpm typecheck` | Passed |
-| `pnpm test` | 1,557 passed, 36 skipped; 180 files passed, 7 skipped |
+| `pnpm test` | 1,621 passed, 36 skipped; 185 files passed, 7 skipped after integration with current main |
 | `pnpm build` | Passed |
 | Rust formatting, Clippy and tests | Passed for protocol/runtime/core/agent and browser host on macOS |
 | `pnpm dsh:build` | Passed for current upstream host, client and web outputs |
@@ -62,6 +62,14 @@ No automated E2E suite was run for this validation pass, as requested by the
 user. Interactive checks used Computer against the real dev app. An earlier
 partial automated attempt, before that instruction, is not passing evidence
 for this candidate.
+
+Before integrating current main, the branch passed 1,557 tests. Main's separate
+`ee6de97` commit conflicted in GPT Web snapshots and Quick Launcher. Resolution
+preserves the shared transcript reader and completion markers, main's
+ProseMirror composer/stop selectors and heading-based turn fallback, launcher
+media controls, and main's popup dismissal/concurrency fixes. Two focused
+regressions cover heading fallback and incomplete transcript handling. All four
+required source checks passed again on the combined tree.
 
 ## Limits and remaining release gates
 

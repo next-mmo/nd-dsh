@@ -1,0 +1,53 @@
+{
+  "protocol": "nd.extension/1",
+  "id": "nd-project-brief",
+  "name": "ND Project Brief",
+  "description": "On-demand project brief showing Git repository changes, tasks, blockers, and next actions with Markdown export.",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "contexts": [
+    "project"
+  ],
+  "permissions": [],
+  "settings": [],
+  "executable": {
+    "kind": "mcp-stdio",
+    "command": "node",
+    "args": [
+      "mcp-server.mjs"
+    ]
+  },
+  "contributions": {
+    "tools": [
+      {
+        "id": "project-brief",
+        "title": "Project Brief",
+        "description": "Generate an on-demand status brief of repository changes, project tasks, blockers, and next actions.",
+        "toolName": "project_brief",
+        "contexts": [
+          "project"
+        ]
+      },
+      {
+        "id": "project-brief-export",
+        "title": "Export Project Brief",
+        "description": "Export the repository status brief as a formatted Markdown summary for standups and handoffs.",
+        "toolName": "project_brief_export",
+        "contexts": [
+          "project"
+        ]
+      }
+    ],
+    "skills": [
+      {
+        "id": "project-brief-skill",
+        "title": "Project Brief Skill",
+        "description": "Instructs the agent on using Project Brief tools to assess repository changes, track tasks, and export standup summaries.",
+        "instructions": "Use the project_brief tool to inspect current Git repository changes, review tasks in .project-brief/tasks.json, identify blocked or in-progress work, and determine deterministic next actions. Use project_brief_export to generate clean Markdown summaries for standups, reviews, or handoffs. Always respect the read-only workspace boundary.",
+        "contexts": [
+          "project"
+        ]
+      }
+    ]
+  }
+}

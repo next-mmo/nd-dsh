@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
+import type { LauncherHandoffTarget } from '../../shared/quick-launcher'
 import type { ThemeState } from '../../shared/contracts'
 import type { NdContext } from '../../shared/nd-context'
 import type { NdCommandView } from '../../shared/nd-invocations'
@@ -100,7 +101,13 @@ export default function LauncherPopupApp(): React.ReactNode {
     ? orgState?.projects.find((item) => item.id === selectedContext.projectId) ?? null
     : null
 
-  const hidePopup = (): void => void window.ndDsh.window?.hideLauncherPopup?.()
+  const hidePopup = (): void => {
+    void window.ndDsh.window?.hideLauncherPopup?.().catch((cause) => notify(errorMessage(cause)))
+  }
+  const handoff = async (target: LauncherHandoffTarget, text?: string, context?: NdContext): Promise<void> => {
+    await window.ndDsh.window?.handoffLauncherPopup?.(target, text, context)
+      .catch((cause) => notify(errorMessage(cause)))
+  }
 
   const invokeDaily = (contributionId: string, concept: 'command' | 'view', input: Record<string, unknown>) =>
     window.ndDsh.ndExtensions.invoke({
@@ -220,7 +227,7 @@ export default function LauncherPopupApp(): React.ReactNode {
       return
     }
     if (command.openViewId) {
-      void window.ndDsh.window?.handoffLauncherPopup?.(
+      await handoff(
         'extension-view',
         `${command.extensionId}:${command.openViewId}`,
         selectedContext,
@@ -228,14 +235,26 @@ export default function LauncherPopupApp(): React.ReactNode {
       return
     }
     if (command.host === 'capture.area') {
-      void window.ndDsh.window?.handoffLauncherPopup?.('capture-tools', undefined, selectedContext)
+      await handoff('capture-tools', undefined, selectedContext)
       return
     }
     if (command.host === 'chat.ask') {
-      void window.ndDsh.window?.handoffLauncherPopup?.('agent', String(plan.input.text ?? ''), selectedContext)
+      await handoff('agent', String(plan.input.text ?? ''), selectedContext)
       return
     }
+    let hiddenForCapture = false
+    const reportFailure = async (message: string): Promise<void> => {
+      if (hiddenForCapture) {
+        await window.ndDsh.window?.toggleLauncherPopup?.().catch(() => undefined)
+        hiddenForCapture = false
+      }
+      notify(message)
+    }
     try {
+      if (command.host === 'capture.screen') {
+        await window.ndDsh.window?.hideLauncherPopup?.()
+        hiddenForCapture = true
+      }
       const result = await window.ndDsh.ndExtensions.invoke({
         extensionId: command.extensionId,
         contributionId: command.contributionId,
@@ -246,21 +265,21 @@ export default function LauncherPopupApp(): React.ReactNode {
       })
       if (!result.ok) {
         if (result.error?.code === 'approval-required') {
-          notify('This needs your approval — check Settings → Extensions.')
+          await reportFailure('This needs your approval — check Settings → Extensions.')
           return
         }
-        notify(result.error?.message ?? 'The action could not run.')
+        await reportFailure(result.error?.message ?? 'The action could not run.')
         return
       }
       const value = (result.value ?? {}) as Record<string, unknown>
       switch (command.host) {
         case 'browser.openUrl':
         case 'browser.search':
-          void window.ndDsh.window?.handoffLauncherPopup?.('browser', typeof value.url === 'string' ? value.url : undefined, selectedContext)
+          await handoff('browser', typeof value.url === 'string' ? value.url : undefined, selectedContext)
           return
         case 'capture.screen':
           hidePopup()
-          void window.ndDsh.window?.handoffLauncherPopup?.('home', undefined, selectedContext)
+          await handoff('home', undefined, selectedContext)
           return
         case 'note.create':
           hidePopup()
@@ -296,7 +315,7 @@ export default function LauncherPopupApp(): React.ReactNode {
           return
       }
     } catch (cause) {
-      notify(errorMessage(cause))
+      await reportFailure(errorMessage(cause))
     }
   }
 
@@ -304,6 +323,7 @@ export default function LauncherPopupApp(): React.ReactNode {
     <div className="launcher-popup-mode h-screen w-screen overflow-hidden bg-transparent p-2 font-sans">
       <QuickLauncher
         open
+        closeBeforeRun={false}
         onOpenChange={hidePopup}
         organization={orgState}
         contexts={contexts}
@@ -311,17 +331,17 @@ export default function LauncherPopupApp(): React.ReactNode {
         contextLabel={describeContextForUi(selectedContext, orgState)}
         onSelectContext={setLauncherContextId}
         extensionCommands={extensionCommands}
-        onRunExtensionCommand={(command, typed) => void runCommand(command, typed)}
-        onOpenKanban={() => void window.ndDsh.window?.handoffLauncherPopup?.('kanban', undefined, selectedContext)}
-        onOpenAgent={() => void window.ndDsh.window?.handoffLauncherPopup?.('agent', undefined, selectedContext)}
-        onActivateProject={(projectId) => void activateProject(projectId)}
-        onSwitchCompany={(companyId) => void switchCompany(companyId)}
-        onCreateTask={(text) => void createTask(text)}
-        onQuickNote={(text) => void quickNote(text)}
-        onAskAgent={(text) => void window.ndDsh.window?.handoffLauncherPopup?.('agent', text, selectedContext)}
+        onRunExtensionCommand={runCommand}
+        onOpenKanban={() => handoff('kanban', undefined, selectedContext)}
+        onOpenAgent={() => handoff('agent', undefined, selectedContext)}
+        onActivateProject={activateProject}
+        onSwitchCompany={switchCompany}
+        onCreateTask={createTask}
+        onQuickNote={quickNote}
+        onAskAgent={(text) => handoff('agent', text, selectedContext)}
         onCaptureScreen={() => {
           if (selectedContext.kind === 'personal') {
-            void runCommand({
+            return runCommand({
               extensionId: DAILY_ESSENTIALS_ID,
               contributionId: 'capture-screen',
               title: 'Capture screen',
@@ -331,13 +351,12 @@ export default function LauncherPopupApp(): React.ReactNode {
               host: 'capture.screen',
               permission: 'capture.screen',
             }, '')
-            return
           }
-          void window.ndDsh.window?.handoffLauncherPopup?.('capture-screen', undefined, selectedContext)
+          return handoff('capture-screen', undefined, selectedContext)
         }}
-        onOpenCaptureTools={() => void window.ndDsh.window?.handoffLauncherPopup?.('capture-tools', undefined, selectedContext)}
-        onCaptureClipboard={() => void captureClipboard()}
-        onCaptureUrl={(url) => void quickNote(url, ['capture', 'url'])}
+        onOpenCaptureTools={() => handoff('capture-tools', undefined, selectedContext)}
+        onCaptureClipboard={captureClipboard}
+        onCaptureUrl={(url) => quickNote(url, ['capture', 'url'])}
       />
       <Toaster position="bottom-right" duration={5000} />
     </div>

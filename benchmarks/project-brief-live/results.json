@@ -1,0 +1,153 @@
+{
+  "date": "2026-10-02",
+  "timezone": "Asia/Phnom_Penh",
+  "task": "Build an independently implemented Project Brief MCP extension",
+  "trialsPerRunner": 1,
+  "weights": {
+    "packaging": 15,
+    "protocol": 15,
+    "git": 20,
+    "tasks": 20,
+    "safety": 15,
+    "export": 10,
+    "documentation": 5
+  },
+  "requirementsSha256": "4f19d3181839b9482d227b136357b8b84540082c21133d3246344d118e1ebaca",
+  "originalScorerSha256": "401e487605193276593face73f6b131d956f9ff90b1fcd9e7d64f2ddaf80fcd4",
+  "scorerVersion": "1.1",
+  "scorerSha256": "5baf992e72a44e4452cc2a491f28884d5b6ec4fafeed82c9750458d9528afeb9",
+  "scorerCorrection": "v1 penalized valid Markdown punctuation escapes and a wrapped MCP Servers phrase. Original results retained (ND 95, GPT 80). v1.1 normalizes those formatting differences equally for both; weights and artifacts unchanged. Corrected score is 95 for each.",
+  "modelsMatched": false,
+  "executionOrder": [
+    "nd",
+    "gpt"
+  ],
+  "ndCoreModified": false,
+  "ndModelProviderSettingsModified": false,
+  "gptSavedConfigurationModified": false,
+  "setup": {
+    "nd": "An isolated profile initially lacked Chromium Local State and could not decrypt the existing key. Copied the original encryption metadata and passed credential preflight before the scored model run.",
+    "gpt": "Configured gpt-6.1-sol was rejected before coding began. Selected authenticated model/list isDefault gpt-6-astra for one invocation; kept configured high reasoning and saved configuration unchanged."
+  },
+  "timing": "Build timing runs from dispatch/CLI start through terminal completion. Validation duration is measured separately. Sum excludes operator idle/setup/registration time. ND monitoring began after async dispatch and anchored the wall-clock start with a monotonic elapsed timer, with 2-second terminal polling.",
+  "result": [
+    {
+      "runner": "ND default",
+      "model": "ag/gemini-3.8-flash-medium",
+      "extensionId": "nd-project-brief",
+      "score": 95,
+      "maxScore": 100,
+      "checksPassed": 20,
+      "checksTotal": 21,
+      "fullVerificationPassed": false,
+      "buildWallMs": 438043.9306,
+      "verificationWallMs": 3992.6177,
+      "buildPlusChecksMs": 442036.5483,
+      "reportedTotalTokens": 2807168,
+      "telemetry": {
+        "modelCalls": 36,
+        "toolCalls": 35,
+        "observedChildToolCalls": 0
+      },
+      "nativePackageInstalled": true,
+      "realWorkspaceGatewayCallPassed": true,
+      "manualRegistrationWorkaround": true,
+      "operatorCodeRepairs": 0,
+      "artifactFiles": [
+        {
+          "path": "mcp-server.mjs",
+          "sha256": "91b5791edc0a71f8aa12de655f417a9fbc1599dd00cd7051ab3f832e92491877"
+        },
+        {
+          "path": "nd-extension.example.json",
+          "sha256": "d1c501f87123e098a4068ac18604254b3ed545a7485a3fc618ccd73de34fbbf8"
+        },
+        {
+          "path": "nd-extension.json",
+          "sha256": "decc831cc56544b4d16f3cc4b4daf4b1d2602c54f3118d2598752ab22d7987b5"
+        },
+        {
+          "path": "README.md",
+          "sha256": "2f2acba46d06cdb7390b2b261e790db73e274e77c0686f2eaf990a226256438d"
+        },
+        {
+          "path": "test/run-tests.mjs",
+          "sha256": "2660b186d0c69aa42345401c8ad6ec28d74f6b8e55a09743da929fef70fb5e37"
+        }
+      ],
+      "failures": [
+        {
+          "group": "packaging",
+          "label": "Real executable, documentation, and MCP registration template",
+          "points": 5,
+          "passed": false,
+          "error": "Invalid MCP registration template"
+        }
+      ],
+      "realWorkspaceError": null
+    },
+    {
+      "runner": "GPT / Codex CLI",
+      "model": "gpt-6-astra",
+      "reasoningEffort": "high",
+      "extensionId": "gpt-project-brief",
+      "score": 95,
+      "maxScore": 100,
+      "checksPassed": 20,
+      "checksTotal": 21,
+      "fullVerificationPassed": false,
+      "buildWallMs": 549428.4271999999,
+      "verificationWallMs": 2759.4055,
+      "buildPlusChecksMs": 552187.8326999999,
+      "reportedTotalTokens": 280343,
+      "telemetry": {
+        "usage": {
+          "input_tokens": 265114,
+          "cached_input_tokens": 211840,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 15229,
+          "reasoning_output_tokens": 1301
+        },
+        "commands": 9,
+        "modelMessages": 6
+      },
+      "nativePackageInstalled": true,
+      "realWorkspaceGatewayCallPassed": false,
+      "manualRegistrationWorkaround": true,
+      "operatorCodeRepairs": 0,
+      "artifactFiles": [
+        {
+          "path": "mcp-server.mjs",
+          "sha256": "c09fda37070eae1d05ba72a5860527e6d99deb322469ac9336ac8a585b9c30d0"
+        },
+        {
+          "path": "nd-extension.example.json",
+          "sha256": "311567de6ae50aa51e1ea6028c8979d23e8ec70d5a5c70ca29e5ff771cb62b2c"
+        },
+        {
+          "path": "nd-extension.json",
+          "sha256": "d02d0a7a786624def5ddafa26a7fe6957b39b6525741b46046da87f7d4a4e63a"
+        },
+        {
+          "path": "README.md",
+          "sha256": "3e33c9840cf97004c931d3e0b23fdec246b42950a58b6ab42dd37003011efa06"
+        },
+        {
+          "path": "test/project-brief.test.mjs",
+          "sha256": "e85681d49a102520d6bb08f3fdcdd1487610aa9466c83979fa931f89a2e1e04a"
+        }
+      ],
+      "failures": [
+        {
+          "group": "packaging",
+          "label": "Real executable, documentation, and MCP registration template",
+          "points": 5,
+          "passed": false,
+          "error": "Invalid MCP registration template"
+        }
+      ],
+      "realWorkspaceError": "External/shared Git metadata is not supported within a bound workspace."
+    }
+  ],
+  "scope": "One first-attempt matched coding workload with different default tool stacks/models. No repeated-trial, multi-task throughput, or subagent speed claim. Generated tests and explicit fixtures test extension behavior; coding and ND gateway execution are real."
+}

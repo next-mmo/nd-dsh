@@ -1,0 +1,21 @@
+{
+  "protocol": "nd.extension/1",
+  "id": "nd-task-results",
+  "name": "ND Task Results",
+  "description": "Read verified task results and measured multitasking overlap from local benchmark receipts.",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "contexts": ["project"],
+  "permissions": [],
+  "settings": [],
+  "executable": { "kind": "mcp-stdio", "command": "node", "args": ["mcp-server.mjs"] },
+  "contributions": {
+    "tools": [
+      { "id": "task-results", "title": "Task Results", "description": "Inspect verified outcomes, durations, counters, and observed task overlap.", "toolName": "task_results", "contexts": ["project"] },
+      { "id": "task-results-export", "title": "Export Task Results", "description": "Return a Markdown results report without writing files.", "toolName": "task_results_export", "contexts": ["project"] }
+    ],
+    "skills": [
+      { "id": "task-results-skill", "title": "Task Results Skill", "description": "Report task and multitasking evidence accurately.", "contexts": ["project"], "instructions": "Use task_results to read local ND agent-task metrics receipts and task_results_export for Markdown. Supply resultsPath relative to the server workspace when needed. Report verified completions and failures together. Offline fixtures exclude model latency and do not prove live AI performance. Observed task concurrency does not prove child subagents. Never claim a live speedup from fixture timings." }
+    ]
+  }
+}

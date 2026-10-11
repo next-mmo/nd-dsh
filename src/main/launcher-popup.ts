@@ -10,6 +10,7 @@ export interface LauncherPopupController {
   /** Raycast-style: hidden → show, visible → hide. */
   toggle(): void
   hide(): void
+  dispose(): void
   /** Hide the popup, bring the full app window forward, and forward the picked action. */
   handoff(target: LauncherHandoffTarget, text?: string, context?: NdContext): void
   /** The popup window when it exists; used to admit its renderer to trusted desktop IPC. */
@@ -28,6 +29,17 @@ export function createLauncherPopup(options: {
 }): LauncherPopupController {
   const { preloadPath, getMainWindow } = options
   let popup: BrowserWindow | null = null
+  let pendingShow = false
+  let owner: BrowserWindow | undefined
+
+  const dispose = (): void => {
+    pendingShow = false
+    owner?.removeListener('closed', dispose)
+    owner = undefined
+    const target = popup
+    popup = null
+    if (target && !target.isDestroyed()) target.destroy()
+  }
 
   const ensureWindow = (): BrowserWindow | null => {
     if (popup && !popup.isDestroyed()) return popup
@@ -55,11 +67,29 @@ export function createLauncherPopup(options: {
         sandbox: true,
       },
     })
+    const target = popup
+    owner = main
+    main.once('closed', dispose)
+    target.once('ready-to-show', () => {
+      if (popup === target && pendingShow && !target.isDestroyed()) {
+        pendingShow = false
+        showPopup(target)
+      }
+    })
     popup.setAlwaysOnTop(true, 'floating')
     popup.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
-    void popup.loadURL(`${currentUrl.split('#')[0]}#/launcher`)
+    void popup.loadURL(`${currentUrl.split('#')[0]}#/launcher`).catch((cause) => {
+      if (popup !== target) return
+      console.error('ND Quick Launcher could not load:', cause)
+      dispose()
+    })
     popup.on('closed', () => {
-      popup = null
+      if (popup === target) {
+        popup = null
+        pendingShow = false
+        owner?.removeListener('closed', dispose)
+        owner = undefined
+      }
     })
     // Focus leaving the popup (click into another app) dismisses it, like
     // Raycast. Hide instead of destroy so the next toggle reuses the surface.
@@ -90,22 +120,21 @@ export function createLauncherPopup(options: {
   }
 
   const toggle = (): void => {
-    if (popup && !popup.isDestroyed() && popup.isVisible()) {
-      popup.hide()
+    if (pendingShow || (popup && !popup.isDestroyed() && popup.isVisible())) {
+      hide()
       return
     }
     const ensured = ensureWindow()
     if (!ensured) return
     if (ensured.webContents.isLoading()) {
-      ensured.once('ready-to-show', () => {
-        if (!ensured.isDestroyed() && !ensured.isVisible()) showPopup(ensured)
-      })
+      pendingShow = true
       return
     }
     showPopup(ensured)
   }
 
   const hide = (): void => {
+    pendingShow = false
     if (popup && !popup.isDestroyed()) popup.hide()
   }
 
@@ -124,6 +153,7 @@ export function createLauncherPopup(options: {
   return {
     toggle,
     hide,
+    dispose,
     handoff,
     window: () => (popup && !popup.isDestroyed() ? popup : null),
   }
