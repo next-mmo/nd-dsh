@@ -270,6 +270,8 @@ export interface OrganizationTask {
   executionSessionId?: string
   reviewSessionId?: string
   resultSummary?: string
+  /** Identifies the human submission being reviewed, including non-code work. */
+  humanSubmission?: { id: string; memberId: string; checkpointCommit?: string }
   reviewSummary?: string
   /** Integration is independent from task status so a successful review can remain inspectable when merge-back conflicts. */
   integrationState?: OrganizationIntegrationState

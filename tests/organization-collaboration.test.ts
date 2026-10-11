@@ -403,7 +403,12 @@ describe('local team collaboration', () => {
     const pendingApproval = (state.approvalRequests ?? []).find((a) => a.taskId === task.id)
     expect(pendingApproval).toBeDefined()
     expect(pendingApproval?.status).toBe('pending')
-    expect(pendingApproval?.targetRevision).toBe('git-commit-auth-123')
+    expect(submittedTask.humanSubmission?.checkpointCommit).toBe('git-commit-auth-123')
+    expect(pendingApproval?.targetRevision).toBe(submittedTask.humanSubmission?.id)
+    await expect(store.mutate({ type: 'approval.resolve', id: pendingApproval!.id, actorMemberId: owner.id, verdict: 'approve' })).rejects.toThrow(/assigned human reviewer/i)
+    expect((await store.state()).approvalRequests?.find((a) => a.id === pendingApproval!.id)?.status).toBe('pending')
+    state = await store.mutate({ type: 'approval.resolve', id: pendingApproval!.id, actorMemberId: ken.id, verdict: 'approve' })
+    expect(state.tasks.find((t) => t.id === task.id)?.status).toBe('completed')
 
     // When submitted without reviewer, task completes directly
     state = await store.mutate({
@@ -424,6 +429,42 @@ describe('local team collaboration', () => {
       summary: 'Docs published to docs/',
     })
     expect(state.tasks.find((t) => t.id === docTask.id)?.status).toBe('completed')
+  })
+
+  it('rejects active handoffs and human submissions that overwrite other work', async () => {
+    const { store, company, project, owner } = await fixture()
+    const agent = (await store.state()).agents[0]!
+    let state = await store.mutate({ type: 'task.create', companyId: company.id, projectId: project.id, title: 'Active AI work', description: 'Keep ownership until execution stops', assignedAgentId: agent.id })
+    const task = state.tasks[0]!
+    await store.markExecution(task.id, 'active-worker')
+    await expect(store.mutate({ type: 'task.reassign', taskId: task.id, assignee: { kind: 'human', id: owner.id }, reason: 'Handoff' })).rejects.toThrow(/cannot reassign/i)
+    await expect(store.mutate({ type: 'task.update', id: task.id, patch: { assigneeKind: 'human', assignedMemberId: owner.id } })).rejects.toThrow(/cannot reassign/i)
+    await expect(store.mutate({ type: 'task.submitWork', taskId: task.id, memberId: owner.id, summary: 'Override' })).rejects.toThrow(/assigned human/i)
+    state = await store.state()
+    expect(state.tasks[0]?.assignedAgentId).toBe(agent.id)
+    expect(state.tasks[0]?.status).toBe('in_progress')
+    expect(state.tasks[0]?.handoffs ?? []).toHaveLength(0)
+    expect(state.agents.find((a) => a.id === agent.id)?.status).toBe('working')
+  })
+
+  it('binds non-code human review to its submission and completes after approval', async () => {
+    const { store, company, project, owner } = await fixture()
+    let state = await store.mutate({ type: 'member.create', companyId: company.id, displayName: 'Reviewer', accessRole: 'reviewer' })
+    const reviewer = state.members!.find((m) => m.displayName === 'Reviewer')!
+    state = await store.mutate({ type: 'task.create', companyId: company.id, projectId: project.id, title: 'Design delivery', description: 'Review human design work', assigneeKind: 'human', assignedMemberId: owner.id, reviewerKind: 'human', reviewerMemberId: reviewer.id })
+    const task = state.tasks[0]!
+    await expect(store.mutate({ type: 'task.submitWork', taskId: task.id, memberId: reviewer.id, summary: 'Not my work' })).rejects.toThrow(/assigned human/i)
+    state = await store.mutate({ type: 'task.submitWork', taskId: task.id, memberId: owner.id, summary: 'First design' })
+    const first = state.approvalRequests!.find((a) => a.taskId === task.id)!
+    expect(first.targetRevision).toBe(state.tasks[0]?.humanSubmission?.id)
+    await expect(store.mutate({ type: 'task.submitWork', taskId: task.id, memberId: owner.id, summary: 'Duplicate' })).rejects.toThrow(/ready or in progress/i)
+    await store.mutate({ type: 'approval.resolve', id: first.id, actorMemberId: reviewer.id, verdict: 'request_changes' })
+    state = await store.mutate({ type: 'task.submitWork', taskId: task.id, memberId: owner.id, summary: 'Revised design' })
+    const next = state.approvalRequests!.find((a) => a.taskId === task.id && a.status === 'pending')!
+    expect(next.targetRevision).not.toBe(first.targetRevision)
+    state = await store.mutate({ type: 'approval.resolve', id: next.id, actorMemberId: reviewer.id, verdict: 'approve' })
+    expect(state.tasks[0]?.status).toBe('completed')
+    expect(state.projects[0]?.progress).toBe(100)
   })
 
   it('supports agent and human collaboration messages with typed attribution and categories', async () => {

@@ -420,18 +420,18 @@ describe('wallpaper collections', () => {
     const collection = await store.createCollection('Nature')
     const first = await store.addToCollection(collection.id, [
       { kind: 'link', ref: 'https://example.com/forest.jpg', title: 'Forest' },
-      { kind: 'file', ref: 'C:\\Pictures\\mountain.png', title: 'Mountain' },
+      { kind: 'file', ref: join(dir, 'mountain.png'), title: 'Mountain' },
     ])
     expect(first.added).toBe(2)
     const duplicate = await store.addToCollection(collection.id, [
       { kind: 'link', ref: 'https://example.com/forest.jpg' },
-      { kind: 'file', ref: 'C:\\Pictures\\mountain.png' },
+      { kind: 'file', ref: join(dir, 'mountain.png') },
     ])
     expect(duplicate.added).toBe(0)
     expect(duplicate.skipped).toBe(2)
     const entries = store.findCollection(collection.id)!.entries
     expect(entries.map((entry) => entry.kind)).toEqual(['link', 'file'])
-    expect(entries[1]!.id).toBe(collectionEntryId('file', 'C:\\Pictures\\mountain.png'))
+    expect(entries[1]!.id).toBe(collectionEntryId('file', join(dir, 'mountain.png')))
   })
 
   it('validates entry refs before saving', async () => {
@@ -445,9 +445,9 @@ describe('wallpaper collections', () => {
       { kind: 'file', ref: 'relative/path.jpg' },
     ])).rejects.toThrow(/folders/i)
     await expect(store.addToCollection(collection.id, [
-      { kind: 'file', ref: 'C:\\Pictures\\notes.txt' },
+      { kind: 'file', ref: join(dir, 'notes.txt') },
     ])).rejects.toThrow(/supported/i)
-    expect(validateCollectionFileRef('C:\\Pictures\\ok.webp')).toBe('C:\\Pictures\\ok.webp')
+    expect(validateCollectionFileRef(join(dir, 'ok.webp'))).toBe(join(dir, 'ok.webp'))
   })
 
   it('removes entries and purges removed links from every collection', async () => {
@@ -469,7 +469,7 @@ describe('wallpaper collections', () => {
     const store = new WallpaperLinkStore(path)
     await store.initialize()
     const collection = await store.createCollection('Nature')
-    await store.addToCollection(collection.id, [{ kind: 'file', ref: 'C:\\Pictures\\a.jpg', title: 'A' }])
+    await store.addToCollection(collection.id, [{ kind: 'file', ref: join(dir, 'a.jpg'), title: 'A' }])
     const reopened = new WallpaperLinkStore(path)
     await reopened.initialize()
     const restored = reopened.listCollections()

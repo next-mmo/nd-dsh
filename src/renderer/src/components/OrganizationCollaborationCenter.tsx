@@ -179,6 +179,7 @@ export function OrganizationCollaborationCenter({ companyId, projectId, onAskAge
         taskId,
         memberId: activeMember.id,
         summary: submitSummary.trim(),
+        ...(submitCommit.trim() ? { checkpointCommit: submitCommit.trim() } : {}),
       })
       setSubmittingTaskId(null)
       setSubmitSummary('')
@@ -459,7 +460,7 @@ export function OrganizationCollaborationCenter({ companyId, projectId, onAskAge
                   <strong className="text-xs">{taskName(item.taskId, tasks)} · {item.targetKind}</strong>
                   <span className={cn('text-[10px] font-bold uppercase', item.status === 'approved' ? 'text-primary' : item.status === 'pending' ? 'text-warning' : 'text-destructive')}>{item.status.replace('_', ' ')}</span>
                 </div>
-                {item.targetRevision ? <p className="m-0 mt-1 font-mono text-[10px] text-faint">checkpoint {item.targetRevision}</p> : null}
+                {item.targetRevision ? <p className="m-0 mt-1 font-mono text-[10px] text-faint">{item.targetKind === 'task-review' && state?.tasks.find((task) => task.id === item.taskId)?.humanSubmission ? 'submission' : 'checkpoint'} {item.targetRevision}</p> : null}
                 {item.status === 'pending' ? (
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     <button className={primaryButton} disabled={busy !== null || !activeMember} onClick={() => void resolveApproval(item.id, 'approve')}>Approve</button>

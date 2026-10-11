@@ -357,6 +357,7 @@ export class OrganizationStore {
     await this.load()
     const task = this.task(taskId)
     task.status = 'in_progress'; task.executionSessionId = sessionId; delete task.reviewSessionId; delete task.blockedReason
+    delete task.humanSubmission
     task.integrationState = 'pending'; delete task.integrationSummary; delete task.integratedHead
     task.updatedAt = Date.now()
     this.setAgent(task.assignedAgentId, 'working', task.id, sessionId)
@@ -857,7 +858,10 @@ export class OrganizationStore {
     if (patch.reviewerMemberId && !this.value.members.some((item) => item.id === patch.reviewerMemberId && item.companyId === task.companyId && item.status === 'active')) throw new Error('Reviewer member crosses company boundary')
     if (patch.reviewerAgentId && !this.value.agents.some((item) => item.id === patch.reviewerAgentId && item.companyId === task.companyId)) throw new Error('Reviewer agent crosses company boundary')
     for (const collaboratorId of patch.collaboratorIds ?? []) this.assertActorInCompany(collaboratorId, task.companyId)
-    if (patch.assignedAgentId && patch.assignedAgentId !== task.assignedAgentId && (task.status === 'in_progress' || task.status === 'review')) {
+    const changesAssignee = (patch.assignedAgentId !== undefined && patch.assignedAgentId !== task.assignedAgentId)
+      || (patch.assignedMemberId !== undefined && patch.assignedMemberId !== task.assignedMemberId)
+      || (patch.assigneeKind !== undefined && patch.assigneeKind !== task.assigneeKind)
+    if (changesAssignee && (task.status === 'in_progress' || task.status === 'review' || this.value.runs.some((run) => run.taskId === task.id && run.status === 'running'))) {
       throw new Error('Cannot reassign a task while it is in progress or review')
     }
     for (const dependency of patch.dependsOn ?? []) if (!this.value.tasks.some((item) => item.id === dependency && item.projectId === task.projectId)) throw new Error('Task dependency crosses project boundary')
@@ -890,6 +894,9 @@ export class OrganizationStore {
 
   private reassignTask(input: Extract<OrganizationMutation, { type: 'task.reassign' }>): void {
     const task = this.task(input.taskId)
+    if (task.status === 'in_progress' || task.status === 'review' || this.value.runs.some((run) => run.taskId === task.id && run.status === 'running')) {
+      throw new Error('Cannot reassign a task while it is in progress or review')
+    }
     const reason = clean(input.reason)
     if (!reason) throw new Error('A reason is required when reassigning a task')
     const fromAssignee = task.assigneeKind === 'human' && task.assignedMemberId
@@ -903,17 +910,11 @@ export class OrganizationStore {
 
     if (input.assignee.kind === 'human') {
       const member = this.member(input.assignee.id, task.companyId)
-      if (task.assignedAgentId && (task.status === 'in_progress' || task.status === 'review')) {
-        this.releaseTaskAgent(task.assignedAgentId, task.id)
-      }
       task.assigneeKind = 'human'
       task.assignedMemberId = member.id
       delete task.assignedAgentId
     } else {
       const agent = must(this.value.agents.find((item) => item.id === input.assignee.id && item.companyId === task.companyId), 'Organization agent')
-      if (task.assignedAgentId && task.assignedAgentId !== agent.id && (task.status === 'in_progress' || task.status === 'review')) {
-        this.releaseTaskAgent(task.assignedAgentId, task.id)
-      }
       task.assigneeKind = 'agent'
       task.assignedAgentId = agent.id
       delete task.assignedMemberId
@@ -928,6 +929,7 @@ export class OrganizationStore {
       changedBy,
       reason,
     }
+    delete task.humanSubmission
     if (!task.handoffs) task.handoffs = []
     task.handoffs.push(handoff)
     task.updatedAt = Date.now()
@@ -941,11 +943,18 @@ export class OrganizationStore {
   private submitTaskWork(input: Extract<OrganizationMutation, { type: 'task.submitWork' }>): void {
     const task = this.task(input.taskId)
     const member = this.member(input.memberId, task.companyId)
+    if (task.assigneeKind !== 'human' || task.assignedMemberId !== member.id) throw new Error('Only the assigned human member can submit work')
+    if (task.status !== 'in_progress' && task.status !== 'ready') throw new Error('Human work can only be submitted for a ready or in progress task')
+    if (this.value.runs.some((run) => run.taskId === task.id && run.status === 'running')) throw new Error('Cannot submit human work while an automated run is active')
     const summary = clean(input.summary)
     if (!summary) throw new Error('Work submission requires a summary of delivered outcomes')
+    const artifacts = input.artifactPaths ? normalizeArtifactPaths(input.artifactPaths) : undefined
+    const checkpointCommit = input.checkpointCommit?.trim()
+    task.humanSubmission = { id: randomUUID(), memberId: member.id, ...(checkpointCommit ? { checkpointCommit } : {}) }
+    this.cancelStaleApprovals(task.id, task.humanSubmission.id)
     task.resultSummary = summary
-    if (input.artifactPaths) {
-      task.artifactPaths = normalizeArtifactPaths(input.artifactPaths)
+    if (artifacts) {
+      task.artifactPaths = artifacts
       if (task.artifactPaths.length) task.evidenceKind = 'artifact'
     }
     const hasReviewer = Boolean(task.reviewerMemberId || task.reviewerAgentId)
@@ -959,7 +968,7 @@ export class OrganizationStore {
         taskId: task.id,
         targetKind: 'task-review',
         targetId: task.id,
-        ...(input.checkpointCommit ? { targetRevision: input.checkpointCommit } : {}),
+        targetRevision: task.humanSubmission.id,
         requestedBy: { kind: 'human', id: member.id },
         requiredApproverKind: 'human',
         status: 'pending',
@@ -1188,11 +1197,14 @@ export class OrganizationStore {
     if (request.status !== 'pending') throw new Error('Approval request is no longer pending')
     const member = this.member(input.actorMemberId, request.companyId)
     const approvalTask = request.taskId ? this.task(request.taskId) : undefined
+    if (request.targetKind === 'task-review' && approvalTask?.humanSubmission && approvalTask.reviewerMemberId !== member.id) throw new Error('Only the assigned human reviewer can resolve this submission')
     if (request.targetKind === 'integration' && approvalTask?.integrationState === 'integrated') {
       throw new Error('Integration approval is no longer actionable because the checkpoint has already been integrated.')
     }
     if (request.taskId && request.targetRevision) {
-      const current = this.latestCheckpoint(request.taskId)
+      const current = request.targetKind === 'task-review' && approvalTask?.humanSubmission
+        ? approvalTask.humanSubmission.id
+        : this.latestCheckpoint(request.taskId)
       if (current !== request.targetRevision) {
         throw new Error(`Approval target is stale: expected checkpoint ${request.targetRevision}, current checkpoint is ${current ?? 'unavailable'}`)
       }
@@ -1202,7 +1214,12 @@ export class OrganizationStore {
     request.resolvedAt = Date.now()
     if (request.taskId) {
       const task = approvalTask ?? this.task(request.taskId)
-      if (input.verdict === 'request_changes') {
+      if (input.verdict === 'approve' && request.targetKind === 'task-review' && task.humanSubmission && task.status === 'review') {
+        task.status = 'completed'
+        task.reviewSummary = input.comment?.trim().slice(0, 20_000) || 'Approved by the assigned human reviewer.'
+        task.updatedAt = request.resolvedAt
+        this.refreshProject(task.projectId)
+      } else if (input.verdict === 'request_changes') {
         task.status = 'ready'
         task.integrationState = 'pending'
         delete task.integrationSummary

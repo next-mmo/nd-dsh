@@ -421,7 +421,7 @@ pub fn send_media_key(params: MediaKeyParams) -> Result<MediaKeyResult> {
 #[cfg(windows)]
 fn press_media_key(vk: u32) -> Result<()> {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-        keybd_event, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP,
+        KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, keybd_event,
     };
     // Media keys are extended keys; receivers ignore the press without the flag.
     unsafe {

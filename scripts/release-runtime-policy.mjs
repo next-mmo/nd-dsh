@@ -38,11 +38,13 @@ export async function officeEngineDirectories(runtimeRoot) {
 }
 
 export async function removeOfficeEngines(runtimeRoot) {
-  const root = resolve(runtimeRoot)
+  // macOS aliases /var to /private/var. Walk from the canonical staging root
+  // so that alias does not look like a target escaping the deletion boundary.
+  const root = await fs.realpath(resolve(runtimeRoot))
   const paths = await officeEngineDirectories(root)
   // Resolve every deletion target before the first mutation. Never follow an
   // unexpected staging junction into a source checkout or another directory.
-  const realRoot = await fs.realpath(root)
+  const realRoot = root
   for (const path of paths) {
     const inside = relative(realRoot, await fs.realpath(path))
     if (!inside || inside.startsWith('..') || resolve(realRoot, inside) !== resolve(path)) {

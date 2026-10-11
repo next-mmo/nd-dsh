@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module'
-import { mkdtemp, mkdir, writeFile, readFile, rm, stat, truncate } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, readFile, rm, stat, truncate, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -71,5 +71,22 @@ describe('release payload policy', () => {
     expect(checkSize({ artifactPaths: [path] })).toEqual([])
     await truncate(path, 400_000_001)
     expect(() => checkSize({ artifactPaths: [path] })).toThrow('limit is 400 MB')
+  })
+
+  it('accepts an aliased staging root without following links outside staging', async () => {
+    const parent = await scratch()
+    const root = join(parent, 'staging')
+    const alias = join(parent, 'alias')
+    const scope = join(root, 'node_modules', '@deepseek-ai')
+    const native = join(scope, 'libreoffice-kit-win32-x64')
+    const external = await scratch()
+    const externalEngine = join(external, 'node_modules', '@deepseek-ai', 'libreoffice-kit-wasm')
+    await mkdir(native, { recursive: true })
+    await mkdir(externalEngine, { recursive: true })
+    await symlink(root, alias, 'junction')
+    await symlink(external, join(scope, 'linked-package'), 'junction')
+    expect(await removeOfficeEngines(alias)).toBe(1)
+    await expect(stat(native)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect((await stat(externalEngine)).isDirectory()).toBe(true)
   })
 })

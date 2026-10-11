@@ -1941,7 +1941,7 @@ function ExtensionViewDialog({
   const isDetail = currentData?.kind === 'detail'
   const isWebView = currentData?.kind === 'web' && Boolean(currentData.webView?.url)
   // Keep-alive docking: the dialog renders a placeholder slot; the shell-level
-  // host pins the live iframe over it. Unmounting the slot (dialog closed)
+  // host docks the live iframe container inside it. Unmounting the slot (dialog closed)
   // backgrounds the view without unmounting its iframe.
   const webViewDockKey = isWebView && currentData ? extensionViewKey(currentData) : null
   const dockWebViewSlot = useCallback((el: HTMLDivElement | null) => {

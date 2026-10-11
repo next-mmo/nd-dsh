@@ -74,7 +74,7 @@ if (process.platform !== 'win32') {
 // deploy operation. CI=true is the upstream-supported way to skip git-hook
 // installation inside submodule worktrees.
 console.log('\nInstalling the Harness release dependency graph...')
-await run(corepack, ['pnpm', '--dir', harnessSource, 'install', '--frozen-lockfile'], root, harnessEnv)
+await run(corepack, ['pnpm', '--dir', harnessSource, 'install', '--frozen-lockfile'], harnessSource, harnessEnv)
 
 console.log('\nBuilding the Harness runtime (host, client, and web faces)...')
 await run(process.execPath, [join(root, 'scripts', 'build-harness.mjs'), '--skip-install'], root, harnessEnv)
@@ -228,7 +228,7 @@ async function deploy(packageName, destination, productionOnly) {
     '--config.inject-workspace-packages=true',
     '--config.node-linker=hoisted',
     'deploy', destination,
-  ], root, harnessEnv)
+  ], harnessSource, harnessEnv)
 }
 
 /**

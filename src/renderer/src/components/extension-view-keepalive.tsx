@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useSyncExternalStore, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { contextKey } from '../../../shared/nd-context'
 import type { NdContext } from '../../../shared/nd-context'
 import type { NdViewData } from '../../../shared/nd-invocations'
@@ -17,8 +18,8 @@ import { SurfaceErrorBoundary } from './surface-error-boundary'
  *
  * The live iframes are owned by {@link ExtensionKeepAliveHost}, mounted once
  * at the app shell. While the extension view dialog is open for a view, the
- * host pins that view's container over the dialog's placeholder slot; when the
- * dialog closes, the same container flips to `display: none` and the view
+ * host moves that view's stable container into the dialog's placeholder slot; when the
+ * dialog closes, the same container moves to hidden parking and the view
  * keeps running in the background. Reopening never reloads the frame: the
  * dialog reuses the admitted view data (and its asset token) instead of
  * calling `loadView` again.
@@ -41,8 +42,9 @@ interface ExtensionKeepAliveState {
 let keepAliveState: ExtensionKeepAliveState = { views: [], dockedKey: null }
 const keepAliveListeners = new Set<() => void>()
 // Dialog placeholder elements per docked view (not render state: the host
-// reads them every frame while pinning the live iframe over the slot).
+// moves the live iframe container into the slot when it docks).
 const keepAliveSlots = new Map<string, HTMLElement>()
+const keepAliveParking = new Map<string, HTMLElement>()
 
 function emitKeepAliveChange(): void {
   for (const listener of keepAliveListeners) listener()
@@ -88,7 +90,14 @@ export function lookupKeepAliveView(key: string): NdViewData | undefined {
  */
 export function dockKeepAliveView(key: string, slot: HTMLElement | null): void {
   if (slot) keepAliveSlots.set(key, slot)
-  else keepAliveSlots.delete(key)
+  else {
+    // Park before React removes the dialog slot: detaching an iframe first
+    // would reload it when reopened. Chromium's atomic move preserves it.
+    const container = keepAliveSlots.get(key)?.firstElementChild
+    const parking = keepAliveParking.get(key)
+    if (container && parking && container.isConnected) parking.moveBefore(container, null)
+    keepAliveSlots.delete(key)
+  }
   const dockedKey = slot ? key : (keepAliveState.dockedKey === key ? null : keepAliveState.dockedKey)
   if (dockedKey !== keepAliveState.dockedKey) {
     keepAliveState = { ...keepAliveState, dockedKey }
@@ -133,60 +142,50 @@ function getKeepAliveSnapshot(): ExtensionKeepAliveState {
   return keepAliveState
 }
 
-/**
- * Lives once at the app shell. Renders every alive web view; the docked one is
- * pinned exactly over the dialog's slot (synced per frame so dialog
- * animations, scroll, and resizes stay glued), the rest are hidden but alive.
- */
-export function ExtensionKeepAliveHost({ onError }: { onError: (message: string) => void }): ReactNode {
-  const { views, dockedKey } = useExtensionKeepAlive()
-  const containerRefs = useRef(new Map<string, HTMLDivElement | null>())
+/** Keep one portal target for the lifetime of the frame, including while hidden. */
+function KeepAliveFrame({ view, docked, onError }: {
+  view: ExtensionKeepAliveView
+  docked: boolean
+  onError: (message: string) => void
+}): ReactNode {
+  const parkingRef = useRef<HTMLDivElement>(null)
+  const [container] = useState(() => document.createElement('div'))
 
   useLayoutEffect(() => {
-    if (!dockedKey) return
-    let running = true
-    let frame = 0
-    const sync = (): void => {
-      if (!running) return
-      const slot = keepAliveSlots.get(dockedKey)
-      const container = containerRefs.current.get(dockedKey)
-      if (slot && container) {
-        const rect = slot.getBoundingClientRect()
-        container.style.left = `${rect.left}px`
-        container.style.top = `${rect.top}px`
-        container.style.width = `${rect.width}px`
-        container.style.height = `${rect.height}px`
-      }
-      frame = requestAnimationFrame(sync)
-    }
-    sync()
-    return () => {
-      running = false
-      cancelAnimationFrame(frame)
-    }
-  }, [dockedKey])
+    const destination = docked ? keepAliveSlots.get(view.key) : parkingRef.current
+    if (!destination) return
+    // Move the same DOM/portal target into the dialog. A sibling overlay is
+    // hidden by Radix's modal accessibility boundary on every reopen, and its
+    // controls also sit outside the dialog's keyboard focus scope.
+    if (container.isConnected) destination.moveBefore(container, null)
+    else destination.appendChild(container)
+  }, [container, docked, view.key])
+
+  useLayoutEffect(() => () => { container.remove() }, [container])
 
   return (
     <>
-      {views.map((view) => {
-        const docked = view.key === dockedKey
-        return (
-          <div
-            key={view.key}
-            ref={(el) => {
-              if (el) containerRefs.current.set(view.key, el)
-              else containerRefs.current.delete(view.key)
-            }}
-            className={cn('pointer-events-auto fixed z-[55] overflow-hidden', docked ? 'block' : 'hidden')}
-          >
-            <SurfaceErrorBoundary label={view.data.title} resetKey={view.key} onError={onError}>
-              <ExtensionWebView data={view.data} onError={onError} />
-            </SurfaceErrorBoundary>
-          </div>
-        )
-      })}
+      <div ref={(el) => {
+        parkingRef.current = el
+        if (el) keepAliveParking.set(view.key, el)
+        else keepAliveParking.delete(view.key)
+      }} hidden />
+      {createPortal(
+        <SurfaceErrorBoundary label={view.data.title} resetKey={view.key} onError={onError}>
+          <ExtensionWebView data={view.data} onError={onError} />
+        </SurfaceErrorBoundary>,
+        container,
+      )}
     </>
   )
+}
+
+/** Keeps each iframe mounted, docking its stable container inside the open dialog. */
+export function ExtensionKeepAliveHost({ onError }: { onError: (message: string) => void }): ReactNode {
+  const { views, dockedKey } = useExtensionKeepAlive()
+  return <>{views.map((view) => (
+    <KeepAliveFrame key={view.key} view={view} docked={view.key === dockedKey} onError={onError} />
+  ))}</>
 }
 
 /**
