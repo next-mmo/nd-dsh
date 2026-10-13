@@ -42,16 +42,23 @@ async function openGameView(page: Page): Promise<Frame> {
   await launcher.getByText('Play 3D Tic-Tac-Toe', { exact: true }).click()
   await page.getByRole('dialog', { name: '3D Tic-Tac-Toe' }).waitFor({ state: 'visible', timeout: 10_000 })
 
-  // Anchor on the live iframe element: page.frames() can still list stale
-  // entries from earlier dialog instances. The frame navigates after attach,
-  // so poll until it actually sits on the extension scheme.
+  // Anchor on the live iframe: a previous instance can still be attached
+  // while its dialog tears down (or parked by keep-alive), and a stale frame
+  // swallows interactions. Skip hidden handles and take the one actually on
+  // the extension scheme.
   const iframe = page.locator('iframe[title="3D Tic-Tac-Toe"]')
   await iframe.waitFor({ state: 'attached', timeout: 15_000 })
-  let frame: Frame | null | undefined
+  let frame: Frame | null = null
   await expect.poll(async () => {
-    const handle = await iframe.elementHandle()
-    frame = await handle?.contentFrame() ?? null
-    return frame?.url() ?? ''
+    for (const handle of await page.locator('iframe[title="3D Tic-Tac-Toe"]').elementHandles()) {
+      if (!(await handle.isVisible())) continue
+      const content = await handle.contentFrame()
+      if (content?.url().startsWith('nd-extension-ui://')) {
+        frame = content
+        return content.url()
+      }
+    }
+    return ''
   }, { timeout: 15_000 }).toContain('nd-extension-ui://')
   return frame!
 }
@@ -129,4 +136,34 @@ test('reopening the view restores the persisted scoreboard and reset clears it',
   expect(stats.stats.wins).toBe(0)
 
   expect(rendererErrors, `renderer errors: ${rendererErrors.join(' | ')}`).toEqual([])
+})
+
+test('the 3D board draws on interaction and stops GPU draws when idle', async () => {
+  const frame = await openGameView(launched.page)
+  await frame.locator('#mode-2p').click()
+  await expect(frame.locator('#status')).toHaveText('X to move')
+  await frame.locator('canvas').waitFor({ state: 'visible' })
+  // Observe real WebGL calls rather than the render scheduler's implementation.
+  await frame.evaluate(() => {
+    const counter = { draws: 0 }
+    Object.assign(window, { gpuDrawCounter: counter })
+    for (const prototype of [WebGLRenderingContext.prototype, WebGL2RenderingContext.prototype]) {
+      const original = prototype.drawElements
+      prototype.drawElements = function (...args: Parameters<typeof original>) {
+        counter.draws += 1
+        return original.apply(this, args)
+      }
+    }
+  })
+  const drawCount = (): Promise<number> => frame.evaluate(() =>
+    (window as unknown as { gpuDrawCounter: { draws: number } }).gpuDrawCounter.draws)
+  await frame.locator('body').press('1')
+  await expect.poll(drawCount).toBeGreaterThan(0)
+  // Wait past the short placement animation, then compare a quiet interval.
+  await launched.page.waitForTimeout(750)
+  const settled = await drawCount()
+  await launched.page.waitForTimeout(750)
+  expect(await drawCount()).toBe(settled)
+  await frame.locator('#new-game').click()
+  await expect.poll(drawCount).toBeGreaterThan(settled)
 })

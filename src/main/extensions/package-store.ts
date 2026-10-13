@@ -44,12 +44,34 @@ const MAX_PACKAGE_FILES = 5_000
  * previous version usable.
  */
 export class ExtensionPackageStore {
+  private byId = new Map<string, NdPackageRecord>()
+  private generation = 0
+  private mutationChain: Promise<unknown> = Promise.resolve()
   private loaded = false
   private loadPromise: Promise<void> | undefined
   private saveChain: Promise<void> = Promise.resolve()
   private value: PackageIndexSnapshot = { version: 1, packages: [] }
 
-  constructor(private readonly rootDir: string, private readonly git: GitExecRunner = rawGitExecRunner) {}
+  constructor(
+    private readonly rootDir: string,
+    private readonly git: GitExecRunner = rawGitExecRunner,
+    private readonly snapshot: PackageSnapshot = snapshotPackageInProcess,
+  ) {}
+
+  get revision(): number { return this.generation }
+
+  async initialize(): Promise<void> { await this.load() }
+
+  private serialize<T>(run: () => Promise<T>): Promise<T> {
+    const operation = this.mutationChain.catch(() => undefined).then(run)
+    this.mutationChain = operation
+    return operation
+  }
+
+  private rebuildIndex(): void {
+    this.byId = new Map(this.value.packages.map((record) => [record.manifest.id, record]))
+    this.generation += 1
+  }
 
   async list(): Promise<NdInstalledPackageView[]> {
     await this.load()
@@ -58,7 +80,7 @@ export class ExtensionPackageStore {
 
   async record(extensionId: string): Promise<NdPackageRecord | undefined> {
     await this.load()
-    return this.value.packages.find((item) => item.manifest.id === extensionId)
+    return this.byId.get(extensionId)
   }
 
   /** The manifest of the active version, or undefined when the package is unknown. */
@@ -97,8 +119,10 @@ export class ExtensionPackageStore {
     if (permissionIssues.length > 0) {
       throw new Error(`Invalid built-in extension package: ${permissionIssues.map((issue) => issue.message).join('; ')}`)
     }
-    const existing = this.value.packages.find((item) => item.manifest.id === normalized.id)
+    const existing = this.byId.get(normalized.id)
     const snapshotDir = this.snapshotDir(normalized.id, normalized.version)
+    if (existing?.source.kind === 'builtin' && JSON.stringify(existing.manifest) === JSON.stringify(normalized)
+      && await fs.access(join(snapshotDir, ND_EXTENSION_MANIFEST_FILENAME)).then(() => true, () => false)) return
     await fs.mkdir(snapshotDir, { recursive: true })
     await fs.writeFile(
       join(snapshotDir, ND_EXTENSION_MANIFEST_FILENAME),
@@ -130,12 +154,20 @@ export class ExtensionPackageStore {
    * is inert: it validates, snapshots, and records provenance, and nothing
    * executes until an authorized context activates and invokes it.
    */
-  async installFromDirectory(sourceDirectory: string, options?: { expectId?: string }): Promise<NdInstalledPackageView> {
+  async installFromDirectory(sourceDirectory: string, options?: { expectId?: string; source?: NdPackageSourceView }): Promise<NdInstalledPackageView> {
+    return this.serialize(() => this.installSnapshot(sourceDirectory, options))
+  }
+
+  private async installSnapshot(sourceDirectory: string, options?: { expectId?: string; source?: NdPackageSourceView }): Promise<NdInstalledPackageView> {
     await this.load()
     const sourceDir = resolve(sourceDirectory)
     const stat = await fs.stat(sourceDir).catch(() => undefined)
     if (!stat?.isDirectory()) throw new Error('Choose a directory that contains an nd-extension.json package')
     const manifestFile = join(sourceDir, ND_EXTENSION_MANIFEST_FILENAME)
+    const manifestStat = await fs.lstat(manifestFile)
+    if (!manifestStat.isFile() || manifestStat.isSymbolicLink() || manifestStat.size > ND_WEBVIEW_MAX_ASSET_FILE_BYTES) {
+      throw new Error('Package manifest must be a regular file within the per-file cap')
+    }
     let parsed: unknown
     try {
       parsed = JSON.parse(await fs.readFile(manifestFile, 'utf8'))
@@ -155,25 +187,26 @@ export class ExtensionPackageStore {
     if (options?.expectId && manifest.id !== options.expectId) {
       throw new Error(`This package is ${manifest.id}, not ${options.expectId}`)
     }
-    await assertContainedPackage(sourceDir)
+    if (this.byId.get(manifest.id)?.source.kind === 'builtin') {
+      throw new Error('An external package cannot replace an ND built-in')
+    }
 
     const revision = await gitRevision(sourceDir, this.git)
-    const source: NdPackageSourceView = {
+    const source: NdPackageSourceView = options?.source ?? {
       kind: sourceDir.includes(`${sep}.git${sep}`) || revision ? 'git' : 'local',
       location: sourceDir,
       ...(revision ? { revision } : {}),
     }
 
     const snapshotDir = this.snapshotDir(manifest.id, manifest.version)
-    await fs.rm(snapshotDir, { recursive: true, force: true })
-    await fs.mkdir(dirname(snapshotDir), { recursive: true })
-    await fs.cp(sourceDir, snapshotDir, {
-      recursive: true,
-      dereference: false,
-      filter: (source) => !source.split(sep).includes('.git'),
-    })
+    await this.snapshot(sourceDir, snapshotDir, parsed)
+    // Re-read the exact snapshot rather than trusting a manifest read before copying.
+    const installedManifest = await this.manifestForVersion(manifest.id, manifest.version)
+    if (JSON.stringify(installedManifest) !== JSON.stringify(manifest)) {
+      throw new Error('Package manifest changed during installation; retry from a stable folder')
+    }
 
-    const existing = this.value.packages.find((item) => item.manifest.id === manifest.id)
+    const existing = this.byId.get(manifest.id)
     if (existing) {
       const activeVersion = existing.manifest.version
       existing.manifest = manifest
@@ -193,7 +226,8 @@ export class ExtensionPackageStore {
       })
     }
     await this.persist()
-    return this.toView(this.value.packages.find((item) => item.manifest.id === manifest.id)!)
+    await this.pruneVersions(manifest.id)
+    return this.toView(this.byId.get(manifest.id)!)
   }
 
   /**
@@ -201,8 +235,12 @@ export class ExtensionPackageStore {
    * settings live with activation records, not with the package snapshot.
    */
   async rollback(extensionId: string): Promise<NdInstalledPackageView> {
+    return this.serialize(() => this.rollbackSnapshot(extensionId))
+  }
+
+  private async rollbackSnapshot(extensionId: string): Promise<NdInstalledPackageView> {
     await this.load()
-    const record = this.value.packages.find((item) => item.manifest.id === extensionId)
+    const record = this.byId.get(extensionId)
     if (!record) throw new Error(`Unknown extension package: ${extensionId}`)
     const target = record.previousVersion
     if (!target) throw new Error('This package has no previous version to roll back to')
@@ -216,8 +254,12 @@ export class ExtensionPackageStore {
   }
 
   async uninstall(extensionId: string): Promise<void> {
+    return this.serialize(() => this.removePackage(extensionId))
+  }
+
+  private async removePackage(extensionId: string): Promise<void> {
     await this.load()
-    const record = this.value.packages.find((item) => item.manifest.id === extensionId)
+    const record = this.byId.get(extensionId)
     if (!record) return
     if (record.source.kind === 'builtin') throw new Error('ND-maintained packages cannot be uninstalled; disable them in the target context instead')
     this.value.packages = this.value.packages.filter((item) => item.manifest.id !== extensionId)
@@ -231,7 +273,18 @@ export class ExtensionPackageStore {
     const candidate = resolve(root, relativePath)
     const inside = candidate === root || candidate.startsWith(`${root}${sep}`)
     if (!inside) return null
-    return fs.access(candidate).then(() => candidate, () => null)
+    try {
+      const realRoot = await fs.realpath(root)
+      const realCandidate = await fs.realpath(candidate)
+      if (!realCandidate.startsWith(`${realRoot}${sep}`)) return null
+      // Reject even links that currently point inside: snapshot files must be regular.
+      let current = root
+      for (const part of relative(root, candidate).split(sep)) {
+        current = join(current, part)
+        if ((await fs.lstat(current)).isSymbolicLink()) return null
+      }
+      return realCandidate
+    } catch { return null }
   }
 
   private snapshotDir(extensionId: string, version: string): string {
@@ -274,7 +327,20 @@ export class ExtensionPackageStore {
       }
       this.value = { version: 1, packages: [] }
     }
+    this.rebuildIndex()
     this.loaded = true
+  }
+
+  private async pruneVersions(extensionId: string): Promise<void> {
+    const record = this.byId.get(extensionId)
+    if (!record) return
+    const keep = new Set([record.manifest.version, record.previousVersion].filter(Boolean))
+    const directory = join(this.rootDir, 'packages', extensionId)
+    for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+      if (!keep.has(entry.name)) await fs.rm(join(directory, entry.name), { recursive: true, force: true })
+    }
+    record.versions = record.versions.filter((version) => keep.has(version))
+    await this.persist()
   }
 
   private indexPath(): string {
@@ -282,6 +348,7 @@ export class ExtensionPackageStore {
   }
 
   private async persist(): Promise<void> {
+    this.rebuildIndex()
     const serialized = `${JSON.stringify(this.value, null, 2)}\n`
     const target = this.indexPath()
     const write = this.saveChain.catch(() => undefined).then(async () => {
@@ -323,6 +390,7 @@ export class ExtensionPackageStore {
       contributions: counts,
       views: record.manifest.contributions.views.map((view) => ({
         id: view.id,
+        kind: view.kind,
         title: view.title,
         ...(view.description ? { description: view.description } : {}),
       })),
@@ -356,13 +424,14 @@ async function assertContainedPackage(root: string): Promise<void> {
     for (const entry of entries) {
       visited += 1
       if (visited > MAX_PACKAGE_FILES) throw new Error(`Package contains more than ${MAX_PACKAGE_FILES} files`)
-      if (entry.name === '.git' || entry.name === 'node_modules') continue
+      if (entry.name === '.git') continue
       const absolute = join(directory, entry.name)
       if (entry.isSymbolicLink()) throw new Error(`Package contains a symbolic link (${relative(root, absolute)}); links are not allowed in packages`)
       if (entry.isDirectory()) {
         await walk(absolute)
         continue
       }
+      if (!entry.isFile()) throw new Error(`Package contains a non-regular file (${relative(root, absolute)})`)
       const size = (await fs.stat(absolute)).size
       if (size > ND_WEBVIEW_MAX_ASSET_FILE_BYTES) {
         throw new Error(`Package file ${relative(root, absolute)} exceeds the ${ND_WEBVIEW_MAX_ASSET_FILE_BYTES / (1024 * 1024)} MB per-file cap`)
@@ -383,5 +452,33 @@ async function gitRevision(directory: string, runGit: GitExecRunner): Promise<st
     return /^[0-9a-f]{7,64}$/.test(revision) ? revision : undefined
   } catch {
     return undefined
+  }
+}
+
+export type PackageSnapshot = (source: string, destination: string, expectedManifest: unknown) => Promise<void>
+
+/** Test/development seam. Production injects the Rust snapshotter at bootstrap. */
+export async function snapshotPackageInProcess(source: string, destination: string, expectedManifest: unknown): Promise<void> {
+  await assertContainedPackage(source)
+  const stage = `${destination}.stage-${randomUUID()}`
+  const backup = `${destination}.backup-${randomUUID()}`
+  await fs.mkdir(dirname(destination), { recursive: true })
+  let backedUp = false
+  try {
+    await fs.cp(source, stage, { recursive: true, dereference: false, filter: (path) => !relative(source, path).split(sep).includes('.git') })
+    await assertContainedPackage(stage)
+    if (JSON.stringify(JSON.parse(await fs.readFile(join(stage, ND_EXTENSION_MANIFEST_FILENAME), 'utf8'))) !== JSON.stringify(expectedManifest)) {
+      throw new Error('Package manifest changed during installation')
+    }
+    try { await fs.rename(destination, backup); backedUp = true } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+    try { await fs.rename(stage, destination) } catch (error) {
+      if (backedUp) await fs.rename(backup, destination)
+      throw error
+    }
+  } finally {
+    await fs.rm(stage, { recursive: true, force: true })
+    if (await fs.access(destination).then(() => true, () => false)) await fs.rm(backup, { recursive: true, force: true })
   }
 }

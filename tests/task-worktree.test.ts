@@ -1,10 +1,11 @@
 import { execFile } from 'node:child_process'
+import { promises as fsPromises } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { afterEach, describe, expect, it } from 'vitest'
-import { TaskIntegrationConflictError, TaskWorktreeManager } from '../src/main/organization/task-worktree.js'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { removeDisposableArtifacts, TaskIntegrationConflictError, TaskWorktreeManager } from '../src/main/organization/task-worktree.js'
 
 const exec = promisify(execFile)
 const temporary: string[] = []
@@ -155,5 +156,119 @@ describe('TaskWorktreeManager', () => {
     await expect(manager.integrate(repo, 'task-conflict')).rejects.toBeInstanceOf(TaskIntegrationConflictError)
     expect(await readFile(join(worktree.root, 'app.ts'), 'utf8')).toContain('"task"')
     expect((await exec('git', ['status', '--porcelain'], { cwd: repo })).stdout.trim()).toBe('')
+  })
+
+  it('preserves tracked files inside directories matching disposable names like vendor/vscode-git/build/update-emoji.js', async () => {
+    const repo = await repoFixture()
+    const trackedSubdir = join(repo, 'vendor', 'vscode-git', 'build')
+    await mkdir(trackedSubdir, { recursive: true })
+    const emojiScript = join(trackedSubdir, 'update-emoji.js')
+    await writeFile(emojiScript, 'console.log("emoji")\n')
+    await exec('git', ['add', 'vendor/vscode-git/build/update-emoji.js'], { cwd: repo })
+    await exec('git', ['commit', '-m', 'add emoji script'], { cwd: repo })
+
+    const manager = new TaskWorktreeManager()
+    const worktree = await manager.ensure(repo, 'preserve-tracked-build')
+    expect(worktree).toBeTruthy()
+    if (!worktree) return
+
+    // Create an untracked disposable directory to ensure disposable cleanup still works
+    await mkdir(join(worktree.root, 'dist'), { recursive: true })
+    await writeFile(join(worktree.root, 'dist', 'bundle.js'), 'bundle\n')
+
+    // Baseline establishes retry boundary; prior to fix this deleted vendor/vscode-git/build/update-emoji.js
+    const head = await manager.baseline(worktree)
+    expect(head).toBeTruthy()
+
+    // Tracked file must still exist and be intact
+    expect(await readFile(join(worktree.root, 'vendor', 'vscode-git', 'build', 'update-emoji.js'), 'utf8')).toBe('console.log("emoji")\n')
+    // Untracked disposable directory should be removed
+    await expect(readFile(join(worktree.root, 'dist', 'bundle.js'))).rejects.toThrow()
+
+    // Git status in worktree must remain clean
+    const status = (await exec('git', ['status', '--porcelain=v1', '--untracked-files=all'], { cwd: worktree.root })).stdout.trim()
+    expect(status).toBe('')
+  })
+
+  it('propagates failure and fails closed when git ls-files fails during cleanup', async () => {
+    const repo = await repoFixture()
+    const failingGit = async (_cwd: string, args: string[]) => {
+      if (args[0] === 'ls-files') {
+        throw new Error('git ls-files failed: simulated error')
+      }
+      return { stdout: '', stderr: '' }
+    }
+
+    await expect(removeDisposableArtifacts(repo, failingGit)).rejects.toThrow('git ls-files failed: simulated error')
+
+    const manager = new TaskWorktreeManager(failingGit)
+    const worktree = { root: repo, repoRoot: repo, branch: 'test-branch', taskId: 'test-task' }
+    await expect(manager.baseline(worktree)).rejects.toThrow('git ls-files failed: simulated error')
+  })
+
+  it('skips nested directories with their own .git marker and preserves their contents', async () => {
+    const repo = await repoFixture()
+    const manager = new TaskWorktreeManager()
+    const worktree = await manager.ensure(repo, 'preserve-nested-repo')
+    expect(worktree).toBeTruthy()
+    if (!worktree) return
+
+    // 1. Nested repository/submodule under vendor/sub-module with its own .git file marker
+    const nestedSub = join(worktree.root, 'vendor', 'sub-module')
+    await mkdir(join(nestedSub, 'dist'), { recursive: true })
+    await mkdir(join(nestedSub, 'build'), { recursive: true })
+    await writeFile(join(nestedSub, '.git'), 'gitdir: ../../.git/modules/vendor/sub-module\n')
+    await writeFile(join(nestedSub, 'dist', 'bundle.js'), 'export const subBundle = true\n')
+    await writeFile(join(nestedSub, 'build', 'artifact.js'), 'export const subArtifact = true\n')
+
+    // 2. Nested repo whose directory itself matches a disposable name (e.g. build)
+    const nestedBuild = join(worktree.root, 'build')
+    await mkdir(nestedBuild, { recursive: true })
+    await writeFile(join(nestedBuild, '.git'), 'gitdir: ../.git/modules/build\n')
+    await writeFile(join(nestedBuild, 'output.js'), 'export const buildRepo = true\n')
+
+    // 3. Normal untracked disposable directories that should be removed
+    await mkdir(join(worktree.root, 'node_modules', 'pkg'), { recursive: true })
+    await writeFile(join(worktree.root, 'node_modules', 'pkg', 'index.js'), 'module.exports = 1\n')
+    await mkdir(join(worktree.root, 'dist'), { recursive: true })
+    await writeFile(join(worktree.root, 'dist', 'app.js'), 'bundle\n')
+
+    await removeDisposableArtifacts(worktree.root)
+
+    // Nested repo and its contents must still be completely intact
+    expect(await readFile(join(nestedSub, 'dist', 'bundle.js'), 'utf8')).toBe('export const subBundle = true\n')
+    expect(await readFile(join(nestedSub, 'build', 'artifact.js'), 'utf8')).toBe('export const subArtifact = true\n')
+    expect(await readFile(join(nestedBuild, 'output.js'), 'utf8')).toBe('export const buildRepo = true\n')
+
+    // Untracked disposable directories outside nested repos must be removed
+    await expect(readFile(join(worktree.root, 'node_modules', 'pkg', 'index.js'))).rejects.toThrow()
+    await expect(readFile(join(worktree.root, 'dist', 'app.js'))).rejects.toThrow()
+  })
+
+  it('invokes fs.rm with bounded retries maxRetries 5 and retryDelay 100 for disposable directories', async () => {
+    const repo = await repoFixture()
+    const manager = new TaskWorktreeManager()
+    const worktree = await manager.ensure(repo, 'test-rm-retries')
+    expect(worktree).toBeTruthy()
+    if (!worktree) return
+
+    await mkdir(join(worktree.root, 'dist'), { recursive: true })
+    await writeFile(join(worktree.root, 'dist', 'bundle.js'), 'bundle\n')
+
+    const rmSpy = vi.spyOn(fsPromises, 'rm')
+    try {
+      await removeDisposableArtifacts(worktree.root)
+      expect(rmSpy).toHaveBeenCalledWith(
+        join(worktree.root, 'dist'),
+        expect.objectContaining({
+          recursive: true,
+          force: true,
+          maxRetries: 5,
+          retryDelay: 100,
+        }),
+      )
+    } finally {
+      rmSpy.mockRestore()
+    }
   })
 })

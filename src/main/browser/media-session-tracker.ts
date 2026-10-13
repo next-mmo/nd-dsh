@@ -8,13 +8,15 @@ interface MediaTabRecord {
   /** 0 until the tab first played media; inactive tabs never surface. */
   lastActivityAt: number
   metadata: NdMediaMetadata | null
-  refreshTimers: NodeJS.Timeout[]
+  refreshTimer: NodeJS.Timeout | null
+  refreshPromise: Promise<void> | null
+  revision: number
 }
 
 /** playPause result: what the page did, or 'none' when it has no media element. */
 export type MediaPlayPauseResult = 'paused' | 'playing' | 'none'
 
-const METADATA_REFRESH_DELAYS_MS = [600, 2400]
+const MEDIA_REFRESH_INTERVAL_MS = 1_000
 
 const METADATA_SCRIPT = `(() => {
   const meta = navigator.mediaSession ? navigator.mediaSession.metadata : null;
@@ -74,30 +76,52 @@ export class BrowserMediaTracker {
   constructor(private readonly onState: (state: NdMediaSessionState | null) => void) {}
 
   attach(tabId: string, contents: WebContents): void {
-    const record: MediaTabRecord = { tabId, contents, playing: false, lastActivityAt: 0, metadata: null, refreshTimers: [] }
+    const record: MediaTabRecord = {
+      tabId, contents, playing: false, lastActivityAt: 0, metadata: null,
+      refreshTimer: null, refreshPromise: null, revision: 0,
+    }
     this.records.set(tabId, record)
     contents.on('media-started-playing', () => {
       record.playing = true
       record.lastActivityAt = Date.now()
-      this.scheduleMetadataRefresh(record)
+      ++record.revision
+      this.ensureRefreshTimer(record)
+      void this.refreshRecord(record)
       this.emit()
     })
     contents.on('media-paused', () => {
       record.playing = false
       record.lastActivityAt = Date.now()
+      ++record.revision
+      this.ensureRefreshTimer(record)
+      // A pause from an auxiliary player must not leave a still-playing page
+      // paused in the launcher. Read the current media elements as well.
+      void this.refreshRecord(record)
       this.emit()
     })
-    contents.on('did-start-navigation', () => {
-      if (!record.playing && !record.metadata) return
+    contents.on('did-start-navigation', (details) => {
+      // SPA history changes and iframe navigations do not replace the player.
+      if (!details.isMainFrame || details.isSameDocument) return
+      ++record.revision
       record.playing = false
       record.metadata = null
-      this.clearRefreshTimers(record)
+      record.lastActivityAt = 0
+      this.clearRefreshTimer(record)
       this.emit()
     })
     contents.on('destroyed', () => {
-      this.clearRefreshTimers(record)
+      ++record.revision
+      this.clearRefreshTimer(record)
       if (this.records.delete(tabId)) this.emit()
     })
+  }
+
+  /** Reconcile when opening a launcher, including a previously hidden popup. */
+  async refresh(): Promise<NdMediaSessionState | null> {
+    await Promise.all([...this.records.values()]
+      .filter((record) => record.lastActivityAt > 0)
+      .map((record) => this.refreshRecord(record)))
+    return this.state()
   }
 
   /** The session the transport row shows, or null when nothing has played. */
@@ -122,7 +146,10 @@ export class BrowserMediaTracker {
     const record = this.active()
     if (!record || record.contents.isDestroyed()) return 'none'
     const result = await record.contents.executeJavaScript(PLAY_PAUSE_SCRIPT, true).catch(() => 'none')
-    return result === 'paused' || result === 'playing' ? result : 'none'
+    if (result !== 'paused' && result !== 'playing') return 'none'
+    ++record.revision
+    await this.refreshRecord(record)
+    return result
   }
 
   async skip(direction: 'next' | 'previous'): Promise<boolean> {
@@ -141,26 +168,48 @@ export class BrowserMediaTracker {
     return pool.sort((a, b) => b.lastActivityAt - a.lastActivityAt)[0]
   }
 
-  private scheduleMetadataRefresh(record: MediaTabRecord): void {
-    this.clearRefreshTimers(record)
-    for (const delay of METADATA_REFRESH_DELAYS_MS) {
-      record.refreshTimers.push(setTimeout(() => {
-        if (record.contents.isDestroyed()) return
-        void record.contents.executeJavaScript(METADATA_SCRIPT, true)
-          .then((value) => {
-            const metadata = asMetadata(value)
-            if (!metadata) return
-            record.metadata = metadata
-            this.emit()
-          })
-          .catch(() => undefined)
-      }, delay))
-    }
+  private ensureRefreshTimer(record: MediaTabRecord): void {
+    if (record.refreshTimer) return
+    // Media Session metadata can arrive late or change without another native
+    // media-started-playing event. Keep one non-overlapping read per media tab.
+    record.refreshTimer = setInterval(() => void this.refreshRecord(record), MEDIA_REFRESH_INTERVAL_MS)
+    record.refreshTimer.unref()
   }
 
-  private clearRefreshTimers(record: MediaTabRecord): void {
-    record.refreshTimers.forEach((timer) => clearTimeout(timer))
-    record.refreshTimers = []
+  private refreshRecord(record: MediaTabRecord): Promise<void> {
+    if (record.refreshPromise) return record.refreshPromise
+    if (record.contents.isDestroyed() || record.lastActivityAt === 0) return Promise.resolve()
+    const read = async (): Promise<void> => {
+      while (!record.contents.isDestroyed() && record.lastActivityAt > 0 && this.records.get(record.tabId) === record) {
+        const revision = record.revision
+        const value: unknown = await record.contents.executeJavaScript(METADATA_SCRIPT, true)
+        if (record.contents.isDestroyed() || record.lastActivityAt === 0 || this.records.get(record.tabId) !== record) return
+        // A media event or transport action can overtake a pending read. Take
+        // another snapshot before resolving launcher state in that case.
+        if (record.revision !== revision) continue
+        if (!value || typeof value !== 'object') return
+        const raw = value as Record<string, unknown>
+        const metadata = asMetadata(value)
+        let changed = JSON.stringify(metadata) !== JSON.stringify(record.metadata)
+        if (typeof raw.playing === 'boolean' && record.playing !== raw.playing) {
+          record.playing = raw.playing
+          record.lastActivityAt = Date.now()
+          changed = true
+        }
+        record.metadata = metadata
+        if (changed) this.emit()
+        return
+      }
+    }
+    record.refreshPromise = read()
+      .catch(() => undefined)
+      .finally(() => { record.refreshPromise = null })
+    return record.refreshPromise
+  }
+
+  private clearRefreshTimer(record: MediaTabRecord): void {
+    if (record.refreshTimer) clearInterval(record.refreshTimer)
+    record.refreshTimer = null
   }
 
   private emit(): void {

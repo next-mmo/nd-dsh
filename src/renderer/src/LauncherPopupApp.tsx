@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
-import type { LauncherHandoffTarget } from '../../shared/quick-launcher'
+import { launcherBrowserTabPayload, type LauncherHandoffTarget } from '../../shared/quick-launcher'
 import type { ThemeState } from '../../shared/contracts'
 import type { NdContext } from '../../shared/nd-context'
 import type { NdCommandView } from '../../shared/nd-invocations'
@@ -334,6 +334,7 @@ export default function LauncherPopupApp(): React.ReactNode {
         onRunExtensionCommand={runCommand}
         onOpenKanban={() => handoff('kanban', undefined, selectedContext)}
         onOpenAgent={() => handoff('agent', undefined, selectedContext)}
+        onOpenMedia={(tabId) => handoff('browser', launcherBrowserTabPayload(tabId), selectedContext)}
         onActivateProject={activateProject}
         onSwitchCompany={switchCompany}
         onCreateTask={createTask}

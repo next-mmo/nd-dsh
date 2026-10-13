@@ -17,6 +17,7 @@ export interface DialpadSite {
 export const PERSONAL_DIALPAD_SITES: readonly DialpadSite[] = [
   { id: 'google', title: 'Google', url: 'https://www.google.com/' },
   { id: 'youtube', title: 'YouTube', url: 'https://www.youtube.com/' },
+  { id: 'youtube-music', title: 'YouTube Music', url: 'https://music.youtube.com/' },
   { id: 'gmail', title: 'Gmail', url: 'https://mail.google.com/' },
   { id: 'maps', title: 'Maps', url: 'https://www.google.com/maps' },
   { id: 'translate', title: 'Translate', url: 'https://translate.google.com/' },

@@ -1,6 +1,7 @@
+import { RemoteExtensionCatalog } from './remote-catalog.js'
 import { app, clipboard, dialog, ipcMain, nativeImage, protocol, shell, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { existsSync, promises as fs } from 'node:fs'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import process from 'node:process'
 import { asNdContext, contextKey, type NdContext } from '../../shared/nd-context.js'
 import { ND_HOST_METHODS, manifestPermissionIssues, validateNdExtensionManifest, type NdHostMethod } from '../../shared/extension-package.js'
@@ -44,6 +45,9 @@ import {
 } from '../os/wallpaper-links.js'
 import { parseWallpaperLinkUrl, parseWallpaperLinksBundle, type WallpaperCollection, type WallpaperCollectionEntry, type WallpaperCollectionItemInput, type WallpaperLink } from '../../shared/wallpaper-links.js'
 import type { CoreMedia } from '../core/core-media.js'
+import type { CoreDiskScan } from '../core/core-disk.js'
+import { DiskScanService } from './disk-scan-service.js'
+import { listDiskVolumes, nodeDiskVolumeSources } from '../os/disk-volumes.js'
 import type { CoreClipboard } from '../core/core-clipboard.js'
 import type { CoreVault } from '../core/core-vault.js'
 import { ProcessInventory } from '../os/process-inventory.js'
@@ -71,6 +75,8 @@ import { promptVaultEntry, type VaultPromptValues } from './vault-prompt.js'
 import { ExtensionWebViewAssets } from './webview-assets.js'
 import { TicTacToeStatsStore, asTicTacToeOutcome } from './tic-tac-toe-store.js'
 import { MiniBrowserStore, browserTabUrl, asMiniEntryId, miniTabTitle, legacyYouTubeQueuePath, type MiniLink } from './mini-browser-store.js'
+import { PayGuardStore } from './pay-guard-store.js'
+import { PayGuardScheduler } from './pay-guard-scheduler.js'
 import { ND_TRANSLATE_ID, ND_TRANSLATE_MAX_TEXT, isLlmProvider } from '../../shared/nd-translate.js'
 import { ND_WEBVIEW_URL_SCHEME } from '../../shared/extension-webview.js'
 import type { ProviderStore } from '../providers.js'
@@ -112,6 +118,11 @@ export interface NdIpcDependencies {
    * surfaces; the vault host methods fail closed without it.
    */
   coreVault?: CoreVault
+  /**
+   * nd-core's disk-usage scan surface. Optional like the other sidecar
+   * surfaces; the disk scan host methods fail closed without it.
+   */
+  coreDisk?: CoreDiskScan
   /** Notified after ND Home records change, so other services can re-derive views. */
   onHomeChanged?: () => void
 }
@@ -122,15 +133,18 @@ const QUIT_PROCESS_ID = 'nd.quit-process'
 const PASSWORD_VAULT_ID = 'nd.password-vault'
 const TIC_TAC_TOE_ID = 'nd.tic-tac-toe'
 const MINI_BROWSER_ID = 'nd.mini-browser'
+const PAY_GUARD_ID = 'nd.pay-guard'
+const DISK_CLEANER_ID = 'nd.disk-cleaner'
 
 /**
- * The bundled on-demand packages. Not built-ins: nothing here is registered or
+ * Development package sources. Release Discover uses separately published metadata.
+ * Not built-ins: nothing here is registered or
  * activated automatically, and each is installed only by explicit user action
  * through the catalog. Clipboard History in particular must never appear in
  * `BUILTIN_EXTENSION_PACKAGES` — a clipboard watcher that starts by default is
  * surveillance, not a feature.
  */
-const AVAILABLE_PACKAGES: readonly { id: string; path: () => string }[] = [
+const AVAILABLE_PACKAGES: readonly { id: string; path: () => string }[] = app.isPackaged ? [] : [
   { id: ND_TRANSLATE_ID, path: translatePackagePath },
   { id: QUIT_PROCESS_ID, path: quitProcessPackagePath },
   { id: CLIPBOARD_HISTORY_ID, path: clipboardHistoryPackagePath },
@@ -139,7 +153,12 @@ const AVAILABLE_PACKAGES: readonly { id: string; path: () => string }[] = [
   // three.js) is fully external and is never staged into packaged releases,
   // where it would only ever show as unavailable. Developers install it from
   // Discover; packaged users install it from a folder.
-  ...(app.isPackaged ? [] : [{ id: TIC_TAC_TOE_ID, path: ticTacToePackagePath }, { id: MINI_BROWSER_ID, path: miniBrowserPackagePath }]),
+  ...(app.isPackaged ? [] : [
+    { id: TIC_TAC_TOE_ID, path: ticTacToePackagePath },
+    { id: MINI_BROWSER_ID, path: miniBrowserPackagePath },
+    { id: PAY_GUARD_ID, path: payGuardPackagePath },
+    { id: DISK_CLEANER_ID, path: diskCleanerPackagePath },
+  ]),
 ]
 
 /**
@@ -151,6 +170,7 @@ const AVAILABLE_PACKAGES: readonly { id: string; path: () => string }[] = [
  */
 let applyWallpaperRotation: ((mode: 'next' | 'random' | 'previous') => Promise<unknown>) | null = null
 let refreshWallpaperRotation: (() => void) | null = null
+let refreshPayGuardScheduler: (() => void) | null = null
 
 /** Linked folders: the `folders` list, falling back to the legacy single `folder`. */
 function readLinkedFolders(settings: Record<string, unknown> | undefined): string[] {
@@ -203,6 +223,18 @@ function miniBrowserPackagePath(): string {
     : join(app.getAppPath(), 'extensions', 'nd-mini-browser')
 }
 
+function payGuardPackagePath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'nd-extensions', 'nd-pay-guard')
+    : join(app.getAppPath(), 'extensions', 'nd-pay-guard')
+}
+
+function diskCleanerPackagePath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'nd-extensions', 'disk-cleaner')
+    : join(app.getAppPath(), 'extensions', 'disk-cleaner')
+}
+
 /**
  * The ND extension invocation surface plus the ND Home personal surface. Every
  * handler runs in the trusted main process, is registered on narrow channels
@@ -211,6 +243,7 @@ function miniBrowserPackagePath(): string {
  */
 export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
   const channels: string[] = []
+  const remoteCatalog = new RemoteExtensionCatalog(process.env.ND_EXTENSION_CATALOG_URL?.trim() || undefined)
   let seeded: Promise<void> | undefined
   let wallpaperTimer: NodeJS.Timeout | null = null
 
@@ -256,9 +289,9 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
 
   const ensureSeeded = (): Promise<void> => {
     seeded ??= seedBuiltinPackages(deps).then(async () => {
-      await refreshAvailablePackages(deps)
       void syncWallpaperRotation()
       syncClipboardWatcher()
+      refreshPayGuardScheduler?.()
     })
     return seeded
   }
@@ -306,12 +339,17 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
     const state = await deps.broker.stateView()
     return {
       ...state,
-      available: await Promise.all([
+      available: app.isPackaged ? remoteCatalog.views(new Set(state.packages.map((item) => item.id))) : await Promise.all([
         quitProcessCatalogView(state),
         translateCatalogView(state),
         clipboardHistoryCatalogView(state),
         passwordVaultCatalogView(state),
-        ...(app.isPackaged ? [] : [ticTacToeCatalogView(state), miniBrowserCatalogView(state)]),
+        ...(app.isPackaged ? [] : [
+          ticTacToeCatalogView(state),
+          miniBrowserCatalogView(state),
+          payGuardCatalogView(state),
+          diskCleanerCatalogView(state),
+        ]),
       ]),
     }
   }
@@ -333,6 +371,11 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
   // --- Extension packages ----------------------------------------------------
 
   handle(ND_EXTENSIONS_IPC.state, () => stateView())
+  handle(ND_EXTENSIONS_IPC.runtimePolicy, async (_event, policy) => {
+    await deps.state.setRuntimePolicy(policy)
+    await emitState()
+    return stateView()
+  })
 
   handle(ND_EXTENSIONS_IPC.installLocal, async () => {
     const result = await dialog.showOpenDialog(deps.window, {
@@ -364,8 +407,19 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
     return { saved: true, path: result.filePath }
   })
 
+  handle(ND_EXTENSIONS_IPC.refreshCatalog, async () => {
+    if (app.isPackaged) await remoteCatalog.refresh()
+    await emitState()
+    return stateView()
+  })
+
   handle(ND_EXTENSIONS_IPC.installAvailable, async (_event, extensionId) => {
     const requestedId = shortId(extensionId, 'Extension id')
+    if (app.isPackaged) {
+      await remoteCatalog.install(requestedId, deps.packages, join(app.getPath('userData'), 'nd-extension-downloads'))
+      await emitState()
+      return stateView()
+    }
     const available = AVAILABLE_PACKAGES.find((entry) => entry.id === requestedId)
     if (!available) throw new Error('Unknown available ND extension')
     const packagePath = available.path()
@@ -380,11 +434,19 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
     const id = shortId(extensionId, 'Extension id')
     const record = await deps.packages.record(id)
     if (!record) throw new Error(`Unknown extension package: ${id}`)
+    if (record.source.kind === 'remote' && !rawPath) {
+      await remoteCatalog.refresh()
+      await remoteCatalog.install(id, deps.packages, join(app.getPath('userData'), 'nd-extension-downloads'))
+      webViews.revokeExtension(id)
+      await emitState()
+      return stateView()
+    }
     const sourcePath = typeof rawPath === 'string' && rawPath.trim()
       ? absolutePath(rawPath)
       : record.source.kind === 'local' || record.source.kind === 'git' ? record.source.location : undefined
     if (!sourcePath) throw new Error('This package records no local source; choose the updated package folder')
     await deps.packages.installFromDirectory(sourcePath, { expectId: id })
+    webViews.revokeExtension(id)
     syncClipboardWatcher()
     await emitState()
     return stateView()
@@ -393,6 +455,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
   handle(ND_EXTENSIONS_IPC.rollback, async (_event, extensionId) => {
     const id = shortId(extensionId, 'Extension id')
     await deps.packages.rollback(id)
+    webViews.revokeExtension(id)
     syncClipboardWatcher()
     await emitState()
     return stateView()
@@ -401,11 +464,13 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
   handle(ND_EXTENSIONS_IPC.uninstall, async (_event, extensionId) => {
     const id = shortId(extensionId, 'Extension id')
     await deps.packages.uninstall(id)
+    webViews.revokeExtension(id)
     // Uninstall revokes activation and executable access; personal notes and
     // captures are user data and stay untouched.
     await deps.state.revokeActivationsForExtension(id)
     await deps.state.revokeGrantsForExtension(id)
     syncClipboardWatcher()
+    if (id === PAY_GUARD_ID) refreshPayGuardScheduler?.()
     await emitState()
     return stateView()
   })
@@ -416,9 +481,13 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
     const manifest = await deps.packages.activeManifest(id)
     if (!manifest) throw new Error(`Unknown extension package: ${id}`)
     await deps.state.setActivation(id, target, enabled === true)
-    if (enabled !== true) await deps.state.revokeGrantsForExtension(id)
+    if (enabled !== true) {
+      await deps.state.revokeGrantsForExtension(id, target)
+      webViews.revokeExtension(id, contextKey(target))
+    }
     if (id === WALLPAPER_MANAGER_ID) void syncWallpaperRotation()
     if (id === CLIPBOARD_HISTORY_ID) syncClipboardWatcher()
+    if (id === PAY_GUARD_ID) refreshPayGuardScheduler?.()
     await emitState()
     return stateView()
   })
@@ -434,6 +503,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
     await deps.state.setSetting(id, target, field.key, value)
     if (id === WALLPAPER_MANAGER_ID) void syncWallpaperRotation()
     if (id === CLIPBOARD_HISTORY_ID) syncClipboardWatcher()
+    if (id === PAY_GUARD_ID) refreshPayGuardScheduler?.()
     await emitState()
     return stateView()
   })
@@ -462,9 +532,9 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
       await deps.broker.resolveContext(asNdContext(context)),
     )
     if (data.kind !== 'web' || !data.webView) return data
-    const issued = await webViews.issue(data.extensionId, data.webView.entry)
+    const issued = await webViews.issue(data.extensionId, data.webView.entry, contextKey(data.context))
     if (!issued) throw new Error('The extension view assets could not be opened')
-    return { ...data, webView: { ...data.webView, url: issued.url, token: issued.token } }
+    return { ...data, webView: { ...data.webView, ...issued } }
   })
 
   handle(ND_EXTENSIONS_IPC.closeWebView, (_event, token) => {
@@ -1983,6 +2053,141 @@ export function registerNativeHostHandlers(
     return { links: await miniBrowser.removeLink(asMiniEntryId(input.id)), session: await sessionFor() }
   })
 
+  // --- ND Pay Guard -------------------------------------------------------------
+  //
+  // Personal-only manual subscription tracker with local-first persistent storage,
+  // leap/month-end aware date math, and real Electron OS reminder alerts.
+  // Zero network, zero bank credentials, zero third-party dependencies.
+
+  const payGuardStore = new PayGuardStore(join(app.getPath('userData'), 'nd-pay-guard', 'subscriptions.json'))
+  const payGuardScheduler = new PayGuardScheduler({
+    store: payGuardStore,
+    state: deps.state,
+    packages: deps.packages,
+  })
+  refreshPayGuardScheduler = () => {
+    payGuardScheduler.sync().catch((error) => {
+      console.warn('[nd-pay-guard] Failed to sync scheduler:', error)
+    })
+  }
+
+  host.register('payguard.subscriptions.list', async (_input, context) => {
+    requirePersonalContext(context)
+    const subscriptions = await payGuardStore.list()
+    const upcoming = await payGuardStore.upcoming()
+    const summary = await payGuardStore.summary()
+    return { subscriptions, upcoming, summary }
+  })
+
+  host.register('payguard.subscriptions.create', async (input, context) => {
+    requirePersonalContext(context)
+    const created = await payGuardStore.create(input)
+    void payGuardScheduler.checkAndNotify().catch(() => undefined)
+    return created
+  })
+
+  host.register('payguard.subscriptions.update', async (input, context) => {
+    requirePersonalContext(context)
+    const id = typeof input?.id === 'string' ? input.id : ''
+    const updated = await payGuardStore.update(id, input)
+    void payGuardScheduler.checkAndNotify().catch(() => undefined)
+    return updated
+  })
+
+  host.register('payguard.subscriptions.delete', async (input, context) => {
+    requirePersonalContext(context)
+    const id = typeof input?.id === 'string' ? input.id : ''
+    const deleted = await payGuardStore.delete(id)
+    return { ok: deleted, id }
+  })
+
+  host.register('payguard.subscriptions.markPaid', async (input, context) => {
+    requirePersonalContext(context)
+    const id = typeof input?.id === 'string' ? input.id : ''
+    const paidDate = typeof input?.paidDate === 'string' ? input.paidDate : undefined
+    const updated = await payGuardStore.markPaid(id, paidDate)
+    void payGuardScheduler.checkAndNotify().catch(() => undefined)
+    return updated
+  })
+
+  host.register('payguard.subscriptions.upcoming', async (input, context) => {
+    requirePersonalContext(context)
+    const daysAhead = typeof input?.daysAhead === 'number' ? input.daysAhead : 30
+    return payGuardStore.upcoming(daysAhead)
+  })
+
+  host.register('payguard.notifications.test', async (_input, context) => {
+    requirePersonalContext(context)
+    return await payGuardScheduler.sendTestNotification()
+  })
+
+  // --- ND Disk Cleaner ----------------------------------------------------------
+  //
+  // The heavy work is the sidecar's: `disk.scan` walks and prunes in nd-core
+  // with live progress events, and this process keeps only the job records.
+  // Volumes, trash, and reveal are thin trusted adapters over Electron/Node
+  // primitives — Personal-only, with the same native confirm dialog Quit
+  // Processes uses for its destructive action. The path for trash/reveal is
+  // normalized here; nothing from the web view ever reaches the OS unvalidated.
+
+  const diskScans = deps.coreDisk ? new DiskScanService(deps.coreDisk) : null
+  const requireDiskScans = (): DiskScanService => {
+    if (!diskScans) throw new Error('The nd-core sidecar is required for disk scans')
+    return diskScans
+  }
+
+  host.register('disk.volumes.list', async (_input, context) => {
+    requirePersonalContext(context)
+    return { volumes: await listDiskVolumes(nodeDiskVolumeSources()) }
+  })
+
+  host.register('disk.scan.start', async (input, context) => {
+    requirePersonalContext(context)
+    return requireDiskScans().start(requiredText(input.root ?? input.path, 'Scan folder', 4096))
+  })
+
+  host.register('disk.scan.status', async (input, context) => {
+    requirePersonalContext(context)
+    const job = requireDiskScans().status(requiredText(input.scanId ?? input.id, 'Scan', 160))
+    if (!job) throw new Error('That scan no longer exists')
+    return job
+  })
+
+  host.register('disk.scan.cancel', async (input, context) => {
+    requirePersonalContext(context)
+    return requireDiskScans().cancel(requiredText(input.scanId ?? input.id, 'Scan', 160))
+  })
+
+  host.register('disk.trash.move', async (input, context) => {
+    requirePersonalContext(context)
+    const path = resolve(requiredText(input.path, 'Item', 4096))
+    const stat = await fs.stat(path).catch(() => null)
+    if (!stat) throw new Error('That item no longer exists')
+    if (dirname(path) === path) throw new Error('Refusing to move a filesystem root to the trash')
+    if (path === resolve(app.getPath('home'))) throw new Error('Refusing to move your home folder to the trash')
+    const result = await dialog.showMessageBox(deps.window, {
+      type: 'warning',
+      title: 'Move to trash?',
+      message: `Move ${basename(path)} to the trash?`,
+      detail: `${path}\n\nIt can be restored from the system trash.`,
+      buttons: ['Cancel', 'Move to Trash'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    })
+    if (result.response !== 1) return { trashed: false, path }
+    await shell.trashItem(path)
+    return { trashed: true, path }
+  })
+
+  host.register('disk.reveal', async (input, context) => {
+    requirePersonalContext(context)
+    const path = resolve(requiredText(input.path, 'Item', 4096))
+    await fs.access(path)
+    shell.showItemInFolder(path)
+    return { revealed: true, path }
+  })
+
   host.register('browser.openUrl', async (input) => {
     const url = typeof input.url === 'string' && input.url.trim() ? httpUrl(input.url) : 'https://www.google.com'
     await deps.browser.navigate(url)
@@ -2176,7 +2381,13 @@ export function registerNativeHostHandlers(
     await deps.workflow.refresh(context.context.companyId, context.context.projectId)
     return workflowView(deps, context.context)
   })
-  return { dispose: () => translator.dispose() }
+  return {
+    dispose: () => {
+      translator.dispose()
+      payGuardScheduler.stop()
+      diskScans?.dispose()
+    },
+  }
 }
 
 async function translateCatalogView(state: NdExtensionsStateView): Promise<NdAvailablePackageView> {
@@ -2220,6 +2431,22 @@ async function miniBrowserCatalogView(state: NdExtensionsStateView): Promise<NdA
     name: 'ND Mini Browser',
     description: 'A keep-alive browser dashboard: manage many real tabs of the ND built-in browser from a persistent chrome, with quick links and launcher quick-open. Stays fully external to the app bundle.',
     permissions: ['minibrowser.read', 'minibrowser.write'],
+  })
+}
+
+async function payGuardCatalogView(state: NdExtensionsStateView): Promise<NdAvailablePackageView> {
+  return packageCatalogView(state, PAY_GUARD_ID, payGuardPackagePath(), {
+    name: 'ND Pay Guard',
+    description: 'Track recurring subscriptions and receive desktop OS notifications before renewal charges. 100% manual, local-first, zero bank connections.',
+    permissions: ['payguard.read', 'payguard.write', 'browser.openExternal'],
+  })
+}
+
+async function diskCleanerCatalogView(state: NdExtensionsStateView): Promise<NdAvailablePackageView> {
+  return packageCatalogView(state, DISK_CLEANER_ID, diskCleanerPackagePath(), {
+    name: 'ND Disk Cleaner',
+    description: 'Scan a folder or drive to see what is using space — a zoomable sunburst of the biggest items, reveal in Finder/Explorer, and move selected items to the trash. Stays fully external to the app bundle.',
+    permissions: ['disk.read', 'disk.write'],
   })
 }
 
@@ -2283,25 +2510,6 @@ async function seedBuiltinPackages(deps: NdIpcDependencies): Promise<void> {
       const existing = await deps.state.activation(manifest.id, context)
       if (!existing) await deps.state.setActivation(manifest.id, context, true)
     }
-  }
-}
-
-/** Re-snapshot installed ND-bundled on-demand packages when their bundled manifest changed. */
-async function refreshAvailablePackages(deps: NdIpcDependencies): Promise<void> {
-  for (const { id, path } of AVAILABLE_PACKAGES) {
-    const packagePath = path()
-    const installed = await deps.packages.record(id)
-    if (!installed) continue
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(await fs.readFile(join(packagePath, 'nd-extension.json'), 'utf8'))
-    } catch {
-      continue
-    }
-    const validated = validateNdExtensionManifest(parsed)
-    if (!validated.ok || validated.manifest.id !== id || manifestPermissionIssues(validated.manifest).length > 0) continue
-    if (JSON.stringify(validated.manifest) === JSON.stringify(installed.manifest)) continue
-    await deps.packages.installFromDirectory(packagePath, { expectId: id })
   }
 }
 

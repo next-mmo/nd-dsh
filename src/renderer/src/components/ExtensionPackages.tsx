@@ -1,5 +1,6 @@
+import { normalizeExtensionRuntimePolicy } from '../../../shared/extension-runtime-policy'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { BookOpen, Check, ChevronLeft, ChevronRight, Download, ExternalLink, Eye, FolderOpen, FolderPlus, Gamepad2, Image, Languages, Layers, Link2, ListChecks, MonitorPlay, Package, PanelsTopLeft, Pencil, Plus, Power, Puzzle, RefreshCw, Repeat, Search, Settings2, ShieldCheck, Shuffle, SkipBack, SkipForward, Sparkles, SquareTerminal, Trash2, Undo2, Upload, Workflow, Globe } from 'lucide-react'
+import { BookOpen, Check, ChevronLeft, ChevronRight, Download, ExternalLink, Eye, FolderOpen, FolderPlus, Gamepad2, HardDrive, Image, Languages, Layers, Link2, ListChecks, MonitorPlay, Package, PanelsTopLeft, Pencil, Plus, Power, Puzzle, RefreshCw, Repeat, Search, Settings2, ShieldCheck, Shuffle, SkipBack, SkipForward, Sparkles, SquareTerminal, Trash2, Undo2, Upload, Workflow, Globe } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { cn } from '../lib/utils'
 import type { NdContext } from '../../../shared/nd-context'
@@ -57,6 +58,8 @@ const EXTENSION_ACCENTS: Record<string, { icon: LucideIcon; tileClassName: strin
   'nd.quit-process': { icon: Power, tileClassName: 'border-rose-500/25 bg-rose-500/15 text-rose-500' },
   'nd.tic-tac-toe': { icon: Gamepad2, tileClassName: 'border-teal-500/25 bg-teal-500/15 text-teal-500' },
   'nd.mini-browser': { icon: Globe, tileClassName: 'border-red-500/25 bg-red-500/15 text-red-500' },
+  'nd.pay-guard': { icon: ShieldCheck, tileClassName: 'border-indigo-500/25 bg-indigo-500/15 text-indigo-500' },
+  'nd.disk-cleaner': { icon: HardDrive, tileClassName: 'border-cyan-500/25 bg-cyan-500/15 text-cyan-500' },
 }
 
 function ExtensionIconTile({ id, large = false }: { id: string; large?: boolean }): React.ReactNode {
@@ -107,11 +110,18 @@ export function ExtensionPackagesCard({ state, organization, contexts, requested
   const [view, setView] = useState<{ extensionId: string; viewId: string; context: NdContext } | null>(null)
   const [detailTarget, setDetailTarget] = useState<ExtensionDetailTarget | null>(null)
   const [busy, setBusy] = useState(false)
+  const [visibleCount, setVisibleCount] = useState(48)
   const [catalogTab, setCatalogTab] = useState<'discover' | 'installed'>('installed')
   const [query, setQuery] = useState('')
   const [guideOpen, setGuideOpen] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
 
+  const policy = normalizeExtensionRuntimePolicy(state.runtimePolicy)
+  const webPackages = state.packages.filter((item) => item.views.some((view) => view.kind === 'web')
+    && `${item.name} ${item.id}`.toLowerCase().includes(query.trim().toLowerCase())).slice(0, 48)
+  const packageIndex = useMemo(() => new Map(state.packages.map((item) => [item.id, item])), [state.packages])
+  const activeIndex = useMemo(() => new Set(state.activations.filter((item) => item.enabled).map((item) => JSON.stringify([item.extensionId, item.contextKey]))), [state.activations])
+  useEffect(() => setVisibleCount(48), [query, catalogTab])
   const normalizedQuery = query.trim().toLowerCase()
   const available = (state.available ?? []).filter((item) =>
     !normalizedQuery || `${item.name} ${item.description} ${item.id}`.toLowerCase().includes(normalizedQuery))
@@ -169,8 +179,7 @@ export function ExtensionPackagesCard({ state, organization, contexts, requested
   }
 
   const isActive = (extensionId: string, context: NdContext): boolean =>
-    state.activations.some((record) =>
-      record.extensionId === extensionId && record.contextKey === contextKey(context) && record.enabled)
+    activeIndex.has(JSON.stringify([extensionId, contextKey(context)]))
 
   return (
     <div className="mx-auto w-full max-w-[1120px] space-y-7 pb-8">
@@ -196,7 +205,10 @@ export function ExtensionPackagesCard({ state, organization, contexts, requested
               key={id}
               type="button"
               aria-pressed={catalogTab === id}
-              onClick={() => setCatalogTab(id)}
+              onClick={() => {
+                setCatalogTab(id)
+                if (id === 'discover') void run(() => window.ndDsh.ndExtensions.refreshCatalog())
+              }}
               className={cn(
                 'inline-flex h-8 items-center gap-2 rounded-full px-3.5 text-xs font-medium transition-colors',
                 catalogTab === id ? 'bg-primary/15 text-primary shadow-sm' : 'text-faint hover:bg-accent hover:text-foreground',
@@ -227,6 +239,34 @@ export function ExtensionPackagesCard({ state, organization, contexts, requested
           </Button>
         </div>
       </div>
+
+      <details className="rounded-xl border border-border-soft bg-surface-0/60 p-4">
+        <summary className="cursor-pointer text-sm font-semibold">Background extension limits</summary>
+        <p className="mt-2 text-xs text-faint">Views stop when closed unless you enable background use below. Idle views can lose unsaved state when released. Native reminders and clipboard recording use their own settings.</p>
+        <div className="mt-3 flex flex-wrap gap-4">
+          <label className="text-xs">Maximum background views
+            <select aria-label="Maximum background extension views" className="ml-2 rounded border border-border-soft bg-surface-1 p-1" value={policy.maxBackgroundViews} disabled={busy}
+              onChange={(event) => void run(() => window.ndDsh.ndExtensions.setRuntimePolicy({ ...policy, maxBackgroundViews: Number(event.target.value) }))}>
+              {Array.from({ length: 17 }, (_, value) => <option key={value} value={value}>{value}</option>)}
+            </select>
+          </label>
+          <label className="text-xs">Release after idle minutes
+            <select aria-label="Extension idle timeout minutes" className="ml-2 rounded border border-border-soft bg-surface-1 p-1" value={policy.idleTimeoutMinutes} disabled={busy}
+              onChange={(event) => void run(() => window.ndDsh.ndExtensions.setRuntimePolicy({ ...policy, idleTimeoutMinutes: Number(event.target.value) }))}>
+              {Array.from({ length: 20 }, (_, index) => <option key={index} value={index + 1}>{index + 1}</option>)}
+            </select>
+          </label>
+        </div>
+        <p className="mt-2 text-xs text-faint">Use the extension search to find background options. Up to 48 matching views are shown.</p>
+        <div className="mt-3 flex flex-wrap gap-4">
+          {webPackages.map((item) => <label key={item.id} className="flex items-center gap-2 text-xs">
+            <input type="checkbox" disabled={busy} checked={policy.backgroundExtensionIds.includes(item.id)}
+              onChange={(event) => void run(() => window.ndDsh.ndExtensions.setRuntimePolicy({ ...policy, backgroundExtensionIds: event.target.checked
+                ? [...policy.backgroundExtensionIds, item.id] : policy.backgroundExtensionIds.filter((id) => id !== item.id) }))} />
+            Keep {item.name} in background
+          </label>)}
+        </div>
+      </details>
 
       {state.pendingApprovals.length > 0 ? (
         <section className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4" aria-label="Pending extension approvals">
@@ -280,8 +320,8 @@ export function ExtensionPackagesCard({ state, organization, contexts, requested
           <section aria-label="Discover extensions">
             {available.length > 0 ? (
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                {available.map((item) => {
-                  const installed = state.packages.find((pack) => pack.id === item.id)
+                {available.slice(0, visibleCount).map((item) => {
+                  const installed = packageIndex.get(item.id)
                   const updateAvailable = installed && installed.version !== item.version
                   return (
                     <article
@@ -325,7 +365,7 @@ export function ExtensionPackagesCard({ state, organization, contexts, requested
           <section aria-label="Installed extensions">
             {installed.length > 0 ? (
               <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-                {installed.map((item) => (
+                {installed.slice(0, visibleCount).map((item) => (
                   <PackageRow
                     key={item.id}
                     item={item}
@@ -346,6 +386,10 @@ export function ExtensionPackagesCard({ state, organization, contexts, requested
           </section>
         )}
       </div>
+
+      {(catalogTab === 'discover' ? available.length : installed.length) > visibleCount ? (
+        <Button variant="outline" onClick={() => setVisibleCount((count) => count + 48)}>Show more extensions</Button>
+      ) : null}
 
       <details className="group rounded-xl border border-border-soft bg-surface-0/30">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-xs font-semibold text-foreground [&::-webkit-details-marker]:hidden">
@@ -1895,7 +1939,12 @@ function ExtensionViewDialog({
     let mounted = true
     void window.ndDsh.ndExtensions.loadView(target.extensionId, target.viewId, target.context)
       .then((next) => {
-        if (!mounted) return
+        if (!mounted) {
+          // A canceled load never owned a frame. Revoke its unused capability
+          // instead of consuming a live-token slot until TTL expiration.
+          if (next.webView?.token) void window.ndDsh.ndExtensions.closeWebView(next.webView.token).catch(() => undefined)
+          return
+        }
         if (next.kind === 'web' && next.webView?.url) admitKeepAliveView(next)
         setData(next)
         setLoadedTarget(targetKey)
@@ -3746,5 +3795,5 @@ function describePermissions(permissions: string[]): string {
 }
 
 function describeSource(kind: string): string {
-  return kind === 'builtin' ? 'Bundled with ND' : kind === 'local' ? 'Installed from a folder' : kind
+  return kind === 'builtin' ? 'Bundled with ND' : kind === 'local' ? 'Installed from a folder' : kind === 'remote' ? 'Downloaded on demand' : kind
 }

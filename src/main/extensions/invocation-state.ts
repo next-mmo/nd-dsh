@@ -1,3 +1,4 @@
+import { normalizeExtensionRuntimePolicy, type ExtensionRuntimePolicy } from '../../shared/extension-runtime-policy.js'
 import { randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -24,6 +25,7 @@ interface ActivationRecord {
 type GrantRecord = NdGrantView
 
 interface InvocationSnapshot {
+  runtimePolicy?: ExtensionRuntimePolicy
   version: 1
   activations: ActivationRecord[]
   grants: GrantRecord[]
@@ -40,12 +42,38 @@ const AUDIT_LIMIT = 500
  * implied by the other.
  */
 export class InvocationStateStore {
+  private activationIndex = new Map<string, ActivationRecord>()
+  private generation = 0
   private loaded = false
   private loadPromise: Promise<void> | undefined
   private saveChain: Promise<void> = Promise.resolve()
   private value: InvocationSnapshot = { version: 1, activations: [], grants: [], audit: [] }
 
   constructor(private readonly rootDir: string) {}
+
+  async runtimePolicy(): Promise<ExtensionRuntimePolicy> {
+    await this.load()
+    return normalizeExtensionRuntimePolicy(this.value.runtimePolicy)
+  }
+
+  async setRuntimePolicy(policy: unknown): Promise<void> {
+    await this.load()
+    this.value.runtimePolicy = normalizeExtensionRuntimePolicy(policy)
+    await this.persist()
+  }
+
+  get revision(): number { return this.generation }
+
+  async enabledExtensionIds(context: NdContext): Promise<string[]> {
+    await this.load()
+    const key = contextKey(context)
+    return this.value.activations.filter((record) => record.contextKey === key && record.enabled).map((record) => record.extensionId)
+  }
+
+  private rebuildIndex(): void {
+    this.activationIndex = new Map(this.value.activations.map((record) => [JSON.stringify([record.extensionId, record.contextKey]), record]))
+    this.generation += 1
+  }
 
   async activations(): Promise<NdActivationView[]> {
     await this.load()
@@ -55,14 +83,14 @@ export class InvocationStateStore {
   async activation(extensionId: string, context: NdContext): Promise<ActivationRecord | undefined> {
     await this.load()
     const key = contextKey(context)
-    const record = this.value.activations.find((item) => item.extensionId === extensionId && item.contextKey === key)
+    const record = this.activationIndex.get(JSON.stringify([extensionId, key]))
     return record ? structuredClone(record) : undefined
   }
 
   async setActivation(extensionId: string, context: NdContext, enabled: boolean): Promise<void> {
     await this.load()
     const key = contextKey(context)
-    const existing = this.value.activations.find((item) => item.extensionId === extensionId && item.contextKey === key)
+    const existing = this.activationIndex.get(JSON.stringify([extensionId, key]))
     if (existing) {
       existing.enabled = enabled
       existing.context = context
@@ -77,6 +105,7 @@ export class InvocationStateStore {
         updatedAt: Date.now(),
       })
     }
+    this.rebuildIndex()
     await this.persist()
   }
 
@@ -88,13 +117,14 @@ export class InvocationStateStore {
   async setSetting(extensionId: string, context: NdContext, key: string, value: unknown): Promise<void> {
     await this.load()
     const contextId = contextKey(context)
-    let record = this.value.activations.find((item) => item.extensionId === extensionId && item.contextKey === contextId)
+    let record = this.activationIndex.get(JSON.stringify([extensionId, contextId]))
     if (!record) {
       record = { extensionId, contextKey: contextId, context, enabled: false, settings: {}, updatedAt: Date.now() }
       this.value.activations.push(record)
     }
     record.settings = { ...record.settings, [key]: value }
     record.updatedAt = Date.now()
+    this.rebuildIndex()
     await this.persist()
   }
 
@@ -141,10 +171,11 @@ export class InvocationStateStore {
     return removed
   }
 
-  async revokeGrantsForExtension(extensionId: string): Promise<void> {
+  async revokeGrantsForExtension(extensionId: string, context?: NdContext): Promise<void> {
     await this.load()
     const before = this.value.grants.length
-    this.value.grants = this.value.grants.filter((grant) => grant.extensionId !== extensionId)
+    const key = context ? contextKey(context) : undefined
+    this.value.grants = this.value.grants.filter((grant) => grant.extensionId !== extensionId || (key !== undefined && grant.contextKey !== key))
     if (this.value.grants.length !== before) await this.persist()
   }
 
@@ -153,7 +184,10 @@ export class InvocationStateStore {
     await this.load()
     const before = this.value.activations.length
     this.value.activations = this.value.activations.filter((record) => record.extensionId !== extensionId)
-    if (this.value.activations.length !== before) await this.persist()
+    if (this.value.activations.length !== before) {
+      this.rebuildIndex()
+      await this.persist()
+    }
   }
 
   /** One-shot grants are consumed by the invocation that used them. */
@@ -190,6 +224,7 @@ export class InvocationStateStore {
       if (record.version !== 1) throw new Error('invocation state has an unsupported schema')
       this.value = {
         version: 1,
+        runtimePolicy: normalizeExtensionRuntimePolicy(record.runtimePolicy),
         activations: Array.isArray(record.activations) ? record.activations.filter(isActivationRecord) : [],
         grants: Array.isArray(record.grants) ? record.grants.filter(isGrantRecord) : [],
         audit: Array.isArray(record.audit) ? record.audit.slice(0, AUDIT_LIMIT).filter(isAuditRecord) : [],
@@ -200,6 +235,7 @@ export class InvocationStateStore {
       }
       this.value = { version: 1, activations: [], grants: [], audit: [] }
     }
+    this.rebuildIndex()
     this.loaded = true
   }
 

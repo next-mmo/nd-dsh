@@ -1,3 +1,4 @@
+import type { ExtensionRuntimePolicy } from './extension-runtime-policy.js'
 /**
  * Invocation, grant, and ND Home contracts shared by main, preload, and the
  * renderer. The invocation envelope is the only way a contribution runs: it
@@ -94,8 +95,11 @@ export interface NdWebViewData {
   entry: string
   /** Attached by main for the renderer: the token-scoped asset URL to load. */
   url?: string
-  /** Opaque serving token; revoke it when the hosting dialog closes. */
+  /** Opaque serving token; revoke it when the hosting live view is released. */
   token?: string
+  expiresAt?: number
+  version?: string
+  updatedAt?: number
 }
 
 export interface NdViewData {
@@ -112,7 +116,7 @@ export interface NdViewData {
   webView?: NdWebViewData
 }
 
-export type NdPackageSourceKind = 'builtin' | 'local' | 'git'
+export type NdPackageSourceKind = 'builtin' | 'local' | 'git' | 'remote'
 
 export interface NdPackageSourceView {
   kind: NdPackageSourceKind
@@ -144,7 +148,7 @@ export interface NdInstalledPackageView {
   settings: NdPackageSettingField[]
   contributions: NdContributionCounts
   /** Typed views this package offers, in manifest order. */
-  views: Array<{ id: string; title: string; description?: string }>
+  views: Array<{ id: string; title: string; description?: string; kind?: 'list' | 'detail' | 'web' }>
   /** Command contributions with display metadata, in manifest order. */
   commands: Array<{ id: string; title: string; description?: string }>
   hasExecutable: boolean
@@ -189,6 +193,7 @@ export interface NdAuditEntryView {
 }
 
 export interface NdExtensionsStateView {
+  runtimePolicy?: ExtensionRuntimePolicy
   packages: NdInstalledPackageView[]
   available?: NdAvailablePackageView[]
   activations: NdActivationView[]
@@ -283,9 +288,11 @@ export interface NdHomeNoteInput {
 
 export interface NdExtensionsDesktopApi {
   state(): Promise<NdExtensionsStateView>
+  setRuntimePolicy(policy: ExtensionRuntimePolicy): Promise<NdExtensionsStateView>
   /** Opens a native directory picker, validates, and installs the chosen package. */
   installLocal(): Promise<NdExtensionsStateView | null>
   installFromPath(path: string): Promise<NdExtensionsStateView>
+  refreshCatalog(): Promise<NdExtensionsStateView>
   installAvailable(extensionId: string): Promise<NdExtensionsStateView>
   /**
    * Builds the extension starter kit (a complete, installable sample package)
@@ -334,9 +341,11 @@ export interface NdHomeDesktopApi {
 
 export const ND_EXTENSIONS_IPC = {
   state: 'nd-ext:state',
+  runtimePolicy: 'nd-ext:runtime-policy',
   installLocal: 'nd-ext:install-local',
   installFromPath: 'nd-ext:install-path',
   installAvailable: 'nd-ext:install-available',
+  refreshCatalog: 'nd-ext:catalog:refresh',
   exportStarterKit: 'nd-ext:export-starter-kit',
   update: 'nd-ext:update',
   rollback: 'nd-ext:rollback',

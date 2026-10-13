@@ -48,6 +48,8 @@ if (process.platform !== 'win32') await fs.chmod(join(nodeOutput, nodeBinaryName
 await requireFile(join(harnessSource, 'package.json'), 'Harness source manifest')
 await requireFile(join(harnessSource, 'pnpm-lock.yaml'), 'Harness lockfile')
 
+await run(process.execPath, [join(root, 'scripts', 'build-extension-catalog.mjs')], root, harnessEnv)
+
 console.log('\nBuilding the ND Core and Browser Companion native host release binaries...')
 await run(cargo, ['build', '--release', '-p', 'nd-core', '-p', 'nd-agent', '-p', 'nd-browser-host'], root, harnessEnv)
 await requireFile(coreSourceBinary, 'ND Core release binary')

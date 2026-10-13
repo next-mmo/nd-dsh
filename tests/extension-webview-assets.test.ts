@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, mkdir, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -95,6 +95,38 @@ describe('ExtensionWebViewAssets serving', () => {
     assets.revoke(token)
     expect((await assets.respond(url)).status).toBe(404)
     expect((await assets.respond(webviewAssetUrl(token, 'nd.tic-tac-toe', 'ui/game.js'))).status).toBe(404)
+  })
+
+  it('refuses a symlink introduced into an existing snapshot', async () => {
+    await install()
+    const issued = await assets.issue('nd.tic-tac-toe', 'ui/index.html')
+    const snapshot = join(root, 'packages', 'packages', 'nd.tic-tac-toe', '1.0.0')
+    await mkdir(join(snapshot, 'node_modules'))
+    const outside = join(root, 'outside')
+    await mkdir(outside)
+    await writeFile(join(outside, 'fixture.txt'), 'LOCAL_TEST_FIXTURE')
+    await symlink(outside, join(snapshot, 'node_modules', 'escape'), 'junction')
+    const response = await assets.respond(webviewAssetUrl(issued!.token, 'nd.tic-tac-toe', 'node_modules/escape/fixture.txt'))
+    expect(response.status).toBe(404)
+  })
+
+  it('revokes all tokens belonging to an uninstalled or disabled extension', async () => {
+    await install()
+    const first = await assets.issue('nd.tic-tac-toe', 'ui/index.html')
+    const second = await assets.issue('nd.tic-tac-toe', 'ui/index.html')
+    assets.revokeExtension('nd.tic-tac-toe')
+    expect(assets.liveTokenCount()).toBe(0)
+    expect((await assets.respond(first!.url)).status).toBe(404)
+    expect((await assets.respond(second!.url)).status).toBe(404)
+  })
+
+  it('keeps tokens in other contexts when disabling a single activation', async () => {
+    await install()
+    const personal = await assets.issue('nd.tic-tac-toe', 'ui/index.html', 'personal')
+    const project = await assets.issue('nd.tic-tac-toe', 'ui/index.html', 'project:c1/p1')
+    assets.revokeExtension('nd.tic-tac-toe', 'personal')
+    expect((await assets.respond(personal!.url)).status).toBe(404)
+    expect((await assets.respond(project!.url)).status).toBe(200)
   })
 
   it('binds tokens to the installed version and expires stale ones', async () => {

@@ -33,6 +33,7 @@ import type { UsageLedger } from './usage/usage-ledger.js'
 import { registerExtensionIpc } from './extensions/ipc.js'
 import { ExtensionRouter } from './extensions/extension-router.js'
 import { ExtensionStore } from './extensions/extension-store.js'
+import type { PackageSnapshot } from './extensions/package-store.js'
 import { ExtensionPackageStore } from './extensions/package-store.js'
 import { InvocationStateStore } from './extensions/invocation-state.js'
 import { NativeHostRegistry } from './extensions/native-host.js'
@@ -44,8 +45,10 @@ import type { GitExecRunner } from './git/git-cli.js'
 import type { CoreMedia } from './core/core-media.js'
 import type { CoreClipboard } from './core/core-clipboard.js'
 import type { CoreMediaKeys } from './core/core-media-keys.js'
+import { validateSystemVolumeUpdate, type CoreSystemVolume } from './core/core-system-volume.js'
 import type { NdMediaKeyKind } from '../shared/media-session.js'
 import type { CoreVault } from './core/core-vault.js'
+import type { CoreDiskScan } from './core/core-disk.js'
 import type { HarnessService } from './harness/harness-service.js'
 import type { ProviderStore } from './providers.js'
 import type { QaService } from './qa/qa-service.js'
@@ -81,6 +84,8 @@ interface IpcDependencies {
   externalElements: ExternalElementStage
   recentPicks: RecentPickStore
   git: GitService
+  /** nd-core owns bounded, cancellable extension snapshots. */
+  corePackageSnapshot: PackageSnapshot
   /** nd-core-backed Git for the workflow-plugin and extension-package pipelines. */
   coreGit?: GitExecRunner
   /** nd-core-backed native image and wallpaper surface for extensions. */
@@ -89,8 +94,11 @@ interface IpcDependencies {
   coreClipboard?: CoreClipboard
   /** nd-core-backed OS media transport keys, the launcher transport fallback. */
   coreMediaKeys?: CoreMediaKeys
+  coreSystemVolume?: CoreSystemVolume
   /** nd-core-backed encrypted local password vault for extensions. */
   coreVault?: CoreVault
+  /** nd-core-backed disk-usage scan surface for extensions. */
+  coreDisk?: CoreDiskScan
   qa: QaService
   sessionArchive: SessionArchiveStore
   /** ND's durable token accounting, captured from the runtime event stream. */
@@ -250,7 +258,7 @@ export function registerIpc(deps: IpcDependencies): () => void {
   // between surfaces.
   const userDataRoot = app.getPath('userData')
   const homeStore = new HomeStore(join(userDataRoot, 'nd-home'))
-  const packageStore = new ExtensionPackageStore(join(userDataRoot, 'nd-extensions'), deps.coreGit)
+  const packageStore = new ExtensionPackageStore(join(userDataRoot, 'nd-extensions'), deps.coreGit, deps.corePackageSnapshot)
   const invocationState = new InvocationStateStore(userDataRoot)
   const nativeHost = new NativeHostRegistry()
   const invocationBroker = new InvocationBroker({
@@ -295,6 +303,7 @@ export function registerIpc(deps: IpcDependencies): () => void {
     ...(deps.coreMedia ? { media: deps.coreMedia } : {}),
     ...(deps.coreClipboard ? { coreClipboard: deps.coreClipboard } : {}),
     ...(deps.coreVault ? { coreVault: deps.coreVault } : {}),
+    ...(deps.coreDisk ? { coreDisk: deps.coreDisk } : {}),
     onHomeChanged: () => { void syncHomeSessions() },
   })
   // Personal chats run outside the active workspace but must stay listed in the
@@ -543,7 +552,14 @@ export function registerIpc(deps: IpcDependencies): () => void {
   const sendMediaKey = async (key: NdMediaKeyKind): Promise<void> => {
     await deps.coreMediaKeys?.sendKey(key).catch(() => false)
   }
-  handleLauncherSurface(IPC.mediaState, () => deps.browser.media().state())
+  handleLauncherSurface(IPC.mediaState, () => deps.browser.media().refresh())
+  handleLauncherSurface(IPC.mediaVolumeState, () => deps.coreSystemVolume?.state()
+    ?? { available: false, reason: 'System volume is unavailable' })
+  handleLauncherSurface(IPC.mediaVolumeSet, (_event, update: unknown) => {
+    const validated = validateSystemVolumeUpdate(update)
+    return deps.coreSystemVolume?.set(validated)
+      ?? { available: false, reason: 'System volume is unavailable' }
+  })
   handleLauncherSurface(IPC.mediaPlayPause, async () => {
     const result = await deps.browser.media().playPause()
     if (result === 'none') await sendMediaKey('play-pause')

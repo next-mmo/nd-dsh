@@ -17,7 +17,6 @@ describe('release payload policy', () => {
     const resources = electronPlatformName === 'darwin'
       ? join(appOutDir, 'ND-DSH.app', 'Contents', 'Resources') : join(appOutDir, 'resources')
     await mkdir(join(resources, 'vendor', 'deepseek-harness'), { recursive: true })
-    await mkdir(join(resources, 'nd-extensions', 'translate'), { recursive: true })
     await mkdir(join(resources, 'scripts'), { recursive: true })
     await writeFile(join(resources, 'scripts', 'nd-agent-browser-cli.mjs'), '// fixture')
     await writeFile(join(resources, 'scripts', 'nd-background-process.cjs'), '// fixture')
@@ -26,26 +25,12 @@ describe('release payload policy', () => {
     return { appOutDir, electronPlatformName, manifestPath, manifest }
   }
 
-  it.each(['win32', 'darwin'])('rejects a %s package that omits the optional Translate manifest', async (platform) => {
+  it.each(['win32', 'darwin'])('accepts a %s release without optional package payloads', async (platform) => {
     const fixture = await packagedFixture(platform)
-    await expect(checkPayload(fixture)).rejects.toThrow('ND Translate release manifest is missing or invalid')
-    await writeFile(fixture.manifestPath, JSON.stringify(fixture.manifest))
     await expect(checkPayload(fixture)).resolves.toBeUndefined()
-  })
-
-  it('rejects a present Translate payload with mismatched identity or contributions', async () => {
-    const fixture = await packagedFixture()
-    await writeFile(fixture.manifestPath, JSON.stringify({ ...fixture.manifest, id: 'other.package' }))
-    await expect(checkPayload(fixture)).rejects.toThrow('invalid identity or contributions')
-    fixture.manifest.contributions.views[0].host = 'browser.openUrl'
+    await mkdir(join(fixture.manifestPath, '..'), { recursive: true })
     await writeFile(fixture.manifestPath, JSON.stringify(fixture.manifest))
-    await expect(checkPayload(fixture)).rejects.toThrow('invalid identity or contributions')
-  })
-
-  it('rejects a corrupt Translate manifest before accepting a complete package', async () => {
-    const fixture = await packagedFixture()
-    await writeFile(fixture.manifestPath, '{broken json')
-    await expect(checkPayload(fixture)).rejects.toThrow('missing or invalid')
+    await expect(checkPayload(fixture)).rejects.toThrow('must not bundle optional ND extension packages')
   })
 
   it('removes native Office engines, including nested copies, and preserves runtime JS and other engines', async () => {
