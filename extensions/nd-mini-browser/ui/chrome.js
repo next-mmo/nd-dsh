@@ -34,32 +34,40 @@ function createBridge() {
     }
   })
 
-  // Announce readiness until the host answers: a fast burst first, then a
+  // `ready` means "the UI can accept input": the host unhides the frame on
+  // this message, and a click that lands while this script is still setting
+  // up is silently swallowed. Call `start()` only after every control is
+  // bound. It announces until the host answers — a fast burst first, then a
   // slow retry forever, so a host that mounts late still connects instead of
   // leaving the dialog stuck on its loading state.
   let attempts = 0
   let slow = false
+  let retry = null
   const announce = () => window.parent.postMessage({ kind: 'nd-webview:ready' }, '*')
-  announce()
-  const retry = setInterval(() => {
-    if (hello) {
-      clearInterval(retry)
-      return
-    }
-    attempts += 1
-    if (!slow && attempts > 40) {
-      slow = true
-      clearInterval(retry)
-      setInterval(function slower() {
-        if (!hello) announce()
-        else clearInterval(slower)
-      }, 2_000)
-      return
-    }
+  const start = () => {
+    if (retry) return
     announce()
-  }, 250)
+    retry = setInterval(() => {
+      if (hello) {
+        clearInterval(retry)
+        return
+      }
+      attempts += 1
+      if (!slow && attempts > 40) {
+        slow = true
+        clearInterval(retry)
+        setInterval(function slower() {
+          if (!hello) announce()
+          else clearInterval(slower)
+        }, 2_000)
+        return
+      }
+      announce()
+    }, 250)
+  }
 
   return {
+    start,
     get connected() {
       return Boolean(hello)
     },
@@ -296,8 +304,16 @@ addressEl.addEventListener('keydown', (event) => {
   }
 })
 
+// The markup ships controls disabled so an interaction that arrives while
+// this script is still loading simply waits for them; enable them only now
+// that every handler above is bound.
+openEl.disabled = false
+
 // The frame must queue work until the host's hello handshake lands; an
 // initial fetch always races the handshake.
 bridge.whenConnected(() => {
   void refreshSession()
 })
+
+// Ready only now: every control above is bound before the host unhides the frame.
+bridge.start()

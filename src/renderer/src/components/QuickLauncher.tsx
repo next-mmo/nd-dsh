@@ -8,7 +8,6 @@ import {
   ListTodo,
   MessageSquare,
   MonitorUp,
-  Music2,
   Pause,
   Play,
   Puzzle,
@@ -21,6 +20,8 @@ import type { NdMediaSessionState } from '../../../shared/media-session'
 import type { NdCommandView } from '../../../shared/nd-invocations'
 import type { ContextOption } from '../lib/nd-context-model'
 import { cn } from '@renderer/lib/utils'
+import { MediaArtwork } from './MediaArtwork'
+import { SystemVolumeControl } from './SystemVolumeControl'
 import {
   DEFAULT_LAUNCHER_COMMAND_REGISTRY,
   launcherCommandGroups,
@@ -55,6 +56,7 @@ interface Props {
   onRunExtensionCommand?(command: NdCommandView, typed: string): void | Promise<void>
   onOpenKanban(): void
   onOpenAgent(): void
+  onOpenMedia(tabId: string): void | Promise<void>
   onActivateProject(projectId: string): void | Promise<void>
   onSwitchCompany(companyId: string): void | Promise<void>
   onCreateTask(text: string): void | Promise<void>
@@ -99,6 +101,7 @@ export function QuickLauncher({
   onRunExtensionCommand,
   onOpenKanban,
   onOpenAgent,
+  onOpenMedia,
   onActivateProject,
   onSwitchCompany,
   onCreateTask,
@@ -205,7 +208,7 @@ export function QuickLauncher({
         onValueChange={setQuery}
         placeholder="Search ND or type something to capture…"
       />
-      <CommandList className="max-h-[384px]">
+      <CommandList className={popupSurface ? (media ? 'max-h-[300px]' : 'max-h-[350px]') : 'max-h-[384px]'}>
         <CommandEmpty>No matching ND command.</CommandEmpty>
 
         {groups.map((group, index) => (
@@ -234,19 +237,24 @@ export function QuickLauncher({
 
       {media ? (
         <div className="flex items-center gap-2 border-t border-border-soft px-3 py-2">
-          {media.artworkUrl ? (
-            <img src={media.artworkUrl} alt="" className="size-8 shrink-0 rounded-md object-cover" />
-          ) : (
-            <span className="grid size-8 shrink-0 place-items-center rounded-md border border-primary/30 bg-primary/10 text-primary">
-              <Music2 className="size-4" />
+          <button
+            type="button"
+            aria-label={`Open ${media.site || 'media'} in browser`}
+            title="Go to playing tab"
+            onClick={() => {
+              if (closeBeforeRun) onOpenChange(false)
+              void onOpenMedia(media.tabId)
+            }}
+            className="flex min-w-0 flex-1 items-center gap-2 rounded-md text-left transition-colors hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-primary"
+          >
+            <MediaArtwork key={JSON.stringify([media.tabId, media.url, media.artworkUrl])} media={media} />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-xs font-medium text-strong">{media.title}</span>
+              <span className="block truncate text-[10px] text-faint">
+                {media.artist ? `${media.artist} · ` : ''}{media.site || 'media'}
+              </span>
             </span>
-          )}
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-xs font-medium text-strong">{media.title}</div>
-            <div className="truncate text-[10px] text-faint">
-              {media.artist ? `${media.artist} · ` : ''}{media.site || 'media'}
-            </div>
-          </div>
+          </button>
           <div className="flex shrink-0 items-center gap-1">
             <button
               type="button"
@@ -278,6 +286,8 @@ export function QuickLauncher({
           </div>
         </div>
       ) : null}
+
+      <SystemVolumeControl active={open} />
 
       <div className="flex items-center justify-between gap-3 border-t border-border-soft px-3 py-2 text-[10px] text-faint">
         <span className="truncate">

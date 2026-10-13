@@ -3,6 +3,8 @@ import type { Project } from '../src/shared/organization.js'
 import {
   DEFAULT_QUICK_LAUNCHER_SHORTCUT_MODE,
   isLauncherHandoffTarget,
+  launcherBrowserTabPayload,
+  launcherBrowserTabId,
   isQuickLauncherShortcutMode,
   resolveShortcutBehavior,
 } from '../src/shared/quick-launcher.js'
@@ -120,5 +122,15 @@ describe('ND Quick Launcher shortcut modes', () => {
     expect(isLauncherHandoffTarget('capture-clipboard')).toBe(true)
     expect(isLauncherHandoffTarget('browser-history')).toBe(false)
     expect(isLauncherHandoffTarget(undefined)).toBe(false)
+  })
+
+  it('carries existing-tab navigation through the established browser handoff', () => {
+    expect(isLauncherHandoffTarget('browser')).toBe(true)
+    expect(isLauncherHandoffTarget('browser-tab')).toBe(false)
+    expect(launcherBrowserTabId(launcherBrowserTabPayload('tab:media/1'))).toBe('tab:media/1')
+    expect(launcherBrowserTabId('https://www.youtube.com/watch?v=fixture')).toBeNull()
+    expect(launcherBrowserTabId(undefined)).toBeNull()
+    expect(launcherBrowserTabId('nd-browser-tab:')).toBeNull()
+    expect(launcherBrowserTabId('nd-browser-tab:%')).toBeNull()
   })
 })

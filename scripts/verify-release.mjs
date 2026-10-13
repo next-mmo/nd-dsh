@@ -36,8 +36,6 @@ for (const marker of [
   'to: THIRD_PARTY_NOTICES.nd-dsh.md',
   'from: extensions/browser-companion',
   'to: browser-companion',
-  'from: extensions/translate',
-  'to: nd-extensions/translate',
   'from: node_modules/agent-browser',
   'from: resources/browser-extensions',
   'to: browser-extensions',
@@ -46,6 +44,7 @@ for (const marker of [
   if (!builderConfig.includes(marker)) throw new Error(`electron-builder.yml is missing: ${marker}`)
 }
 const extraResourcesConfig = builderConfig.split('extraResources:')[1] ?? ''
+if (/to:\s*nd-extensions(?:\/|\s)/.test(extraResourcesConfig)) throw new Error('Optional extension packages must not be bundled')
 if (!builderConfig.includes('  - package.json\n  - node_modules/**')) {
   throw new Error('electron-builder.yml must keep the application package.json in app.asar')
 }
@@ -64,6 +63,7 @@ if (!configOnly) {
   await assertNoOfficeEngines(join(root, '.release', 'harness'))
   const requiredFiles = [
     '.release/release-manifest.json',
+    '.release/nd-extension-catalog.json',
     `.release/node/${process.platform === 'win32' ? 'node.exe' : 'node'}`,
     '.release/node/LICENSE',
     `.release/nd-core/${process.platform === 'win32' ? 'nd-core.exe' : 'nd-core'}`,

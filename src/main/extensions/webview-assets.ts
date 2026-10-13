@@ -60,6 +60,7 @@ export interface ParsedWebviewAssetUrl {
 }
 
 interface IssuedToken {
+  contextKey?: string
   extensionId: string
   version: string
   expiresAt: number
@@ -81,18 +82,25 @@ export class ExtensionWebViewAssets {
   ) {}
 
   /** Issue a serving URL for one installed package's UI entry. */
-  async issue(extensionId: string, entryPath: string): Promise<{ url: string; token: string } | undefined> {
+  async issue(extensionId: string, entryPath: string, contextKey?: string): Promise<{ url: string; token: string; version: string; updatedAt: number; expiresAt: number } | undefined> {
     const record = await this.packages.record(extensionId)
     if (!record) return undefined
     this.prune()
     if (this.tokens.size >= MAX_LIVE_TOKENS) return undefined
     const token = randomBytes(TOKEN_BYTES).toString('hex')
-    this.tokens.set(token, { extensionId, version: record.manifest.version, expiresAt: this.now() + TOKEN_TTL_MS })
-    return { token, url: webviewAssetUrl(token, extensionId, entryPath) }
+    const expiresAt = this.now() + TOKEN_TTL_MS
+    this.tokens.set(token, { extensionId, version: record.manifest.version, expiresAt, ...(contextKey ? { contextKey } : {}) })
+    return { token, version: record.manifest.version, updatedAt: record.updatedAt, expiresAt, url: webviewAssetUrl(token, extensionId, entryPath) }
   }
 
   revoke(token: string): void {
     this.tokens.delete(token)
+  }
+
+  revokeExtension(extensionId: string, contextKey?: string): void {
+    for (const [token, entry] of this.tokens) {
+      if (entry.extensionId === extensionId && (!contextKey || entry.contextKey === contextKey)) this.tokens.delete(token)
+    }
   }
 
   liveTokenCount(): number {

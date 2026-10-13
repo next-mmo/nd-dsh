@@ -127,6 +127,9 @@ test('the quick launcher popup shows an OS-style transport row for browser media
   await expect(pauseButton).toBeVisible({ timeout: 15_000 })
   await expect(dialog.getByText(TRACK_TITLE)).toBeVisible()
   await expect(dialog.getByText(new RegExp(TRACK_ARTIST))).toBeVisible()
+  await expect(dialog.getByRole('group', { name: 'System volume controls' })).toBeVisible()
+  const bounds = await dialog.boundingBox()
+  expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(await popup.evaluate(() => window.innerHeight))
 
   await pauseButton.click()
   const playButton = dialog.getByRole('button', { name: 'Play' })
@@ -135,6 +138,28 @@ test('the quick launcher popup shows an OS-style transport row for browser media
 
   await playButton.click()
   await expect(dialog.getByRole('button', { name: 'Pause' })).toBeVisible({ timeout: 10_000 })
+  await expect.poll(async () => await playerPaused(), { timeout: 10_000 }).toBe(false)
+
+  // YouTube Music changes routes while its player stays alive. The tracker
+  // must retain playback and refresh track metadata without another play event.
+  await launched.app.evaluate(async ({ webContents }, target) => {
+    const contents = webContents.getAllWebContents().find((item) => !item.isDestroyed() && item.getURL().startsWith(target))!
+    await contents.executeJavaScript(`(() => {
+      history.pushState({}, '', '/media?track=second');
+      navigator.mediaSession.metadata = new MediaMetadata({ title: 'ND Second Track', artist: 'Second Artist' });
+    })()`)
+  }, origin)
+  await expect(pauseButton).toBeVisible()
+  await expect(dialog.getByText('ND Second Track')).toBeVisible({ timeout: 10_000 })
+  await expect(dialog.getByText(/Second Artist/)).toBeVisible()
+
+  // An auxiliary player may pause while the music keeps playing. Reconcile the
+  // native notification with the actual page rather than retaining a Play icon.
+  await launched.app.evaluate(({ webContents }, target) => {
+    const contents = webContents.getAllWebContents().find((item) => !item.isDestroyed() && item.getURL().startsWith(target))!
+    contents.emit('media-paused')
+  }, origin)
+  await expect(pauseButton).toBeVisible({ timeout: 10_000 })
   await expect.poll(async () => await playerPaused(), { timeout: 10_000 }).toBe(false)
 
   await popup.screenshot({ path: 'test-results/launcher-media-row.png' })

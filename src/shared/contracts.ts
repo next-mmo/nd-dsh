@@ -1,6 +1,6 @@
 import type { LauncherHandoffTarget, QuickLauncherShortcutMode } from './quick-launcher.js'
 import type { GlobalShortcutId, GlobalShortcutState, CaptureDelaySeconds } from './shortcuts.js'
-import type { NdMediaSessionState } from './media-session.js'
+import type { NdMediaSessionState, NdSystemVolumeState, NdSystemVolumeUpdate } from './media-session.js'
 import type { WorkspaceProfile } from './workspace-profile.js'
 
 export interface BrowserBounds {
@@ -817,6 +817,8 @@ export interface DesktopApi {
     playPause(): Promise<{ ok: boolean }>
     next(): Promise<{ ok: boolean }>
     previous(): Promise<{ ok: boolean }>
+    volumeState(): Promise<NdSystemVolumeState>
+    setVolume(update: NdSystemVolumeUpdate): Promise<NdSystemVolumeState>
   }
   window?: {
     setFloatMode(enabled: boolean): Promise<{ float: boolean }>
@@ -887,6 +889,8 @@ export const IPC = {
   mediaPlayPause: 'media:play-pause',
   mediaNext: 'media:next',
   mediaPrevious: 'media:previous',
+  mediaVolumeState: 'media:volume-state',
+  mediaVolumeSet: 'media:volume-set',
   workspaceState: 'workspace:state',
   workspacePick: 'workspace:pick',
   workspacePickPath: 'workspace:pick-path',

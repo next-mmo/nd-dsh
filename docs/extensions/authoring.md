@@ -166,6 +166,10 @@ and in the product.
 | `os.wallpaper.links.import` / `os.wallpaper.links.export` | `os.wallpaper.write` | Merge a wallpaper-links JSON bundle into the user's list, or export the user's links in the same bundle format; Personal only |
 | `process.list` | `process.read` | List running processes in Personal with CPU and memory |
 | `process.quit` / `process.forceQuit` | `process.quit` | Quit a selected process from a fresh ND-issued list handle; ND confirms each action and protects its own processes; Personal only |
+| `disk.volumes.list` | `disk.read` | List mounted volumes with capacity and free space (metadata only); Personal only |
+| `disk.scan.start` / `disk.scan.status` / `disk.scan.cancel` | `disk.read` | Run one cancellable disk-usage scan of a folder through the nd-core sidecar (parallel walk, size aggregation, a pruned result tree), watch live progress, or stop it; Personal only, sensitive |
+| `disk.trash.move` | `disk.write` | Move one scanned item to the system trash after ND's own confirm dialog; filesystem roots and the home folder are refused; Personal only, sensitive |
+| `disk.reveal` | `disk.read` | Reveal a scanned item in Finder/Explorer; Personal only |
 | `chat.ask` | `chat.start` | Start an ND chat/agent turn from typed text |
 | `workflow.list` / `workflow.refresh` | `workflow.read` | Read (or refresh) the project's repository task board through the existing read-only mirror |
 
@@ -221,37 +225,77 @@ match `^[A-Za-z][A-Za-z0-9._-]{0,63}$` and must be unique in the package.
 
 ## 5. Distribution and lifecycle
 
-### Delivery models: built-in, on-demand catalog, fully external
+### Delivery models: core built-ins and external packages
 
-Every package follows exactly one delivery model. Pick it before writing the
-manifest — it decides where the files live, how users find the package, and
-what a release download costs. **The default for new work is fully external,
-on demand**: nothing ships in the app bundle, and users install when they want
-the capability.
+New optional extensions are external and installed on demand. Their UI,
+assets, vendored libraries, and package-specific logic stay in the package;
+do not add them to `electron-builder.yml` or import their UI into the app shell.
+Only product-core capabilities belong in `builtin-extension-packages.ts`.
+Reusable native host contracts remain in ND and enforce authority on every call.
 
-| | **Built-in** | **On-demand (staged catalog)** | **Fully external (default)** |
-| --- | --- | --- | --- |
-| Source of truth | `src/shared/builtin-extension-packages.ts` | `extensions/<name>/` folder | `extensions/<name>/` folder |
-| Ships in the release? | Yes — inside the app bundle | Yes — staged via `electron-builder.yml` `extraResources` into `nd-extensions/` | **No — zero release impact** |
-| Found in Discover | Always; cannot be uninstalled | Yes, every build — one-click Install | Dev builds only; packaged builds install from folder |
-| Installed | Seeded automatically at startup | By explicit user action | By explicit user action |
-| Use when | The behavior is part of ND itself and must always exist (Wallpaper Manager, Daily Essentials) | A first-party extra small enough to ship for everyone (Translate, Clipboard History, Password Vault) | Everything else: experiments, large assets (e.g. a vendored three.js), third-party or opt-in packages (3D Tic-Tac-Toe) |
+- Development Discover installs repository folders. Release builds fetch catalog
+  metadata only when the user opens Discover, then download only the selected
+  package after Install. Starting ND performs no catalog network requests.
+- Run `pnpm ext:catalog` after committing extension sources. Release staging
+  also generates `.release/nd-extension-catalog.json`. Upload this file as a
+  separate asset of the dedicated `nd-extension-catalog` GitHub prerelease.
+  This keeps catalog updates independent of app installer releases. Package files are fetched from the
+  immutable Git revision recorded in that catalog, with per-file SHA-256 and
+  size checks. The catalog and package folders are **not** part of the installer.
+- The default metadata URL is the ND repository's dedicated
+  `nd-extension-catalog` release asset, not the latest app release.
+  `ND_EXTENSION_CATALOG_URL` is a trusted deployment/development override for
+  the HTTPS metadata location; asset downloads remain restricted to the ND
+  repository. A private or unpublished repository/release cannot serve anonymous
+  downloads; users can still install from a folder while distribution is prepared.
+- Normal release staging refuses dirty/uncommitted package sources. To publish
+  an existing reviewed commit without including local work, use
+  `pnpm ext:catalog --revision <commit> --packages <directory,directory>`. This
+  reads manifests and file bytes directly from Git objects. Publishing
+  metadata is a release step, not something extension installation does.
+- Installation snapshots package files through `extensions.snapshot` in nd-core.
+  Rust owns the bounded directory walk, copy, cancellation and atomic directory
+  replacement; main owns manifest validation, activation and provenance. The
+  in-process snapshotter is a unit-test seam, not a production fallback.
+- Every file copied, including `node_modules`, is checked. Symlinks and
+  non-regular files are refused. Limits are 5,000 entries, 8 MiB per file, and
+  24 MiB per package. Asset serving separately verifies real-path containment.
+- ND keeps the active and previous version; installing another update removes
+  older snapshots. Rollback swaps the two retained versions.
 
-Promotion between models is deliberate and visible in review:
+### Background views and runtime budgets
 
-- **External → staged**: add the folder to `electron-builder.yml`
-  `extraResources` (`extensions/<name> → nd-extensions/<id>`), a path helper +
-  `AVAILABLE_PACKAGES` entry + a `packageCatalogView` in
-  `src/main/extensions/nd-ipc.ts`, and the package appears in Discover in every
-  build. Each staged package grows the release by its on-disk size.
-- **Staged → built-in**: move the manifest into
-  `src/shared/builtin-extension-packages.ts` (registered + seeded at startup,
-  uninstall refused). Do this only when the capability is genuinely part of the
-  product.
-- **Dev-only Discover entries** are the middle ground for external packages:
-  gate the `AVAILABLE_PACKAGES` entry and catalog view on `!app.isPackaged`, so
-  developers get one-click install from the repository folder while packaged
-  releases carry nothing (see `nd.tic-tac-toe` in `nd-ipc.ts`).
+Web views unload when the dialog closes by default. In Settings → Extensions →
+Background extension limits, the user can allow individual packages to keep a
+closed view alive, choose a maximum of 0–16 background views (default 4), and
+choose an idle timeout of 1–20 minutes (default 5). Oldest background views are
+released first when the limit is reached; foreground views are not evicted.
+Expiry destroys the iframe and can discard unsaved UI state, so persist important
+state through declared view actions. Only opened views consume a renderer heap;
+installing a package does not start an iframe or executable.
+
+Deactivation, uninstall, and a version change release retained views. Tokens
+are revoked when a view is released. Expired asset tokens cause a fresh load on
+reopen. A view may have at most eight pending bridge actions. Native jobs such as
+clipboard recording, wallpaper rotation, and reminders have their own activation
+and setting controls; keeping an iframe alive is not required for those jobs.
+External MCP calls continue to start their process on demand and close it after
+the call, rather than keeping every installed runtime resident.
+
+Registry lookup uses indexed package/activation records, a bounded context command
+cache with mutation invalidation, and paged management cards. Use
+`pnpm bench:extensions` to measure 10, 100, 1,000, and 5,000 installed packages;
+it measures warmed registry enumeration, not whole-app CPU or RAM.
+
+Package authors must also bound the work inside a running extension. Render
+static canvas/WebGL views on changes, stop animation frames when hidden or
+zero-sized, and animate only while something is changing. Dispose GPU geometry
+and materials when replacing them. Avoid continuous polling: prefer events or
+an explicit refresh, and prevent overlapping background jobs. Use nd-core for
+heavy native work and keep synchronous CPU/filesystem work off the app's main
+thread. Count/idle limits bound residency; they do not enforce a per-extension
+CPU or memory quota. Check actual idle CPU, GPU activity, memory, and UI response
+with representative active extensions before making whole-PC performance claims.
 
 - **Validate**: `node scripts/validate-nd-extension.mjs <folder>` (or
   `pnpm ext:validate`). The folder form requires a file named exactly
@@ -285,7 +329,7 @@ the same broker invocation path as any other contribution call, so
 permissions, contexts, and audit never depend on what the frame claims.
 Serving is token-scoped: main issues a per-dialog token bound to the installed
 version, re-checks snapshot containment, an asset-type allowlist, and the size
-caps on every request, and revokes the token when the dialog closes.
+caps on every request, and revokes the token when its live view is released.
 
 Rules for a web view:
 
@@ -299,13 +343,16 @@ Rules for a web view:
 - Privileged operations go through the bridge as view-action invocations
   (`{ action: '<id>', … }`), which the broker routes to the action's declared
   host method. A web view with no named action runs nothing.
+- Announce `nd-webview:ready` only once your controls are bound. The host
+  unhides the frame on that message, and an interaction that lands while the
+  UI script is still loading is silently dropped — so `ready` must mean "the
+  UI can accept input", not "the script started".
 - `extensions/tic-tac-toe/` is the reference implementation: a three.js game
   whose scoreboard persistence is three ordinary host methods. Its game logic
   (`ui/game-core.js`) is unit-tested straight from the repository, and the
   package stays fully external — it is never staged into the app bundle. Dev
-  builds list it in **Settings → Extensions → Discover** (installing from the
-  repository folder); packaged builds omit it from Discover, where users
-  install it from a folder instead.
+  builds install it from the repository folder; packaged builds install it from
+  the separately published catalog or a local folder.
 
 ## 6. What v1 deliberately does not support
 
@@ -333,13 +380,13 @@ actually consume `settings`. Validate the built-ins any time with:
 node scripts/validate-nd-extension.mjs --builtins
 ```
 
-`Quit Processes` is an optional ND-bundled package under
+`Quit Processes` is an optional external package under
 `extensions/quit-process`. It appears in Settings → Extensions → Available and
 is installed only when selected, then activated for Personal separately. Its
 command uses `openViewId` to open the process view from either launcher, and its
 view uses `refreshIntervalMs` to refresh while open.
 
-`ND Translate` is another optional ND-bundled package under
+`ND Translate` is another optional external package under
 `extensions/translate`. Install it from Settings → Extensions → Available,
 activate the context where it will be used, then run ND Translate in the
 launcher. It contributes manifest data to the native ND translator view;
@@ -369,6 +416,15 @@ persists its scoreboard through three ordinary host methods
 catalog; packaged users install it from a folder. Its pure game logic
 (`ui/game-core.js`) is unit-tested directly from the repository, and desktop
 coverage is in `e2e/tic-tac-toe.spec.ts`.
+
+`ND Disk Cleaner` under `extensions/disk-cleaner` is the reference for heavy
+native work behind a web view: the parallel disk-usage scan runs in the
+nd-core sidecar (bounded, cancellable, progress events), while the package
+ships only a sandboxed canvas UI whose privileged actions are
+`disk.volumes.list`, `disk.scan.start/status/cancel`, `disk.trash.move`, and
+`disk.reveal`. Its pure layout logic (`ui/sunburst.js`) is unit-tested
+directly from the repository; desktop coverage is in
+`tests/disk-cleaner-extension.test.ts` and `e2e/disk-cleaner.spec.ts`.
 
 For the real model-backed coding autopilot scenario, build first and configure
 the gitignored `.env.e2e`. In PowerShell, run:

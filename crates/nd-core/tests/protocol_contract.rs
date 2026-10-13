@@ -1401,6 +1401,7 @@ fn every_declared_capability_is_reachable_and_unknown_methods_are_refused() {
         "cache",
         "deadline",
         "cancellation",
+        "disk-scan",
         "metrics",
     ] {
         assert!(
@@ -1496,4 +1497,55 @@ fn scheduler_permits_are_shared_state_the_capability_list_still_promises() {
         )
         .expect("scheduler.release");
     assert_eq!(released["released"], json!(true));
+}
+
+#[test]
+fn extension_snapshots_validate_dependencies_over_the_wire_and_preserve_existing_content() {
+    let fixture = temp_dir("extension-snapshot");
+    let source = fixture.join("source");
+    let destination = fixture.join("installed/1.0.0");
+    fs::create_dir_all(source.join("node_modules/dependency")).unwrap();
+    fs::write(source.join("nd-extension.json"), "{}").unwrap();
+    fs::write(source.join("node_modules/dependency/index.js"), "fixture").unwrap();
+    let mut core = Core::launch();
+    let params = json!({ "source": source, "destination": destination, "expectedManifest": {} });
+    let result: Value = core.call("extensions.snapshot", params.clone()).unwrap();
+    assert_eq!(result["files"], 4);
+    let oversized = fs::File::create(source.join("node_modules/dependency/large.bin")).unwrap();
+    oversized.set_len(8 * 1024 * 1024 + 1).unwrap();
+    assert!(core.call::<Value>("extensions.snapshot", params).is_err());
+    assert_eq!(
+        fs::read_to_string(destination.join("node_modules/dependency/index.js")).unwrap(),
+        "fixture"
+    );
+    let _ = fs::remove_dir_all(fixture);
+}
+
+#[test]
+fn disk_scan_aggregates_sizes_over_the_wire_and_refuses_bad_roots() {
+    let fixture = temp_dir("disk-scan");
+    fs::create_dir_all(fixture.join("b/inner")).unwrap();
+    fs::write(fixture.join("a.bin"), vec![0u8; 1_000]).unwrap();
+    fs::write(fixture.join("b/big.bin"), vec![0u8; 5_000]).unwrap();
+    fs::write(fixture.join("b/inner/tiny.txt"), b"tiny").unwrap();
+    let mut core = Core::launch();
+
+    let result: Value = core.call("disk.scan", json!({ "root": fixture })).unwrap();
+    assert_eq!(result["bytes"], json!(6_004));
+    assert_eq!(result["fileCount"], json!(3));
+    assert_eq!(result["truncated"], json!(false));
+    assert_eq!(result["tree"]["s"], json!(6_004));
+    // Delivered children sort by size and reconcile to their parent's total.
+    let children = result["tree"]["c"].as_array().unwrap();
+    assert_eq!(children[0]["n"], json!("b"));
+    assert_eq!(children[0]["s"], json!(5_004));
+    let sum: u64 = children
+        .iter()
+        .map(|node| node["s"].as_u64().unwrap())
+        .sum();
+    assert_eq!(sum, 6_004);
+
+    let missing = core.call::<Value>("disk.scan", json!({ "root": fixture.join("nope") }));
+    assert!(missing.is_err());
+    let _ = fs::remove_dir_all(fixture);
 }

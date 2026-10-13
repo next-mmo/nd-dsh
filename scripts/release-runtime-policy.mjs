@@ -59,3 +59,14 @@ export async function assertNoOfficeEngines(runtimeRoot) {
   const paths = await officeEngineDirectories(runtimeRoot)
   if (paths.length) throw new Error(`Release must not bundle native Office engines: ${paths.join(', ')}`)
 }
+
+/** Optional packages must be fetched separately, never shipped as resources. */
+export async function assertNoOptionalExtensionPayloads(resources) {
+  const path = join(resources, 'nd-extensions')
+  try {
+    const entries = await fs.readdir(path)
+    if (entries.length) throw new Error('Release must not bundle optional ND extension packages')
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error
+  }
+}

@@ -1,3 +1,5 @@
+import { normalizeExtensionRuntimePolicy, type ExtensionRuntimePolicy } from '../../../shared/extension-runtime-policy'
+import type { NdExtensionsStateView } from '../../../shared/nd-invocations'
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { contextKey } from '../../../shared/nd-context'
@@ -12,9 +14,8 @@ import { SurfaceErrorBoundary } from './surface-error-boundary'
 
 /**
  * React keep-alive for `kind: 'web'` extension views (games, mini-apps). An
- * opened view stays mounted — iframe, JS heap, and game state included — until
- * the user closes it from the header tab strip, exactly like a browser tab
- * kept alive in the background.
+ * foreground view owns one iframe. Background retention is profile-owned,
+ * opt-in, count-bounded, and subject to idle expiry; release disposes its heap.
  *
  * The live iframes are owned by {@link ExtensionKeepAliveHost}, mounted once
  * at the app shell. While the extension view dialog is open for a view, the
@@ -39,6 +40,8 @@ interface ExtensionKeepAliveState {
   dockedKey: string | null
 }
 
+let runtimePolicy = normalizeExtensionRuntimePolicy(undefined)
+const backgroundedAt = new Map<string, number>()
 let keepAliveState: ExtensionKeepAliveState = { views: [], dockedKey: null }
 const keepAliveListeners = new Set<() => void>()
 // Dialog placeholder elements per docked view (not render state: the host
@@ -81,7 +84,12 @@ export function admitKeepAliveView(data: NdViewData): string {
 }
 
 export function lookupKeepAliveView(key: string): NdViewData | undefined {
-  return keepAliveState.views.find((view) => view.key === key)?.data
+  const data = keepAliveState.views.find((view) => view.key === key)?.data
+  if (data?.webView?.expiresAt && data.webView.expiresAt <= Date.now()) {
+    closeKeepAliveView(key)
+    return undefined
+  }
+  return data
 }
 
 /**
@@ -98,11 +106,16 @@ export function dockKeepAliveView(key: string, slot: HTMLElement | null): void {
     if (container && parking && container.isConnected) parking.moveBefore(container, null)
     keepAliveSlots.delete(key)
   }
+  if (slot) backgroundedAt.delete(key)
+  else backgroundedAt.set(key, Date.now())
   const dockedKey = slot ? key : (keepAliveState.dockedKey === key ? null : keepAliveState.dockedKey)
   if (dockedKey !== keepAliveState.dockedKey) {
     keepAliveState = { ...keepAliveState, dockedKey }
     emitKeepAliveChange()
   }
+  // React StrictMode briefly detaches refs before reattaching the same slot.
+  // Reconcile after that cycle so a development mount never destroys its frame.
+  queueMicrotask(() => pruneKeepAliveViews())
 }
 
 /** Truly closes a view: unmounts its iframe and revokes its asset token. */
@@ -110,13 +123,40 @@ export function closeKeepAliveView(key: string): void {
   const view = keepAliveState.views.find((entry) => entry.key === key)
   if (!view) return
   keepAliveSlots.delete(key)
+  backgroundedAt.delete(key)
   keepAliveState = {
     views: keepAliveState.views.filter((entry) => entry.key !== key),
     dockedKey: keepAliveState.dockedKey === key ? null : keepAliveState.dockedKey,
   }
   emitKeepAliveChange()
   const token = view.data.webView?.token
-  if (token) void window.ndDsh.ndExtensions.closeWebView(token).catch(() => { /* token TTL cleans up anyway */ })
+  if (token && typeof window !== 'undefined') void window.ndDsh.ndExtensions.closeWebView(token).catch(() => { /* token TTL cleans up anyway */ })
+}
+
+/** Reconcile live views with current profile authority, including update/uninstall. */
+export function reconcileExtensionKeepAlive(state: NdExtensionsStateView): void {
+  runtimePolicy = normalizeExtensionRuntimePolicy(state.runtimePolicy)
+  const packages = new Map(state.packages.map((item) => [item.id, item]))
+  const enabled = new Set(state.activations.filter((item) => item.enabled).map((item) => JSON.stringify([item.extensionId, item.contextKey])))
+  for (const view of [...keepAliveState.views]) {
+    const installed = packages.get(view.data.extensionId)
+    if (!installed || !enabled.has(JSON.stringify([view.data.extensionId, contextKey(view.data.context)]))
+      || (view.data.webView?.version && installed.version !== view.data.webView.version)
+      || (view.data.webView?.updatedAt && installed.updatedAt !== view.data.webView.updatedAt)) closeKeepAliveView(view.key)
+  }
+  pruneKeepAliveViews()
+}
+
+export function pruneKeepAliveViews(now = Date.now(), policy: ExtensionRuntimePolicy = runtimePolicy): void {
+  const background = keepAliveState.views.filter((view) => view.key !== keepAliveState.dockedKey && backgroundedAt.has(view.key))
+    .sort((a, b) => (backgroundedAt.get(a.key) ?? now) - (backgroundedAt.get(b.key) ?? now))
+  for (const view of background) {
+    if (!policy.backgroundExtensionIds.includes(view.data.extensionId)
+      || now - (backgroundedAt.get(view.key) ?? now) >= policy.idleTimeoutMinutes * 60_000
+      || (view.data.webView?.expiresAt && view.data.webView.expiresAt <= now)) closeKeepAliveView(view.key)
+  }
+  const retained = background.filter((view) => lookupKeepAliveView(view.key))
+  for (const view of retained.slice(0, Math.max(0, retained.length - policy.maxBackgroundViews))) closeKeepAliveView(view.key)
 }
 
 let keepAliveReopenHandler: ((view: ExtensionKeepAliveView) => void) | null = null
@@ -183,6 +223,11 @@ function KeepAliveFrame({ view, docked, onError }: {
 /** Keeps each iframe mounted, docking its stable container inside the open dialog. */
 export function ExtensionKeepAliveHost({ onError }: { onError: (message: string) => void }): ReactNode {
   const { views, dockedKey } = useExtensionKeepAlive()
+  useEffect(() => {
+    if (!views.some((view) => backgroundedAt.has(view.key))) return
+    const timer = window.setInterval(() => pruneKeepAliveViews(), 15_000)
+    return () => window.clearInterval(timer)
+  }, [views, dockedKey])
   return <>{views.map((view) => (
     <KeepAliveFrame key={view.key} view={view} docked={view.key === dockedKey} onError={onError} />
   ))}</>
@@ -226,7 +271,7 @@ export function ExtensionKeepAliveTabs({ organization, activeContext }: {
               }
             }}
             className={cn(
-              'group flex h-6 min-w-0 max-w-[150px] cursor-pointer items-center gap-1.5 rounded-md border px-2 text-xs font-semibold transition-colors',
+              'group flex h-6 w-[240px] shrink-0 cursor-pointer items-center gap-1.5 rounded-md border px-2 text-xs font-semibold transition-colors',
               active
                 ? 'border-primary/25 bg-primary/12 text-primary shadow-[0_1px_3px_rgba(0,0,0,0.2)]'
                 : 'border-border-strong bg-surface-1/50 text-soft hover:bg-accent hover:text-foreground',
@@ -235,7 +280,7 @@ export function ExtensionKeepAliveTabs({ organization, activeContext }: {
           >
             <SparkIcon className="size-3 shrink-0" />
             <span className="max-w-[62px] shrink-0 truncate text-[9px] font-semibold tracking-[0.04em] text-faint uppercase">{contextLabel}</span>
-            <span className="truncate">{view.data.title}</span>
+            <span className="min-w-0 flex-1 truncate">{view.data.title}</span>
             <button
               type="button"
               aria-label={`Close ${view.data.title}`}

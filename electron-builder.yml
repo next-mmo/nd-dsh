@@ -32,14 +32,6 @@ extraResources:
     to: nd-browser-host
   - from: extensions/browser-companion
     to: browser-companion
-  - from: extensions/quit-process
-    to: nd-extensions/quit-process
-  - from: extensions/translate
-    to: nd-extensions/translate
-  - from: extensions/clipboard-history
-    to: nd-extensions/clipboard-history
-  - from: extensions/password-vault
-    to: nd-extensions/password-vault
   - from: .release/harness
     to: vendor/deepseek-harness
   - from: .release/harness/node_modules

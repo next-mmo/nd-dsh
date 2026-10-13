@@ -32,8 +32,7 @@ import { QuickLauncher } from './components/QuickLauncher'
 import { HomeView } from './components/HomeView'
 import { PersonalSurface, type PersonalPane } from './components/personal-surface'
 import { PersonalDialpad } from './components/personal-dialpad'
-import { ExtensionPackagesCard } from './components/ExtensionPackages'
-import { ExtensionKeepAliveHost, ExtensionKeepAliveTabs, useExtensionKeepAliveReopenHandler } from './components/extension-view-keepalive'
+import { reconcileExtensionKeepAlive, ExtensionKeepAliveHost, ExtensionKeepAliveTabs, useExtensionKeepAliveReopenHandler } from './components/extension-view-keepalive'
 import { cn } from './lib/utils'
 import { fileAccent } from './lib/file-accents'
 import { isWorkspaceSelected } from './lib/workspace-selection'
@@ -52,7 +51,7 @@ import {
   optionIdForContext,
   browserFocusView,
 } from './lib/nd-context-model'
-import type { LauncherHandoffTarget } from '../../shared/quick-launcher'
+import { launcherBrowserTabId, type LauncherHandoffTarget } from '../../shared/quick-launcher'
 import { DEFAULT_CAPTURE_DELAY_SECONDS, type GlobalShortcutId } from '../../shared/shortcuts'
 import { asNdContext, type NdContext } from '../../shared/nd-context'
 import type { WorkspaceProfile } from '../../shared/workspace-profile'
@@ -76,6 +75,7 @@ import {
   type SettingsTab,
 } from './lib/settings-route'
 
+const ExtensionPackagesCard = lazy(() => import('./components/ExtensionPackages').then((module) => ({ default: module.ExtensionPackagesCard })))
 const SettingsPane = lazy(() => import('./components/SettingsPane').then((module) => ({ default: module.SettingsPane })))
 
 type ProductView = 'home' | 'company' | 'agent' | 'design' | 'qa' | 'settings'
@@ -280,6 +280,7 @@ export default function App() {
   // explicit context selector (Personal by default, independent of the active
   // company/project selection).
   const [ndExtensions, setNdExtensions] = useState<NdExtensionsStateView | null>(null)
+  useEffect(() => { if (ndExtensions) reconcileExtensionKeepAlive(ndExtensions) }, [ndExtensions])
   const [extensionViewRequest, setExtensionViewRequest] = useState<{ extensionId: string; viewId: string; context: NdContext } | null>(null)
   const [homeState, setHomeState] = useState<NdHomeStateView | null>(null)
   const [homeBusy, setHomeBusy] = useState(false)
@@ -1359,6 +1360,19 @@ export default function App() {
     }
   }
 
+  const openMediaTab = async (tabId: string): Promise<void> => {
+    try {
+      await window.ndDsh.browserPlatform.activateTab('builtin', tabId)
+      await window.ndDsh.browserPlatform.select({ mode: 'tab', targetId: 'builtin', tabId })
+      setQuickLauncherOpen(false)
+      setPersonalPane('browser')
+      setPersonalDialpadOpen(false)
+      switchToWorkbench('home')
+    } catch (cause) {
+      notify(errorMessage(cause))
+    }
+  }
+
   // Handoffs arrive from the launcher popup surface (a separate sandboxed
   // renderer) after main brings this window forward. The ref keeps the
   // subscription stable while the handler always sees the latest closures.
@@ -1376,11 +1390,17 @@ export default function App() {
           setCompanyView('workspace')
           switchToWorkbench('company')
           return
-        case 'browser':
+        case 'browser': {
+          const tabId = launcherBrowserTabId(text)
+          if (tabId) {
+            void openMediaTab(tabId)
+            return
+          }
           switchToWorkbench('agent')
           setAgentPane('browser')
           if (text) void window.ndDsh.browser.navigate(text).catch((cause) => notify(errorMessage(cause)))
           return
+        }
         case 'agent':
           if (text && context.kind === 'personal') void startContextChat(text, context)
           else {
@@ -1580,9 +1600,9 @@ export default function App() {
       <header
         data-nd-keepalive={headerKeepAlive ? '' : undefined}
         className={cn(
-          // Left column sizes to content so the keep-alive tabs are not clipped; the right column absorbs the slack
-          // and the nav keeps a content floor so it never shrinks under its buttons.
-          'app-drag grid grid-cols-[minmax(180px,auto)_minmax(min-content,auto)_minmax(180px,1fr)] items-center gap-[18px] border-b border-border-soft bg-titlebar pr-[148px] pl-3',
+          // Context controls and running views own a full-width second row.
+          // The top row reserves room for navigation and desktop controls.
+          'app-drag grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-[18px] border-b border-border-soft bg-titlebar pr-[148px] pl-3',
           headerKeepAlive && 'pointer-events-auto relative z-[60]',
         )}
       >
@@ -1662,8 +1682,73 @@ export default function App() {
               </span>
             </div>
           </div>
+
+        </div>
+        <nav className="app-no-drag flex min-w-0 self-start items-center justify-center pt-[2px]" aria-label="ND-DSH navigation">
+          <div className="flex min-w-0 items-center justify-center gap-0.5 rounded-lg border border-border-soft bg-surface-1/70 p-[3px] shadow-[inset_0_1px_0_rgba(255,255,255,0.025),0_4px_14px_rgba(0,0,0,0.12)]">
+            {navItems.map((item) => (
+              <button
+                key={item.id}
+                className={navButtonClasses(surface === 'workbench' && view === item.id)}
+                onClick={() => switchToWorkbench(item.id)}
+                title={item.label}
+                aria-current={surface === 'workbench' && view === item.id ? 'page' : undefined}
+              >
+                {item.icon}
+                <span>{item.label}</span>
+              </button>
+            ))}
+          </div>
+        </nav>
+        <div className="app-no-drag flex min-w-0 items-center justify-end gap-[7px] overflow-hidden font-mono text-xs text-faint">
+          {workspace?.binding === 'project' ? (
+            <Badge
+              variant="outline"
+              className="h-[17px] shrink-0 rounded-full border-primary/20 bg-primary/[0.06] px-[5px] font-sans text-[10px] font-extrabold tracking-[0.08em] text-primary"
+            >
+              SYNC
+            </Badge>
+          ) : null}
+          <TitlebarIconButton
+            active={true}
+            title="Inspect target: this ND-DSH app — the camera captures this window, the crosshair picks elements here. Click to target external apps instead."
+            onClick={toggleInspectScope}
+          >
+            <MonitorIcon />
+          </TitlebarIconButton>
+          <ScreenshotDropdown
+            scope={inspectScope}
+            disabled={appInspectCountdown !== null || appInspectInFlight}
+            onSelectMode={(selectedMode) => {
+              if (selectedMode === 'full') startAppInspect('full')
+              else openCaptureOverlay(selectedMode)
+            }}
+          >
+            <TitlebarIconButton
+              title="Inspect screenshot options: Full, Area, or Direct Annotation"
+              disabled={appInspectCountdown !== null || appInspectInFlight}
+            >
+              <CameraIcon />
+            </TitlebarIconButton>
+          </ScreenshotDropdown>
+          <TitlebarIconButton
+            title="Inspect an element in this app (Ctrl+Alt+E) — hover and click any element in ND-DSH, then Add to chat"
+            disabled={elementInspectActive}
+            onClick={startElementInspect}
+          >
+            <CrosshairIcon />
+          </TitlebarIconButton>
+          <ThemeToggle theme={theme} onSelect={selectTheme} />
+          <span className={cn('inline-block size-1.5 shrink-0 rounded-full', harnessDotClasses(harnessStatus?.state))} title={harnessStatus?.model ?? 'Runtime offline'} />
+          <TitlebarIconButton
+            title={workspaceCollapsed ? 'Expand workspace pane' : 'Collapse workspace pane'}
+            onClick={() => setWorkspaceCollapsed((collapsed) => !collapsed)}
+          >
+            <SidebarToggleIcon collapsed={!workspaceCollapsed} />
+          </TitlebarIconButton>
+        </div>
           {orgState ? (
-        <div className="app-no-drag flex min-w-0 items-center gap-[8px] overflow-hidden">
+        <div className="app-no-drag col-span-3 flex min-w-0 items-center gap-[8px] overflow-x-auto pb-1 [&>*]:shrink-0">
           <label className="flex items-center gap-[5px]">
             <span className="text-[10px] font-semibold tracking-[0.1em] text-faint">COMPANY</span>
                 <Select value={company?.id ?? ''} onValueChange={switchCompany}>
@@ -1763,70 +1848,6 @@ export default function App() {
               <ExtensionKeepAliveTabs organization={orgState} activeContext={currentContext(orgState)} />
             </div>
           ) : null}
-        </div>
-        <nav className="app-no-drag flex min-w-0 self-start items-center justify-center pt-[2px]" aria-label="ND-DSH navigation">
-          <div className="flex min-w-0 items-center justify-center gap-0.5 rounded-lg border border-border-soft bg-surface-1/70 p-[3px] shadow-[inset_0_1px_0_rgba(255,255,255,0.025),0_4px_14px_rgba(0,0,0,0.12)]">
-            {navItems.map((item) => (
-              <button
-                key={item.id}
-                className={navButtonClasses(surface === 'workbench' && view === item.id)}
-                onClick={() => switchToWorkbench(item.id)}
-                title={item.label}
-                aria-current={surface === 'workbench' && view === item.id ? 'page' : undefined}
-              >
-                {item.icon}
-                <span>{item.label}</span>
-              </button>
-            ))}
-          </div>
-        </nav>
-        <div className="app-no-drag flex min-w-0 items-center justify-end gap-[7px] overflow-hidden font-mono text-xs text-faint">
-          {workspace?.binding === 'project' ? (
-            <Badge
-              variant="outline"
-              className="h-[17px] shrink-0 rounded-full border-primary/20 bg-primary/[0.06] px-[5px] font-sans text-[10px] font-extrabold tracking-[0.08em] text-primary"
-            >
-              SYNC
-            </Badge>
-          ) : null}
-          <TitlebarIconButton
-            active={true}
-            title="Inspect target: this ND-DSH app — the camera captures this window, the crosshair picks elements here. Click to target external apps instead."
-            onClick={toggleInspectScope}
-          >
-            <MonitorIcon />
-          </TitlebarIconButton>
-          <ScreenshotDropdown
-            scope={inspectScope}
-            disabled={appInspectCountdown !== null || appInspectInFlight}
-            onSelectMode={(selectedMode) => {
-              if (selectedMode === 'full') startAppInspect('full')
-              else openCaptureOverlay(selectedMode)
-            }}
-          >
-            <TitlebarIconButton
-              title="Inspect screenshot options: Full, Area, or Direct Annotation"
-              disabled={appInspectCountdown !== null || appInspectInFlight}
-            >
-              <CameraIcon />
-            </TitlebarIconButton>
-          </ScreenshotDropdown>
-          <TitlebarIconButton
-            title="Inspect an element in this app (Ctrl+Alt+E) — hover and click any element in ND-DSH, then Add to chat"
-            disabled={elementInspectActive}
-            onClick={startElementInspect}
-          >
-            <CrosshairIcon />
-          </TitlebarIconButton>
-          <ThemeToggle theme={theme} onSelect={selectTheme} />
-          <span className={cn('inline-block size-1.5 shrink-0 rounded-full', harnessDotClasses(harnessStatus?.state))} title={harnessStatus?.model ?? 'Runtime offline'} />
-          <TitlebarIconButton
-            title={workspaceCollapsed ? 'Expand workspace pane' : 'Collapse workspace pane'}
-            onClick={() => setWorkspaceCollapsed((collapsed) => !collapsed)}
-          >
-            <SidebarToggleIcon collapsed={!workspaceCollapsed} />
-          </TitlebarIconButton>
-        </div>
       </header>
 
       <main className="relative min-h-0 min-w-0 overflow-hidden bg-surface-0">
@@ -2128,6 +2149,7 @@ export default function App() {
             switchToWorkbench('company')
           }}
           onOpenAgent={() => switchToWorkbench('agent')}
+          onOpenMedia={openMediaTab}
           onActivateProject={launcherActivateProject}
           onSwitchCompany={launcherSwitchCompany}
           onCreateTask={launcherCreateTask}

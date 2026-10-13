@@ -89,6 +89,29 @@ function invoke(overrides: Partial<Parameters<InvocationBroker['invoke']>[0]>) {
 }
 
 describe('InvocationBroker authorization', () => {
+  it('revokes grants only in the disabled context and all contexts on uninstall', async () => {
+    await state.addGrant({ extensionId: DAILY_ESSENTIALS_MANIFEST.id, host: 'note.create', context: personal, scope: 'remembered' })
+    await state.addGrant({ extensionId: DAILY_ESSENTIALS_MANIFEST.id, host: 'note.create', context: project, scope: 'remembered' })
+    await state.revokeGrantsForExtension(DAILY_ESSENTIALS_MANIFEST.id, personal)
+    expect((await state.grants()).map((grant) => grant.contextKey)).toEqual(['project:c1/p1'])
+    await state.revokeGrantsForExtension(DAILY_ESSENTIALS_MANIFEST.id)
+    expect(await state.grants()).toEqual([])
+  })
+
+  it('invalidates cached commands when activation or package contributions change', async () => {
+    await state.setActivation(DAILY_ESSENTIALS_MANIFEST.id, personal, true)
+    const first = await broker.commands(personal)
+    first[0]!.title = 'Caller mutation'
+    expect((await broker.commands(personal))[0]!.title).not.toBe('Caller mutation')
+    await state.setActivation(DAILY_ESSENTIALS_MANIFEST.id, personal, false)
+    expect(await broker.commands(personal)).toEqual([])
+    await state.setActivation(DAILY_ESSENTIALS_MANIFEST.id, personal, true)
+    const changed = structuredClone(DAILY_ESSENTIALS_MANIFEST)
+    changed.contributions.commands[0]!.title = 'Changed contribution'
+    await packages.registerBuiltin(changed)
+    expect((await broker.commands(personal)).some((item) => item.title === 'Changed contribution')).toBe(true)
+  })
+
   it('lists nothing until the package is activated in that context', async () => {
     expect(await broker.commands(personal)).toEqual([])
     await state.setActivation(DAILY_ESSENTIALS_MANIFEST.id, personal, true)
