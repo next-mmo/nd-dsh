@@ -73,6 +73,7 @@ const RUN_CREDENTIAL_TTL_MS = 12 * 60 * 60 * 1_000
  * authority.
  */
 export class InvocationBroker {
+  private commandCache = new Map<string, { packages: number; activations: number; commands: NdCommandView[] }>()
   private pending = new Map<string, PendingApproval>()
   private runs = new Map<string, RunCredential>()
   private onApprovalRequested: ((approval: NdPendingApprovalView) => void) | undefined
@@ -90,10 +91,16 @@ export class InvocationBroker {
 
   /** Contributions available in one context for the launcher and management UI. */
   async commands(context: NdContext): Promise<NdCommandView[]> {
+    const [ids] = await Promise.all([this.deps.state.enabledExtensionIds(context), this.deps.packages.initialize()])
+    const key = contextKey(context)
+    const packages = this.deps.packages.revision
+    const activations = this.deps.state.revision
+    const cached = this.commandCache.get(key)
+    if (cached?.packages === packages && cached.activations === activations) return structuredClone(cached.commands)
     const views: NdCommandView[] = []
-    for (const manifest of await this.activeManifests()) {
-      const activation = await this.deps.state.activation(manifest.id, context)
-      if (!activation?.enabled) continue
+    for (const id of ids) {
+      const manifest = await this.deps.packages.activeManifest(id)
+      if (!manifest) continue
       for (const command of manifest.contributions.commands) {
         if (!command.contexts.includes(context.kind)) continue
         views.push(commandView(manifest.id, command))
@@ -103,17 +110,30 @@ export class InvocationBroker {
         views.push(workflowOpenCommand(manifest.id, workflow))
       }
     }
-    return views.sort((left, right) => left.title.localeCompare(right.title))
+    views.sort((left, right) => left.title.localeCompare(right.title))
+    if (packages === this.deps.packages.revision && activations === this.deps.state.revision) {
+      this.commandCache.delete(key)
+      let retainedCommands = [...this.commandCache.values()].reduce((count, entry) => count + entry.commands.length, 0)
+      while (this.commandCache.size && (this.commandCache.size >= 32 || retainedCommands + views.length > 10_000)) {
+        const oldest = this.commandCache.keys().next().value!
+        retainedCommands -= this.commandCache.get(oldest)!.commands.length
+        this.commandCache.delete(oldest)
+      }
+      if (views.length <= 10_000) this.commandCache.set(key, { packages, activations, commands: views })
+    }
+    return structuredClone(views)
   }
 
   async stateView(): Promise<NdExtensionsStateView> {
-    const [packages, activations, grants, audit] = await Promise.all([
+    const [packages, activations, grants, audit, runtimePolicy] = await Promise.all([
       this.deps.packages.list(),
       this.deps.state.activations(),
       this.deps.state.grants(),
       this.deps.state.audit(),
+      this.deps.state.runtimePolicy(),
     ])
     return {
+      runtimePolicy,
       packages: packages.sort((left, right) => left.name.localeCompare(right.name)),
       activations,
       grants,
@@ -475,16 +495,6 @@ export class InvocationBroker {
       await params.audit('allowed', message(error), { outcome: 'failed', host: params.contribution.host, contextKey: contextKey(params.context) })
       return failure('failed', message(error))
     }
-  }
-
-  private async activeManifests(): Promise<NdExtensionManifest[]> {
-    const packages = await this.deps.packages.list()
-    const manifests: NdExtensionManifest[] = []
-    for (const item of packages) {
-      const manifest = await this.deps.packages.activeManifest(item.id)
-      if (manifest) manifests.push(manifest)
-    }
-    return manifests
   }
 }
 

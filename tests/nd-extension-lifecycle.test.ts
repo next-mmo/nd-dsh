@@ -101,6 +101,42 @@ describe('ExtensionPackageStore lifecycle', () => {
     await expect(store.installFromDirectory(sourceRoot)).rejects.toThrow(/symbolic link/)
   })
 
+  it('counts dependency payloads against size caps and preserves the existing version on failure', async () => {
+    await writePackage(sourceRoot, SAMPLE, { 'runtime/server.mjs': 'original' })
+    const store = new ExtensionPackageStore(root)
+    await store.installFromDirectory(sourceRoot)
+    await mkdir(join(sourceRoot, 'node_modules', 'large'), { recursive: true })
+    await writeFile(join(sourceRoot, 'node_modules', 'large', 'payload'), Buffer.alloc(8 * 1024 * 1024 + 1))
+    await expect(store.installFromDirectory(sourceRoot)).rejects.toThrow(/per-file cap/)
+    expect(await readFile(join(root, 'packages', SAMPLE.id, '1.0.0', 'runtime', 'server.mjs'), 'utf8')).toBe('original')
+  })
+
+  it('rejects symlinks hidden under node_modules', async () => {
+    await writePackage(sourceRoot, SAMPLE)
+    await mkdir(join(sourceRoot, 'node_modules'))
+    await mkdir(join(sourceRoot, 'outside'))
+    await symlink(join(sourceRoot, 'outside'), join(sourceRoot, 'node_modules', 'link'), 'junction')
+    await expect(new ExtensionPackageStore(root).installFromDirectory(sourceRoot)).rejects.toThrow(/symbolic link/)
+  })
+
+  it('retains only the active and previous version and keeps rollback working', async () => {
+    const store = new ExtensionPackageStore(root)
+    for (const version of ['1.0.0', '1.1.0', '1.2.0']) {
+      await writePackage(sourceRoot, { ...SAMPLE, version })
+      await store.installFromDirectory(sourceRoot)
+    }
+    expect(existsSync(join(root, 'packages', SAMPLE.id, '1.0.0'))).toBe(false)
+    expect((await store.record(SAMPLE.id))?.versions).toEqual(['1.1.0', '1.2.0'])
+    expect((await store.rollback(SAMPLE.id)).version).toBe('1.1.0')
+  })
+
+  it('refuses to import an external package over a built-in identity', async () => {
+    const store = new ExtensionPackageStore(root)
+    await store.registerBuiltin(DAILY_ESSENTIALS_MANIFEST)
+    await writePackage(sourceRoot, DAILY_ESSENTIALS_MANIFEST)
+    await expect(store.installFromDirectory(sourceRoot)).rejects.toThrow(/cannot replace an ND built-in/)
+  })
+
   it('updates to a new version, keeps the previous version available, and rolls back', async () => {
     await writePackage(sourceRoot, SAMPLE)
     const store = new ExtensionPackageStore(root)

@@ -34,7 +34,12 @@ export interface NdWebViewHelloMessage {
   context: NdContext
 }
 
-/** Frame → host, once the UI script is alive. */
+/**
+ * Frame → host, once the UI can accept input. The host unhides the frame on
+ * this message, so a package must send it only after its controls are bound —
+ * announcing earlier lets interactions land on a UI that cannot handle them
+ * yet (they are silently dropped).
+ */
 export interface NdWebViewReadyMessage {
   kind: 'nd-webview:ready'
 }

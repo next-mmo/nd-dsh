@@ -5,7 +5,7 @@ import type { NdContext } from '../src/shared/nd-context.js'
 import type { OrganizationDesktopApi } from '../src/shared/organization.js'
 import { closeApp, launchApp, type LaunchedApp } from './fixtures.js'
 
-// Keep-alive contract for `kind: 'web'` extension views: opening one puts a
+// Opt-in keep-alive contract for `kind: 'web'` extension views: opening one puts a
 // closable tab on the header's company row, closing the dialog (or navigating
 // the app) backgrounds the view WITHOUT reloading its frame — same asset
 // token, same game state — and only the tab's × button truly closes it.
@@ -18,6 +18,7 @@ type NdPlatformWindow = typeof globalThis & {
     ndExtensions: {
       state(): Promise<{ packages: Array<{ id: string }> }>
       installAvailable(extensionId: string): Promise<unknown>
+      setRuntimePolicy(policy: { backgroundExtensionIds: string[]; maxBackgroundViews: number; idleTimeoutMinutes: number }): Promise<unknown>
       setActivation(extensionId: string, context: NdContext, enabled: boolean): Promise<unknown>
     }
   }
@@ -59,6 +60,7 @@ test('an opened web view stays alive in the background until its tab is closed',
   await page.getByRole('tab', { name: 'Extensions' }).click()
   await page.evaluate(async () => {
     const api = (globalThis as NdPlatformWindow).ndDsh.ndExtensions
+    await api.setRuntimePolicy({ backgroundExtensionIds: ['nd.tic-tac-toe', 'nd.mini-browser'], maxBackgroundViews: 4, idleTimeoutMinutes: 5 })
     const state = await api.state()
     if (!state.packages.some((item) => item.id === 'nd.tic-tac-toe')) {
       await api.installAvailable('nd.tic-tac-toe')
@@ -81,7 +83,7 @@ test('an opened web view stays alive in the background until its tab is closed',
 
   // Closing the dialog backgrounds the view; the tab stays and the frame
   // keeps its token (no reload, no fresh loadView).
-  await page.keyboard.press('Escape')
+  await page.getByRole('dialog').press('Escape')
   await expect(dialog).toBeHidden()
   const tab = page.getByRole('tab', { name: GAME_TAB })
   await expect(tab, `renderer errors: ${rendererErrors.join(' | ')}`).toBeVisible()
@@ -96,7 +98,7 @@ test('an opened web view stays alive in the background until its tab is closed',
   await tab.click()
   await expect(dialog).toBeVisible()
   await expect.poll(() => webviewFrameUrl(page)).toBe(urlBefore)
-  await page.keyboard.press('Escape')
+  await page.getByRole('dialog').press('Escape')
   await expect(dialog).toBeHidden()
 
   // The tab's × is what truly closes it: tab and frame both go away.
@@ -120,7 +122,7 @@ test('keep-alive tabs stay visible on a narrow window with a full company row', 
     await card.getByRole('button', { name: /^Open/ }).first().click()
     const dialog = page.getByRole('dialog')
     await expect(dialog).toBeVisible()
-    await page.keyboard.press('Escape')
+    await page.getByRole('dialog').press('Escape')
     await expect(dialog).toBeHidden()
 
     const tab = page.getByRole('tab', { name: GAME_TAB })
@@ -137,6 +139,36 @@ test('keep-alive tabs stay visible on a narrow window with a full company row', 
   }
 })
 
+test('closing a view releases it when background use is off, and disable disposes an opted-in view', async () => {
+  const page = launched.page
+  await page.getByLabel('ND-DSH navigation').getByRole('button', { name: 'Settings' }).click()
+  await page.getByRole('tab', { name: 'Extensions' }).click()
+  await page.evaluate(async () => {
+    const api = (globalThis as NdPlatformWindow).ndDsh.ndExtensions
+    await api.setRuntimePolicy({ backgroundExtensionIds: [], maxBackgroundViews: 4, idleTimeoutMinutes: 5 })
+  })
+  const card = page.locator('article', { hasText: 'ND 3D Tic-Tac-Toe' })
+  await card.getByRole('button', { name: /^Open/ }).first().click()
+  await expect(page.getByRole('dialog')).toBeVisible()
+  await expect.poll(() => webviewFrameUrl(page)).not.toBe('')
+  await page.getByRole('dialog').press('Escape')
+  await expect.poll(() => webviewFrameUrl(page)).toBe('')
+  await expect(page.getByRole('tab', { name: GAME_TAB })).toHaveCount(0)
+
+  await page.evaluate(async () => {
+    await (globalThis as NdPlatformWindow).ndDsh.ndExtensions.setRuntimePolicy({ backgroundExtensionIds: ['nd.tic-tac-toe'], maxBackgroundViews: 4, idleTimeoutMinutes: 5 })
+  })
+  await card.getByRole('button', { name: /^Open/ }).first().click()
+  await expect.poll(() => webviewFrameUrl(page)).not.toBe('')
+  await page.getByRole('dialog').press('Escape')
+  await expect(page.getByRole('tab', { name: GAME_TAB })).toBeVisible()
+  await page.evaluate(async () => {
+    await (globalThis as NdPlatformWindow).ndDsh.ndExtensions.setActivation('nd.tic-tac-toe', { kind: 'personal' }, false)
+  })
+  await expect.poll(() => webviewFrameUrl(page)).toBe('')
+  await expect(page.getByRole('tab', { name: GAME_TAB })).toHaveCount(0)
+})
+
 const BROWSER_TAB = /Mini Browser/
 
 test('the Mini Browser chrome stays alive and opens real ND browser tabs', async () => {
@@ -146,6 +178,7 @@ test('the Mini Browser chrome stays alive and opens real ND browser tabs', async
   await page.getByRole('tab', { name: 'Extensions' }).click()
   await page.evaluate(async () => {
     const api = (globalThis as NdPlatformWindow).ndDsh.ndExtensions
+    await api.setRuntimePolicy({ backgroundExtensionIds: ['nd.tic-tac-toe', 'nd.mini-browser'], maxBackgroundViews: 4, idleTimeoutMinutes: 5 })
     const state = await api.state()
     if (!state.packages.some((item) => item.id === 'nd.mini-browser')) {
       await api.installAvailable('nd.mini-browser')

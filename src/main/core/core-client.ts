@@ -58,6 +58,12 @@ export interface CoreRequestOptions {
    * timeout while the work carries on in Rust.
    */
   deadlineMs?: number
+  /**
+   * Caller-chosen request id, for work that must be addressable while it runs
+   * (a disk scan is canceled through `core.cancel` with this id, and progress
+   * events arrive tagged with it). Defaults to a generated id.
+   */
+  requestId?: string
 }
 
 export interface CoreClientOptions {
@@ -238,6 +244,12 @@ export class CoreClient {
       return Promise.reject(new Error('ND Core is not running.'))
     }
     if (!method || method.length > 128) return Promise.reject(new Error('Invalid ND Core method.'))
+    const id = options.requestId ?? randomUUID()
+    if (options.requestId !== undefined) {
+      if (!options.requestId || options.requestId.length > 256 || this.pending.has(options.requestId)) {
+        return Promise.reject(new Error('ND Core request id must be unique, non-empty, and at most 256 characters.'))
+      }
+    }
 
     const isControl = CONTROL_METHODS.has(method)
     const configuredMaxPending = this.options.maxPendingRequests
@@ -254,7 +266,6 @@ export class CoreClient {
     // claim honest: failed and timed-out crossings cost the caller too.
     taskMetricsRecorder()?.noteIpcCrossing()
 
-    const id = randomUUID()
     const deadlineMs = resolveCoreDeadlineMs(timeoutMs, options.deadlineMs)
     const encoded = Buffer.from(encode(buildCoreRequestFrame({ id, method, params, ...(deadlineMs === undefined ? {} : { deadlineMs }) })))
     if (encoded.length > ND_CORE_MAX_FRAME_BYTES) {

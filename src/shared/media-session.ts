@@ -26,3 +26,14 @@ export interface NdMediaSessionState {
 
 /** OS media transport keys the sidecar can synthesize as a fallback. */
 export type NdMediaKeyKind = 'play-pause' | 'next' | 'previous'
+
+/** Default OS output device, independent of browser media sessions. */
+export type NdSystemVolumeState =
+  | { available: true; level: number; muted: boolean; canMute: boolean }
+  | { available: false; reason: string }
+
+export interface NdSystemVolumeUpdate {
+  /** Master output volume, 0–100. Does not implicitly change mute. */
+  level?: number
+  muted?: boolean
+}

@@ -48,6 +48,7 @@ export function ExtensionWebView({ data, onError }: { data: NdViewData; onError?
       viewId: data.viewId,
       context: data.context,
     }
+    let pendingCalls = 0
     const onMessage = (event: MessageEvent): void => {
       if (event.origin !== expectedOrigin) return
       if (!event.data || typeof event.data !== 'object') return
@@ -61,6 +62,12 @@ export function ExtensionWebView({ data, onError }: { data: NdViewData; onError?
         return
       }
       if (message.kind !== 'nd-webview:invoke') return
+      if (pendingCalls >= 8) {
+        frame.contentWindow?.postMessage({ kind: 'nd-webview:result', requestId: message.requestId, ok: false,
+          error: { code: 'unavailable', message: 'Too many pending extension actions. Try again shortly.' } }, expectedOrigin)
+        return
+      }
+      pendingCalls += 1
       void window.ndDsh.ndExtensions.invoke({
         extensionId: data.extensionId,
         contributionId: data.viewId,
@@ -79,6 +86,7 @@ export function ExtensionWebView({ data, onError }: { data: NdViewData; onError?
           if (!result.ok && result.error && result.error.code !== 'denied') onErrorRef.current?.(result.error.message)
         })
         .catch((cause) => onErrorRef.current?.(cause instanceof Error ? cause.message : String(cause)))
+        .finally(() => { pendingCalls -= 1 })
     }
     window.addEventListener('message', onMessage)
     return () => {
@@ -89,7 +97,7 @@ export function ExtensionWebView({ data, onError }: { data: NdViewData; onError?
   if (!webView?.url) return null
   return (
     <div className="relative">
-      {!ready ? <p className="text-xs text-faint" role="status">Loading 3D view…</p> : null}
+      {!ready ? <p className="text-xs text-faint" role="status">Loading extension view…</p> : null}
       <iframe
         ref={frameRef}
         src={webView.url}

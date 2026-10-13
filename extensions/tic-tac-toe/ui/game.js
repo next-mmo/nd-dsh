@@ -46,32 +46,40 @@ function createBridge() {
     }
   })
 
-  // Announce readiness until the host answers: a fast burst first, then a
+  // `ready` means "the UI can accept input": the host unhides the frame on
+  // this message, and a click that lands while this script is still setting
+  // up is silently swallowed. Call `start()` only after every control is
+  // bound. It announces until the host answers — a fast burst first, then a
   // slow retry forever, so a host that mounts late still connects instead of
   // leaving the dialog stuck on its loading state.
   let attempts = 0
   let slow = false
+  let retry = null
   const announce = () => window.parent.postMessage({ kind: 'nd-webview:ready' }, '*')
-  announce()
-  const retry = setInterval(() => {
-    if (hello) {
-      clearInterval(retry)
-      return
-    }
-    attempts += 1
-    if (!slow && attempts > 40) {
-      slow = true
-      clearInterval(retry)
-      setInterval(function slower() {
-        if (!hello) announce()
-        else clearInterval(slower)
-      }, 2_000)
-      return
-    }
+  const start = () => {
+    if (retry) return
     announce()
-  }, 250)
+    retry = setInterval(() => {
+      if (hello) {
+        clearInterval(retry)
+        return
+      }
+      attempts += 1
+      if (!slow && attempts > 40) {
+        slow = true
+        clearInterval(retry)
+        setInterval(function slower() {
+          if (!hello) announce()
+          else clearInterval(slower)
+        }, 2_000)
+        return
+      }
+      announce()
+    }, 250)
+  }
 
   return {
+    start,
     get connected() {
       return Boolean(hello)
     },
@@ -174,6 +182,31 @@ if (renderer) {
 
   const scene = new THREE.Scene()
   scene.background = new THREE.Color(0x111318)
+
+  // Static boards need no GPU work. Coalesce changes into one frame and keep
+  // scheduling only while a short piece animation is active.
+  let pendingFrame = 0
+  function requestRender() {
+    if (pendingFrame || document.hidden || !boardEl.clientWidth || !boardEl.clientHeight) return
+    pendingFrame = requestAnimationFrame(renderFrame)
+  }
+  function pauseRendering() {
+    cancelAnimationFrame(pendingFrame)
+    pendingFrame = 0
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) pauseRendering()
+    else requestRender()
+  })
+
+  function disposeMesh(mesh, disposeMaterials = true) {
+    mesh.traverse((child) => {
+      child.geometry?.dispose()
+      const materials = Array.isArray(child.material) ? child.material : [child.material]
+      if (disposeMaterials) for (const material of materials) material?.dispose()
+    })
+    scene.remove(mesh)
+  }
 
   const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 100)
   const target = new THREE.Vector3(0, 0.2, 0)
@@ -289,12 +322,15 @@ if (renderer) {
     scene.add(mesh)
     pieces.set(index, mesh)
     tweens.push({ mesh, start: performance.now(), duration: 340 })
+    requestRender()
   }
 
   clearPieces = () => {
-    for (const mesh of pieces.values()) scene.remove(mesh)
+    // X/O materials are shared across rounds; only the piece geometry is owned.
+    for (const mesh of pieces.values()) disposeMesh(mesh, false)
     pieces.clear()
     tweens.length = 0
+    requestRender()
   }
 
   showWinLine = (line) => {
@@ -307,11 +343,13 @@ if (renderer) {
     scene.add(beam)
     tweens.winBeams ??= []
     tweens.winBeams.push(beam)
+    requestRender()
   }
 
   clearWinLine = () => {
-    for (const beam of tweens.winBeams ?? []) scene.remove(beam)
+    for (const beam of tweens.winBeams ?? []) disposeMesh(beam)
     tweens.winBeams = []
+    requestRender()
   }
 
   // --- pointer interaction: hover + place (fixed camera, no orbit) --------------
@@ -340,6 +378,7 @@ if (renderer) {
   function showHover(index) {
     hover.visible = index >= 0 && state.board[index] === EMPTY && humanTurn()
     if (hover.visible) hover.position.copy(cellPosition(index)).setY(0.12)
+    requestRender()
   }
 
   renderer.domElement.addEventListener('pointermove', (event) => {
@@ -348,6 +387,7 @@ if (renderer) {
 
   renderer.domElement.addEventListener('pointerleave', () => {
     hover.visible = false
+    requestRender()
   })
 
   // Press previews the target cell (touch has no hover phase); release places
@@ -367,15 +407,21 @@ if (renderer) {
 
   function resize() {
     const { clientWidth, clientHeight } = boardEl
-    if (clientWidth === 0 || clientHeight === 0) return
+    if (clientWidth === 0 || clientHeight === 0) {
+      pauseRendering()
+      return
+    }
     renderer.setSize(clientWidth, clientHeight, false)
     camera.aspect = clientWidth / clientHeight
     camera.updateProjectionMatrix()
+    requestRender()
   }
   new ResizeObserver(resize).observe(boardEl)
   resize()
 
-  renderer.setAnimationLoop(() => {
+  function renderFrame() {
+    pendingFrame = 0
+    if (document.hidden || !boardEl.clientWidth || !boardEl.clientHeight) return
     const now = performance.now()
     for (let i = tweens.length - 1; i >= 0; i -= 1) {
       const tween = tweens[i]
@@ -385,10 +431,9 @@ if (renderer) {
       tween.mesh.position.y = 0.9 - ease * 0.62
       if (t >= 1) tweens.splice(i, 1)
     }
-    const pulse = 0.75 + Math.sin(now * 0.005) * 0.25
-    for (const beam of tweens.winBeams ?? []) beam.material.emissiveIntensity = pulse
     renderer.render(scene, camera)
-  })
+    if (tweens.length) requestRender()
+  }
 } else {
   fallbackEl.style.display = 'flex'
 }
@@ -538,8 +583,17 @@ window.addEventListener('keydown', (event) => {
 refreshModeButtons()
 setStatus(turnLabel())
 toast(newGameMessage())
+// The markup ships controls disabled so an interaction that arrives while
+// this script is still loading simply waits for them; enable them only now
+// that every handler above is bound. (Reset stays disabled until the
+// scoreboard has data — showScores owns it.)
+for (const control of [els.modeAi, els.mode2p, els.diffHard, els.diffEasy, els.newGame]) {
+  control.disabled = false
+}
 // The handshake lands asynchronously; only fetch the scoreboard once the
 // bridge is actually connected, or the first read would always miss.
 bridge.whenConnected(() => {
   void loadScores()
 })
+// Ready only now: every control above is bound before the host unhides the frame.
+bridge.start()

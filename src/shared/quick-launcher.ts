@@ -75,6 +75,23 @@ export function isLauncherHandoffTarget(value: unknown): value is LauncherHandof
   return typeof value === 'string' && (LAUNCHER_HANDOFF_TARGETS as readonly string[]).includes(value)
 }
 
+// Use the established browser target so a hot-reloaded renderer can hand off
+// to a main process that started before existing-tab navigation was added.
+const BROWSER_TAB_PAYLOAD_PREFIX = 'nd-browser-tab:'
+
+export function launcherBrowserTabPayload(tabId: string): string {
+  return `${BROWSER_TAB_PAYLOAD_PREFIX}${encodeURIComponent(tabId)}`
+}
+
+export function launcherBrowserTabId(text?: string): string | null {
+  if (!text?.startsWith(BROWSER_TAB_PAYLOAD_PREFIX)) return null
+  try {
+    return decodeURIComponent(text.slice(BROWSER_TAB_PAYLOAD_PREFIX.length)) || null
+  } catch {
+    return null
+  }
+}
+
 /**
  * A handoff may carry the context the popup was showing, so work started from
  * Personal stays personal even when the main window has a project selected.

@@ -9,12 +9,14 @@ use nd_runtime::clipboard::{
 };
 use nd_runtime::deadline::{Deadline, Interrupt, InterruptGuard, InterruptRegistry};
 use nd_runtime::decision::{self, DecisionEvaluateParams};
+use nd_runtime::disk_scan;
 use nd_runtime::dispatcher::{DispatchStats, Dispatcher, priority_for_method};
 use nd_runtime::effect_journal::{
     EffectJournalAppendParams, EffectJournalConfigureParams, EffectJournalReplayParams,
     EffectJournalStateParams, EffectJournalStore,
 };
 use nd_runtime::evidence::{self, EvidenceParams};
+use nd_runtime::extension_package;
 use nd_runtime::git::{self, GitExecParams, GitLogParams, GitQueryParams};
 use nd_runtime::media;
 use nd_runtime::metrics::{self, MetricsRegistry};
@@ -219,12 +221,14 @@ fn dispatch(
                     "artifacts",
                     "workspace",
                     "media",
+                    "extension-packages",
                     "vault",
                     "search",
                     "revision",
                     "cache",
                     "deadline",
                     "cancellation",
+                    "disk-scan",
                     "metrics"
                 ],
                 "processCount": state.processes.process_count(),
@@ -574,9 +578,13 @@ fn dispatch(
             state.metrics.observe_workspace(&params.root);
             to_value(snapshot::snapshot(params, interrupt)?)
         }
-        // Media roots are directories the desktop handed to the sidecar for a
-        // native surface (a wallpaper library), not linked workspaces, so they
-        // deliberately do not feed `observe_workspace`.
+        // ND supplies the trusted destination; package manifests and activation
+        // semantics stay in the desktop control plane.
+        "extensions.snapshot" => to_value(extension_package::snapshot(
+            from_params(params)?,
+            interrupt,
+        )?),
+        // Media roots are native libraries, not linked workspaces.
         "media.thumbnails" => {
             let params = from_params::<media::ThumbnailsParams>(params)?;
             to_value(media::thumbnails(params, interrupt)?)
@@ -589,6 +597,29 @@ fn dispatch(
             let params = from_params::<media::MediaKeyParams>(params)?;
             to_value(media::send_media_key(params)?)
         }
+        // Disk-usage scans for the ND Disk Cleaner extension: the heavy walk
+        // stays here, progress streams out as events tagged with the request
+        // id (the desktop's scan identity, canceled through `core.cancel`).
+        "disk.scan" => {
+            let params = from_params::<disk_scan::DiskScanParams>(params)?;
+            state
+                .metrics
+                .observe_workspace(&params.root.to_string_lossy());
+            let writer = Arc::clone(&state.writer);
+            let progress_id = request_id.to_owned();
+            let progress = move |entries: u64, bytes: u64| {
+                let _ = writer.send_event(
+                    "disk.scan.progress",
+                    Some(&progress_id),
+                    None,
+                    "background",
+                    &json!({ "entries": entries, "bytes": bytes }),
+                );
+            };
+            to_value(disk_scan::scan(params, interrupt, Some(&progress))?)
+        }
+        "media.volume-state" => to_value(nd_runtime::system_volume::state()),
+        "media.volume-set" => to_value(nd_runtime::system_volume::set(from_params(params)?)?),
         // The sidecar owns clipboard read, write, and observation in one
         // process, which is what makes write-back echo suppression exact.
         // Watchers exist only in response to `clipboard.watch` from the
@@ -634,13 +665,10 @@ fn dispatch(
                 state.vault.delete(from_params::<VaultIdParams>(params)?)?;
             to_value(result)
         }
-        other => {
-            let _ = request_id;
-            Err(errors::coded(
-                CODE_METHOD_FAILED,
-                format!("unknown nd-core method: {other}"),
-            ))
-        }
+        other => Err(errors::coded(
+            CODE_METHOD_FAILED,
+            format!("unknown nd-core method: {other}"),
+        )),
     }
 }
 

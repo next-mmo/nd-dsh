@@ -2,6 +2,7 @@
 
 import { expect, test } from '@playwright/test'
 import { IPC } from '../src/shared/contracts.js'
+import type { DesktopApi } from '../src/shared/contracts.js'
 import type { OrganizationDesktopApi, OrganizationSnapshot } from '../src/shared/organization.js'
 import { closeApp, createWorkspaceDir, launchApp, type LaunchedApp } from './fixtures.js'
 
@@ -246,4 +247,41 @@ test('launcher popup window toggles like Raycast and creates a task without open
   expect(closeToggle?.visible).toBe(false)
 
   expect(rendererErrors).toEqual([])
+})
+
+test('media click hands off to the existing tab in Personal browser', async () => {
+  const { page, app } = launched
+  const tabId = await page.evaluate(async () => {
+    const api = (globalThis as typeof globalThis & { ndDsh: DesktopApi }).ndDsh
+    const mediaTab = await api.browserPlatform.createTab('builtin', 'about:blank')
+    await api.browserPlatform.createTab('builtin', 'about:blank')
+    return mediaTab.id
+  })
+  let popup = app.windows().find((window) => window.url().includes('#/launcher'))
+  if (!popup) {
+    const opened = app.waitForEvent('window')
+    await page.evaluate(() => (globalThis as LauncherDesktopWindow).ndDsh.window?.toggleLauncherPopup?.())
+    popup = await opened
+  } else {
+    await page.evaluate(() => (globalThis as LauncherDesktopWindow).ndDsh.window?.toggleLauncherPopup?.())
+  }
+  const dialog = popup.getByRole('dialog', { name: 'ND Quick Launcher' })
+  await expect(dialog).toBeVisible()
+  // Explicit media metadata fixture; the target is a real embedded browser tab.
+  await app.evaluate(({ BrowserWindow }, { tabId, channel }) => {
+    const popupWindow = BrowserWindow.getAllWindows().find((window) => window.webContents.getURL().includes('#/launcher'))
+    popupWindow!.webContents.send(channel, {
+      tabId, title: 'Media handoff fixture', site: 'youtube.com', url: 'https://www.youtube.com/', playing: true, updatedAt: Date.now(),
+    })
+  }, { tabId, channel: IPC.mediaStateEvent })
+  await dialog.getByRole('button', { name: 'Open youtube.com in browser' }).click()
+  await expect(page.getByRole('region', { name: 'Personal browser' })).toBeVisible()
+  await expect.poll(() => page.evaluate(async () => {
+    const api = (globalThis as typeof globalThis & { ndDsh: DesktopApi }).ndDsh
+    const state = await api.browser.state()
+    return { tabId: state.activeTabId, visible: state.visible }
+  })).toEqual({ tabId, visible: true })
+  await expect.poll(() => app.evaluate(({ BrowserWindow }) => {
+    return BrowserWindow.getAllWindows().find((window) => window.webContents.getURL().includes('#/launcher'))?.isVisible()
+  })).toBe(false)
 })

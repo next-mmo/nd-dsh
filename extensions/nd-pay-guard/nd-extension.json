@@ -1,0 +1,44 @@
+{
+  "protocol": "nd.extension/1",
+  "id": "nd.pay-guard",
+  "name": "ND Pay Guard",
+  "description": "Track subscriptions and get desktop OS reminders before upcoming renewal charges. 100% manual, local-first, zero bank connections.",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "contexts": ["personal"],
+  "permissions": ["payguard.read", "payguard.write", "browser.openExternal"],
+  "settings": [],
+  "contributions": {
+    "commands": [
+      {
+        "id": "open",
+        "title": "ND Pay Guard",
+        "description": "Open subscription tracker and upcoming renewal reminders.",
+        "keywords": ["pay guard", "pay", "subscription", "renew", "renewal", "charge", "billing", "reminder", "saas", "trial"],
+        "host": "payguard.subscriptions.list",
+        "openViewId": "guard",
+        "contexts": ["personal"]
+      }
+    ],
+    "views": [
+      {
+        "id": "guard",
+        "title": "ND Pay Guard",
+        "description": "Keep track of recurring subscriptions and upcoming renewal dates.",
+        "kind": "web",
+        "entry": "ui/index.html",
+        "contexts": ["personal"],
+        "actions": [
+          { "id": "list", "title": "List subscriptions", "host": "payguard.subscriptions.list" },
+          { "id": "create", "title": "Add a subscription", "host": "payguard.subscriptions.create" },
+          { "id": "update", "title": "Edit a subscription", "host": "payguard.subscriptions.update" },
+          { "id": "delete", "title": "Delete a subscription", "host": "payguard.subscriptions.delete" },
+          { "id": "mark-paid", "title": "Mark renewal paid", "host": "payguard.subscriptions.markPaid" },
+          { "id": "upcoming", "title": "List upcoming renewals", "host": "payguard.subscriptions.upcoming" },
+          { "id": "notify-test", "title": "Send test notification", "host": "payguard.notifications.test" },
+          { "id": "open-url", "title": "Open billing URL", "host": "browser.openExternal" }
+        ]
+      }
+    ]
+  }
+}

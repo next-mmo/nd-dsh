@@ -1,0 +1,45 @@
+{
+  "protocol": "nd.extension/1",
+  "id": "nd.disk-cleaner",
+  "name": "ND Disk Cleaner",
+  "description": "Scan a folder or drive to see what is using space: a zoomable sunburst of the biggest items, a sortable list, reveal in Finder/Explorer, and move selected items to the trash. Fully external — installed on demand, nothing ships in the app bundle.",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "contexts": ["personal"],
+  "permissions": ["disk.read", "disk.write"],
+  "settings": [],
+  "contributions": {
+    "tools": [],
+    "skills": [],
+    "commands": [
+      {
+        "id": "open",
+        "title": "Open ND Disk Cleaner",
+        "description": "Scan a folder or drive and clean up the biggest space hogs.",
+        "keywords": ["disk", "cleaner", "space", "storage", "usage", "sunburst", "trash", "du", "scan"],
+        "host": "disk.volumes.list",
+        "openViewId": "main",
+        "contexts": ["personal"]
+      }
+    ],
+    "views": [
+      {
+        "id": "main",
+        "title": "ND Disk Cleaner",
+        "description": "Choose a folder or volume to scan.",
+        "kind": "web",
+        "entry": "ui/index.html",
+        "contexts": ["personal"],
+        "actions": [
+          { "id": "volumes", "title": "List volumes", "host": "disk.volumes.list" },
+          { "id": "scan-start", "title": "Start a disk scan", "host": "disk.scan.start" },
+          { "id": "scan-status", "title": "Read scan progress or result", "host": "disk.scan.status" },
+          { "id": "scan-cancel", "title": "Cancel a running scan", "host": "disk.scan.cancel" },
+          { "id": "trash", "title": "Move an item to the trash", "host": "disk.trash.move" },
+          { "id": "reveal", "title": "Reveal an item in Finder or Explorer", "host": "disk.reveal" }
+        ]
+      }
+    ],
+    "workflows": []
+  }
+}

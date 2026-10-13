@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { promises as fs } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
@@ -106,7 +106,7 @@ export class TaskWorktreeManager {
    * allowed only from this boundary, never on top of unknown partial writes.
    */
   async baseline(worktree: TaskWorktree): Promise<string> {
-    await removeDisposableArtifacts(worktree.root)
+    await removeDisposableArtifacts(worktree.root, this.runGit)
     const status = await this.runGit(worktree.root, ['status', '--porcelain=v1', '--untracked-files=all'])
     if (status.stdout.trim()) {
       throw new Error('Task worktree is dirty before execution attempt; refusing to create an unsafe retry boundary')
@@ -135,6 +135,7 @@ export class TaskWorktreeManager {
       // The task worktree is ND-owned, so restage the current files from the
       // working tree instead of carrying stale cache entries into a retry.
       await this.runGit(worktree.root, ['reset', '--'])
+      await this.runGit(worktree.root, ['add', '-u', '--', '.']).catch(() => undefined)
       await this.runGit(worktree.root, ['add', '-A', '--', '.', ...CHECKPOINT_EXCLUDED_PATHS])
       const staged = await this.runGit(worktree.root, ['diff', '--cached', '--name-only'])
       if (staged.stdout.trim()) {
@@ -145,12 +146,12 @@ export class TaskWorktreeManager {
         ])
       }
     }
-    await removeDisposableArtifacts(worktree.root)
+    await removeDisposableArtifacts(worktree.root, this.runGit)
     return (await this.runGit(worktree.root, ['rev-parse', 'HEAD'])).stdout.trim()
   }
 
   async assertUnchanged(worktree: TaskWorktree, expectedHead: string): Promise<void> {
-    await removeDisposableArtifacts(worktree.root)
+    await removeDisposableArtifacts(worktree.root, this.runGit)
     const [status, head] = await Promise.all([
       this.runGit(worktree.root, ['status', '--porcelain=v1', '--untracked-files=all']),
       this.runGit(worktree.root, ['rev-parse', 'HEAD']),
@@ -204,17 +205,48 @@ export class TaskWorktreeManager {
  * directory. They are never part of a task checkpoint and must not make an
  * otherwise clean ND-owned worktree look modified during review or rework.
  */
-async function removeDisposableArtifacts(root: string): Promise<void> {
+export async function removeDisposableArtifacts(root: string, runGit: WorktreeGitRunner = git): Promise<void> {
+  const trackedDirs = new Set<string>()
+  const { stdout } = await runGit(root, ['ls-files', '-z'])
+  const files = stdout.split('\0').filter(Boolean)
+  for (const file of files) {
+    const parts = file.split('/')
+    let current = ''
+    for (let i = 0; i < parts.length - 1; i++) {
+      const segment = parts[i]
+      if (!segment) continue
+      current = current ? `${current}/${segment}` : segment
+      trackedDirs.add(current)
+    }
+  }
+
   async function visit(directory: string): Promise<void> {
     const entries = await fs.readdir(directory, { withFileTypes: true }).catch(() => [])
     for (const entry of entries) {
       if (entry.name === '.git' || entry.isSymbolicLink()) continue
       const candidate = join(directory, entry.name)
-      if (entry.isDirectory() && DISPOSABLE_DIRECTORY_NAMES.has(entry.name)) {
-        await fs.rm(candidate, { recursive: true, force: true })
-        continue
+      if (entry.isDirectory()) {
+        if (await pathExists(join(candidate, '.git'))) {
+          // Skip initialized submodule roots or nested git repositories
+          continue
+        }
+        const rel = relative(root, candidate).split(sep).join('/')
+        if (trackedDirs.has(rel)) {
+          // Never delete a directory containing tracked files (e.g. vendor/vscode-git/build)
+          await visit(candidate)
+          continue
+        }
+        if (DISPOSABLE_DIRECTORY_NAMES.has(entry.name)) {
+          await fs.rm(candidate, {
+            recursive: true,
+            force: true,
+            maxRetries: 5,
+            retryDelay: 100,
+          })
+          continue
+        }
+        await visit(candidate)
       }
-      if (entry.isDirectory()) await visit(candidate)
     }
   }
   await visit(root)
