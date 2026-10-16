@@ -6,6 +6,7 @@ import {
   CODEX_CLI_ENGINE_ID,
   CODEX_ENGINE_ID,
   CURSOR_CLI_ENGINE_ID,
+  GEMINI_WEB_ENGINE_ID,
   ND_HARNESS_ENGINE_ID,
   ND_NATIVE_ENGINE_ID,
   PI_CODING_ENGINE_ID,
@@ -13,6 +14,7 @@ import {
   buildCodingEngineCatalog,
   chatGptWebEngineDescriptor,
   codingEngineInstallCommand,
+  geminiWebEngineDescriptor,
   workerAssignableCodingEngines,
   type CodingEngineAvailability,
 } from '../src/shared/coding-engines.js'
@@ -72,6 +74,19 @@ describe('coding engine catalog', () => {
     expect(workers.map((engine) => engine.id)).toContain(PI_CODING_ENGINE_ID)
     expect(workers.map((engine) => engine.id)).toContain(CURSOR_CLI_ENGINE_ID)
     expect(workers.map((engine) => engine.id)).toContain(CLAUDE_CODE_CLI_ENGINE_ID)
+  })
+
+  it('keeps browser-only Gemini Web interactive with no workspace or Git contract', () => {
+    const gemini = geminiWebEngineDescriptor()
+    expect(gemini.id).toBe(GEMINI_WEB_ENGINE_ID)
+    expect(gemini.available).toBe(true)
+    expect(gemini.name).toBe('Gemini Web')
+    expect(gemini.capabilities.browser).toBe(true)
+    expect(gemini.capabilities.workspace).toBe(false)
+    expect(gemini.capabilities.filesystem).toBe(false)
+    expect(gemini.capabilities.shell).toBe(false)
+    expect(gemini.capabilities.persistentSessions).toBe(true)
+    expect(workerAssignableCodingEngines([...buildCodingEngineCatalog(availability()), gemini]).map((engine) => engine.id)).not.toContain(GEMINI_WEB_ENGINE_ID)
   })
 
   it('advertises only capabilities ND actually wires for the delegated Codex adapter', () => {

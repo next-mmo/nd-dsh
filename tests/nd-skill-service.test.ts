@@ -81,7 +81,7 @@ describe('ND catalog and explicit invocation', () => {
     const f = await fixture()
     const direct = { run: vi.fn(async () => ({ sessionId: 'direct' })), ownsSession: () => false }
     const harness = { status: () => ({}), run: vi.fn() }
-    const router = new EngineSessionRouter(harness as never, direct as never, f.workspace as never, direct as never, undefined, direct as never, direct as never, direct as never, direct as never)
+    const router = new EngineSessionRouter(harness as never, direct as never, f.workspace as never, direct as never, undefined, undefined, direct as never, direct as never, direct as never, direct as never)
     router.setSkillService(f.service)
     await router.run('/review exact user text', { engineId })
     const prompt = direct.run.mock.calls[0] as unknown as [string]

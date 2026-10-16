@@ -3,6 +3,7 @@ import type { CodingEngineDescriptor, CodingEngineInstallHelp } from './contract
 export const ND_HARNESS_ENGINE_ID = 'nd-harness'
 export const ND_NATIVE_ENGINE_ID = 'nd-native'
 export const CHATGPT_WEB_ENGINE_ID = 'chatgpt-web'
+export const GEMINI_WEB_ENGINE_ID = 'gemini-web'
 export const CODEX_ENGINE_ID = 'codex'
 export const CODEX_CLI_ENGINE_ID = 'codex-cli'
 export const ANTIGRAVITY_ENGINE_ID = 'antigravity'
@@ -43,6 +44,29 @@ export function chatGptWebEngineDescriptor(): CodingEngineDescriptor {
       persistentSessions: true,
     },
     workerInstructions: '\nExecution engine: ChatGPT Web with Git sync. Conversation transport is the signed-in ChatGPT website in ND\'s visible browser; local code transport is the session-owned Git branch. Do not assume direct ND filesystem or shell tools exist inside ChatGPT. Require actual remote commits before claiming code synchronized. Never push directly to main or master.\n',
+  }
+}
+
+export function geminiWebEngineDescriptor(): CodingEngineDescriptor {
+  return {
+    id: GEMINI_WEB_ENGINE_ID,
+    name: 'Gemini Web',
+    integration: 'primary',
+    available: true,
+    description: 'Chat through the signed-in Gemini website in ND\'s visible browser. Conversation state stays on Gemini; an optional per-project Gem (GEMS) keeps the chat scoped to the project instructions without any Git requirement.',
+    capabilities: {
+      workspace: false,
+      filesystem: false,
+      shell: false,
+      browser: true,
+      skills: false,
+      mcp: false,
+      modelProviderRouting: false,
+      humanApprovals: false,
+      streaming: false,
+      persistentSessions: true,
+    },
+    workerInstructions: '\nExecution engine: Gemini Web. Conversation transport is the signed-in Gemini website in ND\'s visible browser. No local code transport is assumed: Gemini has no connected Git or filesystem tools, so use conversation text only and never claim code was pushed or committed.\n',
   }
 }
 

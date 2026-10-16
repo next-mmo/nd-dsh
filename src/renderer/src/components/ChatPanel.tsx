@@ -8,6 +8,7 @@ import type {
   ExternalElementAttachmentView,
   HarnessStatus,
   ChatGptProjectBinding,
+  GeminiGemBinding,
   ModelProvider,
   ModelProviderGroup,
   ProviderPingResult,
@@ -15,7 +16,7 @@ import type {
   SessionSummary,
   WorkspaceSuggestion,
 } from '../../../shared/contracts'
-import { ANTIGRAVITY_ENGINE_ID, CHATGPT_WEB_ENGINE_ID, CODEX_CLI_ENGINE_ID, ND_HARNESS_ENGINE_ID, ND_NATIVE_ENGINE_ID, PI_CODING_ENGINE_ID, ZCODE_CLI_ENGINE_ID } from '../../../shared/coding-engines'
+import { ANTIGRAVITY_ENGINE_ID, CHATGPT_WEB_ENGINE_ID, CODEX_CLI_ENGINE_ID, GEMINI_WEB_ENGINE_ID, ND_HARNESS_ENGINE_ID, ND_NATIVE_ENGINE_ID, PI_CODING_ENGINE_ID, ZCODE_CLI_ENGINE_ID } from '../../../shared/coding-engines'
 import { DisplayGroup, groupEntries, parseFileChanges, toolPreview, type ContextBlock } from '../../../shared/chat-grouping'
 import { filterSessionsInProjectScope, isSessionInProjectScope } from '../../../shared/session-project-scope'
 import { buildSessionTree, type SessionTreeNode } from '../../../shared/session-tree'
@@ -62,6 +63,7 @@ import { ChangedFilesCard } from './ChangedFilesCard'
 import { ChatContextPopover } from './ChatContextPopover'
 import { ZcodeModelConfigDialog } from './ZcodeModelConfigDialog'
 import { ChatGptProjectDialog } from './ChatGptProjectDialog'
+import { GeminiGemDialog } from './GeminiGemDialog'
 import { MarkdownLite } from './MarkdownLite'
 import { Button } from './ui/button'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog'
@@ -260,6 +262,9 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   // ChatGPT Project binding: ChatGPT Web requires a project to scope conversations.
   const [chatGptProjectBinding, setChatGptProjectBinding] = useState<ChatGptProjectBinding | null>(null)
   const [chatGptProjectModalOpen, setChatGptProjectModalOpen] = useState(false)
+  // Gemini Gem binding is optional: unbound chats use the default Gemini conversation.
+  const [geminiGemBinding, setGeminiGemBinding] = useState<GeminiGemBinding | null>(null)
+  const [geminiGemModalOpen, setGeminiGemModalOpen] = useState(false)
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -345,6 +350,22 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
       void refreshChatGptProjectBinding()
     }
   }, [activeEngineId, activeWorkspaceRoot, refreshChatGptProjectBinding])
+
+  const refreshGeminiGemBinding = useCallback(async (): Promise<void> => {
+    if (!activeWorkspaceRoot) return
+    try {
+      const binding = await window.ndDsh?.geminiWeb?.getGemBinding(activeWorkspaceRoot)
+      setGeminiGemBinding(binding ?? null)
+    } catch {
+      setGeminiGemBinding(null)
+    }
+  }, [activeWorkspaceRoot])
+
+  useEffect(() => {
+    if (activeEngineId === GEMINI_WEB_ENGINE_ID) {
+      void refreshGeminiGemBinding()
+    }
+  }, [activeEngineId, activeWorkspaceRoot, refreshGeminiGemBinding])
   // Extra chat engines come straight from the catalog; unavailable ones never render.
   const chatEngines = useMemo(() => engines.filter((engine) => engine.available && engine.id !== ND_HARNESS_ENGINE_ID), [engines])
   // Header engine selector shows only active or available/enabled engines.
@@ -1901,6 +1922,58 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
           </div>
         ) : null}
 
+        {activeEngineId === GEMINI_WEB_ENGINE_ID ? (
+          <div className="mx-3 mt-2.5 flex items-center justify-between gap-2 rounded-[7px] border border-border-soft bg-surface-1 px-2.5 py-1.5 text-[10px]">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="shrink-0 font-medium text-soft">Gemini Gem:</span>
+              {geminiGemBinding ? (
+                <span className="flex min-w-0 items-center gap-1.5 truncate">
+                  <strong className="truncate font-semibold text-foreground">
+                    {geminiGemBinding.gemRef}
+                  </strong>
+                  {geminiGemBinding.source === 'auto' ? (
+                    <span className="shrink-0 rounded bg-accent px-1 py-0.5 text-[8px] text-faint">
+                      auto-matched
+                    </span>
+                  ) : null}
+                </span>
+              ) : (
+                <span className="truncate text-faint">
+                  No gem linked — chats use your default Gemini (optional)
+                </span>
+              )}
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              {geminiGemBinding?.gemUrl ? (
+                <button
+                  type="button"
+                  className="rounded border border-border-soft px-1.5 py-0.5 text-[9px] text-faint hover:bg-accent hover:text-foreground"
+                  onClick={() => onOpenLink?.(geminiGemBinding.gemUrl)}
+                  title="Open Gem in browser"
+                >
+                  Open in Gemini
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="rounded border border-border-soft px-1.5 py-0.5 text-[9px] text-faint hover:bg-accent hover:text-foreground"
+                  onClick={() => onOpenLink?.('https://gemini.google.com/gems')}
+                  title="Browse Gemini Gems"
+                >
+                  gemini.google.com/gems
+                </button>
+              )}
+              <button
+                type="button"
+                className="rounded bg-primary/10 px-2 py-0.5 text-[9px] font-medium text-primary hover:bg-primary/20"
+                onClick={() => setGeminiGemModalOpen(true)}
+              >
+                {geminiGemBinding ? 'Change' : 'Link Gem'}
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         {changedFiles.length > 0 ? (
           <ChangedFilesCard files={changedFiles} {...(onOpenFile ? { onOpenFile } : {})} onError={onError} />
         ) : null}
@@ -2481,6 +2554,20 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
         }}
         onCleared={() => {
           setChatGptProjectBinding(null)
+        }}
+        onError={onError}
+      />
+      <GeminiGemDialog
+        open={geminiGemModalOpen}
+        workspaceRoot={activeWorkspaceRoot}
+        workspaceName={currentProjectName}
+        currentBinding={geminiGemBinding}
+        onClose={() => setGeminiGemModalOpen(false)}
+        onSaved={(binding) => {
+          setGeminiGemBinding(binding)
+        }}
+        onCleared={() => {
+          setGeminiGemBinding(null)
         }}
         onError={onError}
       />

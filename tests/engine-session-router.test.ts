@@ -53,7 +53,7 @@ function fixture() {
     status: () => ({}),
   }
   const workspace = { state: () => workspaceState, assertUsable: vi.fn() }
-  const router = new EngineSessionRouter(harness as never, direct as never, workspace as never, direct as never, undefined, direct as never, direct as never, direct as never, direct as never)
+  const router = new EngineSessionRouter(harness as never, direct as never, workspace as never, direct as never, undefined, undefined, direct as never, direct as never, direct as never, direct as never)
   return { router, run, workspace, harness, direct, sessions }
 }
 
@@ -99,7 +99,7 @@ describe('ND Agent session ownership', () => {
       listSessions: () => [],
     }
     const router = new EngineSessionRouter(harness as never, direct as never, workspace as never,
-      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, native as never)
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, native as never)
     try {
       delete process.env[ND_NATIVE_PRIVATE_SELECTION_ENV]
       await expect(router.createSession(ND_NATIVE_ENGINE_ID)).rejects.toThrow(/private/i)
@@ -126,7 +126,7 @@ describe('ND Agent session ownership', () => {
       transcript: async (sessionId: string) => ({ sessionId, engineId: 'nd-native', events: [] }),
     }
     const router = new EngineSessionRouter(harness as never, direct as never, workspace as never,
-      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, native as never)
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, native as never)
     await router.run('continue', { sessionId: 'nd-native-legacy', engineId: 'nd-harness' })
     expect(native.run).toHaveBeenCalledWith(expect.stringContaining('continue'), { sessionId: 'nd-native-legacy', cwd: workspaceState.root })
     expect(harness.run).not.toHaveBeenCalled()
@@ -303,6 +303,7 @@ describe('native direct transcript retention', () => {
       undefined,
       undefined,
       undefined,
+      undefined,
       journal,
     )
 
@@ -346,6 +347,7 @@ describe('native direct transcript retention', () => {
       harness as never,
       direct as never,
       workspace as never,
+      undefined,
       undefined,
       undefined,
       undefined,

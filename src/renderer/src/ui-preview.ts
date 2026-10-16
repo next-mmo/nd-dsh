@@ -924,6 +924,19 @@ const desktopApi: DesktopApi = {
     }),
     clearProjectBinding: async () => undefined,
   },
+  geminiWeb: {
+    getGemBinding: async () => null,
+    setGemBinding: async (workspaceRoot, input) => ({
+      workspaceRoot,
+      projectName: 'Preview Project',
+      gemRef: input.trim(),
+      gemId: input.trim(),
+      gemUrl: `https://gemini.google.com/gem/${input.trim()}`,
+      source: 'manual',
+      updatedAt: Date.now(),
+    }),
+    clearGemBinding: async () => undefined,
+  },
   window: {
     setFloatMode: async () => ({ float: false }),
     resizeFloatWindow: async () => undefined,

@@ -838,6 +838,20 @@ export function registerIpc(deps: IpcDependencies): () => void {
     const root = typeof workspaceRoot === 'string' && workspaceRoot.trim() ? workspaceRoot.trim() : deps.projectWorkspace.state().root
     deps.engineRouter.getChatGptWeb()?.clearProjectBinding(root)
   })
+  handle(IPC.geminiWebGemGet, (_event, workspaceRoot) => {
+    const root = typeof workspaceRoot === 'string' && workspaceRoot.trim() ? workspaceRoot.trim() : deps.projectWorkspace.state().root
+    return deps.engineRouter.getGeminiWeb()?.getGemBinding(root) ?? null
+  })
+  handle(IPC.geminiWebGemSet, (_event, workspaceRoot, input) => {
+    const root = typeof workspaceRoot === 'string' && workspaceRoot.trim() ? workspaceRoot.trim() : deps.projectWorkspace.state().root
+    const engine = deps.engineRouter.getGeminiWeb()
+    if (!engine) throw new Error('Gemini Web is unavailable')
+    return engine.setGemBinding(root, asString(input, 'Gemini Gem URL', 1024))
+  })
+  handle(IPC.geminiWebGemClear, (_event, workspaceRoot) => {
+    const root = typeof workspaceRoot === 'string' && workspaceRoot.trim() ? workspaceRoot.trim() : deps.projectWorkspace.state().root
+    deps.engineRouter.getGeminiWeb()?.clearGemBinding(root)
+  })
   handle(IPC.harnessPermissionGet, () => deps.theme.permissionMode())
   handle(IPC.harnessPermissionSet, async (_event, value) => {
     const mode = deps.theme.setPermissionMode(asPermissionMode(value))

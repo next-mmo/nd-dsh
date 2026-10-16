@@ -339,6 +339,18 @@ export interface ChatGptProjectBinding {
   updatedAt: number
 }
 
+/** Per-project Gemini Gem link: chats run inside the Gem's own instructions. */
+export interface GeminiGemBinding {
+  workspaceRoot: string
+  projectId?: string
+  projectName: string
+  gemRef: string
+  gemId: string
+  gemUrl: string
+  source: 'auto' | 'manual'
+  updatedAt: number
+}
+
 export interface EngineModelOption {
   id: string
   name?: string
@@ -810,6 +822,11 @@ export interface DesktopApi {
     setProjectBinding(workspaceRoot: string, input: string): Promise<ChatGptProjectBinding>
     clearProjectBinding(workspaceRoot: string): Promise<void>
   }
+  geminiWeb: {
+    getGemBinding(workspaceRoot?: string): Promise<GeminiGemBinding | null>
+    setGemBinding(workspaceRoot: string, input: string): Promise<GeminiGemBinding>
+    clearGemBinding(workspaceRoot: string): Promise<void>
+  }
   /** OS-style media transport over whatever the embedded browser is playing. */
   media?: {
     state(): Promise<NdMediaSessionState | null>
@@ -985,4 +1002,7 @@ export const IPC = {
   chatGptWebProjectGet: 'chatgpt-web:project-get',
   chatGptWebProjectSet: 'chatgpt-web:project-set',
   chatGptWebProjectClear: 'chatgpt-web:project-clear',
+  geminiWebGemGet: 'gemini-web:gem-get',
+  geminiWebGemSet: 'gemini-web:gem-set',
+  geminiWebGemClear: 'gemini-web:gem-clear',
 } as const

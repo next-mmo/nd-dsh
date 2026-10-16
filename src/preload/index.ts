@@ -275,6 +275,11 @@ const api: DesktopApi = {
     setProjectBinding: (workspaceRoot, input) => ipcRenderer.invoke(IPC.chatGptWebProjectSet, workspaceRoot, input),
     clearProjectBinding: (workspaceRoot) => ipcRenderer.invoke(IPC.chatGptWebProjectClear, workspaceRoot),
   },
+  geminiWeb: {
+    getGemBinding: (workspaceRoot) => ipcRenderer.invoke(IPC.geminiWebGemGet, workspaceRoot),
+    setGemBinding: (workspaceRoot, input) => ipcRenderer.invoke(IPC.geminiWebGemSet, workspaceRoot, input),
+    clearGemBinding: (workspaceRoot) => ipcRenderer.invoke(IPC.geminiWebGemClear, workspaceRoot),
+  },
   browserCompanion: {
     state: () => ipcRenderer.invoke(BROWSER_COMPANION_IPC.state) as Promise<BrowserCompanionState>,    acquireLease: (connectionId: string, tabId: number, ownerId: string, scope?: BrowserCompanionLeaseScope) =>
       ipcRenderer.invoke(BROWSER_COMPANION_IPC.acquireLease, connectionId, tabId, ownerId, scope) as Promise<BrowserTabLease>,

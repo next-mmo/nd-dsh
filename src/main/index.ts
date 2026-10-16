@@ -419,6 +419,10 @@ async function createWindow(cdpPort: number): Promise<void> {
     git,
     storePath: join(userData, 'chatgpt-web-sessions.json'),
     log: (line) => console.warn(line),
+  }, {
+    browser,
+    storePath: join(userData, 'gemini-web-sessions.json'),
+    log: (line) => console.warn(line),
   }, zcodeEngine, piEngine, cursorEngine, claudeEngine, engineSpawn, directEngineJournal, nativeAgent)
   activeEngineRouter = engineRouter
   engineRouter.setBrowserAccessProvider(browserPlatform)

@@ -17,6 +17,7 @@ import {
   CODEX_ENGINE_ID,
   CODEX_CLI_ENGINE_ID,
   CURSOR_CLI_ENGINE_ID,
+  GEMINI_WEB_ENGINE_ID,
   ND_HARNESS_ENGINE_ID,
   ND_NATIVE_ENGINE_ID,
   PI_CODING_ENGINE_ID,
@@ -43,6 +44,7 @@ import type { ClaudeCodeCliEngine } from './claude/claude-code-cli-engine.js'
 import type { AntigravityEngine } from './antigravity/antigravity-engine.js'
 import type { CursorCliEngine } from './cursor/cursor-cli-engine.js'
 import { ChatGptWebEngine } from './chatgpt-web/chatgpt-web-engine.js'
+import { GeminiWebEngine } from './gemini-web/gemini-web-engine.js'
 import type { CodexCliEngine } from './codex/codex-cli-engine.js'
 import { createExtraCliEngines } from './agent-cli/extra-cli-engines.js'
 import { TRANSCRIPT_EVENT_TYPES } from './agent-cli/agent-cli-support.js'
@@ -61,6 +63,12 @@ const STRUCTURED_TRANSCRIPT_ENGINE_IDS = new Set([
 export interface ChatGptWebRuntime {
   browser: BrowserController
   git: GitService
+  storePath: string
+  log?: (line: string) => void
+}
+
+export interface GeminiWebRuntime {
+  browser: BrowserController
   storePath: string
   log?: (line: string) => void
 }
@@ -117,6 +125,9 @@ export class EngineSessionRouter {
   private readonly chatGptWeb: ChatGptWebEngine | undefined
   private readonly chatGptWebBrowser: BrowserController | undefined
   private readonly chatGptWebLog: ((line: string) => void) | undefined
+  private readonly geminiWeb: GeminiWebEngine | undefined
+  private readonly geminiWebBrowser: BrowserController | undefined
+  private readonly geminiWebLog: ((line: string) => void) | undefined
   /** Workspace-capable direct engines by catalog id, in catalog order. */
   private readonly directEngines = new Map<string, DirectWorkspaceEngine>()
   /** Direct engines constructed by the router rather than Electron bootstrap. */
@@ -128,6 +139,7 @@ export class EngineSessionRouter {
     private readonly workspace: WorkspaceService,
     antigravity?: AntigravityEngine,
     chatGptWebRuntime?: ChatGptWebRuntime,
+    geminiWebRuntime?: GeminiWebRuntime,
     zcode?: ZcodeCliEngine,
     pi?: PiCodingEngine,
     cursor?: CursorCliEngine,
@@ -161,6 +173,16 @@ export class EngineSessionRouter {
         ...(chatGptWebRuntime.log ? { log: chatGptWebRuntime.log } : {}),
       })
     }
+    if (geminiWebRuntime) {
+      this.geminiWebBrowser = geminiWebRuntime.browser
+      this.geminiWebLog = geminiWebRuntime.log
+      this.geminiWeb = new GeminiWebEngine({
+        browser: geminiWebRuntime.browser,
+        workspace,
+        storePath: geminiWebRuntime.storePath,
+        ...(geminiWebRuntime.log ? { log: geminiWebRuntime.log } : {}),
+      })
+    }
   }
 
   setExtensionRouter(router: ExtensionRouter): void {
@@ -184,6 +206,7 @@ export class EngineSessionRouter {
       emit(frame)
     }
     this.chatGptWeb?.setEmitter(routed)
+    this.geminiWeb?.setEmitter(routed)
     for (const direct of this.directEngines.values()) direct.setEmitter?.(routed)
   }
 
@@ -294,6 +317,9 @@ export class EngineSessionRouter {
       if (harnessState === 'running' || harnessState === 'starting') {
         throw new Error('ChatGPT Web and ND Harness share the visible browser. Finish the active ND Harness turn before starting ChatGPT Web.')
       }
+      if (this.geminiWeb?.listSessions().some((session) => session.running)) {
+        throw new Error('ChatGPT Web and Gemini Web share the visible browser. Finish the active Gemini Web turn before starting ChatGPT Web.')
+      }
       const engine = this.requireChatGptWeb()
       const workspaceRoot = this.workspace.state().root
       if (options?.sessionId) {
@@ -322,8 +348,40 @@ export class EngineSessionRouter {
       }
       return result
     }
-    if (this.chatGptWeb?.listSessions().some((session) => session.running)) {
-      throw new Error('ND Harness and ChatGPT Web share the visible browser. Finish the active ChatGPT Web turn before starting ND Harness.')
+    if (requested === GEMINI_WEB_ENGINE_ID) {
+      const harnessState = this.harness.status().state
+      if (harnessState === 'running' || harnessState === 'starting') {
+        throw new Error('Gemini Web and ND Harness share the visible browser. Finish the active ND Harness turn before starting Gemini Web.')
+      }
+      if (this.chatGptWeb?.listSessions().some((session) => session.running)) {
+        throw new Error('Gemini Web and ChatGPT Web share the visible browser. Finish the active ChatGPT Web turn before starting Gemini Web.')
+      }
+      const engine = this.requireGeminiWeb()
+      const workspaceRoot = this.workspace.state().root
+      if (options?.sessionId) {
+        const session = engine.listSessions().find((candidate) => candidate.sessionId === options.sessionId)
+        if (session?.cwd && session.cwd !== workspaceRoot) {
+          throw new Error('This Gemini Web chat belongs to a different project workspace. Reopen that project before continuing the chat.')
+        }
+      }
+      const browser = this.geminiWebBrowser
+      const returnUrl = browser?.state().url
+      const result = await engine.run(optimizedPrompt, {
+        ...(options?.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
+        cwd: workspaceRoot,
+      })
+      // Like ChatGPT Web, Gemini owns the canonical visible browser while the
+      // turn is active; restore the user's app preview afterwards. On
+      // auth/setup errors leave Gemini visible so the user can fix the page.
+      if (browser && returnUrl && isRestorableBrowserUrl(returnUrl)) {
+        await browser.navigate(returnUrl).catch((error) => {
+          this.geminiWebLog?.(`[gemini-web] could not restore previous browser URL: ${error instanceof Error ? error.message : String(error)}`)
+        })
+      }
+      return result
+    }
+    if (this.chatGptWeb?.listSessions().some((session) => session.running) || this.geminiWeb?.listSessions().some((session) => session.running)) {
+      throw new Error('ND Harness and its Web chats share the visible browser. Finish the active web chat turn before starting ND Harness.')
     }
     const harnessCwd = sessionCwd ?? requestedRunCwd
     return this.harness.run(optimizedPrompt, harnessCwd ? { ...options, workspaceCwd: harnessCwd } : options)
@@ -352,6 +410,11 @@ export class EngineSessionRouter {
     const targetCwd = cwd ?? this.workspace.state().root
     if (engineId === CHATGPT_WEB_ENGINE_ID) {
       const sessionId = (await this.requireChatGptWeb().createSession({ cwd: targetCwd })).sessionId
+      this.logicalEngineBySession.set(sessionId, engineId)
+      return { engineId, sessionId }
+    }
+    if (engineId === GEMINI_WEB_ENGINE_ID) {
+      const sessionId = (await this.requireGeminiWeb().createSession({ cwd: targetCwd })).sessionId
       this.logicalEngineBySession.set(sessionId, engineId)
       return { engineId, sessionId }
     }
@@ -401,6 +464,10 @@ export class EngineSessionRouter {
       await this.requireChatGptWeb().stop(sessionId)
       return
     }
+    if (engine === GEMINI_WEB_ENGINE_ID) {
+      await this.requireGeminiWeb().stop(sessionId)
+      return
+    }
     const result = await this.harness.gatewayRpc('session.cancel', { sessionId })
     if (!result.ok) throw new Error(result.error?.message ?? 'Harness session.cancel failed')
   }
@@ -408,6 +475,7 @@ export class EngineSessionRouter {
   /** Cancel pending turns on every engine; each keeps its runtime available. */
   async stop(): Promise<HarnessStatus> {
     await this.chatGptWeb?.stop()
+    await this.geminiWeb?.stop()
     for (const direct of this.directEngines.values()) await direct.stop()
     return this.harness.stop()
   }
@@ -415,6 +483,7 @@ export class EngineSessionRouter {
   /** Release router-owned resources without double-closing bootstrap-owned engines. */
   async close(): Promise<void> {
     await this.chatGptWeb?.close()
+    await this.geminiWeb?.close()
     await Promise.all([...this.routerOwnedDirectEngines].map(async (direct) => { await direct.close?.() }))
   }
 
@@ -424,6 +493,7 @@ export class EngineSessionRouter {
       if (direct.handlesApproval(rpcId)) return direct.respond(rpcId, value)
     }
     if (this.chatGptWeb?.handlesApproval(rpcId)) return this.chatGptWeb.respond(rpcId, value)
+    if (this.geminiWeb?.handlesApproval(rpcId)) return this.geminiWeb.respond(rpcId, value)
     return this.harness.respond(rpcId, value)
   }
 
@@ -431,6 +501,7 @@ export class EngineSessionRouter {
     const workspaceRoot = this.workspace.state().root
     const workspaceSessions = [
       ...this.chatGptWeb?.listSessions() ?? [],
+      ...this.geminiWeb?.listSessions() ?? [],
       ...[...this.directEngines.entries()]
         .filter(([engineId]) => this.isWorkspaceDirectEngine(engineId))
         .flatMap(([, direct]) => direct.listSessions()),
@@ -454,13 +525,17 @@ export class EngineSessionRouter {
       // 500-event retained history or change browser-session recovery.
       return this.chatGptWeb.transcript(sessionId)
     }
+    if (this.geminiWeb?.ownsSession(sessionId)) {
+      // Gemini Web persists its own transcript, same as ChatGPT Web.
+      return this.geminiWeb.transcript(sessionId)
+    }
     throw new Error(`No engine owns session: ${sessionId}`)
   }
 
   private captureDirectTranscript(frame: DshEventFrame): void {
     if (!this.sessionJournal || frame.kind !== 'session-event' || !frame.sessionId || !frame.event) return
     const engineId = this.engineForSession(frame.sessionId)
-    if (engineId === CHATGPT_WEB_ENGINE_ID) return
+    if (engineId === CHATGPT_WEB_ENGINE_ID || engineId === GEMINI_WEB_ENGINE_ID) return
     const structuredChunk = STRUCTURED_TRANSCRIPT_ENGINE_IDS.has(engineId) && frame.event.type === 'assistant/chunk'
     if (!TRANSCRIPT_EVENT_TYPES.has(frame.event.type) && !structuredChunk) return
     void this.sessionJournal.append(frame.sessionId, [{
@@ -531,6 +606,7 @@ export class EngineSessionRouter {
       engineId === ND_HARNESS_ENGINE_ID
       || engineId === CODEX_ENGINE_ID
       || engineId === CHATGPT_WEB_ENGINE_ID
+      || engineId === GEMINI_WEB_ENGINE_ID
       || this.directEngines.has(engineId)
     ) return
     throw new Error(`Unknown coding engine: ${engineId}`)
@@ -553,6 +629,7 @@ export class EngineSessionRouter {
       if (direct.ownsSession(sessionId)) return engineId
     }
     if (this.chatGptWeb?.ownsSession(sessionId)) return CHATGPT_WEB_ENGINE_ID
+    if (this.geminiWeb?.ownsSession(sessionId)) return GEMINI_WEB_ENGINE_ID
     return ND_HARNESS_ENGINE_ID
   }
 
@@ -566,6 +643,17 @@ export class EngineSessionRouter {
     }
     return this.chatGptWeb
   }
+
+  getGeminiWeb(): GeminiWebEngine | undefined {
+    return this.geminiWeb
+  }
+
+  private requireGeminiWeb(): GeminiWebEngine {
+    if (!this.geminiWeb) {
+      throw new Error('Gemini Web is unavailable because ND did not initialize its visible-browser runtime.')
+    }
+    return this.geminiWeb
+  }
 }
 
 function isChatGptUrl(value: string): boolean {
@@ -576,8 +664,16 @@ function isChatGptUrl(value: string): boolean {
   }
 }
 
+function isGeminiUrl(value: string): boolean {
+  try {
+    return new URL(value).origin === 'https://gemini.google.com'
+  } catch {
+    return false
+  }
+}
+
 export function isRestorableBrowserUrl(value: string): boolean {
-  return value.trim().toLowerCase() !== 'about:blank' && !isChatGptUrl(value)
+  return value.trim().toLowerCase() !== 'about:blank' && !isChatGptUrl(value) && !isGeminiUrl(value)
 }
 
 function sameWorkspaceRoot(left: string, right: string): boolean {
