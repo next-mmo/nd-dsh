@@ -8,6 +8,7 @@
 export type InlineToken =
   | { kind: 'text'; text: string }
   | { kind: 'link'; text: string; url: string }
+  | { kind: 'image'; alt: string; url: string; linkUrl?: string }
   | { kind: 'code'; text: string }
   | { kind: 'bold'; text: string }
   | { kind: 'italic'; text: string }
@@ -45,6 +46,8 @@ function isTableStart(lines: string[], index: number): boolean {
   return headers.length > 0 && headers.length === separatorCells.length
 }
 
+const MARKDOWN_LINKED_IMAGE = /\[!\[([^\]\n]*)\]\(((?:https?:\/\/|data:image\/|blob:)[^\s)]+)\)\]\((https?:\/\/[^\s)]+)\)/y
+const MARKDOWN_IMAGE = /!\[([^\]\n]*)\]\(((?:https?:\/\/|data:image\/|blob:)[^\s)]+)\)/y
 const MARKDOWN_LINK = /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/y
 const BARE_URL = /https?:\/\/[^\s<>()]+/y
 const TRAILING_URL_PUNCTUATION = /[.,!?;:]+$/
@@ -54,16 +57,37 @@ function trimBareUrl(value: string): string {
 }
 
 function linkAt(text: string, cursor: number): { end: number; token: InlineToken } | undefined {
-  MARKDOWN_LINK.lastIndex = cursor
-  const markdown = MARKDOWN_LINK.exec(text)
-  if (markdown?.index === cursor) {
-    return { end: cursor + markdown[0].length, token: { kind: 'link', text: markdown[1]!, url: markdown[2]! } }
-  }
-  BARE_URL.lastIndex = cursor
-  const bare = BARE_URL.exec(text)
-  if (bare?.index === cursor) {
-    const url = trimBareUrl(bare[0])
-    if (url.length > 0) return { end: cursor + url.length, token: { kind: 'link', text: url, url } }
+  const ch = text[cursor]
+  if (ch === '[') {
+    MARKDOWN_LINKED_IMAGE.lastIndex = cursor
+    const linkedImg = MARKDOWN_LINKED_IMAGE.exec(text)
+    if (linkedImg?.index === cursor) {
+      return {
+        end: cursor + linkedImg[0].length,
+        token: { kind: 'image', alt: linkedImg[1]!, url: linkedImg[2]!, linkUrl: linkedImg[3]! },
+      }
+    }
+    MARKDOWN_LINK.lastIndex = cursor
+    const markdown = MARKDOWN_LINK.exec(text)
+    if (markdown?.index === cursor) {
+      return { end: cursor + markdown[0].length, token: { kind: 'link', text: markdown[1]!, url: markdown[2]! } }
+    }
+  } else if (ch === '!') {
+    MARKDOWN_IMAGE.lastIndex = cursor
+    const img = MARKDOWN_IMAGE.exec(text)
+    if (img?.index === cursor) {
+      return {
+        end: cursor + img[0].length,
+        token: { kind: 'image', alt: img[1]!, url: img[2]! },
+      }
+    }
+  } else if (ch === 'h') {
+    BARE_URL.lastIndex = cursor
+    const bare = BARE_URL.exec(text)
+    if (bare?.index === cursor) {
+      const url = trimBareUrl(bare[0])
+      if (url.length > 0) return { end: cursor + url.length, token: { kind: 'link', text: url, url } }
+    }
   }
   return undefined
 }

@@ -39,7 +39,7 @@ describe('keep-alive view identity', () => {
 
 // These exercise disposal decisions, without mounting a browser or iframe.
 import { afterEach, beforeEach, vi } from 'vitest'
-import { admitKeepAliveView, closeKeepAliveView, dockKeepAliveView, lookupKeepAliveView, pruneKeepAliveViews, reconcileExtensionKeepAlive } from './extension-view-keepalive'
+import { admitKeepAliveView, closeKeepAliveView, dockKeepAliveView, lookupKeepAliveView, pruneKeepAliveViews, reconcileExtensionKeepAlive, resetKeepAliveForReload } from './extension-view-keepalive'
 import type { NdExtensionsStateView } from '../../../shared/nd-invocations'
 
 const ids = ['nd.one', 'nd.two', 'nd.three']
@@ -51,10 +51,10 @@ function runtimeState(backgroundExtensionIds: string[] = [], maxBackgroundViews 
     runtimePolicy: { backgroundExtensionIds, maxBackgroundViews, idleTimeoutMinutes: 1 },
   }
 }
-function data(id: string): NdViewData { return { ...view({ kind: 'personal' }).data, extensionId: id, webView: { entry: 'ui/index.html', version: '1.0.0' } } }
+function data(id: string): NdViewData { return { ...view({ kind: 'personal' }).data, extensionId: id, webView: { entry: 'ui/index.html', version: '1.0.0', url: `nd-extension-ui://${id}/ui/index.html`, token: `tok-${id}` } } }
 
 beforeEach(() => reconcileExtensionKeepAlive({ ...runtimeState(), packages: [] }))
-afterEach(() => { reconcileExtensionKeepAlive({ ...runtimeState(), packages: [] }); vi.restoreAllMocks() })
+afterEach(() => { reconcileExtensionKeepAlive({ ...runtimeState(), packages: [] }); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('bounded extension backgrounds', () => {
   it('unloads on close by default', async () => {
@@ -105,4 +105,56 @@ describe('bounded extension backgrounds', () => {
     pruneKeepAliveViews(100_000)
     expect(lookupKeepAliveView(key)).toBeDefined()
   })
+
+  it('persists keep-alive views across hard reload only while the extension remains active and opted-in', async () => {
+    const store = new Map<string, string>()
+    const loadView = vi.fn(async (extensionId: string, viewId: string, context: NdContext): Promise<NdViewData> => ({
+      ...data(extensionId),
+      viewId,
+      context,
+      webView: { entry: 'ui/index.html', version: '1.0.0', url: `nd-extension-ui://reloaded-${extensionId}/ui/index.html`, token: `reloaded-${extensionId}` },
+    }))
+    const closeWebView = vi.fn(async () => undefined)
+    vi.stubGlobal('window', {
+      localStorage: {
+        getItem: (k: string) => store.get(k) ?? null,
+        setItem: (k: string, v: string) => { store.set(k, v) },
+        removeItem: (k: string) => { store.delete(k) },
+      },
+      ndDsh: { ndExtensions: { loadView, closeWebView } },
+    })
+
+    const state = runtimeState(['nd.one', 'nd.two'], 2)
+    reconcileExtensionKeepAlive(state)
+    const keyOne = admitKeepAliveView(data('nd.one'))
+    const keyTwo = admitKeepAliveView(data('nd.two'))
+    dockKeepAliveView(keyOne, null)
+    dockKeepAliveView(keyTwo, null)
+    await Promise.resolve()
+
+    // Simulate a hard reload: in-memory state clears while storage survives.
+    resetKeepAliveForReload()
+    expect(lookupKeepAliveView(keyOne)).toBeUndefined()
+    expect(lookupKeepAliveView(keyTwo)).toBeUndefined()
+
+    // Deactivate nd.two before boot reconciliation: only active nd.one should restore.
+    state.activations[1]!.enabled = false
+    reconcileExtensionKeepAlive(state)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(loadView).toHaveBeenCalledTimes(1)
+    expect(loadView).toHaveBeenCalledWith('nd.one', 'mini-browser', { kind: 'personal' })
+    expect(lookupKeepAliveView(keyOne)?.webView?.token).toBe('reloaded-nd.one')
+    expect(lookupKeepAliveView(keyTwo)).toBeUndefined()
+
+    // Truly closing the restored tab clears persisted storage so a subsequent reload stays empty.
+    closeKeepAliveView(keyOne)
+    resetKeepAliveForReload()
+    reconcileExtensionKeepAlive(state)
+    await Promise.resolve()
+    expect(loadView).toHaveBeenCalledTimes(1)
+    expect(lookupKeepAliveView(keyOne)).toBeUndefined()
+  })
 })
+

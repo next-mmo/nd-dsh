@@ -34,6 +34,28 @@ describe('tokenizeInline', () => {
     ])
   })
 
+  it('tokenizes standalone markdown images', () => {
+    expect(tokenizeInline('Here is ![Xiaomi Redmi Note 9](https://images.com/phone.jpg) phone')).toEqual([
+      { kind: 'text', text: 'Here is ' },
+      { kind: 'image', alt: 'Xiaomi Redmi Note 9', url: 'https://images.com/phone.jpg' },
+      { kind: 'text', text: ' phone' },
+    ])
+  })
+
+  it('tokenizes linked markdown images with click targets', () => {
+    expect(tokenizeInline('[![Redmi](https://images.com/phone.jpg)](https://zdnet.com/article)')).toEqual([
+      { kind: 'image', alt: 'Redmi', url: 'https://images.com/phone.jpg', linkUrl: 'https://zdnet.com/article' },
+    ])
+  })
+
+  it('supports data:image and blob: image URLs', () => {
+    expect(tokenizeInline('![generated](data:image/png;base64,iVBORw0KGgo) and ![cached](blob:https://gemini.google.com/123)')).toEqual([
+      { kind: 'image', alt: 'generated', url: 'data:image/png;base64,iVBORw0KGgo' },
+      { kind: 'text', text: ' and ' },
+      { kind: 'image', alt: 'cached', url: 'blob:https://gemini.google.com/123' },
+    ])
+  })
+
   it('keeps bold markers literal inside inline code', () => {
     const tokens = tokenizeInline('`**not bold**`')
     expect(tokens).toEqual([{ kind: 'code', text: '**not bold**' }])

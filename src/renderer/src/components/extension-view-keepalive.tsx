@@ -2,7 +2,7 @@ import { normalizeExtensionRuntimePolicy, type ExtensionRuntimePolicy } from '..
 import type { NdExtensionsStateView } from '../../../shared/nd-invocations'
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { contextKey } from '../../../shared/nd-context'
+import { asNdContext, contextKey, isNdContext } from '../../../shared/nd-context'
 import type { NdContext } from '../../../shared/nd-context'
 import type { NdViewData } from '../../../shared/nd-invocations'
 import type { OrganizationSnapshot } from '../../../shared/organization'
@@ -40,14 +40,119 @@ interface ExtensionKeepAliveState {
   dockedKey: string | null
 }
 
+interface PersistedKeepAliveEntry {
+  key: string
+  extensionId: string
+  viewId: string
+  context: NdContext
+  title: string
+  version?: string
+  updatedAt?: number
+  backgroundedAt?: number
+}
+
+const KEEP_ALIVE_STORAGE_KEY = 'nd-dsh:extension-keepalive-views'
+
 let runtimePolicy = normalizeExtensionRuntimePolicy(undefined)
 const backgroundedAt = new Map<string, number>()
+const persistedViews = new Map<string, PersistedKeepAliveEntry>()
+const restoringKeys = new Set<string>()
 let keepAliveState: ExtensionKeepAliveState = { views: [], dockedKey: null }
 const keepAliveListeners = new Set<() => void>()
 // Dialog placeholder elements per docked view (not render state: the host
 // moves the live iframe container into the slot when it docks).
 const keepAliveSlots = new Map<string, HTMLElement>()
 const keepAliveParking = new Map<string, HTMLElement>()
+
+function getKeepAliveStorage(): Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage && typeof window.localStorage.getItem === 'function') {
+      return window.localStorage
+    }
+    if (typeof localStorage !== 'undefined' && typeof localStorage.getItem === 'function') {
+      return localStorage
+    }
+  } catch {
+    // Storage can be unavailable in restricted or headless test contexts.
+  }
+  return null
+}
+
+function readPersistedKeepAliveViews(): PersistedKeepAliveEntry[] {
+  const storage = getKeepAliveStorage()
+  if (!storage) return []
+  try {
+    const raw = storage.getItem(KEEP_ALIVE_STORAGE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return []
+    const entries: PersistedKeepAliveEntry[] = []
+    for (const item of parsed) {
+      if (!item || typeof item !== 'object') continue
+      const record = item as Record<string, unknown>
+      if (typeof record.extensionId !== 'string' || !record.extensionId.trim()) continue
+      if (typeof record.viewId !== 'string' || !record.viewId.trim()) continue
+      if (!isNdContext(record.context)) continue
+      const context = asNdContext(record.context)
+      const extensionId = record.extensionId.trim()
+      const viewId = record.viewId.trim()
+      const key = extensionViewKey({ extensionId, viewId, context })
+      entries.push({
+        key,
+        extensionId,
+        viewId,
+        context,
+        title: typeof record.title === 'string' && record.title.trim() ? record.title : viewId,
+        ...(typeof record.version === 'string' && record.version ? { version: record.version } : {}),
+        ...(typeof record.updatedAt === 'number' && Number.isFinite(record.updatedAt) ? { updatedAt: record.updatedAt } : {}),
+        ...(typeof record.backgroundedAt === 'number' && Number.isFinite(record.backgroundedAt) ? { backgroundedAt: record.backgroundedAt } : {}),
+      })
+    }
+    return entries
+  } catch {
+    return []
+  }
+}
+
+function writePersistedKeepAliveViews(): void {
+  const storage = getKeepAliveStorage()
+  if (!storage) return
+  try {
+    if (persistedViews.size === 0) {
+      storage.removeItem(KEEP_ALIVE_STORAGE_KEY)
+      return
+    }
+    storage.setItem(KEEP_ALIVE_STORAGE_KEY, JSON.stringify([...persistedViews.values()]))
+  } catch {
+    // Ignore quota or storage errors; in-memory keep-alive still works.
+  }
+}
+
+function hydratePersistedKeepAliveViews(): void {
+  for (const entry of readPersistedKeepAliveViews()) {
+    if (!persistedViews.has(entry.key)) {
+      persistedViews.set(entry.key, entry)
+    }
+  }
+}
+
+hydratePersistedKeepAliveViews()
+
+function persistKeepAliveView(key: string, data: NdViewData): void {
+  if (data.kind !== 'web') return
+  const backgrounded = backgroundedAt.get(key)
+  persistedViews.set(key, {
+    key,
+    extensionId: data.extensionId,
+    viewId: data.viewId,
+    context: data.context,
+    title: data.title,
+    ...(data.webView?.version !== undefined ? { version: data.webView.version } : {}),
+    ...(data.webView?.updatedAt !== undefined ? { updatedAt: data.webView.updatedAt } : {}),
+    ...(backgrounded !== undefined ? { backgroundedAt: backgrounded } : {}),
+  })
+  writePersistedKeepAliveViews()
+}
 
 function emitKeepAliveChange(): void {
   for (const listener of keepAliveListeners) listener()
@@ -76,10 +181,18 @@ export function extensionKeepAliveContextLabel(view: ExtensionKeepAliveView, org
 /** Registers a loaded web view as alive (idempotent) and returns its key. */
 export function admitKeepAliveView(data: NdViewData): string {
   const key = extensionViewKey(data)
-  if (!keepAliveState.views.some((view) => view.key === key)) {
+  const existing = keepAliveState.views.find((view) => view.key === key)
+  if (!existing) {
     keepAliveState = { ...keepAliveState, views: [...keepAliveState.views, { key, data }] }
     emitKeepAliveChange()
+  } else if (existing.data !== data) {
+    keepAliveState = {
+      ...keepAliveState,
+      views: keepAliveState.views.map((view) => (view.key === key ? { key, data } : view)),
+    }
+    emitKeepAliveChange()
   }
+  persistKeepAliveView(key, data)
   return key
 }
 
@@ -108,6 +221,12 @@ export function dockKeepAliveView(key: string, slot: HTMLElement | null): void {
   }
   if (slot) backgroundedAt.delete(key)
   else backgroundedAt.set(key, Date.now())
+  const persisted = persistedViews.get(key)
+  if (persisted) {
+    if (slot) delete persisted.backgroundedAt
+    else persisted.backgroundedAt = backgroundedAt.get(key)!
+    writePersistedKeepAliveViews()
+  }
   const dockedKey = slot ? key : (keepAliveState.dockedKey === key ? null : keepAliveState.dockedKey)
   if (dockedKey !== keepAliveState.dockedKey) {
     keepAliveState = { ...keepAliveState, dockedKey }
@@ -120,6 +239,9 @@ export function dockKeepAliveView(key: string, slot: HTMLElement | null): void {
 
 /** Truly closes a view: unmounts its iframe and revokes its asset token. */
 export function closeKeepAliveView(key: string): void {
+  const hadPersisted = persistedViews.delete(key)
+  restoringKeys.delete(key)
+  if (hadPersisted) writePersistedKeepAliveViews()
   const view = keepAliveState.views.find((entry) => entry.key === key)
   if (!view) return
   keepAliveSlots.delete(key)
@@ -130,7 +252,103 @@ export function closeKeepAliveView(key: string): void {
   }
   emitKeepAliveChange()
   const token = view.data.webView?.token
-  if (token && typeof window !== 'undefined') void window.ndDsh.ndExtensions.closeWebView(token).catch(() => { /* token TTL cleans up anyway */ })
+  if (token && typeof window !== 'undefined') void window.ndDsh?.ndExtensions?.closeWebView?.(token).catch(() => { /* token TTL cleans up anyway */ })
+}
+
+function isPersistedEntryEligible(
+  entry: PersistedKeepAliveEntry,
+  packages: Map<string, NdExtensionsStateView['packages'][number]>,
+  enabled: Set<string>,
+  policy: ExtensionRuntimePolicy,
+  now: number,
+): boolean {
+  const installed = packages.get(entry.extensionId)
+  if (!installed) return false
+  if (Array.isArray(installed.views) && !installed.views.some((view) => view.id === entry.viewId && view.kind === 'web')) {
+    return false
+  }
+  if (!enabled.has(JSON.stringify([entry.extensionId, contextKey(entry.context)]))) return false
+  if (entry.version && installed.version !== entry.version) return false
+  if (entry.updatedAt && installed.updatedAt !== entry.updatedAt) return false
+  if (keepAliveState.dockedKey !== entry.key) {
+    if (!policy.backgroundExtensionIds.includes(entry.extensionId) || policy.maxBackgroundViews <= 0) return false
+    if (entry.backgroundedAt !== undefined && now - entry.backgroundedAt >= policy.idleTimeoutMinutes * 60_000) return false
+  }
+  return true
+}
+
+function reconcilePersistedKeepAliveViews(
+  packages: Map<string, NdExtensionsStateView['packages'][number]>,
+  enabled: Set<string>,
+  policy: ExtensionRuntimePolicy,
+  now = Date.now(),
+): void {
+  if (keepAliveState.views.length === 0 && persistedViews.size === 0 && restoringKeys.size === 0) {
+    hydratePersistedKeepAliveViews()
+  }
+  let dirty = false
+  for (const entry of [...persistedViews.values()]) {
+    if (!isPersistedEntryEligible(entry, packages, enabled, policy, now)) {
+      persistedViews.delete(entry.key)
+      restoringKeys.delete(entry.key)
+      dirty = true
+    }
+  }
+  const backgroundEntries = [...persistedViews.values()]
+    .filter((entry) => entry.key !== keepAliveState.dockedKey)
+    .sort((a, b) => (a.backgroundedAt ?? now) - (b.backgroundedAt ?? now))
+  for (const entry of backgroundEntries.slice(0, Math.max(0, backgroundEntries.length - policy.maxBackgroundViews))) {
+    persistedViews.delete(entry.key)
+    restoringKeys.delete(entry.key)
+    dirty = true
+  }
+  if (dirty) writePersistedKeepAliveViews()
+
+  if (typeof window === 'undefined' || typeof window.ndDsh?.ndExtensions?.loadView !== 'function') return
+  for (const entry of [...persistedViews.values()]) {
+    if (keepAliveState.views.some((view) => view.key === entry.key) || restoringKeys.has(entry.key)) continue
+    restoringKeys.add(entry.key)
+    void window.ndDsh.ndExtensions.loadView(entry.extensionId, entry.viewId, entry.context)
+      .then((next) => {
+        restoringKeys.delete(entry.key)
+        const current = persistedViews.get(entry.key)
+        if (!current
+          || keepAliveState.views.some((view) => view.key === entry.key)
+          || next.kind !== 'web'
+          || !next.webView?.url
+          || !runtimePolicy.backgroundExtensionIds.includes(next.extensionId)
+          || runtimePolicy.maxBackgroundViews <= 0) {
+          if (next.webView?.token && typeof window !== 'undefined') {
+            void window.ndDsh?.ndExtensions?.closeWebView?.(next.webView.token).catch(() => undefined)
+          }
+          return
+        }
+        if (!keepAliveSlots.has(entry.key)) {
+          backgroundedAt.set(entry.key, current.backgroundedAt ?? Date.now())
+        }
+        admitKeepAliveView(next)
+        pruneKeepAliveViews()
+      })
+      .catch(() => {
+        restoringKeys.delete(entry.key)
+        if (persistedViews.delete(entry.key)) writePersistedKeepAliveViews()
+      })
+  }
+}
+
+/**
+ * Resets in-memory keep-alive state while retaining storage, simulating a hard
+ * renderer reload before {@link reconcileExtensionKeepAlive} runs on boot.
+ */
+export function resetKeepAliveForReload(): void {
+  keepAliveSlots.clear()
+  keepAliveParking.clear()
+  backgroundedAt.clear()
+  persistedViews.clear()
+  restoringKeys.clear()
+  keepAliveState = { views: [], dockedKey: null }
+  hydratePersistedKeepAliveViews()
+  emitKeepAliveChange()
 }
 
 /** Reconcile live views with current profile authority, including update/uninstall. */
@@ -145,6 +363,7 @@ export function reconcileExtensionKeepAlive(state: NdExtensionsStateView): void 
       || (view.data.webView?.updatedAt && installed.updatedAt !== view.data.webView.updatedAt)) closeKeepAliveView(view.key)
   }
   pruneKeepAliveViews()
+  reconcilePersistedKeepAliveViews(packages, enabled, runtimePolicy)
 }
 
 export function pruneKeepAliveViews(now = Date.now(), policy: ExtensionRuntimePolicy = runtimePolicy): void {

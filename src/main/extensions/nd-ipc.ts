@@ -74,6 +74,7 @@ import { createZipFile } from './zip.js'
 import { promptVaultEntry, type VaultPromptValues } from './vault-prompt.js'
 import { ExtensionWebViewAssets } from './webview-assets.js'
 import { TicTacToeStatsStore, asTicTacToeOutcome } from './tic-tac-toe-store.js'
+import { WizardChessStatsStore, asWizardChessOutcome } from './wizard-chess-store.js'
 import { MiniBrowserStore, browserTabUrl, asMiniEntryId, miniTabTitle, legacyYouTubeQueuePath, type MiniLink } from './mini-browser-store.js'
 import { PayGuardStore } from './pay-guard-store.js'
 import { PayGuardScheduler } from './pay-guard-scheduler.js'
@@ -132,6 +133,7 @@ const MAX_OPEN_TARGETS = 1
 const QUIT_PROCESS_ID = 'nd.quit-process'
 const PASSWORD_VAULT_ID = 'nd.password-vault'
 const TIC_TAC_TOE_ID = 'nd.tic-tac-toe'
+const WIZARD_CHESS_ID = 'nd.wizard-chess-3d'
 const MINI_BROWSER_ID = 'nd.mini-browser'
 const PAY_GUARD_ID = 'nd.pay-guard'
 const DISK_CLEANER_ID = 'nd.disk-cleaner'
@@ -155,6 +157,7 @@ const AVAILABLE_PACKAGES: readonly { id: string; path: () => string }[] = app.is
   // Discover; packaged users install it from a folder.
   ...(app.isPackaged ? [] : [
     { id: TIC_TAC_TOE_ID, path: ticTacToePackagePath },
+    { id: WIZARD_CHESS_ID, path: wizardChessPackagePath },
     { id: MINI_BROWSER_ID, path: miniBrowserPackagePath },
     { id: PAY_GUARD_ID, path: payGuardPackagePath },
     { id: DISK_CLEANER_ID, path: diskCleanerPackagePath },
@@ -215,6 +218,16 @@ function ticTacToePackagePath(): string {
   return app.isPackaged
     ? join(process.resourcesPath, 'nd-extensions', 'tic-tac-toe')
     : join(app.getAppPath(), 'extensions', 'tic-tac-toe')
+}
+
+function wizardChessPackagePath(): string {
+  const externalRepo = join(dirname(app.getAppPath()), 'next-mmo', 'wizard-chess-3d')
+  if (existsSync(join(externalRepo, 'nd-extension.json'))) return externalRepo
+  const cwdNeighbor = join(process.cwd(), '..', 'next-mmo', 'wizard-chess-3d')
+  if (existsSync(join(cwdNeighbor, 'nd-extension.json'))) return cwdNeighbor
+  return app.isPackaged
+    ? join(process.resourcesPath, 'nd-extensions', 'wizard-chess-3d')
+    : join(app.getAppPath(), 'extensions', 'wizard-chess-3d')
 }
 
 function miniBrowserPackagePath(): string {
@@ -346,6 +359,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
         passwordVaultCatalogView(state),
         ...(app.isPackaged ? [] : [
           ticTacToeCatalogView(state),
+          wizardChessCatalogView(state),
           miniBrowserCatalogView(state),
           payGuardCatalogView(state),
           diskCleanerCatalogView(state),
@@ -1939,6 +1953,28 @@ export function registerNativeHostHandlers(
     return ticTacToeStats.reset()
   })
 
+  // --- Wizard Chess 3D --------------------------------------------------------
+  //
+  // The game UI itself is the package's web view (sandboxed iframe); this side
+  // only owns the durable scoreboard. Personal-only and non-sensitive.
+
+  const wizardChessStats = new WizardChessStatsStore(join(app.getPath('userData'), 'nd-wizard-chess', 'stats.json'))
+
+  host.register('wizardchess.stats.get', async (_input, context) => {
+    requirePersonalContext(context)
+    return wizardChessStats.get()
+  })
+
+  host.register('wizardchess.stats.record', async (input, context) => {
+    requirePersonalContext(context)
+    return wizardChessStats.record(asWizardChessOutcome(input.outcome))
+  })
+
+  host.register('wizardchess.stats.reset', async (_input, context) => {
+    requirePersonalContext(context)
+    return wizardChessStats.reset()
+  })
+
   // --- Mini ND Browser ----------------------------------------------------------
   //
   // The browser chrome is the package's web view (sandboxed iframe, no
@@ -2423,6 +2459,14 @@ async function ticTacToeCatalogView(state: NdExtensionsStateView): Promise<NdAva
     name: 'ND 3D Tic-Tac-Toe',
     description: 'Play tic-tac-toe on a 3D board rendered with three.js, on demand from the launcher. Ships its own sandboxed UI; the package stays fully external to the app bundle.',
     permissions: ['tictactoe.read', 'tictactoe.write'],
+  })
+}
+
+async function wizardChessCatalogView(state: NdExtensionsStateView): Promise<NdAvailablePackageView> {
+  return packageCatalogView(state, WIZARD_CHESS_ID, wizardChessPackagePath(), {
+    name: 'ND Wizard Chess 3D',
+    description: 'Play 3D Gothic Cathedral Wizard Chess with sculpted stone pieces, cinematic melee captures, stone shatter physics, and single-player AI. Ships its own sandboxed UI; the package stays fully external to the app bundle.',
+    permissions: ['wizardchess.read', 'wizardchess.write'],
   })
 }
 

@@ -66,10 +66,15 @@ function foldEventInto(entries: ThreadEntry[], envelope: HistoryEventEnvelope, o
         entries.push({ kind: 'context', id: crypto.randomUUID(), source, text })
         return
       }
-      const visible = stripWorkspaceContext(text).trim()
+      const hasLegacyUserPrefix = /^(?:#+\s*)?You said\b/i.test(text)
+      const visible = stripWorkspaceContext(text)
+        .replace(/^(?:#+\s*)?You said\b[^\n]*\n+/i, '')
+        .replace(/^You said:\s*/i, '')
+        .trim()
       if (!visible) return
       const last = entries.at(-1)
       if (last?.kind === 'user' && last.text === visible) return
+      if (hasLegacyUserPrefix && entries.some((entry) => entry.kind === 'user' && entry.text === visible)) return
       entries.push({ kind: 'user', id: crypto.randomUUID(), text: visible, ...(data.skillMention ? { skillMention: data.skillMention as import('./skill-catalog.js').SkillSuggestion } : {}) })
       return
     }
@@ -86,16 +91,55 @@ function foldEventInto(entries: ThreadEntry[], envelope: HistoryEventEnvelope, o
       return
     }
     case 'assistant/message': {
-      const text = messageText(data.message) ?? messageText(data)
-      if (text === undefined) return
+      const rawText = messageText(data.message) ?? messageText(data)
+      if (rawText === undefined) return
+      const hasLegacyPrefix = /^ChatGPT said:\s*/i.test(rawText)
+      const text = rawText
+        .replace(/^ChatGPT said:\s*/i, '')
+        .replace(/!\[[^\]]*\]\(https?:\/\/(?:www\.)?google\.com\/s2\/favicons\?[^)]*\)\s*/gi, '')
+        .trim() || rawText
+      if (typeof data.replaceFromEndAssistantOffset === 'number' && data.replaceFromEndAssistantOffset >= 0) {
+        let seenFromEnd = 0
+        for (let i = entries.length - 1; i >= 0; i--) {
+          if (entries[i]?.kind === 'assistant') {
+            if (seenFromEnd === data.replaceFromEndAssistantOffset) {
+              const owned = own(i) as Extract<ThreadEntry, { kind: 'assistant' }>
+              owned.text = text
+              owned.streaming = false
+              return
+            }
+            seenFromEnd += 1
+          }
+        }
+      }
       const last = entries.at(-1)
       if (last?.kind === 'assistant' && last.streaming) {
         const owned = own(entries.length - 1) as typeof last
         owned.text = text
         owned.streaming = false
-      } else {
-        entries.push({ kind: 'assistant', id: crypto.randomUUID(), text })
+        return
       }
+      // If an earlier assistant turn was recorded as a bare "Edit" button placeholder
+      // (before a generated image finished loading) or re-serialized with updated
+      // Markdown images, upgrade that existing assistant turn in place.
+      const firstLine = text.split('\n')[0]?.trim() ?? ''
+      for (let i = 0; i < entries.length; i++) {
+        const existing = entries[i]
+        if (existing?.kind !== 'assistant' || existing.streaming) continue
+        if (existing.text === text && (hasLegacyPrefix || last?.kind === 'assistant')) return
+        if (existing.text === 'Edit' && text.startsWith('![')) {
+          const owned = own(i) as Extract<ThreadEntry, { kind: 'assistant' }>
+          owned.text = text
+          return
+        }
+        const existingFirstLine = existing.text.split('\n')[0]?.trim() ?? ''
+        if (firstLine.length >= 20 && firstLine === existingFirstLine && (text.includes('![') || existing.text.includes('!['))) {
+          const owned = own(i) as Extract<ThreadEntry, { kind: 'assistant' }>
+          owned.text = text
+          return
+        }
+      }
+      entries.push({ kind: 'assistant', id: crypto.randomUUID(), text })
       return
     }
     case 'agent/reasoning': {

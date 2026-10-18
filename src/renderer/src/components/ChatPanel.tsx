@@ -64,7 +64,7 @@ import { ChatContextPopover } from './ChatContextPopover'
 import { ZcodeModelConfigDialog } from './ZcodeModelConfigDialog'
 import { ChatGptProjectDialog } from './ChatGptProjectDialog'
 import { GeminiGemDialog } from './GeminiGemDialog'
-import { MarkdownLite } from './MarkdownLite'
+import { ImagePreviewDialog, MarkdownLite } from './MarkdownLite'
 import { Button } from './ui/button'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from './ui/dropdown-menu'
@@ -190,6 +190,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   const [permissionMode, setPermissionMode] = useState('workspace-write')
   const [prompt, setPrompt] = useState('')
   const [pendingImages, setPendingImages] = useState<string[]>([])
+  const [previewPendingImage, setPreviewPendingImage] = useState<{ url: string; alt: string } | null>(null)
   const [harnessSessionsLoaded, setHarnessSessionsLoaded] = useState(false)
   const [sessionListError, setSessionListError] = useState<string | null>(null)
   const sessionListRequestRef = useRef<Promise<void> | null>(null)
@@ -1925,7 +1926,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
         {activeEngineId === GEMINI_WEB_ENGINE_ID ? (
           <div className="mx-3 mt-2.5 flex items-center justify-between gap-2 rounded-[7px] border border-border-soft bg-surface-1 px-2.5 py-1.5 text-[10px]">
             <div className="flex min-w-0 items-center gap-2">
-              <span className="shrink-0 font-medium text-soft">Gemini Gem:</span>
+              <span className="shrink-0 font-medium text-soft">Gemini Skill:</span>
               {geminiGemBinding ? (
                 <span className="flex min-w-0 items-center gap-1.5 truncate">
                   <strong className="truncate font-semibold text-foreground">
@@ -1939,7 +1940,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
                 </span>
               ) : (
                 <span className="truncate text-faint">
-                  No gem linked — chats use your default Gemini (optional)
+                  No skill linked — chats use your default Gemini (optional)
                 </span>
               )}
             </div>
@@ -1949,7 +1950,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
                   type="button"
                   className="rounded border border-border-soft px-1.5 py-0.5 text-[9px] text-faint hover:bg-accent hover:text-foreground"
                   onClick={() => onOpenLink?.(geminiGemBinding.gemUrl)}
-                  title="Open Gem in browser"
+                  title="Open in Gemini"
                 >
                   Open in Gemini
                 </button>
@@ -1957,10 +1958,10 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
                 <button
                   type="button"
                   className="rounded border border-border-soft px-1.5 py-0.5 text-[9px] text-faint hover:bg-accent hover:text-foreground"
-                  onClick={() => onOpenLink?.('https://gemini.google.com/gems')}
-                  title="Browse Gemini Gems"
+                  onClick={() => onOpenLink?.('https://gemini.google.com/customize/skills')}
+                  title="Browse Gemini skills"
                 >
-                  gemini.google.com/gems
+                  gemini.google.com/customize/skills
                 </button>
               )}
               <button
@@ -1968,7 +1969,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
                 className="rounded bg-primary/10 px-2 py-0.5 text-[9px] font-medium text-primary hover:bg-primary/20"
                 onClick={() => setGeminiGemModalOpen(true)}
               >
-                {geminiGemBinding ? 'Change' : 'Link Gem'}
+                {geminiGemBinding ? 'Change' : 'Link Skill'}
               </button>
             </div>
           </div>
@@ -2173,7 +2174,14 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
               <div className="mb-1.5 flex flex-wrap gap-1.5">
                 {pendingImages.map((image, index) => (
                   <div key={index} className="relative">
-                    <img src={image} alt={`Pasted image ${index + 1}`} className="h-14 w-14 rounded-md border border-border object-cover" />
+                    <button
+                      type="button"
+                      className="block cursor-zoom-in rounded-md focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+                      title={`Preview attached image ${index + 1}`}
+                      onClick={() => setPreviewPendingImage({ url: image, alt: `Attached image ${index + 1}` })}
+                    >
+                      <img src={image} alt={`Pasted image ${index + 1}`} className="h-14 w-14 rounded-md border border-border object-cover transition-opacity hover:opacity-90" />
+                    </button>
                     <button
                       type="button"
                       className="absolute -right-1.5 -top-1.5 grid size-4 place-items-center rounded-full border border-border-strong bg-surface-1 text-faint transition-colors hover:text-foreground"
@@ -2186,6 +2194,14 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
                   </div>
                 ))}
               </div>
+            ) : null}
+            {previewPendingImage ? (
+              <ImagePreviewDialog
+                open={previewPendingImage !== null}
+                onOpenChange={(open) => { if (!open) setPreviewPendingImage(null) }}
+                url={previewPendingImage.url}
+                alt={previewPendingImage.alt}
+              />
             ) : null}
             <textarea
               ref={textareaRef}
@@ -2814,7 +2830,7 @@ function ThreadEntryView({ entry, isLastAssistant, retryPrompt, onAnswerApproval
           <div className="flex max-w-[85%] items-end gap-1.5">
             <CopyMessageButton text={entry.text} />
             <article className="rounded-2xl rounded-br-sm bg-info/[0.13] px-3.5 py-2.5">
-              <div className="whitespace-pre-wrap [overflow-wrap:anywhere] text-[12.5px]/[1.65] text-foreground"><SkillMessage text={entry.text} skill={entry.skillMention} /></div>
+              <div className="whitespace-pre-wrap [overflow-wrap:anywhere] text-[12.5px]/[1.65] text-foreground"><SkillMessage text={entry.text} skill={entry.skillMention} {...(onOpenLink ? { onOpenLink } : {})} /></div>
             </article>
           </div>
         </div>
@@ -3515,8 +3531,10 @@ function PingDot({ state, title }: { state: ProviderPingResult['state']; title?:
   )
 }
 
+const USER_MARKDOWN_IMAGE_RE = /!\[[^\]]*\]\((?:https?:\/\/|data:image\/)/i
+
 /** Plain textarea keeps canonical invocation; sent messages use trusted ND metadata. */
-function SkillMessage({ text, skill }: { text: string; skill: SkillSuggestion | undefined }) {
+function SkillMessage({ text, skill, onOpenLink }: { text: string; skill: SkillSuggestion | undefined; onOpenLink?: (url: string) => void }) {
   const [open, setOpen] = useState(false)
   const [detail, setDetail] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -3535,8 +3553,14 @@ function SkillMessage({ text, skill }: { text: string; skill: SkillSuggestion | 
   const invocation = skill ? `/${skill.name}` : ''
   const start = text.length - text.trimStart().length
   if (!skill?.selectionId || text.slice(start, start + invocation.length) !== invocation
-    || (text[start + invocation.length] !== undefined && !/\s/.test(text[start + invocation.length]!))) return <>{text}</>
+    || (text[start + invocation.length] !== undefined && !/\s/.test(text[start + invocation.length]!))) {
+    if (USER_MARKDOWN_IMAGE_RE.test(text)) {
+      return <MarkdownLite text={text} {...(onOpenLink ? { onOpenLink } : {})} />
+    }
+    return <>{text}</>
+  }
   const info = `${skill.displayName ?? skill.name} — ${skill.description} — ${skill.source ?? 'ND skill'} — ${invocation}`
+  const rest = text.slice(start + invocation.length)
   return <>
     {text.slice(0, start)}
     <span className="group/skill relative inline-block">
@@ -3545,7 +3569,7 @@ function SkillMessage({ text, skill }: { text: string; skill: SkillSuggestion | 
       </button>
       <span role="tooltip" className="pointer-events-none absolute bottom-full right-0 z-50 hidden w-64 whitespace-normal rounded-md border border-border bg-background p-2 text-xs text-foreground shadow-lg group-hover/skill:block group-focus-within/skill:block">{info}</span>
     </span>
-    {text.slice(start + invocation.length)}
+    {USER_MARKDOWN_IMAGE_RE.test(rest) ? <MarkdownLite text={rest} {...(onOpenLink ? { onOpenLink } : {})} /> : rest}
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>

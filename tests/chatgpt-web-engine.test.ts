@@ -391,4 +391,141 @@ describe('ChatGPT Web project binding management and persistence', () => {
       rmSync(directory, { recursive: true, force: true })
     }
   })
+
+  it('targets the visible project ProseMirror composer so the Send button appears and submits', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nd-chatgpt-project-send-'))
+    const storePath = join(directory, 'chatgpt-web-sessions.json')
+    try {
+      const engine = new ChatGptWebEngine({
+        browser: {} as never,
+        git: {} as never,
+        workspace: { state: () => ({ root: '/workspace/habit', projectName: 'habit-tracker' }) } as never,
+        storePath,
+      })
+
+      class FakeElement {
+        nodeType = 1
+        hidden = false
+        innerText = ''
+        parentElement: FakeElement | null = null
+        constructor(
+          readonly style: { display: string; visibility: string },
+          readonly rect: { width: number; height: number },
+        ) {}
+        getAttribute() { return null }
+        getBoundingClientRect() { return this.rect }
+      }
+
+      class FakeButton extends FakeElement {
+        disabled = false
+        clicked = false
+        click() { this.clicked = true }
+      }
+
+      class FakeComposer extends FakeElement {
+        classList = { contains: (cls: string) => cls === 'ProseMirror' }
+        paragraphs: string[] = []
+        form: { querySelectorAll: (sel: string) => FakeButton[]; querySelector: (sel: string) => FakeButton | null } | null = null
+        focus() {}
+        dispatchEvent() { return true }
+        replaceChildren(...nodes: Array<{ textContent?: string }>) {
+          this.paragraphs = nodes.map((n) => n.textContent ?? '')
+          this.innerText = this.paragraphs.join('\n')
+        }
+        closest(sel: string) { return sel === 'form' ? this.form : null }
+      }
+
+      const hiddenContainer = new FakeElement({ display: 'none', visibility: 'visible' }, { width: 0, height: 0 })
+      const hiddenComposer = new FakeComposer({ display: 'block', visibility: 'visible' }, { width: 0, height: 0 })
+      hiddenComposer.parentElement = hiddenContainer
+      hiddenComposer.form = { querySelectorAll: () => [], querySelector: () => null }
+
+      const visibleComposer = new FakeComposer({ display: 'block', visibility: 'visible' }, { width: 340, height: 26 })
+      const sendButton = new FakeButton({ display: 'flex', visibility: 'visible' }, { width: 32, height: 32 })
+      visibleComposer.form = {
+        // Send button only appears after text is inserted into the visible composer
+        querySelectorAll: () => (visibleComposer.innerText.trim() ? [sendButton] : []),
+        querySelector: () => (visibleComposer.innerText.trim() ? sendButton : null),
+      }
+
+      const cdp = {
+        evaluate: async (script: string) => runInNewContext(script, {
+          HTMLElement: FakeElement,
+          HTMLButtonElement: FakeButton,
+          HTMLTextAreaElement: class {},
+          HTMLInputElement: class {},
+          InputEvent: class {},
+          Event: class {},
+          window: {
+            getComputedStyle: (el: FakeElement) => el.style ?? { display: 'block', visibility: 'visible' },
+          },
+          document: {
+            querySelectorAll: (sel: string) => (sel.includes('ProseMirror') ? [hiddenComposer, visibleComposer] : []),
+            querySelector: (sel: string) => (sel.includes('ProseMirror') ? hiddenComposer : null),
+            createElement: (tag: string) => ({ tagName: tag.toUpperCase(), textContent: '', appendChild: () => {} }),
+          },
+        }),
+      }
+
+      const internals = engine as unknown as {
+        submitPrompt: (cdp: unknown, prompt: string, signal: AbortSignal) => Promise<void>
+      }
+      await internals.submitPrompt(cdp, 'Track daily water intake', new AbortController().signal)
+
+      expect(hiddenComposer.innerText).toBe('')
+      expect(visibleComposer.innerText).toBe('Track daily water intake')
+      expect(sendButton.clicked).toBe(true)
+
+      await engine.close()
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('updates an existing assistant message in-place when an image finishes loading in a later snapshot', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nd-chatgpt-img-update-'))
+    const storePath = join(directory, 'chatgpt-web-sessions.json')
+    try {
+      const engine = new ChatGptWebEngine({
+        browser: {} as never,
+        git: {} as never,
+        workspace: { state: () => ({ root: '/workspace' }) } as never,
+        storePath,
+      })
+      const frames: unknown[] = []
+      engine.setEmitter((frame) => frames.push(frame))
+      const internals = engine as unknown as {
+        sessions: Map<string, unknown>
+        importUnseenTurns: (session: unknown, snapshot: unknown) => void
+      }
+
+      const { sessionId } = await engine.createSession({ cwd: '/workspace' })
+      const session = internals.sessions.get(sessionId)
+
+      internals.importUnseenTurns(session, {
+        url: 'https://chatgpt.com/c/test-img',
+        busy: false,
+        turns: [{ role: 'assistant', text: 'Here is your poster:' }],
+      })
+      internals.importUnseenTurns(session, {
+        url: 'https://chatgpt.com/c/test-img',
+        busy: false,
+        turns: [{ role: 'assistant', text: '![Generated image 1](data:image/png;base64,abc)\n\nHere is your poster:' }],
+      })
+
+      const events = engine.transcript(sessionId).events
+      expect(events).toHaveLength(1)
+      expect(events[0]?.data).toEqual({
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: '![Generated image 1](data:image/png;base64,abc)\n\nHere is your poster:' }],
+        },
+      })
+
+      await engine.close()
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
 })
+

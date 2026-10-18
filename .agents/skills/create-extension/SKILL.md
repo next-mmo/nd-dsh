@@ -1,6 +1,6 @@
 ---
 name: create-extension
-description: Create, extend, or review ND Extensions (nd.extension/1 packages) in the nd-dsh repo — launcher commands, typed list/detail views, package-shipped web views (three.js/canvas/games), skills, tools, workflows, host methods, and delivery-model wiring (built-in vs on-demand Discover catalog vs fully external). Use whenever the user wants to build an ND extension, add a command or view to one, ship a game or custom-UI extension, decide between on-demand vs built-in, asks about the Discover catalog, nd-extension.json manifests, host methods, or extension packaging — even if they just say "make an extension" or "add this as a plugin/command".
+description: Create, extend, or review ND Extensions (nd.extension/1 packages) in the nd-dsh repo — launcher commands, typed list/detail views, package-shipped web views (three.js/canvas/games), skills, tools, workflows, host methods, and delivery-model wiring (built-in vs on-demand Discover catalog vs fully external vs own-git standalone Pinokio-style repos). Use whenever the user wants to build an ND extension, add a command or view to one, ship a game or custom-UI extension, decide between on-demand vs built-in, asks about "own git" / Pinokio-style standalone repos (e.g. next-mmo/...), Discover catalog, nd-extension.json manifests, host methods, or extension packaging — even if they just say "make an extension" or "add this as a plugin/command".
 ---
 
 # Create an ND Extension
@@ -22,20 +22,30 @@ scalability rules before considering any product-core exception.
    delivery models and web views).
 3. The closest existing package, for tone and shape:
    - Typed list/detail view: `extensions/password-vault/`
-   - Web view (package-shipped UI): `extensions/tic-tac-toe/`
+   - Web view (in-repo UI): `extensions/tic-tac-toe/`
+   - Standalone "Own Git" repo (Pinokio-style): `../next-mmo/wizard-chess-3d/` (or `https://github.com/next-mmo/wizard-chess-3d`)
    - Minimal starter: `examples/nd-extension-hello/`
 
-## Step 1 — Pick the delivery model
+---
 
-| Model | Ships in release? | Found in Discover | Use when |
-| --- | --- | --- | --- |
-| **Fully external** (default) | No — zero impact | Dev builds only | Anything not explicitly product-core. Experiments, large assets, opt-in packages. |
-| **On-demand external catalog** | No — zero payload impact | Release catalog, one-click download/install | Optional first-party packages, including Password Vault. |
-| **Built-in** | Inside the app bundle | Always; cannot be uninstalled | Only when the behavior IS the product and must always exist (like Wallpaper Manager). |
+## Step 1 — Pick the delivery model and repository location
 
-Ask only if the user's intent is ambiguous between models; otherwise default to
-fully external and say so in one sentence. Promotion between models later is a
-small, reviewable diff (Step 5).
+| Model | Repository Location | Ships in release? | Found in Discover | Use when |
+| --- | --- | --- | --- | --- |
+| **Own Git / Pinokio-style** (preferred for games & 3D) | Dedicated external Git repo (e.g. `next-mmo/<repo>`, sibling folder) | No — zero impact on `nd-dsh` repo or bundle | Dev builds & external catalog | Large assets (games, 3D/WebGL, audio, canvases), partner/community packages, or anytime user requests "own git" / Pinokio-style. Zero code stored in `nd-dsh/extensions/`. |
+| **Fully external (in-repo)** (default for lightweight) | Inside `nd-dsh` under `extensions/<name>/` | No — zero release bundle impact | Dev builds only | Lightweight experiments, small tools, opt-in packages without heavy binary assets. |
+| **On-demand external catalog** | Committed package source | No — zero release payload impact | Release catalog, one-click download/install | Optional first-party packages, including Password Vault. |
+| **Built-in** | Inside the app bundle | Inside the app bundle | Always; cannot be uninstalled | Only when the behavior IS the product and must always exist (like Wallpaper Manager). |
+
+> [!IMPORTANT]
+> **Understanding "Own Git" (Pinokio-style)**:
+> In Pinokio, applications live in their own standalone git repositories with independent git histories, version tags, and dependencies; the host runner discovers and executes them on demand without polluting the main product tree.
+> When a user asks for an extension to have its **"own git"** (or mentions organizations like `next-mmo/*`):
+> 1. Create a dedicated standalone Git repository (e.g. `github.com/next-mmo/<name>`), cloned as a sibling directory (`../<org>/<name>`).
+> 2. **Never commit or copy the package files into `nd-dsh/extensions/`**.
+> 3. ND integrates with it externally: `nd-ipc.ts` discovers it by checking neighbor directory paths, and users install it on-demand into ND's local snapshot store (`userData/packages/`).
+
+---
 
 ## Step 2 — Pick the contribution shapes
 
@@ -56,6 +66,8 @@ small, reviewable diff (Step 5).
   `mcp-stdio` `executable` block, workflows are project-only plugins. Rare;
   see authoring.md.
 
+---
+
 ## Step 3 — Host methods: reuse or add
 
 First try the existing allowlist in `ND_HOST_METHODS`
@@ -69,16 +81,36 @@ First try the existing allowlist in `ND_HOST_METHODS`
    (`src/main/extensions/nd-ipc.ts`) — `requirePersonalContext(context)` first
    when personal-only. The `missingNativeHostMethods` probe fails the build if
    any allowlisted method lacks a handler, so register everything you declare.
-4. Validate inputs at the host (e.g. `asTicTacToeOutcome`), never trust bridge
+4. Validate inputs at the host (e.g. `asWizardChessOutcome`), never trust bridge
    input passed through the broker.
+5. Mirror new permissions in `schema/nd-extension.schema.json` to keep schema validation in sync.
+
+---
 
 ## Step 4 — Scaffold the package
 
+### Option A: In-Repo Scaffold (`extensions/<kebab-name>/`)
 ```text
 extensions/<kebab-name>/
 ├── nd-extension.json      # protocol "nd.extension/1", apiVersion 1
 ├── README.md              # what it does, install steps, provenance
 └── ui/                    # web views only: entry html + js (+ vendored libs)
+```
+
+### Option B: Standalone "Own Git" Repo (`../<org>/<kebab-name>/`)
+When building a Pinokio-style standalone package (e.g. `next-mmo/wizard-chess-3d`):
+```text
+../<org>/<kebab-name>/
+├── .git/                  # Standalone git repo pushed to GitHub/GitLab
+├── nd-extension.json      # protocol "nd.extension/1", apiVersion 1
+├── package.json           # standalone scripts & tests (npm test)
+├── README.md              # what it does, controls, architecture, license
+├── test/                  # standalone logic tests (e.g. game-core.test.mjs)
+└── ui/                    # web views: index.html, styles.css, vanilla *.js, assets
+    ├── index.html         # token-scoped iframe entry point
+    ├── game.js            # nd.webview/1 bridge + renderer
+    ├── game-core.js       # pure rules engine (ES module, no DOM)
+    └── assets/            # 3D models/textures (< 8 MB per file, < 24 MB total)
 ```
 
 Manifest skeleton (keep descriptions honest — they render in the UI):
@@ -108,7 +140,10 @@ Manifest skeleton (keep descriptions honest — they render in the UI):
 }
 ```
 
-Validate immediately: `pnpm ext:validate extensions/<kebab-name>`.
+Validate immediately:
+- In-repo: `pnpm ext:validate extensions/<kebab-name>`
+- Own-git: `node scripts/validate-nd-extension.mjs ../<org>/<kebab-name>/nd-extension.json`
+
 Vendored libraries (like three.js) stay inside the package, note version +
 license in the README, and are subject to the installer caps (8 MB/file,
 24 MB total). Package scripts that the UI imports must be plain JavaScript
@@ -121,60 +156,107 @@ events over polling, and prevent overlapping jobs. Heavy native work belongs
 in nd-core. Check idle CPU/GPU and memory for custom UIs; package count and
 keepalive limits alone do not enforce CPU or memory quotas.
 
-## Step 5 — Wire the delivery model
+---
 
-- **Fully external (default)**: add a **dev-only Discover entry** so
-  developers get one-click install while packaged releases carry nothing:
-  - `TIC_TAC_TOE_ID`-style id const + `xxxPackagePath()` helper in
-    `nd-ipc.ts` (dev: `join(app.getAppPath(), 'extensions', '<name>')`),
-  - `...(app.isPackaged ? [] : [{ id: XXX_ID, path: xxxPackagePath }])` in
-    `AVAILABLE_PACKAGES`,
-  - `...(app.isPackaged ? [] : [xxxCatalogView(state)])` in `stateView`,
-  - an accent tile in `EXTENSION_ACCENTS` (`ExtensionPackages.tsx`).
-  Do NOT touch `electron-builder.yml`.
-- **External release catalog**: commit the package under `extensions/<name>`,
-  validate it, then run `pnpm ext:catalog`. Release staging generates the metadata
+## Step 5 — Wire the delivery model into ND-DSH
+
+### 1. For "Own Git" (Pinokio-style) Packages
+In `src/main/extensions/nd-ipc.ts`:
+- Define a path resolver that checks the neighbor repository dynamically:
+  ```ts
+  function examplePackagePath(): string {
+    const externalRepo = join(dirname(app.getAppPath()), '<org>', '<name>')
+    if (existsSync(join(externalRepo, 'nd-extension.json'))) return externalRepo
+    const cwdNeighbor = join(process.cwd(), '..', '<org>', '<name>')
+    if (existsSync(join(cwdNeighbor, 'nd-extension.json'))) return cwdNeighbor
+    return app.isPackaged
+      ? join(process.resourcesPath, 'nd-extensions', '<name>')
+      : join(app.getAppPath(), 'extensions', '<name>')
+  }
+  ```
+- Register the ID in `AVAILABLE_PACKAGES`:
+  ```ts
+  ...(app.isPackaged ? [] : [
+    { id: EXAMPLE_ID, path: examplePackagePath },
+  ])
+  ```
+- Register the catalog view in `stateView()`:
+  ```ts
+  ...(app.isPackaged ? [] : [
+    exampleCatalogView(state),
+  ])
+  ```
+- In `src/renderer/src/components/ExtensionPackages.tsx`: add an accent card style to `EXTENSION_ACCENTS` with an appropriate Lucide icon and color scheme.
+
+> [!CAUTION]
+> **Electron Main Process Hot-Reload Gotcha**:
+> In development (`electron-vite dev`), Vite hot-reloads the React renderer UI, but **the Electron main process does NOT reload IPC handlers in memory**.
+> After registering or updating an extension in `nd-ipc.ts`, you **must restart the dev server** (`Ctrl+C` then `npm run dev`) for the package to appear in the Discover catalog.
+
+> [!TIP]
+> **Discover Tab Location**:
+> In the desktop UI (**Settings → Extensions**), the view defaults to the **"Installed"** tab. To find on-demand external extensions, the user must click the **"Discover"** tab pill.
+
+### 2. For In-Repo External Packages
+- Use `join(app.getAppPath(), 'extensions', '<name>')` in the package path helper.
+- Wire into `AVAILABLE_PACKAGES`, `stateView()`, and `EXTENSION_ACCENTS`.
+- Commit under `extensions/<name>`.
+
+### 3. For External Release Catalog
+- Validate the package, then run `pnpm ext:catalog`. Release staging generates the metadata
   automatically; publish it as a separate release asset. Never stage the package
   via `extraResources`. Downloads are size-bounded and hash-verified, and production
-  snapshots are handled by Rust. Profile runtime settings own keepalive; packages
-  cannot turn on background execution themselves.
-- **Built-in**: move the manifest into
-  `src/shared/builtin-extension-packages.ts` + `defaultActivationContexts`;
+  snapshots are handled by Rust.
+
+### 4. For Built-in
+- Move the manifest into `src/shared/builtin-extension-packages.ts` + `defaultActivationContexts`;
   uninstall is refused for built-ins.
+
+---
 
 ## Step 6 — Tests (mirror the newest example)
 
-- Unit: `tests/tic-tac-toe-extension.test.ts` is the template — manifest
-  validation + permission derivation, install/activate/uninstall via a real
-  `ExtensionPackageStore`, broker gating with stub `NativeHostRegistry`
-  handlers (user ok, wrong context denied, agent → `approval-required` →
-  approve → ok), web view `loadView` shape (`kind: "web"`, no host call,
-  activation gate).
-- Package logic: import the shipped `ui/*.js` module directly in a vitest file
-  and test the artifact the game actually runs (win detection; minimax never
-  loses).
-- E2E: `e2e/tic-tac-toe.spec.ts` is the template — install via
+- **Unit test in ND-DSH**: `tests/wizard-chess-extension.test.ts` (for Own-Git) or `tests/tic-tac-toe-extension.test.ts` (for in-repo) is the template:
+  - For Own-Git repos, resolve path dynamically:
+    ```ts
+    const externalDir = fileURLToPath(new URL('../../<org>/<name>/', import.meta.url))
+    const internalDir = fileURLToPath(new URL('../extensions/<name>/', import.meta.url))
+    const packagePath = existsSync(internalDir) ? internalDir : externalDir
+    ```
+  - Test manifest validation + permission derivation.
+  - Test install, activate, and uninstall via a temporary `ExtensionPackageStore`.
+  - Test broker gating with stub `NativeHostRegistry` handlers (user ok, wrong context denied, agent → `approval-required` → approve → ok).
+  - Test web view `loadView` shape (`kind: "web"`, no host call, activation gate).
+- **Standalone package tests**:
+  - In the external repository itself, run unit tests directly on the pure rules/engine module (e.g. `npm test` via Node `node --test` or vitest) so the logic can be verified independently without spinning up Electron.
+- **E2E**: `e2e/tic-tac-toe.spec.ts` is the template — install via
   `installAvailable` (the Discover path), activate through the bridge, open
-  from Ctrl+K, drive the game (keyboard 1–9), assert persisted state on disk.
-- Web-view gotchas (each cost a debugging session — do not rediscover them):
-  the app shell CSP needs `frame-src nd-extension-ui:`; asset responses need
-  `access-control-allow-origin: *` (opaque/token origins always fail module
-  CORS); do NOT put a `sandbox` attribute on the iframe (Chromium drops
-  postMessage out of sandboxed non-special-scheme iframes); filter bridge
-  messages by `event.origin` (not `event.source` — unreliable cross-origin);
-  the frame must queue work until the host's `hello` handshake lands (an
-  initial fetch always races the handshake); tokens are TTL-only — never
-  revoke on effect cleanup (React StrictMode double-mounts effects in dev and
-  would pull the token out from under the frame's asset loads, leaving the
-  view stuck on its loading state); the frame's announce loop must retry
-  forever with backoff (a host that mounts late must still connect).
+  from Ctrl+K, drive the view, assert persisted state on disk.
+- **Web-view gotchas (each cost a debugging session — do not rediscover them)**:
+  - The app shell CSP needs `frame-src nd-extension-ui:`.
+  - Asset responses need `access-control-allow-origin: *` (opaque/token origins always fail module CORS).
+  - Do NOT put a `sandbox` attribute on the iframe (Chromium drops postMessage out of sandboxed non-special-scheme iframes).
+  - Filter bridge messages by `event.origin` (not `event.source` — unreliable cross-origin).
+  - The frame must queue work until the host's `hello` handshake lands (an initial fetch always races the handshake).
+  - Tokens are TTL-only — never revoke on effect cleanup (React StrictMode double-mounts effects in dev and would pull the token out from under the frame's asset loads, leaving the view stuck on its loading state).
+  - The frame's announce loop must retry forever with backoff (a host that mounts late must still connect).
+
+---
 
 ## Step 7 — Verify before reporting done
 
 ```bash
-pnpm ext:validate extensions/<name>
-pnpm typecheck && pnpm test && pnpm build
-npx playwright test e2e/<name>.spec.ts
+# 1. Validate manifest
+node scripts/validate-nd-extension.mjs <path-to-nd-extension.json>
+
+# 2. Run standalone tests in the external repo
+cd ../<org>/<name> && npm test
+
+# 3. Verify ND-DSH invariants & tests
+pnpm verify
+pnpm typecheck
+pnpm test tests/<name>-extension.test.ts
+pnpm build
 ```
 
 For external packages, confirm `git diff` shows no `electron-builder.yml`

@@ -155,4 +155,23 @@ describe('chat event folding', () => {
     const entries = foldHistory([message('user/message', 1, 'hi')])
     expect(entries).toEqual([{ kind: 'user', id: expect.any(String), text: 'hi' }])
   })
+
+  it('strips legacy web chat prefixes and upgrades Edit image placeholders in place', () => {
+    const entries = foldHistory([
+      message('user/message', 1, 'generate mock prototype for our app'),
+      message('assistant/message', 2, 'ChatGPT said:\n\nEdit'),
+      message('user/message', 3, 'You said:\n\ngenerate mock prototype for our app'),
+      message('assistant/message', 4, '![Generated image](https://chatgpt.com/backend-api/estuary/content?id=file_123)'),
+      message('user/message', 5, 'generate IMG mock prototype for our app finder'),
+      message('user/message', 6, '### You said generate IMG mock prototype for our app finder\n\ngenerate IMG mock prototype for our app finder'),
+      message('assistant/message', 7, '![App finder mockup](data:image/webp;base64,UklGRiIAAABXRUJQ)'),
+    ])
+    expect(entries).toEqual([
+      { kind: 'user', id: expect.any(String), text: 'generate mock prototype for our app' },
+      { kind: 'assistant', id: expect.any(String), text: '![Generated image](https://chatgpt.com/backend-api/estuary/content?id=file_123)' },
+      { kind: 'user', id: expect.any(String), text: 'generate IMG mock prototype for our app finder' },
+      { kind: 'assistant', id: expect.any(String), text: '![App finder mockup](data:image/webp;base64,UklGRiIAAABXRUJQ)' },
+    ])
+  })
 })
+

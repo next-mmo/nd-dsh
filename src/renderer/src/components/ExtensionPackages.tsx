@@ -57,6 +57,7 @@ const EXTENSION_ACCENTS: Record<string, { icon: LucideIcon; tileClassName: strin
   'nd.translate': { icon: Languages, tileClassName: 'border-emerald-500/25 bg-emerald-500/15 text-emerald-500' },
   'nd.quit-process': { icon: Power, tileClassName: 'border-rose-500/25 bg-rose-500/15 text-rose-500' },
   'nd.tic-tac-toe': { icon: Gamepad2, tileClassName: 'border-teal-500/25 bg-teal-500/15 text-teal-500' },
+  'nd.wizard-chess-3d': { icon: Gamepad2, tileClassName: 'border-amber-500/25 bg-amber-500/15 text-amber-500' },
   'nd.mini-browser': { icon: Globe, tileClassName: 'border-red-500/25 bg-red-500/15 text-red-500' },
   'nd.pay-guard': { icon: ShieldCheck, tileClassName: 'border-indigo-500/25 bg-indigo-500/15 text-indigo-500' },
   'nd.disk-cleaner': { icon: HardDrive, tileClassName: 'border-cyan-500/25 bg-cyan-500/15 text-cyan-500' },

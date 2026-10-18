@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { CheckIcon, CopyIcon } from './Icons'
-import { parseMarkdownBlocks, tokenizeInline } from '../../../shared/markdown-lite'
+import { CheckIcon, CopyIcon, DownloadIcon, ExternalIcon } from './Icons'
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog'
+import { type InlineToken, parseMarkdownBlocks, tokenizeInline } from '../../../shared/markdown-lite'
 import { cn } from '../lib/utils'
 
 /** Extensions that make a bare filename (no folder prefix) worth linking. */
@@ -16,12 +17,227 @@ function looksLikeWorkspacePath(text: string): boolean {
   return dot > 0 && BARE_FILE_EXTENSIONS.has(text.slice(dot + 1).toLowerCase())
 }
 
-/** Inline formatting: `code`, **bold**, *italic* → styled React nodes. */
+function imageDownloadFilename(alt: string | undefined, url: string): string {
+  const base = (alt || 'image')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48) || 'image'
+  const dataMatch = /^data:image\/([a-z0-9+.-]+);/i.exec(url)
+  if (dataMatch?.[1]) {
+    const rawExt = dataMatch[1].toLowerCase()
+    const ext = rawExt === 'jpeg' ? 'jpg' : rawExt === 'svg+xml' ? 'svg' : rawExt
+    return base.endsWith(`.${ext}`) ? base : `${base}.${ext}`
+  }
+  const urlMatch = /\.([a-z0-9]{2,5})(?:[?#]|$)/i.exec(url)
+  const ext = urlMatch?.[1]?.toLowerCase() ?? 'png'
+  return base.endsWith(`.${ext}`) ? base : `${base}.${ext}`
+}
+
+async function copyImageToClipboard(url: string): Promise<boolean> {
+  try {
+    if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+      const img = new Image()
+      img.crossOrigin = 'anonymous'
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve()
+        img.onerror = () => reject(new Error('Image load failed'))
+        img.src = url
+      })
+      const canvas = document.createElement('canvas')
+      canvas.width = img.naturalWidth || img.width || 1
+      canvas.height = img.naturalHeight || img.height || 1
+      const ctx = canvas.getContext('2d')
+      if (ctx) {
+        ctx.drawImage(img, 0, 0)
+        const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
+        if (blob) {
+          await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+          return true
+        }
+      }
+    }
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(url)
+      return true
+    }
+  } catch {
+    // Fallback if canvas/clipboard access is blocked.
+  }
+  return false
+}
+
+export function ImagePreviewDialog({
+  open,
+  onOpenChange,
+  url,
+  alt,
+  linkUrl,
+  onOpenLink,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  url: string
+  alt?: string | undefined
+  linkUrl?: string | undefined
+  onOpenLink?: ((url: string) => void) | undefined
+}) {
+  const [zoomed, setZoomed] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const title = alt?.trim() || 'Image preview'
+  const externalTarget = linkUrl ?? (!url.startsWith('data:') ? url : undefined)
+
+  const handleCopy = async (): Promise<void> => {
+    const ok = await copyImageToClipboard(url)
+    if (ok) {
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1_600)
+    }
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) setZoomed(false)
+        onOpenChange(next)
+      }}
+    >
+      <DialogContent className="flex max-h-[90vh] flex-col gap-3 p-4 sm:max-w-4xl">
+        <DialogHeader className="pr-6">
+          <DialogTitle className="truncate text-[13px] font-semibold">{title}</DialogTitle>
+          <DialogDescription className="sr-only">
+            Preview image in modal dialog. Click the image to toggle zoom.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex min-h-[200px] max-h-[72vh] items-center justify-center overflow-auto rounded-lg border border-border-soft bg-surface-1/80 p-2">
+          <img
+            src={url}
+            alt={title}
+            referrerPolicy="no-referrer"
+            onClick={() => setZoomed((prev) => !prev)}
+            title={zoomed ? 'Click to fit to dialog' : 'Click to zoom'}
+            className={cn(
+              'rounded object-contain transition-transform',
+              zoomed ? 'max-h-none max-w-none cursor-zoom-out' : 'max-h-[68vh] max-w-full cursor-zoom-in',
+            )}
+          />
+        </div>
+        <DialogFooter className="flex flex-row items-center justify-between gap-2 sm:justify-between">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-[11px] font-medium text-soft transition-colors hover:bg-accent hover:text-foreground [&_svg]:size-3.5"
+              onClick={() => void handleCopy()}
+            >
+              {copied ? <CheckIcon /> : <CopyIcon />}
+              {copied ? 'Copied' : 'Copy image'}
+            </button>
+            <a
+              href={url}
+              download={imageDownloadFilename(alt, url)}
+              className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-[11px] font-medium text-soft transition-colors hover:bg-accent hover:text-foreground [&_svg]:size-3.5"
+            >
+              <DownloadIcon />
+              Download
+            </a>
+            {onOpenLink && externalTarget ? (
+              <button
+                type="button"
+                className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-[11px] font-medium text-soft transition-colors hover:bg-accent hover:text-foreground [&_svg]:size-3.5"
+                title={`Open ${externalTarget} in Browser`}
+                onClick={() => {
+                  onOpenChange(false)
+                  onOpenLink(externalTarget)
+                }}
+              >
+                <ExternalIcon />
+                {linkUrl ? 'Open link' : 'Open in Browser'}
+              </button>
+            ) : null}
+          </div>
+          <DialogClose asChild>
+            <button
+              type="button"
+              className="cursor-pointer rounded-md border border-border px-3 py-1 text-[11px] font-medium text-foreground transition-colors hover:bg-accent"
+            >
+              Close
+            </button>
+          </DialogClose>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function ChatImage({
+  token,
+  onOpenLink,
+}: {
+  token: Extract<InlineToken, { kind: 'image' }>
+  onOpenLink?: (url: string) => void
+}) {
+  const [failed, setFailed] = useState(false)
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const targetUrl = token.linkUrl ?? token.url
+
+  if (failed) {
+    return (
+      <span className="my-1 inline-flex items-center gap-1.5 rounded-md border border-border-soft bg-surface-1 px-2.5 py-1 text-[11px] text-faint">
+        <span className="text-[12px]" aria-hidden="true">🖼️</span>
+        <span className="max-w-[220px] truncate">{token.alt || 'Image'}</span>
+        {onOpenLink && targetUrl ? (
+          <button
+            type="button"
+            className="cursor-pointer text-primary underline decoration-primary/45 underline-offset-2 transition-colors hover:text-foreground"
+            title={`Open ${targetUrl} in Browser`}
+            onClick={() => onOpenLink(targetUrl)}
+          >
+            Open link
+          </button>
+        ) : null}
+      </span>
+    )
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        className="group/img my-0.5 inline-block cursor-zoom-in text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+        title={token.alt ? `${token.alt} — click to preview` : 'Click to preview image'}
+        onClick={() => setPreviewOpen(true)}
+      >
+        <img
+          src={token.url}
+          alt={token.alt || 'Image'}
+          referrerPolicy="no-referrer"
+          onError={() => setFailed(true)}
+          className="my-1.5 max-h-64 max-w-full rounded-md border border-border-soft bg-surface-1 object-contain shadow-xs transition-opacity group-hover/img:opacity-95"
+        />
+      </button>
+      <ImagePreviewDialog
+        open={previewOpen}
+        onOpenChange={setPreviewOpen}
+        url={token.url}
+        alt={token.alt}
+        linkUrl={token.linkUrl}
+        onOpenLink={onOpenLink}
+      />
+    </>
+  )
+}
+
+/** Inline formatting: `code`, **bold**, *italic*, images → styled React nodes. */
 function InlineText({ text, onOpenFile, onOpenLink }: { text: string; onOpenFile?: (path: string) => void; onOpenLink?: (url: string) => void }) {
   const tokens = tokenizeInline(text)
   return (
     <>
       {tokens.map((token, index) => {
+        if (token.kind === 'image') {
+          return <ChatImage key={index} token={token} {...(onOpenLink ? { onOpenLink } : {})} />
+        }
         if (token.kind === 'link') {
           if (!onOpenLink) return <span key={index}>{token.text}</span>
           return (
@@ -118,7 +334,7 @@ export function MarkdownLite({ text, className, onOpenFile, onOpenLink }: { text
               <ul key={index} className="m-0 flex list-disc flex-col gap-0.5 pl-[18px]">
                 {block.items.map((item, itemIndex) => (
                   <li key={itemIndex} className="[overflow-wrap:anywhere] text-[12px]/[1.6] text-foreground/90">
-                    <InlineText text={item} {...(onOpenFile ? { onOpenFile } : {})} />
+                    <InlineText text={item} {...(onOpenFile ? { onOpenFile } : {})} {...(onOpenLink ? { onOpenLink } : {})} />
                   </li>
                 ))}
               </ul>
@@ -128,7 +344,7 @@ export function MarkdownLite({ text, className, onOpenFile, onOpenLink }: { text
               <ol key={index} className="m-0 flex list-decimal flex-col gap-0.5 pl-[18px]">
                 {block.items.map((item, itemIndex) => (
                   <li key={itemIndex} className="[overflow-wrap:anywhere] text-[12px]/[1.6] text-foreground/90">
-                    <InlineText text={item} {...(onOpenFile ? { onOpenFile } : {})} />
+                    <InlineText text={item} {...(onOpenFile ? { onOpenFile } : {})} {...(onOpenLink ? { onOpenLink } : {})} />
                   </li>
                 ))}
               </ol>
@@ -147,7 +363,7 @@ export function MarkdownLite({ text, className, onOpenFile, onOpenLink }: { text
                     <tr>
                       {block.headers.map((header, headerIndex) => (
                         <th key={headerIndex} className="border-b border-border-soft px-2 py-1.5 align-top">
-                          <InlineText text={header} {...(onOpenFile ? { onOpenFile } : {})} />
+                          <InlineText text={header} {...(onOpenFile ? { onOpenFile } : {})} {...(onOpenLink ? { onOpenLink } : {})} />
                         </th>
                       ))}
                     </tr>
@@ -157,7 +373,7 @@ export function MarkdownLite({ text, className, onOpenFile, onOpenLink }: { text
                       <tr key={rowIndex} className="border-b border-border-soft last:border-b-0">
                         {row.map((cell, cellIndex) => (
                           <td key={cellIndex} className="px-2 py-1.5 align-top text-foreground/90">
-                            <InlineText text={cell} {...(onOpenFile ? { onOpenFile } : {})} />
+                            <InlineText text={cell} {...(onOpenFile ? { onOpenFile } : {})} {...(onOpenLink ? { onOpenLink } : {})} />
                           </td>
                         ))}
                       </tr>

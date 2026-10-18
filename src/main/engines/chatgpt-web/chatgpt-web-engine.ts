@@ -9,6 +9,7 @@ import type {
   SessionEventEnvelope,
 } from '../../../shared/contracts.js'
 import { CHATGPT_WEB_ENGINE_ID } from '../../../shared/coding-engines.js'
+import { stripWorkspaceContext } from '../../../shared/workspace-context.js'
 import type { BrowserController } from '../../browser/browser-controller.js'
 import { CHATGPT_DOM_TURNS_SCRIPT } from '../../browser/chatgpt-dom-turns.js'
 import type { GitService } from '../../git/git-service.js'
@@ -348,7 +349,7 @@ export class ChatGptWebEngine {
   }
 
   async run(prompt: string, input: { sessionId?: string; cwd?: string } = {}): Promise<{ sessionId: string }> {
-    const cleaned = prompt.trim()
+    const cleaned = stripWorkspaceContext(prompt).trim()
     if (!cleaned) throw new Error('Prompt cannot be empty')
     if (cleaned.length > MAX_PROMPT_CHARS) throw new Error(`Prompt exceeds the ${MAX_PROMPT_CHARS.toLocaleString()} character limit`)
 
@@ -386,6 +387,7 @@ export class ChatGptWebEngine {
         await this.submitPrompt(cdp, compiledPrompt, abort.signal)
         this.recordUserMessage(session, cleaned)
         this.rememberSentPrompt(session, compiledPrompt)
+        if (compiledPrompt !== cleaned) this.rememberSentPrompt(session, cleaned)
         if (session.title === 'New ChatGPT Web chat') session.title = cleaned.slice(0, 80)
         const completed = await this.waitForAssistant(cdp, session, baselineAssistantCount, abort.signal)
         this.captureConversationUrl(session, completed.url)
@@ -461,7 +463,20 @@ export class ChatGptWebEngine {
         assertTurnActive(signal)
         if (snapshot.composer) return cdp
         await cdp.evaluate<boolean>(`(() => {
-          const btn = Array.from(document.querySelectorAll('button, a')).find(el => {
+          const isVisible = (el) => {
+            if (!(el instanceof HTMLElement)) return false;
+            if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') return true;
+            let cur = el;
+            while (cur && cur.nodeType === 1) {
+              if (cur.hidden || cur.getAttribute?.('aria-hidden') === 'true') return false;
+              const style = window.getComputedStyle(cur);
+              if (style.display === 'none' || style.visibility === 'hidden') return false;
+              cur = cur.parentElement;
+            }
+            const r = el.getBoundingClientRect?.();
+            return !r || (r.width > 0 && r.height > 0);
+          };
+          const btn = Array.from(document.querySelectorAll('button, a')).filter(isVisible).find(el => {
             const text = el.innerText?.trim() || '';
             return text.includes('New chat in') || text.includes('New chat');
           });
@@ -548,23 +563,56 @@ export class ChatGptWebEngine {
     const source = JSON.stringify(prompt)
     const result = await cdp.evaluate<{ ok: boolean; reason?: string }>(`(async () => {
       const composerSelector = ${JSON.stringify(CHATGPT_COMPOSER_SELECTOR)};
-      const composer = document.querySelector(composerSelector);
+      const isVisible = (el) => {
+        if (!el) return false;
+        if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') return true;
+        let cur = el;
+        while (cur && cur.nodeType === 1) {
+          if (cur.hidden || cur.getAttribute?.('aria-hidden') === 'true') return false;
+          const style = window.getComputedStyle(cur);
+          if (style.display === 'none' || style.visibility === 'hidden') return false;
+          cur = cur.parentElement;
+        }
+        if (typeof el.getBoundingClientRect === 'function') {
+          const r = el.getBoundingClientRect();
+          return r.width > 0 && r.height > 0;
+        }
+        return true;
+      };
+      const allComposers = typeof document.querySelectorAll === 'function'
+        ? Array.from(document.querySelectorAll(composerSelector)).filter(isVisible)
+        : [];
+      const composer = allComposers.at(-1) ?? (() => {
+        const single = document.querySelector?.(composerSelector) ?? null;
+        return isVisible(single) ? single : null;
+      })();
       if (!(composer instanceof HTMLElement)) return { ok: false, reason: 'composer-missing' };
       const text = ${source};
-      composer.focus();
+      composer.focus?.();
       if (composer instanceof HTMLTextAreaElement || composer instanceof HTMLInputElement) {
         const proto = composer instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
         const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
         setter?.call(composer, text);
         composer.dispatchEvent(new Event('input', { bubbles: true }));
+      } else if (composer.classList?.contains('ProseMirror') && typeof document.createElement === 'function' && typeof composer.replaceChildren === 'function') {
+        const paragraphs = text.split('\\n').map((line) => {
+          const p = document.createElement('p');
+          if (line) p.textContent = line;
+          else p.appendChild(document.createElement('br'));
+          return p;
+        });
+        composer.replaceChildren(...paragraphs);
+        composer.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
       } else {
-        const selection = window.getSelection();
-        const range = document.createRange();
-        range.selectNodeContents(composer);
-        selection?.removeAllRanges();
-        selection?.addRange(range);
-        document.execCommand('delete');
-        if (!document.execCommand('insertText', false, text)) composer.textContent = text;
+        const selection = window.getSelection?.();
+        const range = document.createRange?.();
+        if (selection && range) {
+          range.selectNodeContents(composer);
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }
+        document.execCommand?.('delete');
+        if (!document.execCommand?.('insertText', false, text)) composer.textContent = text;
         composer.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
       }
       return { ok: true };
@@ -573,10 +621,53 @@ export class ChatGptWebEngine {
     for (let index = 0; index < 50; index += 1) {
       assertTurnActive(signal)
       const sent = await cdp.evaluate<boolean>(`(() => {
-        const composer = document.querySelector(${JSON.stringify(CHATGPT_COMPOSER_SELECTOR)});
-        const form = composer?.closest('form');
-        const button = form?.querySelector('button[data-testid="send-button"], button[aria-label*="Send"], button[type="submit"]')
-          ?? document.querySelector('button[data-testid="send-button"], button[aria-label*="Send"]');
+        const composerSelector = ${JSON.stringify(CHATGPT_COMPOSER_SELECTOR)};
+        const isVisible = (el) => {
+          if (!el) return false;
+          if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') return true;
+          let cur = el;
+          while (cur && cur.nodeType === 1) {
+            if (cur.hidden || cur.getAttribute?.('aria-hidden') === 'true') return false;
+            const style = window.getComputedStyle(cur);
+            if (style.display === 'none' || style.visibility === 'hidden') return false;
+            cur = cur.parentElement;
+          }
+          if (typeof el.getBoundingClientRect === 'function') {
+            const r = el.getBoundingClientRect();
+            return r.width > 0 && r.height > 0;
+          }
+          return true;
+        };
+        const allComposers = typeof document.querySelectorAll === 'function'
+          ? Array.from(document.querySelectorAll(composerSelector)).filter(isVisible)
+          : [];
+        const composer = allComposers.at(-1) ?? (() => {
+          const single = document.querySelector?.(composerSelector) ?? null;
+          return isVisible(single) ? single : null;
+        })();
+        if (${index > 0 && index % 5 === 0} && composer instanceof HTMLElement && composer.classList?.contains('ProseMirror') && !(composer.innerText || '').trim()) {
+          const text = ${source};
+          const paragraphs = text.split('\\n').map((line) => {
+            const p = document.createElement('p');
+            if (line) p.textContent = line;
+            else p.appendChild(document.createElement('br'));
+            return p;
+          });
+          composer.replaceChildren(...paragraphs);
+          composer.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+        }
+        const form = composer?.closest?.('form');
+        const sendSelector = 'button[data-testid="send-button"], button[data-testid="fruitjuice-send-button"], button[aria-label*="Send" i], button[type="submit"]';
+        const formButtons = typeof form?.querySelectorAll === 'function'
+          ? Array.from(form.querySelectorAll(sendSelector)).filter(isVisible)
+          : [];
+        const docButtons = typeof document.querySelectorAll === 'function'
+          ? Array.from(document.querySelectorAll('button[data-testid="send-button"], button[data-testid="fruitjuice-send-button"], button[aria-label*="Send" i]')).filter(isVisible)
+          : [];
+        const button = formButtons.at(-1)
+          ?? form?.querySelector?.('button[data-testid="send-button"], button[aria-label*="Send"], button[type="submit"]')
+          ?? docButtons.at(-1)
+          ?? document.querySelector?.('button[data-testid="send-button"], button[aria-label*="Send"]');
         if (button instanceof HTMLButtonElement && !button.disabled && button.getAttribute('aria-disabled') !== 'true') {
           button.click();
           return true;
@@ -629,22 +720,37 @@ export class ChatGptWebEngine {
     return cdp.evaluate<ChatGptDomSnapshot>(`(() => {
       ${CHATGPT_DOM_TURNS_SCRIPT}
       const composerSelector = ${JSON.stringify(CHATGPT_COMPOSER_SELECTOR)};
+      const isVisible = (el) => {
+        if (!el || isHiddenChatGptNode(el)) return false;
+        if (typeof window !== 'undefined' && typeof window.getComputedStyle === 'function' && typeof el.getBoundingClientRect === 'function') {
+          const r = el.getBoundingClientRect();
+          return r.width > 0 && r.height > 0;
+        }
+        return true;
+      };
       const domTurns = readChatGptDomTurns({ legacyFallback: true });
       const turns = [];
-      for (const { root, role } of domTurns) {
-        const text = root instanceof HTMLElement ? root.innerText.trim() : '';
+      for (const { root, role, text: turnText } of domTurns) {
+        const text = turnText || (root instanceof HTMLElement ? root.innerText.trim() : '');
         if (text) turns.push({ role, text });
       }
       const assistants = domTurns.filter(turn => turn.role === 'assistant');
-
       const lastAssistant = assistants.at(-1);
+      const visibleComposers = typeof document.querySelectorAll === 'function'
+        ? Array.from(document.querySelectorAll(composerSelector)).filter(isVisible)
+        : [];
+      const hasComposer = visibleComposers.length > 0 || isVisible(document.querySelector?.(composerSelector));
+      const stopSelector = 'button[data-testid="stop-button"], main form button[aria-label="Stop generating"], main form button[aria-label="Stop streaming"], main form button[aria-label="Stop"]';
+      const visibleStops = typeof document.querySelectorAll === 'function'
+        ? Array.from(document.querySelectorAll(stopSelector)).filter(isVisible)
+        : [];
+      const hasStop = visibleStops.length > 0 || isVisible(document.querySelector?.(stopSelector));
       return {
         url: location.href,
         title: document.title,
-        composer: document.querySelector(composerSelector) !== null,
-        busy: document.querySelector('button[data-testid="stop-button"], main form button[aria-label="Stop generating"], main form button[aria-label="Stop streaming"], main form button[aria-label="Stop"]') !== null,
+        composer: hasComposer,
+        busy: hasStop || lastAssistant?.imagesPending === true,
         complete: lastAssistant?.complete === true,
-
         turns,
       };
     })()`)
@@ -670,16 +776,33 @@ export class ChatGptWebEngine {
     if (snapshot.busy) return
     const seen = new Set(session.seenTurnKeys)
     const sent = new Set(session.sentPromptHashes)
+    const assistantIndices = snapshot.turns
+      .map((turn, idx) => (turn.role === 'assistant' ? idx : -1))
+      .filter((idx) => idx >= 0)
     let changed = false
     snapshot.turns.forEach((turn, index) => {
       const key = domTurnKey(turn, index)
       if (seen.has(key)) return
-      if (turn.role === 'user' && sent.has(hashText(turn.text))) {
+      const indexRolePrefix = `${index}:${turn.role}:`
+      const existingAtIndex = [...seen].find((candidate) => candidate.startsWith(indexRolePrefix))
+      if (existingAtIndex) {
+        seen.delete(existingAtIndex)
+        seen.add(key)
+        if (turn.role === 'assistant') {
+          const pos = assistantIndices.indexOf(index)
+          const offsetFromEnd = pos >= 0 ? assistantIndices.length - 1 - pos : 0
+          this.updateAssistantMessageFromEnd(session, turn.text, offsetFromEnd)
+        }
+        changed = true
+        return
+      }
+      const strippedUserText = turn.role === 'user' ? (stripWorkspaceContext(turn.text).trim() || turn.text) : turn.text
+      if (turn.role === 'user' && (sent.has(hashText(turn.text)) || sent.has(hashText(strippedUserText)))) {
         seen.add(key)
         changed = true
         return
       }
-      if (turn.role === 'user') this.recordUserMessage(session, turn.text)
+      if (turn.role === 'user') this.recordUserMessage(session, strippedUserText)
       else this.recordAssistantMessage(session, turn.text)
       seen.add(key)
       changed = true
@@ -716,12 +839,17 @@ export class ChatGptWebEngine {
     this.watcherBusy = true
     try {
       const currentUrl = this.options.browser.state().url
-      const visibleSession = [...this.sessions.values()].find((session) => session.conversationUrl !== undefined && sameConversationUrl(currentUrl, session.conversationUrl))
-      if (visibleSession && !visibleSession.running) {
+      const visibleSessions = [...this.sessions.values()].filter(
+        (session) => !session.running && session.conversationUrl !== undefined && sameConversationUrl(currentUrl, session.conversationUrl),
+      )
+      if (visibleSessions.length > 0) {
         try {
           const cdp = await VisibleCdpConnection.connect(this.options.browser)
           try {
-            this.importUnseenTurns(visibleSession, await this.captureSnapshot(cdp))
+            const snapshot = await this.captureSnapshot(cdp)
+            for (const visibleSession of visibleSessions) {
+              this.importUnseenTurns(visibleSession, snapshot)
+            }
           } finally {
             cdp.close()
           }
@@ -758,6 +886,34 @@ export class ChatGptWebEngine {
       type: 'assistant/message',
       data: { message: { role: 'assistant', content: [{ type: 'text', text }] } },
     })
+  }
+
+  private updateAssistantMessageFromEnd(session: StoredChatGptWebSession, text: string, offsetFromEnd: number): void {
+    let seenFromEnd = 0
+    for (let i = session.transcript.length - 1; i >= 0; i--) {
+      const entry = session.transcript[i]
+      if (entry?.type === 'assistant/message') {
+        if (seenFromEnd === offsetFromEnd) {
+          session.updatedAt = Date.now()
+          entry.time = session.updatedAt
+          entry.data = { message: { role: 'assistant', content: [{ type: 'text', text }] } }
+          this.emitFrame({
+            kind: 'session-event',
+            sessionId: session.sessionId,
+            event: {
+              ...entry,
+              data: {
+                message: { role: 'assistant', content: [{ type: 'text', text }] },
+                replaceFromEndAssistantOffset: offsetFromEnd,
+              },
+            },
+          })
+          return
+        }
+        seenFromEnd += 1
+      }
+    }
+    this.recordAssistantMessage(session, text)
   }
 
   private recordReasoning(session: StoredChatGptWebSession, text: string): void {

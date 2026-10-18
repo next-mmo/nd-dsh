@@ -19,7 +19,7 @@ import { DiffView } from './components/DiffView'
 import { DshCodingSurface } from './components/DshCodingSurface'
 import { EditorPane } from './components/EditorPane'
 import { Explorer } from './components/Explorer'
-import { BrowserIcon, CameraIcon, CompanyIcon, CrosshairIcon, ExternalIcon, FileIcon, HomeIcon, MonitorIcon, PencilIcon, QualityIcon, SettingsIcon, SidebarToggleIcon, SparkIcon, TrashIcon } from './components/Icons'
+import { BrowserIcon, CameraIcon, CompanyIcon, CrosshairIcon, ExternalIcon, FileIcon, HomeIcon, MonitorIcon, PencilIcon, PuzzleIcon, QualityIcon, SettingsIcon, SidebarToggleIcon, SparkIcon, TrashIcon } from './components/Icons'
 import { OrganizationDashboard, type CompanyView } from './components/OrganizationDashboard'
 import { QaView } from './components/QaView'
 import { RuntimePrompts } from './components/RuntimePrompts'
@@ -78,11 +78,11 @@ import {
 const ExtensionPackagesCard = lazy(() => import('./components/ExtensionPackages').then((module) => ({ default: module.ExtensionPackagesCard })))
 const SettingsPane = lazy(() => import('./components/SettingsPane').then((module) => ({ default: module.SettingsPane })))
 
-type ProductView = 'home' | 'company' | 'agent' | 'design' | 'qa' | 'settings'
+type ProductView = 'home' | 'company' | 'agent' | 'design' | 'qa' | 'extensions' | 'settings'
 
 type AgentPane = 'files' | 'browser'
 
-const VIEWS: ProductView[] = ['home', 'company', 'agent', 'design', 'qa', 'settings']
+const VIEWS: ProductView[] = ['home', 'company', 'agent', 'design', 'qa', 'extensions', 'settings']
 
 const CHAT_MIN_PX = 580
 const CHAT_DEFAULT_PX = 640
@@ -110,10 +110,17 @@ function initialChatLayout(): { width: number; sessionsCollapsed: boolean } {
 
 function viewFromHash(): ProductView {
   const route = window.location.hash.replace(/^#\/?/, '').split(/[/?]/)[0]
+  if (route === 'extensions') return 'extensions'
+  if (route === 'settings') {
+    const tab = settingsTabFromLocation()
+    if (tab === 'extensions') return 'extensions'
+    return 'settings'
+  }
   return VIEWS.includes(route as ProductView) ? (route as ProductView) : 'agent'
 }
 
 function hashForView(view: ProductView, settingsTab: SettingsTab, settingsSubTabs: SettingsSubTabs): string {
+  if (view === 'extensions') return '#/settings?tab=extensions'
   if (view !== 'settings') return `#/${view}`
   const subTab = settingsTab === 'general'
     ? settingsSubTabs.general
@@ -224,7 +231,7 @@ export default function App() {
     const request = { extensionId: view.data.extensionId, viewId: view.data.viewId, context: view.data.context }
     setExtensionViewRequest(request)
     setSettingsTab('extensions')
-    switchToWorkbench('settings')
+    switchToWorkbench('extensions')
     // A hard-to-reproduce load race right after a browser-focus ping can
     // swallow the reopen (the dialog never mounts). When a ping was recent,
     // re-issue the request once after a short settle: the card keys each
@@ -878,12 +885,26 @@ export default function App() {
   }
 
   const switchToWorkbench = (nextView?: ProductView): void => {
-    if (nextView) setView(nextView)
+    if (nextView) {
+      if (nextView === 'extensions') {
+        setSettingsTab('extensions')
+      } else if (nextView === 'settings' && settingsTab === 'extensions') {
+        setSettingsTab('general')
+      }
+      setView(nextView)
+    }
     selectSurface('workbench')
   }
 
   const openSettings = (tab?: SettingsTab): void => {
+    if (tab === 'extensions') {
+      setView('extensions')
+      setSettingsTab('extensions')
+      selectSurface('workbench')
+      return
+    }
     if (tab) setSettingsTab(tab)
+    else if (settingsTab === 'extensions') setSettingsTab('general')
     switchToWorkbench('settings')
   }
 
@@ -1276,7 +1297,7 @@ export default function App() {
     if (command.openViewId) {
       setExtensionViewRequest({ extensionId: command.extensionId, viewId: command.openViewId, context })
       setSettingsTab('extensions')
-      setView('settings')
+      setView('extensions')
       return
     }
     if (command.host === 'capture.area') {
@@ -1428,7 +1449,7 @@ export default function App() {
           if (!match) return
           setExtensionViewRequest({ extensionId: match[1]!, viewId: match[2]!, context })
           setSettingsTab('extensions')
-          setView('settings')
+          setView('extensions')
           return
         }
       }
@@ -1441,6 +1462,7 @@ export default function App() {
     { id: 'agent', label: 'Agent', icon: <SparkIcon /> },
     { id: 'design', label: 'Design', icon: <PencilIcon /> },
     { id: 'qa', label: 'QA', icon: <QualityIcon /> },
+    { id: 'extensions', label: 'Extensions', icon: <PuzzleIcon /> },
     { id: 'settings', label: 'Settings', icon: <SettingsIcon /> },
   ]
   const navItems = workspaceProfile === 'coding'
@@ -1857,7 +1879,7 @@ export default function App() {
           </SurfaceErrorBoundary>
         ) : (
           <>
-            <div className={cn('h-full w-full', view === 'settings' ? 'hidden' : 'block')}>
+            <div className={cn('h-full w-full', view === 'settings' || view === 'extensions' ? 'hidden' : 'block')}>
               <Group orientation="horizontal" className="h-full w-full">
             <Panel className="flex min-w-0 flex-col overflow-hidden" defaultSize={initialChat.width} minSize={sessionsCollapsed ? CHAT_MIN_PX_SIDEBAR_COLLAPSED : CHAT_MIN_PX}>
               <SurfaceErrorBoundary label="Chat" resetKey={workspace?.root ?? 'workspace-loading'} onError={notify}>
@@ -2084,10 +2106,10 @@ export default function App() {
             </Panel>
           </Group>
         </div>
-        {view === 'settings' ? (
-          <section aria-hidden={view !== 'settings'} className="relative h-full w-full overflow-hidden">
+        {view === 'settings' || view === 'extensions' ? (
+          <section aria-hidden={view !== 'settings' && view !== 'extensions'} className="relative h-full w-full overflow-hidden">
             <Suspense fallback={<div className="grid h-full w-full place-items-center bg-surface-0"><div className="size-[34px] animate-spin rounded-full border border-border-strong border-t-primary" /></div>}>
-              <SurfaceErrorBoundary label="Settings" resetKey={view} onError={notify}>
+              <SurfaceErrorBoundary label={view === 'extensions' ? 'Extensions' : 'Settings'} resetKey={view} onError={notify}>
                 <SettingsPane
                   theme={theme}
                   onSelectTheme={selectTheme}
@@ -2100,8 +2122,16 @@ export default function App() {
                     switchToWorkbench('agent')
                     setAgentPane('browser')
                   }}
-                  tab={settingsTab}
-                  onSelectTab={setSettingsTab}
+                  tab={view === 'extensions' ? 'extensions' : settingsTab}
+                  onSelectTab={(tab) => {
+                    if (tab === 'extensions') {
+                      setView('extensions')
+                      setSettingsTab('extensions')
+                    } else {
+                      setView('settings')
+                      setSettingsTab(tab)
+                    }
+                  }}
                   subTab={settingsSubTabs.general}
                   onSelectSubTab={(subTab) => setSettingsSubTabs((current) => ({ ...current, general: subTab }))}
                   capabilitySubTab={settingsSubTabs.capabilities}

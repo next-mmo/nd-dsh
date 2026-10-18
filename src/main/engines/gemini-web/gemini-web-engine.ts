@@ -9,6 +9,7 @@ import type {
   SessionEventEnvelope,
 } from '../../../shared/contracts.js'
 import { GEMINI_WEB_ENGINE_ID } from '../../../shared/coding-engines.js'
+import { stripWorkspaceContext } from '../../../shared/workspace-context.js'
 import type { BrowserController } from '../../browser/browser-controller.js'
 import { GEMINI_DOM_TURNS_SCRIPT } from '../../browser/gemini-dom-turns.js'
 import type { WorkspaceService } from '../../workspace/workspace-service.js'
@@ -16,12 +17,11 @@ import {
   isGeminiConversationUrl,
   isGeminiPageUrl,
   parseGeminiConversationUrl,
-  parseGeminiGemInput,
+  parseGeminiSkillLinkInput,
   sameGeminiUrl,
 } from './gemini-project-binding.js'
 
 const GEMINI_HOME_URL = 'https://gemini.google.com/app'
-const GEMINI_GEMS_URL = 'https://gemini.google.com/gems'
 // Gemini's composer is a contenteditable editor inside <rich-textarea>/main.
 const GEMINI_COMPOSER_SELECTOR = 'main rich-textarea [contenteditable="true"], main [contenteditable="true"], main textarea, main [role="textbox"]'
 const TRANSCRIPT_EVENT_TYPES = new Set(['user/message', 'assistant/message', 'agent/reasoning'])
@@ -129,9 +129,9 @@ export class GeminiWebEngine {
   }
 
   setGemBinding(workspaceRoot: string, input: string): GeminiGemBinding {
-    const parsed = parseGeminiGemInput(input)
+    const parsed = parseGeminiSkillLinkInput(input)
     if (!parsed) {
-      throw new Error('Invalid Gemini Gem link. Please provide a link like https://gemini.google.com/gem/... (or a /gems/view/... or /gems/connect/... URL).')
+      throw new Error('Invalid Gemini chat link. Use a link like https://gemini.google.com/app/fa5b05f3a25f7f76.')
     }
     const wsState = this.options.workspace.state()
     const projectName = wsState.projectName || wsState.name || 'project'
@@ -169,17 +169,17 @@ export class GeminiWebEngine {
     if (existing) return existing
 
     const currentUrl = this.options.browser.state().url
-    const currentGem = parseGeminiGemInput(currentUrl)
-    if (currentGem) {
+    const currentChat = parseGeminiSkillLinkInput(currentUrl)
+    if (currentChat) {
       const wsState = this.options.workspace.state()
       const projectName = wsState.projectName || wsState.name || 'project'
       const binding: GeminiGemBinding = {
         workspaceRoot,
         ...(wsState.projectId ? { projectId: wsState.projectId } : {}),
         projectName,
-        gemRef: currentGem.gemRef,
-        gemId: currentGem.gemId,
-        gemUrl: currentGem.gemUrl,
+        gemRef: currentChat.gemRef,
+        gemId: currentChat.gemId,
+        gemUrl: currentChat.gemUrl,
         source: 'auto',
         updatedAt: Date.now(),
       }
@@ -248,7 +248,7 @@ export class GeminiWebEngine {
   }
 
   async run(prompt: string, input: { sessionId?: string; cwd?: string } = {}): Promise<{ sessionId: string }> {
-    const cleaned = prompt.trim()
+    const cleaned = stripWorkspaceContext(prompt).trim()
     if (!cleaned) throw new Error('Prompt cannot be empty')
     if (cleaned.length > MAX_PROMPT_CHARS) throw new Error(`Prompt exceeds the ${MAX_PROMPT_CHARS.toLocaleString()} character limit`)
 
@@ -456,8 +456,8 @@ export class GeminiWebEngine {
       const composerSelector = ${JSON.stringify(GEMINI_COMPOSER_SELECTOR)};
       const domTurns = readGeminiDomTurns();
       const turns = [];
-      for (const { root, role } of domTurns) {
-        const text = root instanceof HTMLElement ? root.innerText.trim() : '';
+      for (const { root, role, text: turnText } of domTurns) {
+        const text = turnText || (root instanceof HTMLElement ? root.innerText.trim() : '');
         if (text) turns.push({ role, text });
       }
       const lastAssistant = domTurns.filter(turn => turn.role === 'assistant').at(-1);
@@ -466,7 +466,9 @@ export class GeminiWebEngine {
         url: location.href,
         title: document.title,
         composer: document.querySelector(composerSelector) !== null,
-        busy: stopButton !== undefined || document.querySelector('[data-is-streaming="true"], [data-is-generating="true"]') !== null,
+        busy: stopButton !== undefined
+          || document.querySelector('[data-is-streaming="true"], [data-is-generating="true"], .markdown[aria-busy="true"]') !== null
+          || lastAssistant?.imagesPending === true,
         complete: lastAssistant?.complete === true,
         challenge: location.hostname === 'consent.google.com' || location.pathname.includes('/sorry/') || /verify you are human|checking your browser|just a moment/i.test(document.title),
         loginRequired: location.hostname === 'accounts.google.com' || location.pathname.includes('/auth/'),
@@ -481,10 +483,26 @@ export class GeminiWebEngine {
     if (snapshot.busy) return
     const seen = new Set(session.seenTurnKeys)
     const sent = new Set(session.sentPromptHashes)
+    const assistantIndices = snapshot.turns
+      .map((turn, idx) => (turn.role === 'assistant' ? idx : -1))
+      .filter((idx) => idx >= 0)
     let changed = false
     snapshot.turns.forEach((turn, index) => {
       const key = domTurnKey(turn, index)
       if (seen.has(key)) return
+      const indexRolePrefix = `${index}:${turn.role}:`
+      const existingAtIndex = [...seen].find((candidate) => candidate.startsWith(indexRolePrefix))
+      if (existingAtIndex) {
+        seen.delete(existingAtIndex)
+        seen.add(key)
+        if (turn.role === 'assistant') {
+          const pos = assistantIndices.indexOf(index)
+          const offsetFromEnd = pos >= 0 ? assistantIndices.length - 1 - pos : 0
+          this.updateAssistantMessageFromEnd(session, turn.text, offsetFromEnd)
+        }
+        changed = true
+        return
+      }
       if (turn.role === 'user' && sent.has(hashText(turn.text))) {
         seen.add(key)
         changed = true
@@ -515,7 +533,7 @@ export class GeminiWebEngine {
   private captureConversationUrl(session: StoredGeminiWebSession, url: string): void {
     if (!isGeminiConversationUrl(url)) return
     const parsed = parseGeminiConversationUrl(url)
-    if (parsed?.gemId) session.gemRef = parsed.gemId
+    if (parsed?.chatId) session.gemRef = parsed.chatId
     if (session.conversationUrl === url) return
     session.conversationUrl = url
     this.persistStore()
@@ -526,12 +544,17 @@ export class GeminiWebEngine {
     this.watcherBusy = true
     try {
       const currentUrl = this.options.browser.state().url
-      const visibleSession = [...this.sessions.values()].find((session) => session.conversationUrl !== undefined && sameGeminiUrl(currentUrl, session.conversationUrl))
-      if (visibleSession && !visibleSession.running) {
+      const visibleSessions = [...this.sessions.values()].filter(
+        (session) => !session.running && session.conversationUrl !== undefined && sameGeminiUrl(currentUrl, session.conversationUrl),
+      )
+      if (visibleSessions.length > 0) {
         try {
           const cdp = await VisibleCdpConnection.connect(this.options.browser)
           try {
-            this.importUnseenTurns(visibleSession, await this.captureSnapshot(cdp))
+            const snapshot = await this.captureSnapshot(cdp)
+            for (const visibleSession of visibleSessions) {
+              this.importUnseenTurns(visibleSession, snapshot)
+            }
           } finally {
             cdp.close()
           }
@@ -556,6 +579,34 @@ export class GeminiWebEngine {
       type: 'assistant/message',
       data: { message: { role: 'assistant', content: [{ type: 'text', text }] } },
     })
+  }
+
+  private updateAssistantMessageFromEnd(session: StoredGeminiWebSession, text: string, offsetFromEnd: number): void {
+    let seenFromEnd = 0
+    for (let i = session.transcript.length - 1; i >= 0; i--) {
+      const entry = session.transcript[i]
+      if (entry?.type === 'assistant/message') {
+        if (seenFromEnd === offsetFromEnd) {
+          session.updatedAt = Date.now()
+          entry.time = session.updatedAt
+          entry.data = { message: { role: 'assistant', content: [{ type: 'text', text }] } }
+          this.emitFrame({
+            kind: 'session-event',
+            sessionId: session.sessionId,
+            event: {
+              ...entry,
+              data: {
+                message: { role: 'assistant', content: [{ type: 'text', text }] },
+                replaceFromEndAssistantOffset: offsetFromEnd,
+              },
+            },
+          })
+          return
+        }
+        seenFromEnd += 1
+      }
+    }
+    this.recordAssistantMessage(session, text)
   }
 
   private recordEnvelope(session: StoredGeminiWebSession, partial: { type: string; data?: unknown }): void {

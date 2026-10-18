@@ -84,6 +84,8 @@ function getGlobalLocation(): LocationLike {
 
 export function settingsTabFromLocation(location?: LocationLike): SettingsTab {
   const loc = location ?? getGlobalLocation()
+  const route = loc.hash.replace(/^#\/?/, '').split(/[/?]/)[0]
+  if (route === 'extensions') return 'extensions'
   const hashQuery = loc.hash.includes('?') ? loc.hash.slice(loc.hash.indexOf('?') + 1) : ''
   const value = new URLSearchParams(hashQuery).get('tab')
     ?? new URLSearchParams(loc.search).get('tab')
