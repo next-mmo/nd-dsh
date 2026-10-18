@@ -31,7 +31,7 @@ import {
   OPENCODE_CLI_ENGINE_ID,
 } from '../../shared/extra-coding-engines.js'
 import type { BrowserController } from '../browser/browser-controller.js'
-import { appendWorkspaceContext } from '../../shared/workspace-context.js'
+import { appendWorkspaceContext, stripWorkspaceContext } from '../../shared/workspace-context.js'
 import type { ExtensionRouter } from '../extensions/extension-router.js'
 import type { GitService } from '../git/git-service.js'
 import type { HarnessService } from '../harness/harness-service.js'
@@ -62,15 +62,17 @@ const STRUCTURED_TRANSCRIPT_ENGINE_IDS = new Set([
 
 export interface ChatGptWebRuntime {
   browser: BrowserController
-  git: GitService
-  storePath: string
+  git?: GitService
+  storePath?: string
   log?: (line: string) => void
+  engine?: ChatGptWebEngine
 }
 
 export interface GeminiWebRuntime {
   browser: BrowserController
-  storePath: string
+  storePath?: string
   log?: (line: string) => void
+  engine?: GeminiWebEngine
 }
 
 /**
@@ -165,21 +167,21 @@ export class EngineSessionRouter {
     if (chatGptWebRuntime) {
       this.chatGptWebBrowser = chatGptWebRuntime.browser
       this.chatGptWebLog = chatGptWebRuntime.log
-      this.chatGptWeb = new ChatGptWebEngine({
+      this.chatGptWeb = chatGptWebRuntime.engine ?? new ChatGptWebEngine({
         browser: chatGptWebRuntime.browser,
-        git: chatGptWebRuntime.git,
+        git: chatGptWebRuntime.git!,
         workspace,
-        storePath: chatGptWebRuntime.storePath,
+        storePath: chatGptWebRuntime.storePath!,
         ...(chatGptWebRuntime.log ? { log: chatGptWebRuntime.log } : {}),
       })
     }
     if (geminiWebRuntime) {
       this.geminiWebBrowser = geminiWebRuntime.browser
       this.geminiWebLog = geminiWebRuntime.log
-      this.geminiWeb = new GeminiWebEngine({
+      this.geminiWeb = geminiWebRuntime.engine ?? new GeminiWebEngine({
         browser: geminiWebRuntime.browser,
         workspace,
-        storePath: geminiWebRuntime.storePath,
+        storePath: geminiWebRuntime.storePath!,
         ...(geminiWebRuntime.log ? { log: geminiWebRuntime.log } : {}),
       })
     }
@@ -249,16 +251,25 @@ export class EngineSessionRouter {
       options = { ...options, sessionId: created.sessionId }
     }
     const skill = await this.skills?.prepare(prompt, options?.skillScope, options?.skillSelectionId)
-    if (skill && options?.sessionId && !directTarget && requested !== CHATGPT_WEB_ENGINE_ID) {
+    const targetSessionId = options?.sessionId
+    if (skill && targetSessionId && !directTarget && requested !== CHATGPT_WEB_ENGINE_ID && requested !== GEMINI_WEB_ENGINE_ID) {
       const result = await this.harness.gatewayRpc('session.list')
       const items = (result.value as { items?: Array<{ sessionId?: string; cwd?: string }> } | undefined)?.items
-      const session = items?.find((item) => item.sessionId === options?.sessionId)
+      const session = items?.find((item) => item.sessionId === targetSessionId)
       if (!result.ok || !session?.cwd || !this.sessionRootAllowed(session.cwd)) throw new Error('Skill session does not belong to the active workspace')
+    }
+    if (skill && targetSessionId && requested === CHATGPT_WEB_ENGINE_ID) {
+      const session = this.chatGptWeb?.listSessions().find((candidate) => candidate.sessionId === targetSessionId)
+      if (session?.cwd && !this.sessionRootAllowed(session.cwd)) throw new Error('Skill session does not belong to the active workspace')
+    }
+    if (skill && targetSessionId && requested === GEMINI_WEB_ENGINE_ID) {
+      const session = this.geminiWeb?.listSessions().find((candidate) => candidate.sessionId === targetSessionId)
+      if (session?.cwd && !this.sessionRootAllowed(session.cwd)) throw new Error('Skill session does not belong to the active workspace')
     }
     let routedPrompt = this.extensions
       ? await this.extensions.decoratePrompt(skill?.prompt ?? prompt, requested, providerId)
       : skill?.prompt ?? prompt
-    if (options?.sessionId && this.browserAccess && requested !== ND_NATIVE_ENGINE_ID) {
+    if (options?.sessionId && this.browserAccess && requested !== ND_NATIVE_ENGINE_ID && requested !== CHATGPT_WEB_ENGINE_ID && requested !== GEMINI_WEB_ENGINE_ID) {
       const token = this.browserAccess.issueSessionAccess(options.sessionId)
       routedPrompt += `\n\n<nd-browser-access>\nOpaque browser access token for this ND session: ${token}\nPass it unchanged as accessToken on every nd_browser_call. Do not expose it in user-facing output.\n</nd-browser-access>`
     }
@@ -275,6 +286,7 @@ export class EngineSessionRouter {
       options = { ...options, sessionId }
       await this.skills!.assertScope(skill.scope)
       await this.messageStore.rememberSkillMessage(sessionId, optimizedPrompt, prompt, skill.mention)
+      await this.messageStore.rememberSkillMessage(sessionId, stripWorkspaceContext(optimizedPrompt).trim(), prompt, skill.mention)
       await this.messageStore.rememberSkillMessage(sessionId, appendWorkspaceContext(optimizedPrompt, this.workspace.state()), prompt, skill.mention)
     }
     const direct = this.directEngines.get(requested)

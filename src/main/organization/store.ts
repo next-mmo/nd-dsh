@@ -25,6 +25,7 @@ import type {
   Team,
   TaskStatus,
 } from '../../shared/organization.js'
+import { PERSONAL_PROJECT_ID } from '../../shared/organization.js'
 import { taskMetricsRecorder } from '../metrics/task-metrics.js'
 import { compareDeliveryTasks, taskInDeliveryScope } from '../../shared/organization-delivery.js'
 import { BUILTIN_SKILLS, defaultPolicies, defaultWorkflow } from './defaults.js'
@@ -661,12 +662,16 @@ export class OrganizationStore {
       const next = this.value.companies[0]
       if (next) {
         this.value.activeCompanyId = next.id
-        const nextProject = this.value.projects.find((item) => item.companyId === next.id)
-        if (nextProject) this.value.activeProjectId = nextProject.id
-        else delete this.value.activeProjectId
+        if (this.value.activeProjectId !== PERSONAL_PROJECT_ID) {
+          const nextProject = this.value.projects.find((item) => item.companyId === next.id)
+          if (nextProject) this.value.activeProjectId = nextProject.id
+          else delete this.value.activeProjectId
+        }
       } else {
         delete this.value.activeCompanyId
-        delete this.value.activeProjectId
+        if (this.value.activeProjectId !== PERSONAL_PROJECT_ID) {
+          delete this.value.activeProjectId
+        }
       }
     }
   }
@@ -701,7 +706,35 @@ export class OrganizationStore {
     applyRuntimeFields(project, patch)
     project.updatedAt = Date.now()
   }
-  private activateProject(id: string): void { const project = this.project(id); this.value.activeProjectId = id; this.value.activeCompanyId = project.companyId }
+  private activateProject(id: string): void {
+    if (id === PERSONAL_PROJECT_ID) {
+      this.value.activeProjectId = PERSONAL_PROJECT_ID
+      return
+    }
+    if (!id || typeof id !== 'string' || !id.trim()) {
+      const fallback = this.value.projects.find((item) => item.companyId === this.value.activeCompanyId)
+      if (fallback) {
+        this.value.activeProjectId = fallback.id
+        this.value.activeCompanyId = fallback.companyId
+      } else {
+        delete this.value.activeProjectId
+      }
+      return
+    }
+    const project = this.value.projects.find((item) => item.id === id)
+    if (!project) {
+      const fallback = this.value.projects.find((item) => item.companyId === this.value.activeCompanyId)
+      if (fallback) {
+        this.value.activeProjectId = fallback.id
+        this.value.activeCompanyId = fallback.companyId
+      } else {
+        delete this.value.activeProjectId
+      }
+      return
+    }
+    this.value.activeProjectId = id
+    this.value.activeCompanyId = project.companyId
+  }
   /**
    * Forget a project inside ND. Comparable to removing a folder from an editor
    * workspace: the folder and its files are untouched, only ND's own records for
@@ -709,6 +742,7 @@ export class OrganizationStore {
    * be orphaned by removal.
    */
   private removeProject(id: string): void {
+    if (id === PERSONAL_PROJECT_ID) throw new Error('Cannot remove the built-in Personal project')
     const project = this.project(id)
     const live = this.value.runs.find((run) => run.projectId === id && run.status === 'running')
     if (live) throw new Error(`Cancel the running ${live.kind} before removing this project`)

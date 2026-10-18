@@ -53,6 +53,7 @@ import { CodexCliEngine } from './engines/codex/codex-cli-engine.js'
 import { CursorCliEngine } from './engines/cursor/cursor-cli-engine.js'
 import { CodingEngineRegistry } from './engines/coding-engine-registry.js'
 import { EngineSessionRouter } from './engines/engine-session-router.js'
+import { NdRestApiService } from './rest-api/rest-api-service.js'
 import { NdNativeEngine } from './engines/nd-native/nd-native-engine.js'
 import { NdNativeToolBroker } from './engines/nd-native/nd-native-tool-broker.js'
 import { PiCodingEngine } from './engines/pi/pi-coding-engine.js'
@@ -117,6 +118,7 @@ let activePiEngine: PiCodingEngine | undefined
 let activeCursorEngine: CursorCliEngine | undefined
 let activeClaudeEngine: ClaudeCodeCliEngine | undefined
 let activeEngineRouter: EngineSessionRouter | undefined
+let activeRestApiService: NdRestApiService | undefined
 let activeNdPencil: NdPencilController | undefined
 let activeTerminalManager: TerminalManager | undefined
 let activeCore: CoreClient | undefined
@@ -426,6 +428,16 @@ async function createWindow(cdpPort: number): Promise<void> {
   }, zcodeEngine, piEngine, cursorEngine, claudeEngine, engineSpawn, directEngineJournal, nativeAgent)
   activeEngineRouter = engineRouter
   engineRouter.setBrowserAccessProvider(browserPlatform)
+  const restApiService = new NdRestApiService({
+    engineRouter,
+    workspace,
+    userDataPath: userData,
+    log: (line) => console.log(line),
+  })
+  await restApiService.start().catch((error) => {
+    console.warn('ND REST API server could not start:', error instanceof Error ? error.message : String(error))
+  })
+  activeRestApiService = restApiService
   const projectWorkspace = new ProjectWorkspaceCoordinator(
     organizationStore,
     workspace,
@@ -872,6 +884,7 @@ async function createWindow(cdpPort: number): Promise<void> {
     design.destroy()
     if (activeNdPencil === ndPencil) { activeNdPencil = undefined; beginNdPencilClose(ndPencil) }
     if (activeEngineRouter === engineRouter) { activeEngineRouter = undefined; beginEngineRouterClose(engineRouter) }
+    if (activeRestApiService === restApiService) { activeRestApiService = undefined; beginRestApiClose(restApiService) }
     if (activeBrowserPlatform === browserPlatform) { activeBrowserPlatform = undefined; beginBrowserPlatformClose(browserPlatform) }
     if (activeBrowser === browser) { activeBrowser = undefined; beginBrowserClose(browser) }
     if (activeBrowserCompanion === browserCompanion) { activeBrowserCompanion = undefined; beginBrowserCompanionClose(browserCompanion) }
@@ -986,6 +999,11 @@ app.on('before-quit', (event) => {
     const engineRouter = activeEngineRouter
     activeEngineRouter = undefined
     beginEngineRouterClose(engineRouter)
+  }
+  if (activeRestApiService) {
+    const restApiService = activeRestApiService
+    activeRestApiService = undefined
+    beginRestApiClose(restApiService)
   }
   if (activeTerminalManager) {
     const terminalManager = activeTerminalManager
@@ -1136,6 +1154,10 @@ function beginClaudeClose(claudeEngine: ClaudeCodeCliEngine): void {
 
 function beginEngineRouterClose(engineRouter: EngineSessionRouter): void {
   trackClose(engineRouter.close().catch((error) => console.error('Failed to close the engine router cleanly:', error)))
+}
+
+function beginRestApiClose(restApi: NdRestApiService): void {
+  trackClose(restApi.stop().catch((error) => console.error('Failed to close the ND REST API server cleanly:', error)))
 }
 
 function beginTerminalClose(terminalManager: TerminalManager): void {

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { open, readdir, realpath } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { parseDocument } from 'yaml'
-import type { OrganizationSnapshot } from '../../shared/organization.js'
+import { PERSONAL_PROJECT_ID, type OrganizationSnapshot } from '../../shared/organization.js'
 import type { SkillSuggestion } from '../../shared/skill-catalog.js'
 
 interface Skill extends SkillSuggestion { instructions: string; userInvocable: boolean; directory?: string }
@@ -48,7 +48,7 @@ export class NdSkillService {
     const state = await this.deps.organization.state()
     const projectId = state.activeProjectId ?? null
     const project = state.projects.find((item) => item.id === projectId)
-    if (projectId && !project) throw new Error('Active skill project is unavailable')
+    if (projectId && projectId !== PERSONAL_PROJECT_ID && !project) throw new Error('Active skill project is unavailable')
     if (expectedProjectId !== undefined && expectedProjectId !== projectId) throw new Error('Skill project changed; reopen Skills')
     if (project && (!project.workspacePath || resolve(project.workspacePath) !== root)) throw new Error('Skill workspace does not match active project')
     const scope = { root, projectId }

@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs'
 import { resolve } from 'node:path'
 import type { WorkspaceRegistryView, WorkspaceState } from '../../shared/contracts.js'
-import type { OrganizationMutation, OrganizationSnapshot, Project } from '../../shared/organization.js'
+import { PERSONAL_PROJECT_ID, type OrganizationMutation, type OrganizationSnapshot, type Project } from '../../shared/organization.js'
 import type { HarnessService } from '../harness/harness-service.js'
 import type { WorkspaceService } from './workspace-service.js'
 import type { WorkspaceRegistry } from './workspace-registry.js'
@@ -32,6 +32,9 @@ export class ProjectWorkspaceCoordinator {
   }
 
   async assertCanMutate(mutation: OrganizationMutation): Promise<void> {
+    if (mutation.type === 'project.activate' && mutation.id === PERSONAL_PROJECT_ID) {
+      return
+    }
     const state = await this.store.state()
     const changesActiveWorkspace = ACTIVE_CONTEXT_MUTATIONS.has(mutation.type)
       || (mutation.type === 'project.update'
@@ -42,11 +45,17 @@ export class ProjectWorkspaceCoordinator {
       || (mutation.type === 'project.remove' && state.activeProjectId === mutation.id)
     if (!changesActiveWorkspace) return
     const active = state.runs.find((run) => run.status === 'running')
-    if (active) throw new Error(`Cannot switch projects or workspaces while ${active.kind} is running. Cancel the active run first.`)
+    if (active && !(mutation.type === 'project.activate' && mutation.id === active.projectId)) {
+      throw new Error(`Cannot switch projects or workspaces while ${active.kind} is running. Cancel the active run first.`)
+    }
   }
 
   async afterOrganizationMutation(mutation: OrganizationMutation, state: OrganizationSnapshot): Promise<WorkspaceState> {
     if (ACTIVE_CONTEXT_MUTATIONS.has(mutation.type)) {
+      if (mutation.type === 'project.activate' && mutation.id === PERSONAL_PROJECT_ID) {
+        this.onContextChanged?.()
+        return this.workspace.state()
+      }
       const next = await this.syncToOrganization(state, true)
       this.onContextChanged?.()
       return next

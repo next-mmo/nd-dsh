@@ -124,6 +124,26 @@ export interface Project {
   updatedAt: number
 }
 
+export const PERSONAL_PROJECT_ID = 'personal'
+export const PERSONAL_PROJECT_NAME = 'Personal'
+
+export const BUILTIN_PERSONAL_PROJECT: Readonly<Project> = {
+  id: PERSONAL_PROJECT_ID,
+  companyId: '',
+  name: PERSONAL_PROJECT_NAME,
+  objective: 'Personal workspace and global chats',
+  status: 'active',
+  repoUrls: [],
+  teamIds: [],
+  progress: 0,
+  createdAt: 0,
+  updatedAt: 0,
+}
+
+export function isPersonalProject(projectId: string | undefined | null): boolean {
+  return projectId === PERSONAL_PROJECT_ID
+}
+
 /** Live state of a project's dev-server runtime and its browser target. */
 export interface ProjectRuntimeStatus {
   projectId: string

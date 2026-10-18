@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { filterSessionsInProjectScope, isSessionInProjectScope } from '../src/shared/session-project-scope.js'
+import { filterSessionsInProjectScope, isSessionInProjectScope, PERSONAL_PROJECT_ID } from '../src/shared/session-project-scope.js'
 
 const sessionProjects = {
   'sess-plan-dfdf': 'project-dfdf',
   'sess-review-dfdf': 'project-dfdf',
   'sess-plan-ndf': 'project-ndf',
   'sess-engine-ndf': 'project-ndf',
+  'sess-explicit-personal': PERSONAL_PROJECT_ID,
 }
 
 function session(sessionId: string, parentSessionId?: string, origin: 'subagent' | undefined = parentSessionId ? 'subagent' : undefined): { sessionId: string; parentSessionId?: string; origin?: 'subagent' } {
@@ -18,25 +19,37 @@ describe('isSessionInProjectScope', () => {
     expect(isSessionInProjectScope('sess-personal', undefined, sessionProjects)).toBe(true)
   })
 
-  it('keeps sessions with no run attribution visible in every project', () => {
-    expect(isSessionInProjectScope('sess-personal', 'project-dfdf', sessionProjects)).toBe(true)
+  it('scopes to Personal project: shows personal and unassigned chats, hides company project chats', () => {
+    expect(isSessionInProjectScope('sess-explicit-personal', PERSONAL_PROJECT_ID, sessionProjects)).toBe(true)
+    expect(isSessionInProjectScope('sess-personal', PERSONAL_PROJECT_ID, sessionProjects)).toBe(true)
+    expect(isSessionInProjectScope('sess-plan-dfdf', PERSONAL_PROJECT_ID, sessionProjects)).toBe(false)
+    expect(isSessionInProjectScope('sess-plan-ndf', PERSONAL_PROJECT_ID, sessionProjects)).toBe(false)
   })
 
-  it('keeps sessions that belong to the active project', () => {
+  it('keeps sessions that belong to the active company project', () => {
     expect(isSessionInProjectScope('sess-review-dfdf', 'project-dfdf', sessionProjects)).toBe(true)
   })
 
-  it('hides sessions attributed to another project', () => {
+  it('hides sessions attributed to another company project or personal', () => {
     expect(isSessionInProjectScope('sess-plan-ndf', 'project-dfdf', sessionProjects)).toBe(false)
+    expect(isSessionInProjectScope('sess-explicit-personal', 'project-dfdf', sessionProjects)).toBe(false)
+    expect(isSessionInProjectScope('sess-personal', 'project-dfdf', sessionProjects)).toBe(false)
   })
 })
 
 describe('filterSessionsInProjectScope', () => {
-  it('filters harness and engine session listings down to the active project', () => {
-    const items = ['sess-plan-dfdf', 'sess-personal', 'sess-plan-ndf', 'sess-engine-ndf'].map((sessionId) => session(sessionId))
+  it('filters listings strictly down to the active company project without personal leakage', () => {
+    const items = ['sess-plan-dfdf', 'sess-personal', 'sess-plan-ndf', 'sess-engine-ndf', 'sess-explicit-personal'].map((sessionId) => session(sessionId))
     expect(filterSessionsInProjectScope(items, 'project-dfdf', sessionProjects).map((item) => item.sessionId)).toEqual([
       'sess-plan-dfdf',
+    ])
+  })
+
+  it('filters listings to Personal project: includes personal and unassigned, excludes company project chats', () => {
+    const items = ['sess-plan-dfdf', 'sess-personal', 'sess-plan-ndf', 'sess-explicit-personal'].map((sessionId) => session(sessionId))
+    expect(filterSessionsInProjectScope(items, PERSONAL_PROJECT_ID, sessionProjects).map((item) => item.sessionId)).toEqual([
       'sess-personal',
+      'sess-explicit-personal',
     ])
   })
 
@@ -55,18 +68,9 @@ describe('filterSessionsInProjectScope', () => {
     ])
   })
 
-  it('keeps an ordinary fork globally visible when it has no run attribution', () => {
-    // session() defaults origin to 'subagent' when a parent is given, and an
-    // explicit undefined would re-trigger that default, so build the fork here.
-    const fork = { sessionId: 'sess-fork-ndf', parentSessionId: 'sess-plan-ndf' }
-    const items = [session('sess-plan-ndf'), fork]
-    expect(filterSessionsInProjectScope(items, 'project-dfdf', sessionProjects).map((item) => item.sessionId)).toEqual([
-      'sess-fork-ndf',
-    ])
-  })
-
   it('returns the full listing unchanged when no project is active', () => {
     const items = ['sess-plan-dfdf', 'sess-plan-ndf'].map((sessionId) => session(sessionId))
     expect(filterSessionsInProjectScope(items, undefined, sessionProjects)).toEqual(items)
   })
 })
+

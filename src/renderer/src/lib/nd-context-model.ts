@@ -36,6 +36,7 @@ export function contextOptions(organization: OrganizationSnapshot | null): Conte
 
 /** The context implied by the app's current organization selection. */
 export function currentContext(organization: OrganizationSnapshot | null): NdContext {
+  if (organization?.activeProjectId === 'personal') return { kind: 'personal' }
   const company = organization?.companies.find((item) => item.id === organization.activeCompanyId) ?? organization?.companies[0]
   if (!company) return { kind: 'personal' }
   const project = organization?.projects.find((item) => item.id === organization.activeProjectId && item.companyId === company.id)

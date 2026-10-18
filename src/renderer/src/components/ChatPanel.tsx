@@ -18,7 +18,8 @@ import type {
 } from '../../../shared/contracts'
 import { ANTIGRAVITY_ENGINE_ID, CHATGPT_WEB_ENGINE_ID, CODEX_CLI_ENGINE_ID, GEMINI_WEB_ENGINE_ID, ND_HARNESS_ENGINE_ID, ND_NATIVE_ENGINE_ID, PI_CODING_ENGINE_ID, ZCODE_CLI_ENGINE_ID } from '../../../shared/coding-engines'
 import { DisplayGroup, groupEntries, parseFileChanges, toolPreview, type ContextBlock } from '../../../shared/chat-grouping'
-import { filterSessionsInProjectScope, isSessionInProjectScope } from '../../../shared/session-project-scope'
+import { filterSessionsInProjectScope, isSessionInProjectScope, PERSONAL_PROJECT_ID } from '../../../shared/session-project-scope'
+import { storeSessionProject } from '../lib/session-project-registry'
 import { buildSessionTree, type SessionTreeNode } from '../../../shared/session-tree'
 import type { SettingsTab } from '../lib/settings-route'
 import { splitAssistantSegments, type ReviewVerdict } from '../../../shared/structured-output'
@@ -648,6 +649,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
       const result = await window.ndDsh.dsh.rpc('session.create', {})
       const sessionId = ((result.value ?? {}) as { sessionId?: string }).sessionId
       if (typeof sessionId !== 'string') throw new Error('session.create returned no session id')
+      storeSessionProject(sessionId, activeProjectId ?? PERSONAL_PROJECT_ID)
       const created: SessionSummary = { sessionId, updatedAt: Date.now(), running: false, blank: true }
       setSessions((current) => [created, ...current])
       setThreads((current) => ({ ...current, [sessionId]: [] }))
@@ -657,7 +659,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
     } catch (cause) {
       onError(cause instanceof Error ? cause.message : String(cause))
     }
-  }, [onError, startEngineDraft])
+  }, [onError, startEngineDraft, activeProjectId])
 
   const selectHeaderEngine = useCallback((engineId: string): void => {
     try {
@@ -1231,6 +1233,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
       const catalog = /^\s*\//.test(input) ? await window.ndDsh.skills.catalog(activeProjectId ?? null) : undefined
       const result = await window.ndDsh.harness.run(input, { ...options, ...imageOption, ...(catalog ? { skillScope: selectedScope ?? catalog.scope, ...(selection?.selectionId ? { skillSelectionId: selection.selectionId } : {}) } : {}) })
       selectedSkillScope.current = null
+      storeSessionProject(result.sessionId, activeProjectId ?? PERSONAL_PROJECT_ID)
       setActiveSessionId(result.sessionId)
       if (draftEngine !== null) {
         setDraftEngineId(null)
@@ -1291,6 +1294,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
     try {
       const catalog = /^\s*\//.test(retryPrompt) ? await window.ndDsh.skills.catalog(activeProjectId ?? null) : undefined
       const result = await window.ndDsh.harness.run(retryPrompt, { ...options, ...(catalog ? { skillScope: catalog.scope } : {}) })
+      storeSessionProject(result.sessionId, activeProjectId ?? PERSONAL_PROJECT_ID)
       setActiveSessionId(result.sessionId)
       void refreshElementChips()
       // User messages arrive through session events, including on retry.
@@ -1660,28 +1664,51 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
             </div>
           )}
 
-          {projects && projects.length > 0 ? (
-            <div className="mt-1 flex flex-col gap-0.5">
-              <span className="px-2 text-[9px] font-semibold tracking-[0.08em] text-faint">PROJECTS</span>
-              {projects.map((project) => (
-                <button
-                  key={project.id}
-                  className={cn(
-                    'flex h-[23px] w-full items-center gap-2 rounded-md px-2 text-left text-xs transition-colors [&_svg]:size-3 [&_svg]:shrink-0',
-                    project.active
-                      ? 'bg-selected-row text-selected-row-foreground hover:bg-selected-row'
-                      : 'text-soft hover:bg-accent hover:text-foreground',
-                  )}
-                  title={project.linked ? project.name : `${project.name} (workspace not linked)`}
-                  onClick={() => !project.active && onSelectProject?.(project.id)}
-                >
-                  <FolderIcon style={{ color: FOLDER_ACCENT }} />
-                  <span className="min-w-0 truncate">{project.name}</span>
-                  {project.active ? <span className="ml-auto text-[9px] font-bold text-primary">ACTIVE</span> : null}
-                </button>
-              ))}
-            </div>
-          ) : null}
+          <div className="mt-1 flex flex-col gap-0.5">
+            <span className="px-2 text-[9px] font-semibold tracking-[0.08em] text-faint">PROJECTS</span>
+            {(() => {
+              const isPersonalProjectActive = activeProjectId === PERSONAL_PROJECT_ID || projects?.find((p) => p.id === PERSONAL_PROJECT_ID)?.active === true
+              return (
+                <>
+                  <button
+                    key={PERSONAL_PROJECT_ID}
+                    className={cn(
+                      'flex h-[23px] w-full items-center gap-2 rounded-md px-2 text-left text-xs transition-colors [&_svg]:size-3 [&_svg]:shrink-0',
+                      isPersonalProjectActive
+                        ? 'bg-selected-row text-selected-row-foreground hover:bg-selected-row'
+                        : 'text-soft hover:bg-accent hover:text-foreground',
+                    )}
+                    title="Personal (built-in global workspace)"
+                    onClick={() => onSelectProject?.(PERSONAL_PROJECT_ID)}
+                  >
+                    <FolderIcon style={{ color: FOLDER_ACCENT }} />
+                    <span className="min-w-0 truncate">Personal</span>
+                    {isPersonalProjectActive ? <span className="ml-auto text-[9px] font-bold text-primary">ACTIVE</span> : null}
+                  </button>
+                  {projects?.filter((project) => project.id !== PERSONAL_PROJECT_ID).map((project) => {
+                    const isThisProjectActive = !isPersonalProjectActive && (project.active || activeProjectId === project.id)
+                    return (
+                      <button
+                        key={project.id}
+                        className={cn(
+                          'flex h-[23px] w-full items-center gap-2 rounded-md px-2 text-left text-xs transition-colors [&_svg]:size-3 [&_svg]:shrink-0',
+                          isThisProjectActive
+                            ? 'bg-selected-row text-selected-row-foreground hover:bg-selected-row'
+                            : 'text-soft hover:bg-accent hover:text-foreground',
+                        )}
+                        title={project.linked ? project.name : `${project.name} (workspace not linked)`}
+                        onClick={() => (!isThisProjectActive || isPersonalProjectActive) && onSelectProject?.(project.id)}
+                      >
+                        <FolderIcon style={{ color: FOLDER_ACCENT }} />
+                        <span className="min-w-0 truncate">{project.name}</span>
+                        {isThisProjectActive ? <span className="ml-auto text-[9px] font-bold text-primary">ACTIVE</span> : null}
+                      </button>
+                    )
+                  })}
+                </>
+              )
+            })()}
+          </div>
 
           <div className="mt-1.5 flex flex-col gap-1">
             {sessionListError ? (
@@ -2065,7 +2092,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
           onError={onError}
         />
 
-        {activeProjectId ? <ProjectServerControl key={activeProjectId} projectId={activeProjectId} /> : null}
+        {activeProjectId && activeProjectId !== PERSONAL_PROJECT_ID ? <ProjectServerControl key={activeProjectId} projectId={activeProjectId} /> : null}
 
         <div className="mx-3 my-1.5 flex flex-col rounded-xl border border-border bg-surface-1 px-2.5 py-2 shadow-[0_4px_16px_rgba(0,0,0,0.18)]" ref={menuRef}>
           {elementChips.length > 0 ? (

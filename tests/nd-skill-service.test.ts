@@ -1,7 +1,7 @@
 import { SessionArchiveStore } from '../src/main/sessions/session-archive-store.js'
 import { foldHistory } from '../src/shared/chat-events.js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, readFile, rm, symlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { NdSkillService, parseNdSkill } from '../src/main/skills/nd-skill-service.js'
@@ -173,3 +173,77 @@ it('maps direct engine echoes before run returns and after store reload', async 
   router.setMessageStore(new SessionArchiveStore(path))
   await router.run('/review task', { engineId: 'codex-cli' })
 })
+
+it('routes skills through gemini-web and chatgpt-web without harness checks or browser access leakage', async () => {
+  const f = await fixture()
+  const path = join(f.root, 'archive-web.json')
+  let geminiRunPrompt = ''
+  let chatGptRunPrompt = ''
+  const geminiWeb = {
+    ownsSession: (id: string) => id === 'gemini-1',
+    listSessions: () => [{ sessionId: 'gemini-1', cwd: f.root, running: false }],
+    createSession: async () => ({ sessionId: 'gemini-1' }),
+    run: async (prompt: string) => {
+      geminiRunPrompt = prompt
+      return { sessionId: 'gemini-1' }
+    },
+  }
+  const chatGptWeb = {
+    ownsSession: (id: string) => id === 'chatgpt-1',
+    listSessions: () => [{ sessionId: 'chatgpt-1', cwd: f.root, running: false }],
+    createSession: async () => ({ sessionId: 'chatgpt-1' }),
+    run: async (prompt: string) => {
+      chatGptRunPrompt = prompt
+      return { sessionId: 'chatgpt-1' }
+    },
+  }
+  const harness = {
+    status: () => ({ state: 'idle' }),
+    gatewayRpc: vi.fn(async () => ({ ok: true, value: { items: [] } })),
+    run: vi.fn(),
+  }
+  const router = new EngineSessionRouter(
+    harness as never,
+    { ownsSession: () => false } as never,
+    f.workspace as never,
+    undefined,
+    { engine: chatGptWeb as never, browser: { state: () => ({ url: 'https://chatgpt.com' }) } as never },
+    { engine: geminiWeb as never, browser: { state: () => ({ url: 'https://gemini.google.com' }) } as never },
+  )
+  router.setSkillService(f.service)
+  router.setMessageStore(new SessionArchiveStore(path))
+  router.setBrowserAccessProvider({ issueSessionAccess: () => 'secret-browser-token', revokeSessionAccess: () => {} })
+
+  // Gemini Web skill execution
+  await router.run('/review translate task', { sessionId: 'gemini-1' })
+  expect(geminiRunPrompt).toContain('Canonical review instructions')
+  expect(geminiRunPrompt).toContain('/review translate task')
+  expect(geminiRunPrompt).not.toContain('secret-browser-token')
+  expect(geminiRunPrompt).not.toContain('<nd-browser-access>')
+  expect(harness.gatewayRpc).not.toHaveBeenCalled()
+
+  // ChatGPT Web skill execution
+  await router.run('/review gpt translate task', { sessionId: 'chatgpt-1' })
+  expect(chatGptRunPrompt).toContain('Canonical review instructions')
+  expect(chatGptRunPrompt).toContain('/review gpt translate task')
+  expect(chatGptRunPrompt).not.toContain('secret-browser-token')
+  expect(chatGptRunPrompt).not.toContain('<nd-browser-access>')
+  expect(harness.gatewayRpc).not.toHaveBeenCalled()
+})
+
+it('parses real bundled dubbing-spleaker-translate and dubbing-speaker-translate skills', async () => {
+  for (const name of ['dubbing-spleaker-translate', 'dubbing-speaker-translate']) {
+    const filePath = join(__dirname, '..', 'configs', 'dsh', 'agent-presets', 'nd-dsh', 'skills', name, 'SKILL.md')
+    const content = await readFile(filePath, 'utf8')
+    const skill = parseNdSkill(content)
+    expect(skill.name).toBe(name)
+    expect(skill.userInvocable).toBe(true)
+    expect(skill.description).toContain('natural Khmer')
+    expect(skill.instructions).toContain('Keep the exact SRT format unchanged')
+    expect(skill.instructions).toContain('Preserve all original timecodes exactly')
+    expect(skill.instructions).toContain('[SPEAKER_00]')
+    expect(skill.instructions).toContain('ឪពុក!')
+  }
+})
+
+

@@ -1,17 +1,20 @@
+import { PERSONAL_PROJECT_ID } from './organization.js'
+
+export { PERSONAL_PROJECT_ID }
+
 /**
  * Project scoping for the chat sidebar.
  *
- * The gateway session list is workspace-scoped only: every organization run
- * (plan, execute, review) records its session in the same workspace, so
- * sessions from every company/project pile into one flat list. ND-side runs
- * already know which session belongs to which project; these helpers apply
- * that attribution on top of the raw listing.
+ * The gateway session list is workspace-scoped: organization runs and manual
+ * chats record their session in the same workspace. ND attributes sessions to
+ * projects (or the built-in Personal project).
  *
- * Sessions with no run attribution are personal/manual chats and stay visible
- * in every project. Only sessions explicitly marked as subagents inherit the
- * attribution of their parent; an ordinary fork may carry parentSessionId too,
- * but it remains a manual chat unless ND gives it its own run attribution.
- * With no active project (standalone workspace) nothing is filtered.
+ * - With no active project (standalone workspace), all sessions remain visible.
+ * - When Personal is the active project, personal sessions (and unassigned legacy chats)
+ *   are visible, while company project sessions are hidden.
+ * - When a company project is active, only sessions attributed to that project are
+ *   visible, avoiding cross-project chat pollution.
+ * - Subagents inherit the attribution of their parent.
  */
 export function isSessionInProjectScope(
   sessionId: string,
@@ -20,7 +23,10 @@ export function isSessionInProjectScope(
 ): boolean {
   if (!activeProjectId) return true
   const projectId = sessionProjects[sessionId]
-  return projectId === undefined || projectId === activeProjectId
+  if (activeProjectId === PERSONAL_PROJECT_ID) {
+    return projectId === undefined || projectId === PERSONAL_PROJECT_ID
+  }
+  return projectId === activeProjectId
 }
 
 export function filterSessionsInProjectScope<T extends { sessionId: string; parentSessionId?: string; origin?: 'subagent' }>(
@@ -55,6 +61,10 @@ export function filterSessionsInProjectScope<T extends { sessionId: string; pare
 
   return items.filter((item) => {
     const projectId = projectFor(item.sessionId)
-    return projectId === undefined || projectId === activeProjectId
+    if (activeProjectId === PERSONAL_PROJECT_ID) {
+      return projectId === undefined || projectId === PERSONAL_PROJECT_ID
+    }
+    return projectId === activeProjectId
   })
 }
+

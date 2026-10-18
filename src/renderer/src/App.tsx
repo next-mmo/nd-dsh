@@ -54,6 +54,8 @@ import {
 import { launcherBrowserTabId, type LauncherHandoffTarget } from '../../shared/quick-launcher'
 import { DEFAULT_CAPTURE_DELAY_SECONDS, type GlobalShortcutId } from '../../shared/shortcuts'
 import { asNdContext, type NdContext } from '../../shared/nd-context'
+import { PERSONAL_PROJECT_ID } from '../../shared/organization'
+import { getStoredSessionProjects, storeSessionProject } from './lib/session-project-registry'
 import type { WorkspaceProfile } from '../../shared/workspace-profile'
 import type {
   NdCaptureResultView,
@@ -890,6 +892,14 @@ export default function App() {
         setSettingsTab('extensions')
       } else if (nextView === 'settings' && settingsTab === 'extensions') {
         setSettingsTab('general')
+      } else if (nextView === 'home') {
+        switchProject(PERSONAL_PROJECT_ID)
+      } else if (view === 'home' || orgState?.activeProjectId === PERSONAL_PROJECT_ID) {
+        const activeCompany = orgState?.companies.find((item) => item.id === orgState.activeCompanyId) ?? orgState?.companies[0]
+        const fallbackProject = activeCompany ? orgState?.projects.find((item) => item.companyId === activeCompany.id) : undefined
+        if (fallbackProject) {
+          switchProject(fallbackProject.id)
+        }
       }
       setView(nextView)
     }
@@ -998,6 +1008,10 @@ export default function App() {
 
   /** Opens an existing session in the Agent workbench from another surface. */
   const openSession = (sessionId: string): void => {
+    const targetProject = runSessionProjects[sessionId]
+    if (targetProject && (targetProject === PERSONAL_PROJECT_ID || orgState?.projects.some((p) => p.id === targetProject))) {
+      switchProject(targetProject)
+    }
     setSessionOpenRequest({ id: crypto.randomUUID(), sessionId })
     switchToWorkbench('agent')
   }
@@ -1019,14 +1033,45 @@ export default function App() {
       agents: orgState.agents.filter((item) => item.companyId === candidate.id).length,
     }
   }, [removeCompanyId, orgState])
-  const project = companyProjects.find((item) => item.id === orgState?.activeProjectId) ?? companyProjects[0] ?? null
-  // Every organization run records the session it ran in, so the chat sidebar
-  // can scope its workspace-wide session list down to the active project.
+  const activeCompanyProject = companyProjects.find((item) => item.id === orgState?.activeProjectId) ?? companyProjects[0] ?? null
+  const isPersonalActive = view === 'home' || (orgState?.activeProjectId === PERSONAL_PROJECT_ID && !activeCompanyProject)
+  const project = isPersonalActive ? null : activeCompanyProject
+  const effectiveProjectId = isPersonalActive ? PERSONAL_PROJECT_ID : (activeCompanyProject?.id ?? undefined)
+
+  useEffect(() => {
+    if (view === 'home' && orgState && orgState.activeProjectId !== PERSONAL_PROJECT_ID) {
+      void window.ndDshOrganization.mutate({ type: 'project.activate', id: PERSONAL_PROJECT_ID })
+        .then((next) => { if (next) setOrgState(next) })
+        .catch(() => undefined)
+    }
+  }, [view, orgState?.activeProjectId])
+
+  const [storedSessionProjects, setStoredSessionProjects] = useState<Record<string, string>>(() => getStoredSessionProjects())
+
+  useEffect(() => {
+    const handleStorageChange = () => {
+      setStoredSessionProjects(getStoredSessionProjects())
+    }
+    window.addEventListener('storage', handleStorageChange)
+    window.addEventListener('nd-session-projects-changed', handleStorageChange)
+    return () => {
+      window.removeEventListener('storage', handleStorageChange)
+      window.removeEventListener('nd-session-projects-changed', handleStorageChange)
+    }
+  }, [])
+
+  // Every organization run records the session it ran in, plus manual and personal chats,
+  // so the chat sidebar can scope its workspace-wide session list strictly down to the active project.
   const runSessionProjects = useMemo(() => {
-    const map: Record<string, string> = {}
-    for (const run of orgState?.runs ?? []) map[run.sessionId] = run.projectId
+    const map: Record<string, string> = { ...storedSessionProjects }
+    for (const chat of homeState?.chats ?? []) {
+      if (chat.sessionId) map[chat.sessionId] = PERSONAL_PROJECT_ID
+    }
+    for (const run of orgState?.runs ?? []) {
+      map[run.sessionId] = run.projectId
+    }
     return map
-  }, [orgState])
+  }, [orgState, homeState, storedSessionProjects])
 
   // The boot fallback root is a runtime cwd, never a project: only a folder the
   // user opened — or the workspace of a selected organization project — may be
@@ -1035,11 +1080,13 @@ export default function App() {
 
   // An unselected boot root is a runtime cwd, not a project: the title bar stays
   // neutral until the user opens a folder or selects an organization project.
-  const headerWorkspaceLabel = !workspaceSelected
-    ? 'No project'
-    : orgState && company
-      ? (project ? (workspace?.projectName ?? project.name ?? workspace?.name ?? 'No workspace') : 'No project')
-      : (workspace?.projectName ?? workspace?.name ?? 'No workspace')
+  const headerWorkspaceLabel = isPersonalActive
+    ? 'Personal (Global)'
+    : !workspaceSelected
+      ? 'No project'
+      : orgState && company
+        ? (project ? (workspace?.projectName ?? project.name ?? workspace?.name ?? 'No workspace') : 'No project')
+        : (workspace?.projectName ?? workspace?.name ?? 'No workspace')
 
   const showGitControls = workspaceProfile === 'coding' && workspaceSelected && Boolean(
     workspace?.root && (!orgState || (project && (!workspace.projectId || workspace.projectId === project.id)))
@@ -1059,22 +1106,41 @@ export default function App() {
   }
 
   const switchProject = (id: string): void => {
+    if (!id || typeof id !== 'string' || !id.trim()) return
+    if (id !== PERSONAL_PROJECT_ID && orgState && !orgState.projects.some((p) => p.id === id)) {
+      return
+    }
+    setOrgState((prev) => (prev ? { ...prev, activeProjectId: id } : prev))
+    if (id === PERSONAL_PROJECT_ID) {
+      if (view !== 'home') setView('home')
+    } else if (view === 'home') {
+      setView('agent')
+    }
     void window.ndDshOrganization.mutate({ type: 'project.activate', id })
-      .then(() => setFailedProjectIds((prev) => (prev.has(id) ? new Set([...prev].filter((value) => value !== id)) : prev)))
-      .catch(() => setFailedProjectIds((prev) => new Set(prev).add(id)))
+      .then((next) => {
+        if (next) setOrgState(next)
+        setFailedProjectIds((prev) => (prev.has(id) ? new Set([...prev].filter((value) => value !== id)) : prev))
+      })
+      .catch((cause) => {
+        notify(errorMessage(cause))
+        setFailedProjectIds((prev) => new Set(prev).add(id))
+      })
   }
 
   const launcherCreateTask = async (text: string): Promise<void> => {
-    if (activeLauncherContext().kind === 'personal') {
+    const context = activeLauncherContext()
+    if (context.kind === 'personal') {
       notify('Tasks need a company and project. Switch the launcher context first.')
       return
     }
-    if (!company || !project) {
+    const targetCompanyId = context.kind === 'project' || context.kind === 'company' ? context.companyId : company?.id
+    const targetProjectId = context.kind === 'project' ? context.projectId : activeCompanyProject?.id
+    if (!targetCompanyId || !targetProjectId) {
       notify('Choose a company and project before creating a task.')
       return
     }
     try {
-      await window.ndDshOrganization.mutate(buildLauncherTaskMutation(company.id, project.id, text))
+      await window.ndDshOrganization.mutate(buildLauncherTaskMutation(targetCompanyId, targetProjectId, text))
       setCompanyView('workspace')
       switchToWorkbench('company')
       toast('Task created from ND Quick Launcher.')
@@ -1101,9 +1167,10 @@ export default function App() {
       notify('Choose a company before saving a note.')
       return
     }
+    const targetProject = context.kind === 'project' ? orgState?.projects.find((p) => p.id === context.projectId) : activeCompanyProject
     try {
-      await window.ndDshOrganization.mutate(buildLauncherMemoryMutation(company.id, project?.id, text, tags))
-      toast(project ? `Note saved to ${project.name}.` : `Note saved to ${company.name}.`)
+      await window.ndDshOrganization.mutate(buildLauncherMemoryMutation(company.id, targetProject?.id, text, tags))
+      toast(targetProject ? `Note saved to ${targetProject.name}.` : `Note saved to ${company.name}.`)
     } catch (cause) {
       notify(errorMessage(cause))
     }
@@ -1219,7 +1286,9 @@ export default function App() {
       const chat = await window.ndDsh.home.ensureChat(context)
       const result = await window.ndDsh.harness.run(prompt, { workspaceCwd: chat.workDir })
       await window.ndDsh.home.bindChat(chat.chatId, result.sessionId)
+      storeSessionProject(result.sessionId, PERSONAL_PROJECT_ID)
       await refreshHome()
+      setSessionOpenRequest({ id: crypto.randomUUID(), sessionId: result.sessionId })
       switchToWorkbench('agent')
     } catch (cause) {
       notify(errorMessage(cause))
@@ -1854,11 +1923,12 @@ export default function App() {
               </Dialog>
               <label className="flex items-center gap-[5px]">
                 <span className="text-[10px] font-semibold tracking-[0.1em] text-faint">PROJECT</span>
-                <Select value={project?.id ?? ''} onValueChange={switchProject}>
+                <Select value={isPersonalActive ? PERSONAL_PROJECT_ID : (project?.id ?? '')} onValueChange={(val) => { if (val) switchProject(val) }}>
                   <SelectTrigger size="sm" aria-label="Switch project" className="h-6! max-w-[220px]! min-w-0 gap-1.5 rounded-md border-border-strong bg-surface-1/50 px-2! text-xs! text-soft [&>svg]:size-3.5">
                     <SelectValue placeholder="No project" />
                   </SelectTrigger>
                   <SelectContent align="start" position="popper">
+                    <SelectItem value={PERSONAL_PROJECT_ID}>Personal</SelectItem>
                     {companyProjects.map((item) => <SelectItem key={item.id} value={item.id} disabled={failedProjectIds.has(item.id)}>{item.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
@@ -1891,16 +1961,22 @@ export default function App() {
                   {...(workspace?.projectName || workspace?.name ? { workspaceName: workspace.projectName ?? workspace.name } : {})}
                   workspaceSelected={workspaceSelected}
                   onOpenWorkspace={openWorkspaceFolder}
-                  sessionProjectScope={{ activeProjectId: project?.id, sessionProjects: runSessionProjects }}
-                  {...(companyProjects.length ? {
-                    projects: companyProjects.map((item) => ({
+                  sessionProjectScope={{ activeProjectId: effectiveProjectId, sessionProjects: runSessionProjects }}
+                  projects={[
+                    {
+                      id: PERSONAL_PROJECT_ID,
+                      name: 'Personal',
+                      active: isPersonalActive,
+                      linked: false,
+                    },
+                    ...companyProjects.map((item) => ({
                       id: item.id,
                       name: item.name,
-                      active: item.id === project?.id,
+                      active: !isPersonalActive && item.id === project?.id,
                       linked: Boolean(item.workspacePath),
                     })),
-                    onSelectProject: switchProject,
-                  } : {})}
+                  ]}
+                  onSelectProject={switchProject}
                   sessionsCollapsed={sessionsCollapsed}
                   onError={notify}
                   onOpenSettings={openSettings}

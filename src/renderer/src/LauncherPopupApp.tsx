@@ -91,7 +91,7 @@ export default function LauncherPopupApp(): React.ReactNode {
 
   const company = orgState?.companies.find((item) => item.id === orgState.activeCompanyId) ?? orgState?.companies[0] ?? null
   const companyProjects = orgState && company ? orgState.projects.filter((item) => item.companyId === company.id) : []
-  const project = companyProjects.find((item) => item.id === orgState?.activeProjectId) ?? companyProjects[0] ?? null
+  const project = orgState?.activeProjectId === 'personal' ? null : (companyProjects.find((item) => item.id === orgState?.activeProjectId) ?? companyProjects[0] ?? null)
   // Task/note writes follow the popup's explicitly selected context, never the
   // company/project that happens to be active in the main window.
   const contextCompany = selectedContext.kind === 'personal'

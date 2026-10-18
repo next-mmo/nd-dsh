@@ -282,7 +282,23 @@ export class ChatGptWebEngine {
       // Auto-discovery non-fatal, fallback to requirement prompt below
     }
 
-    // 3. Not found: navigate browser to https://chatgpt.com/projects and throw descriptive error
+    // 3. Personal workspace uses standard ChatGPT home directly without requiring a team project
+    if (projectName.toLowerCase() === 'personal') {
+      const binding: ChatGptProjectBinding = {
+        workspaceRoot,
+        projectName,
+        chatGptProjectRef: '',
+        chatGptProjectId: '',
+        chatGptProjectUrl: 'https://chatgpt.com',
+        source: 'auto',
+        updatedAt: Date.now(),
+      }
+      this.projectBindings.set(workspaceRoot, binding)
+      this.projectBindings.set(projectName, binding)
+      return binding
+    }
+
+    // 4. Not found: navigate browser to https://chatgpt.com/projects and throw descriptive error
     if (!currentUrl.includes('chatgpt.com/projects')) {
       await this.options.browser.navigate?.('https://chatgpt.com/projects')?.catch?.(() => {})
     }
@@ -485,7 +501,8 @@ export class ChatGptWebEngine {
         })()`).catch(() => false)
         await sleep(250)
       }
-      throw new Error(`ChatGPT Web is open in ND's visible Browser pane, but the composer for project "${binding.projectName}" is unavailable. Sign in to chatgpt.com and ensure project "${binding.projectName}" is accessible, then resend this message.`)
+      const projectScope = binding.chatGptProjectRef ? ` for project "${binding.projectName}"` : ''
+      throw new Error(`ChatGPT Web is open in ND's visible Browser pane, but the composer${projectScope} is unavailable. Sign in to chatgpt.com and ensure the chat composer is accessible, then resend this message.`)
     } catch (error) {
       cdp.close()
       throw error
