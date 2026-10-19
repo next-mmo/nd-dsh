@@ -21,6 +21,8 @@ class FakeAppServer {
   killCalls = 0
   lastThreadId?: string
   lastTurnId?: string
+  /** One-shot upstream failure returned by the next turn/start request. */
+  turnStartError: string | undefined
   private buffer = ''
 
   constructor(private readonly accountResult: Record<string, unknown> = {
@@ -81,6 +83,12 @@ class FakeAppServer {
         break
       }
       case 'turn/start': {
+        if (this.turnStartError !== undefined) {
+          const failure = this.turnStartError
+          this.turnStartError = undefined
+          this.respondError(message.id, { code: -32000, message: failure })
+          break
+        }
         this.turnCounter += 1
         this.lastTurnId = `turn-${this.turnCounter}`
         this.lastThreadId = String(message.params?.threadId ?? this.lastThreadId)
@@ -97,6 +105,10 @@ class FakeAppServer {
 
   respond(id: number, result: unknown): void {
     this.stdout.write(`${JSON.stringify({ id, result })}\n`)
+  }
+
+  respondError(id: number, error: Record<string, unknown>): void {
+    this.stdout.write(`${JSON.stringify({ id, error })}\n`)
   }
 
   notify(method: string, params: Record<string, unknown>): void {
@@ -303,6 +315,23 @@ describe('CodexCliEngine', () => {
       expect(turnStarts.at(-1)?.params.threadId).toBe(server.lastThreadId)
       // The transcript survives across the restart within ND.
       expect(engine.transcript(sessionId).events.some((event) => event.type === 'user/message' && JSON.stringify(event.data).includes('second task'))).toBe(true)
+    } finally {
+      await engine.close()
+    }
+  }, 15_000)
+
+  it('turns a ChatGPT-account model rejection into a supported-model error', async () => {
+    const { engine, server, frames } = await makeEngine()
+    try {
+      const { sessionId } = await engine.createSession({ cwd: '/workspace' })
+      await flush()
+      server.turnStartError = '{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The \'gpt-6.1-sol\' model is not supported when using Codex with a ChatGPT account."}}'
+      const run = engine.run('hello', { sessionId })
+      await expect(run).rejects.toThrow(/Codex model “gpt-6.1-sol” is not available with a ChatGPT account/)
+      await expect(run).rejects.toThrow(/Choose a supported Codex model/)
+      const errorFrame = frames.find((frame) => frame.kind === 'agent-error')
+      expect(errorFrame?.message).toContain('gpt-6.1-sol')
+      expect(errorFrame?.message).not.toContain('invalid_request_error')
     } finally {
       await engine.close()
     }

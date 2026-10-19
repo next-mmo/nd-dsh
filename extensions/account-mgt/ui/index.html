@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <!-- Mirrors the CSP the ND asset server sets on this document; defense in depth. -->
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'none'; script-src nd-extension-ui:; style-src nd-extension-ui: 'unsafe-inline'; img-src nd-extension-ui: data:; font-src nd-extension-ui:; connect-src 'none'; base-uri 'none'; form-action 'none'" />
+  <title>Account Manager</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="top">
+    <div>
+      <h1>Account Manager</h1>
+      <p class="sub">Track accounts you own. ND opens the pages; you enter credentials and verification codes.</p>
+    </div>
+    <div class="top-actions">
+      <button id="new-account" type="button">New account</button>
+      <button id="register-gpt" type="button" class="primary">Register with ChatGPT</button>
+    </div>
+  </header>
+
+  <div id="connection" class="connection" role="status">Connecting to ND…</div>
+  <div id="notice" class="notice" role="status" hidden></div>
+
+  <section id="register-panel" class="panel" hidden aria-labelledby="register-title">
+    <div class="panel-head">
+      <div>
+        <h2 id="register-title">Guided ChatGPT signup</h2>
+        <p class="muted">Human-in-the-loop: create the mailbox, open the signup page, and enter the code on ChatGPT yourself.</p>
+      </div>
+      <button id="register-cancel" type="button" class="ghost">Close</button>
+    </div>
+
+    <div class="safety">
+      ND never reads your inbox, fills signup forms, or enters verification codes.
+      Do not paste your password or code into this extension.
+    </div>
+
+    <ol class="steps">
+      <li id="step-mailbox" class="step current">
+        <span class="step-number">1</span>
+        <div>
+          <strong>Prepare the mailbox</strong>
+          <p class="muted">Create the inbox on mailticking.com (or use an existing one), then paste its address and inbox URL here.</p>
+          <div class="grid two">
+            <label>Email address
+              <input id="register-email" type="email" autocomplete="off" placeholder="name@example.com" />
+            </label>
+            <label>Mailbox URL
+              <input id="register-mailbox" type="url" autocomplete="off" value="https://www.mailticking.com/" />
+            </label>
+          </div>
+          <button id="register-save" type="button" class="primary">Save &amp; open mailbox</button>
+        </div>
+      </li>
+      <li id="step-signup" class="step">
+        <span class="step-number">2</span>
+        <div>
+          <strong>Open ChatGPT and sign up</strong>
+          <p class="muted">Use the email above. When ChatGPT asks for a code, read it in the mailbox and type it on ChatGPT's page.</p>
+          <div class="step-actions">
+            <button id="register-open-signup" type="button" disabled>Open ChatGPT login / signup</button>
+            <button id="register-open-mailbox" type="button" class="ghost" disabled>Open mailbox</button>
+          </div>
+        </div>
+      </li>
+      <li id="step-active" class="step">
+        <span class="step-number">3</span>
+        <div>
+          <strong>Finish</strong>
+          <p class="muted">After the account is created and verified, mark it active. Store any password in ND Vault, not here.</p>
+          <button id="register-mark-active" type="button" disabled>Mark as active</button>
+        </div>
+      </li>
+    </ol>
+  </section>
+
+  <section id="editor-panel" class="panel" hidden aria-labelledby="editor-title">
+    <div class="panel-head">
+      <h2 id="editor-title">New account</h2>
+      <button id="editor-cancel" type="button" class="ghost">Cancel</button>
+    </div>
+    <form id="editor-form" class="grid two" novalidate>
+      <label>Service
+        <input id="edit-service" type="text" maxlength="80" placeholder="ChatGPT" required />
+      </label>
+      <label>Email
+        <input id="edit-email" type="email" maxlength="320" placeholder="name@example.com" required />
+      </label>
+      <label>Username
+        <input id="edit-username" type="text" maxlength="320" autocomplete="off" />
+      </label>
+      <label>Status
+        <select id="edit-status">
+          <option value="planned">Planned</option>
+          <option value="awaiting-code">Awaiting code</option>
+          <option value="active">Active</option>
+          <option value="disabled">Disabled</option>
+        </select>
+      </label>
+      <label>Site URL
+        <input id="edit-site" type="url" maxlength="2048" placeholder="https://chatgpt.com/auth/login" />
+      </label>
+      <label>Mailbox URL
+        <input id="edit-mailbox" type="url" maxlength="2048" placeholder="https://www.mailticking.com/" />
+      </label>
+      <label class="span-two">Notes
+        <textarea id="edit-notes" rows="3" maxlength="10000" placeholder="Recovery options, plan, renewal date…"></textarea>
+      </label>
+      <div class="span-two form-actions">
+        <button id="editor-save" type="submit" class="primary">Save account</button>
+      </div>
+    </form>
+  </section>
+
+  <main>
+    <div id="empty" class="empty" hidden>
+      <h2>No accounts yet</h2>
+      <p>Create a record for an account you own, or start the guided ChatGPT signup.</p>
+    </div>
+    <div id="accounts" class="accounts"></div>
+  </main>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

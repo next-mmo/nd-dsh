@@ -378,30 +378,56 @@ export class GeminiWebEngine {
   private async submitPrompt(cdp: VisibleCdpConnection, prompt: string, signal: AbortSignal): Promise<void> {
     assertTurnActive(signal)
     const source = JSON.stringify(prompt)
-    const result = await cdp.evaluate<{ ok: boolean; reason?: string }>(`(async () => {
-      const composerSelector = ${JSON.stringify(GEMINI_COMPOSER_SELECTOR)};
-      const composer = document.querySelector(composerSelector);
-      if (!(composer instanceof HTMLElement)) return { ok: false, reason: 'composer-missing' };
-      const text = ${source};
-      composer.focus();
-      if (composer instanceof HTMLTextAreaElement || composer instanceof HTMLInputElement) {
-        const proto = composer instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-        const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-        setter?.call(composer, text);
-        composer.dispatchEvent(new Event('input', { bubbles: true }));
-      } else {
-        const selection = window.getSelection();
-        const range = document.createRange();
-        range.selectNodeContents(composer);
-        selection?.removeAllRanges();
-        selection?.addRange(range);
-        document.execCommand('delete');
-        if (!document.execCommand('insertText', false, text)) composer.textContent = text;
-        composer.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+    const expected = composerKey(prompt)
+    // A freshly loaded Gemini page exposes the composer before its editor model
+    // is ready. Inserting and sending in that window drops everything after the
+    // first paragraph, so require the editor to hold the full message across
+    // two stable reads before pressing Send.
+    let accepted = false
+    for (let attempt = 0; attempt < 3 && !accepted; attempt += 1) {
+      assertTurnActive(signal)
+      const result = await cdp.evaluate<{ ok: boolean; reason?: string; text?: string }>(`(async () => {
+        const composerSelector = ${JSON.stringify(GEMINI_COMPOSER_SELECTOR)};
+        const composer = document.querySelector(composerSelector);
+        if (!(composer instanceof HTMLElement)) return { ok: false, reason: 'composer-missing' };
+        const text = ${source};
+        composer.focus();
+        if (composer instanceof HTMLTextAreaElement || composer instanceof HTMLInputElement) {
+          const proto = composer instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+          const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+          setter?.call(composer, text);
+          composer.dispatchEvent(new Event('input', { bubbles: true }));
+        } else {
+          const selection = window.getSelection();
+          const range = document.createRange();
+          range.selectNodeContents(composer);
+          selection?.removeAllRanges();
+          selection?.addRange(range);
+          document.execCommand('delete');
+          if (!document.execCommand('insertText', false, text)) composer.textContent = text;
+          composer.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+        }
+        // No requestAnimationFrame here: the browser view can be backgrounded,
+        // which freezes rAF and would stall this CDP call until it times out.
+        return { ok: true, text: composer instanceof HTMLTextAreaElement || composer instanceof HTMLInputElement ? composer.value : composer.innerText };
+      })()`)
+      if (!result?.ok) throw new Error('Gemini Web composer is unavailable.')
+      if (composerKey(result.text ?? '') !== expected) {
+        await sleep(400)
+        continue
       }
-      return { ok: true };
-    })()`)
-    if (!result?.ok) throw new Error('Gemini Web composer is unavailable.')
+      await sleep(250)
+      const settled = await this.readComposerText(cdp)
+      if (composerKey(settled) !== expected) {
+        await sleep(200)
+        continue
+      }
+      await sleep(250)
+      accepted = composerKey(await this.readComposerText(cdp)) === expected
+    }
+    if (!accepted) {
+      throw new Error('Gemini Web composer did not keep the full message. Reload Gemini and retry.')
+    }
     for (let index = 0; index < 50; index += 1) {
       assertTurnActive(signal)
       const sent = await cdp.evaluate<boolean>(`(() => {
@@ -420,6 +446,14 @@ export class GeminiWebEngine {
     }
     assertTurnActive(signal)
     throw new Error('Gemini Web could not send the message (send-button-unavailable). Reload Gemini and retry.')
+  }
+
+  private async readComposerText(cdp: VisibleCdpConnection): Promise<string> {
+    return await cdp.evaluate<string>(`(() => {
+      const composer = document.querySelector(${JSON.stringify(GEMINI_COMPOSER_SELECTOR)});
+      if (!(composer instanceof HTMLElement)) return '';
+      return composer instanceof HTMLTextAreaElement || composer instanceof HTMLInputElement ? composer.value : composer.innerText;
+    })()`)
   }
 
   private async waitForAssistant(
@@ -795,6 +829,10 @@ class VisibleCdpConnection {
 
 function hashText(value: string): string {
   return createHash('sha256').update(value.trim()).digest('hex')
+}
+
+function composerKey(text: string): string {
+  return text.replace(/\s+/g, '')
 }
 
 function domTurnKey(turn: GeminiDomTurn, index: number): string {

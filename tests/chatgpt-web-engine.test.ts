@@ -245,6 +245,11 @@ describe('ChatGPT Web project parsing and matching', () => {
       chatId: '6aaac7f2-abcd-ef01',
     })
 
+    const guestChat = 'https://chatgpt.com/uc/6aaac7f2-abcd-ef01'
+    expect(parseChatGptConversationUrl(guestChat)).toEqual({
+      chatId: '6aaac7f2-abcd-ef01',
+    })
+
     expect(parseChatGptConversationUrl('https://evil.com/c/123')).toBeNull()
     expect(parseChatGptConversationUrl('invalid')).toBeNull()
   })
@@ -370,23 +375,106 @@ describe('ChatGPT Web project binding management and persistence', () => {
     }
   })
 
-  it('fails with clear instructions if no project is bound and auto-match fails', async () => {
+  it('never requires a project and auto-binds one when the browser is already inside it', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'nd-chatgpt-resolve-'))
     const storePath = join(directory, 'chatgpt-web-sessions.json')
 
     try {
-      const engine = new ChatGptWebEngine({
-        browser: { state: () => ({ url: 'https://chatgpt.com/' }) } as never,
+      const navigate = vi.fn(async () => {})
+      const unbound = new ChatGptWebEngine({
+        browser: { state: () => ({ url: 'https://chatgpt.com/' }), navigate } as never,
         git: {} as never,
         workspace: { state: () => ({ root: '/workspace/unbound', projectName: 'unbound' }) } as never,
         storePath,
       })
+      expect(await unbound.resolveProjectBinding('/workspace/unbound')).toBeNull()
+      expect(navigate).not.toHaveBeenCalled()
+      await unbound.close()
 
-      await expect(engine.resolveProjectBinding('/workspace/unbound')).rejects.toThrow(
-        'ChatGPT Web requires a project for "unbound"',
-      )
+      const auto = new ChatGptWebEngine({
+        browser: { state: () => ({ url: 'https://chatgpt.com/g/g-p-6a9bf2a6a8c8191ba1ee77c51bc0967-app/project' }) } as never,
+        git: {} as never,
+        workspace: { state: () => ({ root: '/workspace/unbound', projectName: 'unbound' }) } as never,
+        storePath,
+      })
+      expect(await auto.resolveProjectBinding('/workspace/unbound')).toMatchObject({
+        workspaceRoot: '/workspace/unbound',
+        chatGptProjectRef: 'g-p-6a9bf2a6a8c8191ba1ee77c51bc0967-app',
+        source: 'auto',
+      })
+      await auto.close()
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
 
-      await engine.close()
+  it('opens the ChatGPT home page when unbound and the linked project when bound', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nd-chatgpt-direct-'))
+    const storePath = join(directory, 'chatgpt-web-sessions.json')
+
+    try {
+      const navigate = vi.fn(async () => {})
+      const engine = new ChatGptWebEngine({
+        browser: {
+          state: () => ({ url: 'about:blank' }),
+          navigate,
+          ensureAgentReady: async () => {},
+        } as never,
+        git: {} as never,
+        workspace: { state: () => ({ root: '/workspace/direct', projectName: 'direct' }) } as never,
+        storePath,
+      })
+      const internals = engine as unknown as {
+        sessions: Map<string, unknown>
+        openBoundConversation: (session: unknown, signal: AbortSignal) => Promise<unknown>
+      }
+      try {
+        const { sessionId } = await engine.createSession({ cwd: '/workspace/direct' })
+        const session = internals.sessions.get(sessionId)
+        await expect(internals.openBoundConversation(session, new AbortController().signal)).rejects.toThrow('no CDP target id')
+        expect(navigate).toHaveBeenLastCalledWith('https://chatgpt.com/')
+
+        await engine.setProjectBinding('/workspace/direct', 'https://chatgpt.com/g/g-p-6a9bf2a6a8c8191ba1ee77c51bc0967-app/project')
+        await expect(internals.openBoundConversation(session, new AbortController().signal)).rejects.toThrow('no CDP target id')
+        expect(navigate).toHaveBeenLastCalledWith('https://chatgpt.com/g/g-p-6a9bf2a6a8c8191ba1ee77c51bc0967-app/project')
+      } finally {
+        await engine.close()
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('reopens a signed-out guest conversation URL instead of the home page', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nd-chatgpt-guest-'))
+    const storePath = join(directory, 'chatgpt-web-sessions.json')
+
+    try {
+      const navigate = vi.fn(async () => {})
+      const engine = new ChatGptWebEngine({
+        browser: {
+          state: () => ({ url: 'about:blank' }),
+          navigate,
+          ensureAgentReady: async () => {},
+        } as never,
+        git: {} as never,
+        workspace: { state: () => ({ root: '/workspace/guest', projectName: 'guest' }) } as never,
+        storePath,
+      })
+      const internals = engine as unknown as {
+        sessions: Map<string, { conversationUrl?: string }>
+        openBoundConversation: (session: unknown, signal: AbortSignal) => Promise<unknown>
+      }
+      try {
+        const { sessionId } = await engine.createSession({ cwd: '/workspace/guest' })
+        const session = internals.sessions.get(sessionId)
+        if (!session) throw new Error('guest session missing')
+        session.conversationUrl = 'https://chatgpt.com/uc/6aaac7f2-abcd-ef01'
+        await expect(internals.openBoundConversation(session, new AbortController().signal)).rejects.toThrow('no CDP target id')
+        expect(navigate).toHaveBeenLastCalledWith('https://chatgpt.com/uc/6aaac7f2-abcd-ef01')
+      } finally {
+        await engine.close()
+      }
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }

@@ -121,7 +121,7 @@ export class NdSkillService {
     return { skill: metadata, markdown: instructions }
   }
 
-  async prepare(prompt: string, expectedScope?: string, selectionId?: string): Promise<{ prompt: string; scope: string; mention: SkillSuggestion } | undefined> {
+  async prepare(prompt: string, expectedScope?: string, selectionId?: string, format: 'agent' | 'chat' = 'agent'): Promise<{ prompt: string; scope: string; mention: SkillSuggestion } | undefined> {
     if (expectedScope !== undefined) await this.assertScope(expectedScope)
     const match = /^\s*\/([a-zA-Z0-9][a-zA-Z0-9:_-]{0,127})(?=\s|$)/.exec(prompt)
     if (!match) return undefined
@@ -131,6 +131,11 @@ export class NdSkillService {
     if (!skill) return undefined // Preserve native slash commands and unknown user text.
     if (!skill.userInvocable) throw new Error(`Skill /${skill.name} does not allow user invocation`)
     const { instructions: _instructions, directory: _directory, userInvocable: _userInvocable, ...mention } = skill
-    return { scope: catalog.scope, mention, prompt: `ND explicit skill /${skill.name}\n${POLICY}\n${skill.directory ? `Skill resource directory: ${skill.directory}\n` : ''}--- Skill instructions ---\n${skill.instructions}\n--- End skill instructions ---\n${POLICY}\nOriginal user message (preserved verbatim; slash already resolved by ND, do not invoke it again):\n${prompt}\n--- End original user message ---` }
+    // Chat engines see only the text in a plain chat box: the agent wrapper
+    // reads like a skill definition to save, so lead with the task instead.
+    const prepared = format === 'chat'
+      ? `${skill.instructions.trim()}\n\nApply the instructions above to the request below. Do not create, save, edit, or describe a skill; complete the task and return only the requested output.\nRequest:\n${prompt.slice(match[0].length).trim()}`
+      : `ND explicit skill /${skill.name}\n${POLICY}\n${skill.directory ? `Skill resource directory: ${skill.directory}\n` : ''}--- Skill instructions ---\n${skill.instructions}\n--- End skill instructions ---\n${POLICY}\nOriginal user message (preserved verbatim; slash already resolved by ND, do not invoke it again):\n${prompt}\n--- End original user message ---`
+    return { scope: catalog.scope, mention, prompt: prepared }
   }
 }

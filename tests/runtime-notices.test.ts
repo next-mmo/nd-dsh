@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { describeAgentError } from '../src/renderer/src/lib/runtime-notices.js'
+import { describeAgentError, ipcFailureMessage } from '../src/renderer/src/lib/runtime-notices.js'
 
 describe('runtime failure notices', () => {
   it('keeps an unknown message verbatim', () => {
@@ -35,5 +35,22 @@ describe('runtime failure notices', () => {
     const described = describeAgentError('TypeError: fetch failed', { provider: 'omniroute', model: 'local' })
     expect(described).toContain('could not reach the model server')
     expect(described).toContain('Failing route: omniroute / local')
+  })
+
+  it('explains Codex account/model mismatches without recommending re-login', () => {
+    const described = describeAgentError(
+      'Codex app-server request failed: {"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The \'gpt-6.1-sol\' model is not supported when using Codex with a ChatGPT account."}}',
+      null,
+    )
+    expect(described).toContain('not a sign-in failure')
+    expect(described).toContain('will repeat it')
+    expect(described).toContain('Native model')
+    expect(described).toContain('supported Codex model')
+  })
+
+  it('strips Electron IPC wrappers from user-facing notifications', () => {
+    expect(ipcFailureMessage("Error invoking remote method 'harness:run': Error: Codex model “gpt-6.1-sol” is unavailable"))
+      .toBe('Codex model “gpt-6.1-sol” is unavailable')
+    expect(ipcFailureMessage('plain failure')).toBe('plain failure')
   })
 })

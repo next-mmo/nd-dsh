@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { normalizeCodexFailure } from '../../../shared/codex-errors.js'
 import { stripWorkspaceContext } from '../../../shared/workspace-context.js'
 import type {
   DshEventFrame,
@@ -208,7 +209,7 @@ export class CodexCliEngine {
       const terminal = await settled.promise
       this.finishTurn(activeSession)
       if (terminal.status === 'failed') {
-        const message = terminal.failureMessage ?? 'Codex turn failed'
+        const message = normalizeCodexFailure(terminal.failureMessage ?? 'Codex turn failed')
         this.emitFrame({ kind: 'agent-error', sessionId: activeSession.sessionId, message })
         throw new Error(message)
       }
@@ -217,8 +218,10 @@ export class CodexCliEngine {
       // The turn never published (startup/startup-turn failure): clean up here.
       if (activeSession.turnSettled === settled) {
         this.finishTurn(activeSession)
-        const message = error instanceof Error ? error.message : String(error)
+        const original = error instanceof Error ? error.message : String(error)
+        const message = normalizeCodexFailure(original)
         this.emitFrame({ kind: 'agent-error', sessionId: activeSession.sessionId, message })
+        if (message !== original) throw new Error(message)
       }
       throw error
     }

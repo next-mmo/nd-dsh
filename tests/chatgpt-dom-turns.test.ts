@@ -21,6 +21,30 @@ describe('ChatGPT turn compatibility after integration with main', () => {
     expect(read(false)).toEqual([])
   })
 
+  it('reads signed-out guest turns marked with data-message-role', () => {
+    const makeTurn = (role: 'user' | 'assistant', text: string, complete: boolean) => ({
+      innerText: text,
+      childNodes: [],
+      getAttribute: (name: string) => (name === 'data-message-role' ? role : null),
+      hasAttribute: (name: string) => (name === 'data-message-complete' ? complete : false),
+      querySelector: () => null,
+      contains: () => false,
+    })
+    const user = makeTurn('user', 'You said:\n\nhi', false)
+    const assistant = makeTurn('assistant', 'ChatGPT said:\n\nHello!', true)
+    const document = {
+      querySelectorAll: (selector: string) => (selector.startsWith('[data-testid^="conversation-turn-"]') ? [user, assistant] : []),
+    }
+    const result = runInNewContext(`(() => {
+      ${CHATGPT_DOM_TURNS_SCRIPT}
+      return readChatGptDomTurns({ legacyFallback: false }).map(({ role, complete, text }) => ({ role, complete, text }));
+    })()`, { document })
+    expect(result).toEqual([
+      { role: 'user', complete: false, text: 'You said:\n\nhi' },
+      { role: 'assistant', complete: true, text: 'ChatGPT said:\n\nHello!' },
+    ])
+  })
+
   it('keeps transcript completion markers required even with generic Copy controls', () => {
     const turn = {
       getAttribute: (name: string) => name === 'data-message-role' ? 'assistant' : null,

@@ -22,9 +22,9 @@ import {
 } from './chatgpt-project-binding.js'
 
 const CHATGPT_HOME_URL = 'https://chatgpt.com/'
-// Project landing pages now use ProseMirror without the old prompt ID or
-// Lexical attribute. Keep readiness, insertion, and sending on one selector.
-const CHATGPT_COMPOSER_SELECTOR = '[data-testid="prompt-textarea"], #prompt-textarea, [contenteditable="true"][data-lexical-editor="true"], form .ProseMirror[contenteditable="true"], form .ProseMirror[contenteditable="plaintext-only"]'
+// Signed-in project pages use ProseMirror without the old prompt ID or Lexical
+// attribute; signed-out guest chats use the mobile composer textarea instead.
+const CHATGPT_COMPOSER_SELECTOR = '[data-testid="prompt-textarea"], #prompt-textarea, #mobile-composer-prompt, [contenteditable="true"][data-lexical-editor="true"], form .ProseMirror[contenteditable="true"], form .ProseMirror[contenteditable="plaintext-only"]'
 const TRANSCRIPT_EVENT_TYPES = new Set(['user/message', 'assistant/message', 'agent/reasoning'])
 const MAX_TRANSCRIPT_EVENTS = 500
 const MAX_PROMPT_CHARS = 100_000
@@ -217,7 +217,12 @@ export class ChatGptWebEngine {
     this.persistStore()
   }
 
-  async resolveProjectBinding(workspaceRoot: string, signal?: AbortSignal): Promise<ChatGptProjectBinding> {
+  /**
+   * Projects are optional: an unbound chat simply starts on the ChatGPT home
+   * page. When the visible browser is already inside a project, auto-bind it so
+   * the ND project keeps the scoped context across sessions.
+   */
+  async resolveProjectBinding(workspaceRoot: string, signal?: AbortSignal): Promise<ChatGptProjectBinding | null> {
     const existing = this.getProjectBinding(workspaceRoot)
     if (existing) return existing
 
@@ -279,32 +284,10 @@ export class ChatGptWebEngine {
         }
       }
     } catch {
-      // Auto-discovery non-fatal, fallback to requirement prompt below
+      // Auto-discovery is best effort; unbound chats use the ChatGPT home page.
     }
 
-    // 3. Personal workspace uses standard ChatGPT home directly without requiring a team project
-    if (projectName.toLowerCase() === 'personal') {
-      const binding: ChatGptProjectBinding = {
-        workspaceRoot,
-        projectName,
-        chatGptProjectRef: '',
-        chatGptProjectId: '',
-        chatGptProjectUrl: 'https://chatgpt.com',
-        source: 'auto',
-        updatedAt: Date.now(),
-      }
-      this.projectBindings.set(workspaceRoot, binding)
-      this.projectBindings.set(projectName, binding)
-      return binding
-    }
-
-    // 4. Not found: navigate browser to https://chatgpt.com/projects and throw descriptive error
-    if (!currentUrl.includes('chatgpt.com/projects')) {
-      await this.options.browser.navigate?.('https://chatgpt.com/projects')?.catch?.(() => {})
-    }
-    throw new Error(
-      `ChatGPT Web requires a project for "${projectName}". Please create or select project "${projectName}" on ChatGPT in the Browser tab (opened at https://chatgpt.com/projects), or paste its link/ID.`,
-    )
+    return null
   }
 
   setEmitter(emit: (frame: DshEventFrame) => void): void {
@@ -460,11 +443,12 @@ export class ChatGptWebEngine {
   private async openBoundConversation(session: StoredChatGptWebSession, signal: AbortSignal): Promise<VisibleCdpConnection> {
     assertTurnActive(signal)
     const binding = await this.resolveProjectBinding(session.cwd ?? this.options.workspace.state().root, signal)
-    session.chatGptProjectRef = binding.chatGptProjectRef
+    if (binding) session.chatGptProjectRef = binding.chatGptProjectRef
+    else delete session.chatGptProjectRef
 
     const targetUrl = session.conversationUrl && isChatGptConversationUrl(session.conversationUrl)
       ? session.conversationUrl
-      : binding.chatGptProjectUrl
+      : binding?.chatGptProjectUrl || CHATGPT_HOME_URL
     const currentUrl = this.options.browser.state().url
     if (!sameConversationUrl(currentUrl, targetUrl)) await this.options.browser.navigate(targetUrl)
     assertTurnActive(signal)
@@ -501,7 +485,7 @@ export class ChatGptWebEngine {
         })()`).catch(() => false)
         await sleep(250)
       }
-      const projectScope = binding.chatGptProjectRef ? ` for project "${binding.projectName}"` : ''
+      const projectScope = binding?.chatGptProjectRef ? ` for project "${binding.projectName}"` : ''
       throw new Error(`ChatGPT Web is open in ND's visible Browser pane, but the composer${projectScope} is unavailable. Sign in to chatgpt.com and ensure the chat composer is accessible, then resend this message.`)
     } catch (error) {
       cdp.close()
@@ -992,7 +976,7 @@ export class ChatGptWebEngine {
       }
       if (parsed.projectBindings && typeof parsed.projectBindings === 'object') {
         for (const [key, binding] of Object.entries(parsed.projectBindings)) {
-          if (binding && typeof binding === 'object' && typeof binding.chatGptProjectRef === 'string') {
+          if (binding && typeof binding === 'object' && typeof binding.chatGptProjectRef === 'string' && binding.chatGptProjectRef) {
             this.projectBindings.set(key, binding)
           }
         }
@@ -1146,7 +1130,7 @@ function isChatGptPageUrl(value: string): boolean {
 function isChatGptConversationUrl(value: string): boolean {
   try {
     const url = new URL(value)
-    return url.origin === 'https://chatgpt.com' && /(^|\/)c\//.test(url.pathname)
+    return url.origin === 'https://chatgpt.com' && /(^|\/)(?:c|uc)\//.test(url.pathname)
   } catch {
     return false
   }

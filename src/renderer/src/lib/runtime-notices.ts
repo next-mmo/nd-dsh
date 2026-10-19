@@ -8,6 +8,8 @@
  * knows locally: which configured route failed and what is worth checking.
  */
 
+import { isCodexChatGptModelMismatch, normalizeCodexFailure } from '../../../shared/codex-errors.js'
+
 export interface AgentErrorRoute {
   provider: string
   model: string
@@ -20,7 +22,7 @@ const CONTEXT_FAILURE = /context (?:window|length)|too large|too long|exceed/i
 const NETWORK_FAILURE = /fetch failed|connection refused|ENOTFOUND|ETIMEDOUT|socket hang up|network/i
 
 export function describeAgentError(message: string, route?: AgentErrorRoute | null): string {
-  const base = message.trim()
+  const base = normalizeCodexFailure(message.trim())
   const routeLine = route?.provider && route?.model
     ? `\n\nFailing route: ${route.provider} / ${route.model}.`
     : ''
@@ -28,7 +30,19 @@ export function describeAgentError(message: string, route?: AgentErrorRoute | nu
   return hint ? `${base}${routeLine}\n\n${hint}` : base
 }
 
+/**
+ * Electron prefixes every rejected `ipcRenderer.invoke` with the channel and
+ * error type. That wrapper names ND internals, not the failure, so user-facing
+ * notifications strip it before showing the engine's own message.
+ */
+export function ipcFailureMessage(message: string): string {
+  return message.replace(/^Error invoking remote method '[^']*':\s*(?:Error:\s*)?/, '')
+}
+
 function hintFor(message: string): string | undefined {
+  if (isCodexChatGptModelMismatch(message)) {
+    return 'This is an account/model entitlement mismatch, not a sign-in failure: signing in again with the same ChatGPT account will repeat it. When the picker is on “Native model”, Codex inherits the model from ~/.codex/config.toml.'
+  }
   if (UPSTREAM_FAILURE.test(message)) {
     return 'This came from the model provider’s servers after ND delivered the request — not from ND tools or your prompt. OpenRouter-style envelopes often carry no further detail. Retry, or switch routes in Model settings.'
   }

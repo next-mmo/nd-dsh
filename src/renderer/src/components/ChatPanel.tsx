@@ -32,7 +32,7 @@ import { openSkillPicker, parseSkillCatalog, skillSelectionScope, type SkillSugg
 import { isVisionModel, resolveModelSelectionDisplay, type ModelCatalogState } from '../lib/model-selection'
 import { archiveableVisibleSessionIds, cleanThreadTitle, nextSessionAfterArchive } from '../../../shared/session-archive-selection'
 import { imageMediaType, isImageDataUrl, MAX_PASTED_IMAGE_BYTES, MAX_PASTED_IMAGES } from '../../../shared/images'
-import { describeAgentError, type AgentErrorRoute } from '../lib/runtime-notices'
+import { describeAgentError, ipcFailureMessage, type AgentErrorRoute } from '../lib/runtime-notices'
 import {
   ArchiveIcon,
   ArrowUpIcon,
@@ -261,7 +261,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   const [showArchived, setShowArchived] = useState(false)
   const [archiveAllIds, setArchiveAllIds] = useState<string[] | null>(null)
   const [archivingAll, setArchivingAll] = useState(false)
-  // ChatGPT Project binding: ChatGPT Web requires a project to scope conversations.
+  // ChatGPT Project binding is optional: unbound chats start on the ChatGPT home page.
   const [chatGptProjectBinding, setChatGptProjectBinding] = useState<ChatGptProjectBinding | null>(null)
   const [chatGptProjectModalOpen, setChatGptProjectModalOpen] = useState(false)
   // Gemini Gem binding is optional: unbound chats use the default Gemini conversation.
@@ -481,7 +481,12 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
     void window.ndDsh.engines.list().then(setEngines).catch(() => undefined)
   }, [])
 
-  const refreshEngineSessions = useCallback(async (): Promise<void> => {
+  // Error frames resolve asynchronously; compare against the live draft rather
+  // than the value captured when the frame arrived.
+  const draftEngineRef = useRef(draftEngineId)
+  draftEngineRef.current = draftEngineId
+
+  const refreshEngineSessions = useCallback(async (): Promise<EngineSessionSummary[]> => {
     try {
       const items = await window.ndDsh.engines.sessions()
       setEngineSessions(items)
@@ -499,9 +504,11 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
         if (draftEngineId !== null) return null
         return items[0]?.sessionId ?? null
       })
+      return items
     } catch {
       // Engine chat listing stays empty; not an error surface.
       setEngineSessionsLoaded(true)
+      return []
     }
   }, [draftEngineId])
 
@@ -1089,6 +1096,20 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
       if (targetSessionId) {
         markSessionNotBusy(targetSessionId)
       }
+      // A draft engine chat receives its session id from the engine before the
+      // failed turn rejects, but the composer still renders the draft thread.
+      // Adopt that session so the actionable notice (Retry / Switch Model) is
+      // actually visible, and both actions target the engine that failed
+      // instead of falling back to the harness default.
+      if (targetSessionId && activeSessionId === null && draftEngineId !== null) {
+        const draftEngine = draftEngineId
+        void refreshEngineSessions().then((items) => {
+          if (draftEngineRef.current !== draftEngine) return
+          if (items.find((session) => session.sessionId === targetSessionId)?.engineId !== draftEngine) return
+          setDraftEngineId(null)
+          setActiveSessionId(targetSessionId)
+        })
+      }
       const lastUserText = findLastUserPrompt(targetSessionId)
       // Quota errors on Antigravity threads are native-account limits; ND can
       // only route the user to the CLI's own account switch (/logout).
@@ -1244,7 +1265,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
       if (!sessions.some((s) => s.sessionId === result.sessionId)) void refreshSessions()
     } catch (cause) {
       if (activeSessionId) markSessionNotBusy(activeSessionId)
-      onError(cause instanceof Error ? cause.message : String(cause))
+      onError(ipcFailureMessage(cause instanceof Error ? cause.message : String(cause)))
     } finally {
       setSubmitting(false)
     }
@@ -1300,7 +1321,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
       // User messages arrive through session events, including on retry.
       if (!sessions.some((s) => s.sessionId === result.sessionId)) void refreshSessions()
     } catch (cause) {
-      onError(cause instanceof Error ? cause.message : String(cause))
+      onError(ipcFailureMessage(cause instanceof Error ? cause.message : String(cause)))
     }
   }
 
@@ -1366,15 +1387,34 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
     }
   }
 
+  /**
+   * Error notices offer "Switch model" as recovery. Engine chats own a native
+   * model catalog in the composer, so the action must open that picker instead
+   * of the harness-only gateway menu (which does not render for them).
+   */
+  const switchModel = useCallback((): void => {
+    closeMention()
+    setPermissionMenuOpen(false)
+    setContextMenuOpen(false)
+    if (supportsEngineModels) {
+      setModelMenuOpen(false)
+      setEngineModelMenuOpen(true)
+    } else {
+      setEngineModelMenuOpen(false)
+      setModelMenuOpen(true)
+      setModelMenuPane('root')
+    }
+  }, [closeMention, supportsEngineModels])
+
   // Feed rows are memoized, so the handlers they receive must keep one identity
   // while still calling the latest closures.
-  const feedHandlerRef = useRef({ answerApproval, retry, openAntigravityAccountTerminal, onOpenFile, onOpenLink })
-  feedHandlerRef.current = { answerApproval, retry, openAntigravityAccountTerminal, onOpenFile, onOpenLink }
+  const feedHandlerRef = useRef({ answerApproval, retry, switchModel, openAntigravityAccountTerminal, onOpenFile, onOpenLink })
+  feedHandlerRef.current = { answerApproval, retry, switchModel, openAntigravityAccountTerminal, onOpenFile, onOpenLink }
   const feedHandlers = useMemo(() => ({
     answerApproval: (entry: Extract<ThreadEntry, { kind: 'approval' }>, outcome: 'allowed-once' | 'rejected') =>
       feedHandlerRef.current.answerApproval(entry, outcome),
     retry: (retryPrompt: string) => feedHandlerRef.current.retry(retryPrompt),
-    switchModel: () => { setModelMenuOpen(true); setModelMenuPane('root') },
+    switchModel: () => feedHandlerRef.current.switchModel(),
     switchAccount: () => { void feedHandlerRef.current.openAntigravityAccountTerminal() },
     configureZcodeModel: () => setZcodeConfigOpen(true),
     openFile: (path: string) => feedHandlerRef.current.onOpenFile?.(path),
@@ -1914,8 +1954,8 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
                   ) : null}
                 </span>
               ) : (
-                <span className="truncate text-warning">
-                  No project linked (required for ChatGPT Web)
+                <span className="truncate text-faint">
+                  No project linked — chats start a new direct ChatGPT chat (optional)
                 </span>
               )}
             </div>
@@ -2920,7 +2960,7 @@ function ThreadEntryView({ entry, isLastAssistant, retryPrompt, onAnswerApproval
               Quota is native to your Antigravity account: wait for the reset, switch model, or click <span className="font-medium">Switch account</span> to run <code className="font-mono">agy</code> in a terminal and use <code className="font-mono">/logout</code> to sign in as another Google user.
             </div>
           ) : null}
-          {(entry.tone === 'error' && entry.retryPrompt && onRetry) || (entry.switchAccount && onSwitchAccount) || onConfigureModel ? (
+          {(entry.tone === 'error' && ((entry.retryPrompt && onRetry) || onSwitchModel)) || (entry.switchAccount && onSwitchAccount) || onConfigureModel ? (
             <div className="mt-2 flex items-center gap-2">
               {entry.tone === 'error' && entry.retryPrompt && onRetry ? (
                 <button

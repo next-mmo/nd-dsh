@@ -1,0 +1,42 @@
+{
+  "protocol": "nd.extension/1",
+  "id": "nd.account-mgt",
+  "name": "Account Manager",
+  "description": "Track the accounts you own, their mailbox links, and registration status. Includes a guided ChatGPT signup that opens chatgpt.com and your mailbox in ND's browser; you enter credentials and verification codes yourself.",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "contexts": ["personal"],
+  "permissions": ["accountmgt.read", "accountmgt.write", "browser.navigate"],
+  "settings": [],
+  "contributions": {
+    "commands": [
+      {
+        "id": "open",
+        "title": "Account Manager",
+        "description": "Open the account list and the guided ChatGPT registration flow.",
+        "keywords": ["account", "accounts", "register", "signup", "sign up", "mailbox", "chatgpt", "login"],
+        "host": "accountmgt.accounts.list",
+        "openViewId": "accounts",
+        "contexts": ["personal"]
+      }
+    ],
+    "views": [
+      {
+        "id": "accounts",
+        "title": "Account Manager",
+        "description": "No accounts yet. Create a record or start the ChatGPT registration walkthrough.",
+        "kind": "web",
+        "entry": "ui/index.html",
+        "contexts": ["personal"],
+        "actions": [
+          { "id": "list", "title": "List managed accounts", "host": "accountmgt.accounts.list" },
+          { "id": "create", "title": "Create an account record", "host": "accountmgt.accounts.create" },
+          { "id": "update", "title": "Update an account record", "host": "accountmgt.accounts.update" },
+          { "id": "delete", "title": "Delete an account record", "host": "accountmgt.accounts.delete" },
+          { "id": "open-site", "title": "Open the account site in ND's browser", "host": "browser.openUrl" },
+          { "id": "open-mailbox", "title": "Open the mailbox in ND's browser", "host": "browser.openUrl" }
+        ]
+      }
+    ]
+  }
+}

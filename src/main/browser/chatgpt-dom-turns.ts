@@ -234,7 +234,7 @@ export const CHATGPT_DOM_TURNS_SCRIPT = `
   };
 
   const readChatGptDomTurns = ({ legacyFallback = false } = {}) => {
-    let nodes = Array.from(document.querySelectorAll('[data-testid^="conversation-turn-"], [data-conversation-transcript] [data-message-role]'))
+    let nodes = Array.from(document.querySelectorAll('[data-testid^="conversation-turn-"], [data-conversation-transcript] [data-message-role], [data-message-role="user"], [data-message-role="assistant"]'))
       .filter((el) => !isHiddenChatGptNode(el));
     const headingRoles = new Map();
     if (legacyFallback && !nodes.length) {
@@ -305,7 +305,10 @@ export const CHATGPT_DOM_TURNS_SCRIPT = `
         return false;
       });
       const transcriptRoot = root.getAttribute('data-message-role') ? root : messageRole ? node : undefined;
-      const complete = role === 'assistant' && copy && !imagesPending && (!transcriptRoot || transcriptRoot.hasAttribute('data-message-complete'));
+      // Guest transcripts mark completion on the turn itself; signed-in turns
+      // still require the scoped Copy action.
+      const markedComplete = (transcriptRoot ?? node).hasAttribute?.('data-message-complete') === true;
+      const complete = role === 'assistant' && !imagesPending && (markedComplete || (copy && !transcriptRoot));
       let text = serializeChatGptDomRoot(root);
       if (role === 'assistant' && turnScope !== root && typeof turnScope.querySelectorAll === 'function') {
         const extraImgs = Array.from(turnScope.querySelectorAll('img')).filter((img) =>

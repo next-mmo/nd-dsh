@@ -14,7 +14,7 @@ interface ChatGptProjectDialogProps {
 
 const SPEC: WebBindingDialogSpec = {
   title: 'Link ChatGPT Project',
-  description: 'Link workspace "{workspaceName}" to a ChatGPT Project. Chats started with ChatGPT Web will stay scoped inside this project.',
+  description: 'Optionally link workspace "{workspaceName}" to a ChatGPT Project. Linked chats stay scoped inside this project; without a link each new chat starts on the ChatGPT home page.',
   inputLabel: 'ChatGPT Project Link or ID',
   inputPlaceholder: 'https://chatgpt.com/g/g-p-6a9bf...-todo/project or g-p-...',
   hint: 'Copy the URL from your browser bar when viewing the project on ChatGPT, or enter its ID.',

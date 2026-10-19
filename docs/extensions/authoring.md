@@ -139,6 +139,7 @@ and in the product.
 | `clipboard.read` | `clipboard.read` | One explicit read that also saves the text as a note |
 | `clipboard.write` | `clipboard.write` | Write text to the clipboard |
 | `clipboard.history.list` / `.get` / `.pin` / `.delete` / `.clear` / `.copyAgain` | `clipboard.read` / `clipboard.write` | The ND Clipboard History package's local history surface; Personal only, and recording only ever runs behind the package's `recordHistory` opt-in |
+| `accountmgt.accounts.list` / `.create` / `.update` / `.delete` | `accountmgt.read` / `accountmgt.write` | The Account Manager metadata store (service, email, mailbox/site links, status); Personal only. It never stores passwords or verification codes. |
 | `browser.openUrl` / `browser.search` | `browser.navigate` | Navigate the visible embedded ND browser |
 | `browser.openExternal` | `browser.openExternal` | Open an http(s) URL in the system browser |
 | `browser.translate` | `browser.navigate` | Translate text in the ND browser (see §7 for providers and result states) |

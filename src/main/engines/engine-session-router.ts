@@ -250,7 +250,8 @@ export class EngineSessionRouter {
       const created = await this.createSession(requested, defaultCwd)
       options = { ...options, sessionId: created.sessionId }
     }
-    const skill = await this.skills?.prepare(prompt, options?.skillScope, options?.skillSelectionId)
+    const webChatSkill = requested === CHATGPT_WEB_ENGINE_ID || requested === GEMINI_WEB_ENGINE_ID
+    const skill = await this.skills?.prepare(prompt, options?.skillScope, options?.skillSelectionId, webChatSkill ? 'chat' : 'agent')
     const targetSessionId = options?.sessionId
     if (skill && targetSessionId && !directTarget && requested !== CHATGPT_WEB_ENGINE_ID && requested !== GEMINI_WEB_ENGINE_ID) {
       const result = await this.harness.gatewayRpc('session.list')

@@ -24,7 +24,8 @@ export interface ParsedChatGptConversation {
 const CHATGPT_ORIGIN = 'https://chatgpt.com'
 const PROJECT_REF_PATTERN = /^(g-p-[a-zA-Z0-9]+)(?:-(.+))?$/
 const PROJECT_PATH_PATTERN = /\/g\/(g-p-[a-zA-Z0-9]+(?:-[a-zA-Z0-9_-]+)?)/
-const CONVERSATION_PATH_PATTERN = /(?:^|\/)c\/([a-zA-Z0-9-]+)/
+// Signed-in chats live under /c/; signed-out guest chats live under /uc/.
+const CONVERSATION_PATH_PATTERN = /(?:^|\/)(?:c|uc)\/([a-zA-Z0-9-]+)/
 
 /**
  * Parse a user input or URL into a standardized ChatGPT Project descriptor.

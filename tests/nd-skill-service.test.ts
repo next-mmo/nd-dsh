@@ -51,6 +51,17 @@ describe('ND catalog and explicit invocation', () => {
     expect((await f.service.prepare('/sample  hello\n  world  '))?.prompt).toContain('/sample  hello\n  world  \n--- End original user message ---')
     expect((await f.service.prepare('/review'))?.prompt).toContain('Canonical review instructions')
   })
+  it('formats web-chat skills as a task instead of a skill definition', async () => {
+    const f = await fixture()
+    await f.file('bundled/sample.md')
+    const chat = await f.service.prepare('/sample  hello\n  world  ', undefined, undefined, 'chat')
+    expect(chat?.prompt).toContain('Execute exact instructions')
+    expect(chat?.prompt).not.toContain('ND explicit skill')
+    expect(chat?.prompt).not.toContain('/sample')
+    expect(chat?.prompt).toContain('Do not create, save, edit, or describe a skill')
+    expect(chat?.prompt).toContain('Request:\nhello\n  world')
+    expect((await f.service.prepare('/sample task'))?.prompt).toContain('ND explicit skill /sample')
+  })
   it('honors user-only and model-only restrictions, including shadowing', async () => {
     const f = await fixture()
     await f.file('bundled/sample.md')
@@ -217,7 +228,8 @@ it('routes skills through gemini-web and chatgpt-web without harness checks or b
   // Gemini Web skill execution
   await router.run('/review translate task', { sessionId: 'gemini-1' })
   expect(geminiRunPrompt).toContain('Canonical review instructions')
-  expect(geminiRunPrompt).toContain('/review translate task')
+  expect(geminiRunPrompt).toContain('Request:\ntranslate task')
+  expect(geminiRunPrompt).not.toContain('ND explicit skill')
   expect(geminiRunPrompt).not.toContain('secret-browser-token')
   expect(geminiRunPrompt).not.toContain('<nd-browser-access>')
   expect(harness.gatewayRpc).not.toHaveBeenCalled()
@@ -225,25 +237,24 @@ it('routes skills through gemini-web and chatgpt-web without harness checks or b
   // ChatGPT Web skill execution
   await router.run('/review gpt translate task', { sessionId: 'chatgpt-1' })
   expect(chatGptRunPrompt).toContain('Canonical review instructions')
-  expect(chatGptRunPrompt).toContain('/review gpt translate task')
+  expect(chatGptRunPrompt).toContain('Request:\ngpt translate task')
   expect(chatGptRunPrompt).not.toContain('secret-browser-token')
   expect(chatGptRunPrompt).not.toContain('<nd-browser-access>')
   expect(harness.gatewayRpc).not.toHaveBeenCalled()
 })
 
-it('parses real bundled dubbing-spleaker-translate and dubbing-speaker-translate skills', async () => {
-  for (const name of ['dubbing-spleaker-translate', 'dubbing-speaker-translate']) {
-    const filePath = join(__dirname, '..', 'configs', 'dsh', 'agent-presets', 'nd-dsh', 'skills', name, 'SKILL.md')
-    const content = await readFile(filePath, 'utf8')
-    const skill = parseNdSkill(content)
-    expect(skill.name).toBe(name)
-    expect(skill.userInvocable).toBe(true)
-    expect(skill.description).toContain('natural Khmer')
-    expect(skill.instructions).toContain('Keep the exact SRT format unchanged')
-    expect(skill.instructions).toContain('Preserve all original timecodes exactly')
-    expect(skill.instructions).toContain('[SPEAKER_00]')
-    expect(skill.instructions).toContain('ឪពុក!')
-  }
+it('parses real bundled dubbing-speaker-translate skill', async () => {
+  const name = 'dubbing-speaker-translate'
+  const filePath = join(__dirname, '..', 'configs', 'dsh', 'agent-presets', 'nd-dsh', 'skills', name, 'SKILL.md')
+  const content = await readFile(filePath, 'utf8')
+  const skill = parseNdSkill(content)
+  expect(skill.name).toBe(name)
+  expect(skill.userInvocable).toBe(true)
+  expect(skill.description).toContain('natural Khmer')
+  expect(skill.instructions).toContain('Keep the exact SRT format unchanged')
+  expect(skill.instructions).toContain('Preserve all original timecodes exactly')
+  expect(skill.instructions).toContain('[SPEAKER_00]')
+  expect(skill.instructions).toContain('ឪពុក!')
 })
 
 

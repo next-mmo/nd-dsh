@@ -74,6 +74,7 @@ import { createZipFile } from './zip.js'
 import { promptVaultEntry, type VaultPromptValues } from './vault-prompt.js'
 import { ExtensionWebViewAssets } from './webview-assets.js'
 import { TicTacToeStatsStore, asTicTacToeOutcome } from './tic-tac-toe-store.js'
+import { AccountMgtStore } from './account-mgt-store.js'
 import { WizardChessStatsStore, asWizardChessOutcome } from './wizard-chess-store.js'
 import { MiniBrowserStore, browserTabUrl, asMiniEntryId, miniTabTitle, legacyYouTubeQueuePath, type MiniLink } from './mini-browser-store.js'
 import { PayGuardStore } from './pay-guard-store.js'
@@ -133,6 +134,7 @@ const MAX_OPEN_TARGETS = 1
 const QUIT_PROCESS_ID = 'nd.quit-process'
 const PASSWORD_VAULT_ID = 'nd.password-vault'
 const TIC_TAC_TOE_ID = 'nd.tic-tac-toe'
+const ACCOUNT_MGT_ID = 'nd.account-mgt'
 const WIZARD_CHESS_ID = 'nd.wizard-chess-3d'
 const MINI_BROWSER_ID = 'nd.mini-browser'
 const PAY_GUARD_ID = 'nd.pay-guard'
@@ -157,6 +159,7 @@ const AVAILABLE_PACKAGES: readonly { id: string; path: () => string }[] = app.is
   // Discover; packaged users install it from a folder.
   ...(app.isPackaged ? [] : [
     { id: TIC_TAC_TOE_ID, path: ticTacToePackagePath },
+    { id: ACCOUNT_MGT_ID, path: accountMgtPackagePath },
     { id: WIZARD_CHESS_ID, path: wizardChessPackagePath },
     { id: MINI_BROWSER_ID, path: miniBrowserPackagePath },
     { id: PAY_GUARD_ID, path: payGuardPackagePath },
@@ -218,6 +221,12 @@ function ticTacToePackagePath(): string {
   return app.isPackaged
     ? join(process.resourcesPath, 'nd-extensions', 'tic-tac-toe')
     : join(app.getAppPath(), 'extensions', 'tic-tac-toe')
+}
+
+function accountMgtPackagePath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'nd-extensions', 'account-mgt')
+    : join(app.getAppPath(), 'extensions', 'account-mgt')
 }
 
 function wizardChessPackagePath(): string {
@@ -359,6 +368,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
         passwordVaultCatalogView(state),
         ...(app.isPackaged ? [] : [
           ticTacToeCatalogView(state),
+          accountMgtCatalogView(state),
           wizardChessCatalogView(state),
           miniBrowserCatalogView(state),
           payGuardCatalogView(state),
@@ -1953,6 +1963,34 @@ export function registerNativeHostHandlers(
     return ticTacToeStats.reset()
   })
 
+  // --- Account Manager ---------------------------------------------------------
+  //
+  // Metadata only: service, email, mailbox/site links, and registration status.
+  // Credentials stay in ND Vault, and verification codes are entered by the
+  // user on the service's page; they never reach this store.
+
+  const accountMgt = new AccountMgtStore(join(app.getPath('userData'), 'nd-account-mgt', 'accounts.json'))
+
+  host.register('accountmgt.accounts.list', async (input, context) => {
+    requirePersonalContext(context)
+    return accountMgt.list(typeof input.query === 'string' ? input.query : undefined)
+  })
+
+  host.register('accountmgt.accounts.create', async (input, context) => {
+    requirePersonalContext(context)
+    return accountMgt.create(input)
+  })
+
+  host.register('accountmgt.accounts.update', async (input, context) => {
+    requirePersonalContext(context)
+    return accountMgt.update(input.id, input)
+  })
+
+  host.register('accountmgt.accounts.delete', async (input, context) => {
+    requirePersonalContext(context)
+    return { deleted: await accountMgt.delete(input.id) }
+  })
+
   // --- Wizard Chess 3D --------------------------------------------------------
   //
   // The game UI itself is the package's web view (sandboxed iframe); this side
@@ -2459,6 +2497,14 @@ async function ticTacToeCatalogView(state: NdExtensionsStateView): Promise<NdAva
     name: 'ND 3D Tic-Tac-Toe',
     description: 'Play tic-tac-toe on a 3D board rendered with three.js, on demand from the launcher. Ships its own sandboxed UI; the package stays fully external to the app bundle.',
     permissions: ['tictactoe.read', 'tictactoe.write'],
+  })
+}
+
+async function accountMgtCatalogView(state: NdExtensionsStateView): Promise<NdAvailablePackageView> {
+  return packageCatalogView(state, ACCOUNT_MGT_ID, accountMgtPackagePath(), {
+    name: 'Account Manager',
+    description: 'Track the accounts you own and run a guided ChatGPT signup with an external mailbox. ND opens the pages; you enter credentials and verification codes yourself.',
+    permissions: ['accountmgt.read', 'accountmgt.write', 'browser.navigate'],
   })
 }
 

@@ -93,7 +93,7 @@ function readChatGptTurn({ role = 'assistant', copy = true, stop = false, boxles
   const document = {
     title: 'ChatGPT', querySelector: () => null,
     querySelectorAll: (selector: string) => {
-      if (selector === '[data-testid^="conversation-turn-"], [data-conversation-transcript] [data-message-role]') return [turn]
+      if (selector === '[data-testid^="conversation-turn-"], [data-conversation-transcript] [data-message-role], [data-message-role="user"], [data-message-role="assistant"]') return [turn]
       if (selector === 'button') return stop ? [node('Stop generating', { 'data-testid': 'stop-button' })] : []
       if (selector.includes('textarea')) return [node('Composer')]
       return []
@@ -131,7 +131,7 @@ function readChatGptTranscript({ role = 'assistant', markedComplete = true, copy
   }
   const document = { title: 'ChatGPT', querySelector: () => null,
     querySelectorAll: (selector: string) => {
-      if (selector === '[data-testid^="conversation-turn-"], [data-conversation-transcript] [data-message-role]') return nestedLegacyTurn ? [wrapper, turn] : [turn]
+      if (selector === '[data-testid^="conversation-turn-"], [data-conversation-transcript] [data-message-role], [data-message-role="user"], [data-message-role="assistant"]') return nestedLegacyTurn ? [wrapper, turn] : [turn]
       if (selector === 'button') return stop ? [node('Stop generating')] : []
       if (selector.includes('textarea')) return [node('Composer')]
       return []
