@@ -1017,7 +1017,10 @@ export default function App() {
   }
 
   const company = orgState?.companies.find((item) => item.id === orgState.activeCompanyId) ?? orgState?.companies[0] ?? null
-  const companyProjects = orgState && company ? orgState.projects.filter((item) => item.companyId === company.id) : []
+  const companyProjects = useMemo(
+    () => (orgState && company ? orgState.projects.filter((item) => item.companyId === company.id) : []),
+    [orgState, company],
+  )
   const companyRemovalTarget = useMemo(() => {
     if (!removeCompanyId || !orgState) return null
     const candidate = orgState.companies.find((item) => item.id === removeCompanyId)
@@ -1037,6 +1040,22 @@ export default function App() {
   const isPersonalActive = view === 'home' || (orgState?.activeProjectId === PERSONAL_PROJECT_ID && !activeCompanyProject)
   const project = isPersonalActive ? null : activeCompanyProject
   const effectiveProjectId = isPersonalActive ? PERSONAL_PROJECT_ID : (activeCompanyProject?.id ?? undefined)
+  // Memoised so the sidebar can key its chat grouping on this list's identity
+  // instead of regrouping on every render of the app shell.
+  const sidebarProjects = useMemo(() => [
+    {
+      id: PERSONAL_PROJECT_ID,
+      name: 'Personal',
+      active: isPersonalActive,
+      linked: false,
+    },
+    ...companyProjects.map((item) => ({
+      id: item.id,
+      name: item.name,
+      active: !isPersonalActive && item.id === project?.id,
+      linked: Boolean(item.workspacePath),
+    })),
+  ], [companyProjects, isPersonalActive, project?.id])
 
   useEffect(() => {
     if (view === 'home' && orgState && orgState.activeProjectId !== PERSONAL_PROJECT_ID) {
@@ -1960,22 +1979,10 @@ export default function App() {
                   onGitEditableChange={setGitEditable}
                   {...(workspace?.projectName || workspace?.name ? { workspaceName: workspace.projectName ?? workspace.name } : {})}
                   workspaceSelected={workspaceSelected}
+                  workspaceProjectId={workspace?.projectId}
                   onOpenWorkspace={openWorkspaceFolder}
                   sessionProjectScope={{ activeProjectId: effectiveProjectId, sessionProjects: runSessionProjects }}
-                  projects={[
-                    {
-                      id: PERSONAL_PROJECT_ID,
-                      name: 'Personal',
-                      active: isPersonalActive,
-                      linked: false,
-                    },
-                    ...companyProjects.map((item) => ({
-                      id: item.id,
-                      name: item.name,
-                      active: !isPersonalActive && item.id === project?.id,
-                      linked: Boolean(item.workspacePath),
-                    })),
-                  ]}
+                  projects={sidebarProjects}
                   onSelectProject={switchProject}
                   sessionsCollapsed={sessionsCollapsed}
                   onError={notify}

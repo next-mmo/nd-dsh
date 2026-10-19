@@ -104,3 +104,6 @@ export const DownloadIcon = (props: IconProps) => (
 export const BlocksIcon = (props: IconProps) => (
   <IconBase {...props}><rect x="3" y="3" width="7.5" height="7.5" rx="1.2" /><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.2" /><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.2" /><path d="M17.25 13.75v7M13.5 17.5h7.5" /></IconBase>
 )
+export const CalendarIcon = (props: IconProps) => (
+  <IconBase {...props}><rect x="3.5" y="5" width="17" height="15.5" rx="2" /><path d="M3.5 9.75h17" /><path d="M8 3v4M16 3v4" /></IconBase>
+)

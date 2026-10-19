@@ -29,38 +29,57 @@ export function isSessionInProjectScope(
   return projectId === activeProjectId
 }
 
-export function filterSessionsInProjectScope<T extends { sessionId: string; parentSessionId?: string; origin?: 'subagent' }>(
+/**
+ * Resolve each session's project, letting subagents inherit their parent's
+ * attribution so a forked chat never separates from the project it ran in.
+ *
+ * Sessions with no own and no inherited project map to `undefined`, which the
+ * sidebar reads as Personal. Malformed or cyclic parent references fail soft by
+ * leaving the session unattributed rather than hiding it.
+ */
+export function resolveSessionProjectIds<
+  T extends { sessionId: string; parentSessionId?: string; origin?: 'subagent' },
+>(
   items: readonly T[],
-  activeProjectId: string | undefined,
   sessionProjects: Readonly<Record<string, string>>,
-): T[] {
-  if (!activeProjectId) return [...items]
+): Map<string, string | undefined> {
   const byId = new Map(items.map((item) => [item.sessionId, item]))
-  const resolvedProjects = new Map<string, string | undefined>()
+  const resolved = new Map<string, string | undefined>()
 
   const projectFor = (sessionId: string, trail = new Set<string>()): string | undefined => {
-    if (resolvedProjects.has(sessionId)) return resolvedProjects.get(sessionId)
+    if (resolved.has(sessionId)) return resolved.get(sessionId)
     const direct = sessionProjects[sessionId]
     if (direct !== undefined) {
-      resolvedProjects.set(sessionId, direct)
+      resolved.set(sessionId, direct)
       return direct
     }
     if (trail.has(sessionId)) return undefined
     const item = byId.get(sessionId)
     const parentId = item?.origin === 'subagent' ? item.parentSessionId : undefined
     if (!parentId) {
-      resolvedProjects.set(sessionId, undefined)
+      resolved.set(sessionId, undefined)
       return undefined
     }
     const nextTrail = new Set(trail)
     nextTrail.add(sessionId)
     const inherited = projectFor(parentId, nextTrail)
-    resolvedProjects.set(sessionId, inherited)
+    resolved.set(sessionId, inherited)
     return inherited
   }
 
+  for (const item of items) projectFor(item.sessionId)
+  return resolved
+}
+
+export function filterSessionsInProjectScope<T extends { sessionId: string; parentSessionId?: string; origin?: 'subagent' }>(
+  items: readonly T[],
+  activeProjectId: string | undefined,
+  sessionProjects: Readonly<Record<string, string>>,
+): T[] {
+  if (!activeProjectId) return [...items]
+  const resolved = resolveSessionProjectIds(items, sessionProjects)
   return items.filter((item) => {
-    const projectId = projectFor(item.sessionId)
+    const projectId = resolved.get(item.sessionId)
     if (activeProjectId === PERSONAL_PROJECT_ID) {
       return projectId === undefined || projectId === PERSONAL_PROJECT_ID
     }

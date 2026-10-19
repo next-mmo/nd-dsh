@@ -21,6 +21,11 @@ import { DisplayGroup, groupEntries, parseFileChanges, toolPreview, type Context
 import { filterSessionsInProjectScope, isSessionInProjectScope, PERSONAL_PROJECT_ID } from '../../../shared/session-project-scope'
 import { storeSessionProject } from '../lib/session-project-registry'
 import { buildSessionTree, type SessionTreeNode } from '../../../shared/session-tree'
+import {
+  groupSessionsByProject,
+  type SidebarProjectSection,
+  type SidebarSessionEntry,
+} from '../../../shared/session-date-group'
 import type { SettingsTab } from '../lib/settings-route'
 import { splitAssistantSegments, type ReviewVerdict } from '../../../shared/structured-output'
 import type { ProjectPlanInput } from '../../../shared/organization'
@@ -37,6 +42,7 @@ import {
   ArchiveIcon,
   ArrowUpIcon,
   BrainIcon,
+  CalendarIcon,
   ChatIcon,
   CheckIcon,
   ChevronDownIcon,
@@ -82,6 +88,11 @@ interface ChatPanelProps {
    * a runtime cwd, never a project, so the sidebar must not present it as one.
    */
   workspaceSelected?: boolean
+  /**
+   * Organization project the active root is bound to. The PROJECTS list already
+   * carries that project, so the workspace row is dropped to keep one entry each.
+   */
+  workspaceProjectId?: string | undefined
   /** Opens the folder picker from the unselected empty state. */
   onOpenWorkspace?(): void
   sessionsCollapsed: boolean
@@ -168,6 +179,43 @@ function readStoredSessionsWidth(): number {
   return SESSIONS_SIDEBAR_DEFAULT_PX
 }
 
+const SESSIONS_GROUP_BY_DATE_KEY = 'nd-dsh-sessions-group-by-date'
+
+/** Recency grouping is the default, so only the flat "show all" choice is stored. */
+function readStoredGroupByDate(): boolean {
+  try {
+    return window.localStorage.getItem(SESSIONS_GROUP_BY_DATE_KEY) !== 'off'
+  } catch {
+    // localStorage can be unavailable; the default grouping still applies.
+  }
+  return true
+}
+
+const CHAT_PROJECT_EXPANDED_KEY = 'nd-dsh-chat-project-expanded'
+
+/**
+ * Per-project expand/collapse overrides. A project with no entry here follows the
+ * default of the sidebar, so only deliberate choices are remembered.
+ */
+function readStoredProjectExpanded(): Record<string, boolean> {
+  try {
+    const parsed: unknown = JSON.parse(window.localStorage.getItem(CHAT_PROJECT_EXPANDED_KEY) ?? '{}')
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    return Object.fromEntries(Object.entries(parsed).filter(([, value]) => typeof value === 'boolean'))
+  } catch {
+    // Unreadable or unavailable storage; every project falls back to the default.
+  }
+  return {}
+}
+
+function persistProjectExpanded(next: Record<string, boolean>): void {
+  try {
+    window.localStorage.setItem(CHAT_PROJECT_EXPANDED_KEY, JSON.stringify(next))
+  } catch {
+    // Storage unavailable; the collapse state just resets on the next launch.
+  }
+}
+
 type PingEntry = { testing: true } | ProviderPingResult
 type ModelMenuPane = 'root' | 'model' | 'effort'
 
@@ -176,7 +224,7 @@ function fileMentionTag(relativePath: string): string {
   return extension ? extension.toUpperCase().slice(0, 5) : 'FILE'
 }
 
-export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelected, onOpenWorkspace, sessionsCollapsed, sessionProjectScope, projects, onSelectProject, onError, onOpenSettings, onOpenFile, onOpenLink, externalPrompt, onExternalPromptConsumed, incomingImage, onIncomingImageConsumed, sessionOpenRequest, onSessionOpenConsumed, elementAttachmentVersion, onGitEditableChange }: ChatPanelProps) {
+export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelected, workspaceProjectId, onOpenWorkspace, sessionsCollapsed, sessionProjectScope, projects, onSelectProject, onError, onOpenSettings, onOpenFile, onOpenLink, externalPrompt, onExternalPromptConsumed, incomingImage, onIncomingImageConsumed, sessionOpenRequest, onSessionOpenConsumed, elementAttachmentVersion, onGitEditableChange }: ChatPanelProps) {
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [collapsedSessionParents, setCollapsedSessionParents] = useState<Set<string>>(new Set())
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
@@ -259,6 +307,10 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   // Chat archival lives ND-side; the sidebar filters on it and each thread
   // card gets a direct hover action that toggles it (harness and engine chats alike).
   const [showArchived, setShowArchived] = useState(false)
+  // Chats from every engine share one sidebar; grouped is the readable default and
+  // the flat list is the opt-out.
+  const [groupByDate, setGroupByDate] = useState(readStoredGroupByDate)
+  const [projectExpanded, setProjectExpanded] = useState<Record<string, boolean>>(readStoredProjectExpanded)
   const [archiveAllIds, setArchiveAllIds] = useState<string[] | null>(null)
   const [archivingAll, setArchivingAll] = useState(false)
   // ChatGPT Project binding is optional: unbound chats start on the ChatGPT home page.
@@ -336,6 +388,9 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   const activeEngineName = engines.find((engine) => engine.id === activeEngineId)?.name ?? 'Codex CLI'
   const activeWorkspaceRoot = workspaceRoot ?? terminalCwd ?? ''
   const currentProjectName = workspaceName ?? ''
+  // A root bound to a listed project is already shown in PROJECTS with its ACTIVE
+  // badge; only a standalone folder needs its own row here.
+  const showWorkspaceRow = workspaceSelected && !(workspaceProjectId && projects?.some((project) => project.id === workspaceProjectId))
 
   const refreshChatGptProjectBinding = useCallback(async (): Promise<void> => {
     if (!activeWorkspaceRoot) return
@@ -378,6 +433,11 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   // Both listings arrive pre-annotated with ND archive flags; the sidebar
   // shows one bucket at a time. Run attribution narrows each bucket to the
   // active project's sessions (unattributed manual chats always stay).
+  //
+  // The scoped pair below drives everything that must respect the *active*
+  // project — auto-selecting a chat when you switch, and what "archive all"
+  // covers. The chat list itself is no longer scoped: it shows every project as
+  // its own collapsible section, so it reads from the `listed*` pair instead.
   const activeProjectId = sessionProjectScope?.activeProjectId
   const sessionProjects = sessionProjectScope?.sessionProjects ?? EMPTY_SESSION_PROJECTS
   const visibleSessions = useMemo(
@@ -390,11 +450,25 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
       .filter((session) => (showArchived ? session.archived === true : session.archived !== true)),
     [engineSessions, showArchived, activeProjectId, sessionProjects],
   )
-  const visibleHarnessSessions = useMemo(
-    () => visibleSessions.filter((session) => !session.blank || session.sessionId === activeSessionId),
-    [visibleSessions, activeSessionId],
+  const listedSessions = useMemo(
+    () => sessions.filter((session) => (showArchived ? session.archived === true : session.archived !== true)),
+    [sessions, showArchived],
   )
-  const sessionTree = useMemo(() => buildSessionTree(visibleHarnessSessions), [visibleHarnessSessions])
+  const listedEngineSessions = useMemo(
+    () => engineSessions.filter((session) => (showArchived ? session.archived === true : session.archived !== true)),
+    [engineSessions, showArchived],
+  )
+  const listedHarnessSessions = useMemo(
+    () => listedSessions.filter((session) => !session.blank || session.sessionId === activeSessionId),
+    [listedSessions, activeSessionId],
+  )
+  const listedTree = useMemo(() => buildSessionTree(listedHarnessSessions), [listedHarnessSessions])
+  const chatSections = useMemo(
+    () => groupSessionsByProject(
+      projects ?? [], listedTree, listedHarnessSessions, listedEngineSessions, sessionProjects, Date.now(),
+    ),
+    [projects, listedTree, listedHarnessSessions, listedEngineSessions, sessionProjects],
+  )
   const archiveableIds = useMemo(
     () => showArchived ? [] : archiveableVisibleSessionIds(visibleSessions, visibleEngineSessions, activeSessionId),
     [showArchived, visibleSessions, visibleEngineSessions, activeSessionId],
@@ -1526,6 +1600,82 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
     )
   }
 
+  const renderEngineSession = (session: EngineSessionSummary): ReactNode => {
+    const engineName = engines.find((engine) => engine.id === session.engineId)?.name ?? session.engineId
+    return (
+      <SessionCard
+        key={session.sessionId}
+        active={activeSessionId === session.sessionId}
+        busy={busySessions.has(session.sessionId) || Boolean(session.running)}
+        title={cleanThreadTitle(session.title)}
+        time={sessionTime({ updatedAt: session.updatedAt } as SessionSummary)}
+        engineChip={engineName}
+        cardTitle={`${engineName} chat`}
+        archived={session.archived === true}
+        onToggleArchive={() => void setSessionArchived(session.sessionId, session.archived !== true)}
+        onClick={() => selectEngineSession(session)}
+      />
+    )
+  }
+
+  const renderSessionEntry = (entry: SidebarSessionEntry): ReactNode =>
+    entry.kind === 'harness' ? renderSessionNode(entry.node) : renderEngineSession(entry.session)
+
+  const renderProjectSection = (section: SidebarProjectSection): ReactNode => {
+    const expanded = isProjectSectionExpanded(section.id)
+    const project = projects?.find((item) => item.id === section.id)
+    const rowTitle = section.id === PERSONAL_PROJECT_ID
+      ? 'Personal (built-in global workspace)'
+      : project?.linked ? section.name : `${section.name} (workspace not linked)`
+    return (
+      <div key={section.id} className="flex flex-col gap-1">
+        <div className="flex items-center gap-0.5">
+          <button
+            type="button"
+            className="flex size-5 shrink-0 items-center justify-center rounded-full text-faint transition-colors hover:bg-accent hover:text-foreground [&_svg]:size-3"
+            aria-label={expanded ? `Collapse ${section.name} chats` : `Expand ${section.name} chats`}
+            aria-expanded={expanded}
+            title={expanded ? `Collapse ${section.name} chats` : `Expand ${section.name} chats`}
+            onClick={() => toggleProjectSection(section.id)}
+          >
+            {expanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
+          </button>
+          <button
+            type="button"
+            className={cn(
+              'flex h-[23px] min-w-0 flex-1 items-center gap-1.5 rounded-md px-1 text-left text-xs transition-colors [&_svg]:size-3 [&_svg]:shrink-0',
+              section.active
+                ? 'bg-selected-row text-selected-row-foreground hover:bg-selected-row'
+                : 'text-soft hover:bg-accent hover:text-foreground',
+            )}
+            title={rowTitle}
+            onClick={() => selectProjectSection(section)}
+          >
+            <FolderIcon style={{ color: FOLDER_ACCENT }} />
+            <span className="min-w-0 truncate">{section.name}</span>
+            {section.active ? (
+              <span className="ml-auto shrink-0 text-[9px] font-bold text-primary">ACTIVE</span>
+            ) : (
+              <span className="ml-auto shrink-0 text-[9px] font-semibold text-faint">{section.entries.length}</span>
+            )}
+          </button>
+        </div>
+        {!expanded ? null : section.entries.length === 0 ? (
+          <div className="px-2 py-0.5 text-[10px]/[1.5] text-faint">No chats</div>
+        ) : groupByDate ? (
+          section.groups.map((bucket) => (
+            <div key={bucket.group} className="flex flex-col gap-1">
+              <span className="px-2 text-[10px] font-medium text-faint">{bucket.group}</span>
+              {bucket.entries.map(renderSessionEntry)}
+            </div>
+          ))
+        ) : (
+          <div className="flex flex-col gap-1">{section.entries.map(renderSessionEntry)}</div>
+        )}
+      </div>
+    )
+  }
+
   const [sessionsWidth, setSessionsWidth] = useState(readStoredSessionsWidth)
   const sessionsRowRef = useRef<HTMLDivElement | null>(null)
   const sessionsAsideRef = useRef<HTMLElement | null>(null)
@@ -1547,6 +1697,41 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
       window.localStorage.setItem(SESSIONS_SIDEBAR_WIDTH_KEY, String(width))
     } catch {
       // Storage unavailable; the width just resets on the next launch.
+    }
+  }
+
+  const toggleGroupByDate = (): void => {
+    const next = !groupByDate
+    setGroupByDate(next)
+    try {
+      if (next) window.localStorage.removeItem(SESSIONS_GROUP_BY_DATE_KEY)
+      else window.localStorage.setItem(SESSIONS_GROUP_BY_DATE_KEY, 'off')
+    } catch {
+      // Storage unavailable; the sidebar falls back to grouped on the next launch.
+    }
+  }
+
+  // A project the user never touched follows the sidebar default: the one you are
+  // in is open, the rest are tucked away.
+  const isProjectSectionExpanded = (projectId: string): boolean =>
+    projectExpanded[projectId] ?? projectId === activeProjectId
+
+  const toggleProjectSection = (projectId: string): void => {
+    const next = { ...projectExpanded, [projectId]: !isProjectSectionExpanded(projectId) }
+    setProjectExpanded(next)
+    persistProjectExpanded(next)
+  }
+
+  const selectProjectSection = (section: SidebarProjectSection): void => {
+    if (section.active) {
+      toggleProjectSection(section.id)
+      return
+    }
+    onSelectProject?.(section.id)
+    if (!isProjectSectionExpanded(section.id)) {
+      const next = { ...projectExpanded, [section.id]: true }
+      setProjectExpanded(next)
+      persistProjectExpanded(next)
     }
   }
 
@@ -1646,16 +1831,16 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
 
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 py-2">
           <div className="mb-1.5 flex items-center justify-between">
-            <span className="text-[11px] font-semibold text-faint">Workspaces</span>
-            <div className="flex items-center gap-1">
+            <span className="min-w-0 truncate text-[11px] font-semibold text-faint">Workspaces</span>
+            <div className="flex shrink-0 items-center gap-1">
               <button className="grid size-[22px] place-items-center rounded-[5px] text-faint transition-colors hover:bg-accent hover:text-foreground [&_svg]:size-[13px]" title="Refresh sessions" onClick={() => { void refreshSessions({ userInitiated: true }); void refreshEngineSessions() }}>
                 <SearchIcon />
               </button>
               {archiveableIds.length > 0 ? (
                 <button
                   className="grid size-[22px] place-items-center rounded-[5px] text-faint transition-colors hover:bg-accent hover:text-foreground [&_svg]:size-[13px]"
-                  title="Archive all visible chats"
-                  aria-label="Archive all visible chats"
+                  title="Archive this project's chats"
+                  aria-label="Archive this project's chats"
                   onClick={() => setArchiveAllIds([...archiveableIds])}
                 >
                   <ArchiveIcon />
@@ -1683,12 +1868,12 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
             </div>
           </div>
 
-          {workspaceSelected ? (
+          {showWorkspaceRow ? (
             <div className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium text-foreground [&_svg]:size-3.5 [&_svg]:shrink-0 [&_svg]:text-folder">
               <FolderIcon />
               <span className="truncate" title={workspaceName ?? 'workspace'}>{workspaceName ?? 'workspace'}</span>
             </div>
-          ) : (
+          ) : !workspaceSelected ? (
             // The boot fallback root is a runtime cwd, not a project. Present an
             // explicit empty state instead of a default project row.
             <div className="flex flex-col items-start gap-1.5 rounded-md px-2 py-1.5">
@@ -1702,55 +1887,24 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
                 </button>
               ) : null}
             </div>
-          )}
-
-          <div className="mt-1 flex flex-col gap-0.5">
-            <span className="px-2 text-[9px] font-semibold tracking-[0.08em] text-faint">PROJECTS</span>
-            {(() => {
-              const isPersonalProjectActive = activeProjectId === PERSONAL_PROJECT_ID || projects?.find((p) => p.id === PERSONAL_PROJECT_ID)?.active === true
-              return (
-                <>
-                  <button
-                    key={PERSONAL_PROJECT_ID}
-                    className={cn(
-                      'flex h-[23px] w-full items-center gap-2 rounded-md px-2 text-left text-xs transition-colors [&_svg]:size-3 [&_svg]:shrink-0',
-                      isPersonalProjectActive
-                        ? 'bg-selected-row text-selected-row-foreground hover:bg-selected-row'
-                        : 'text-soft hover:bg-accent hover:text-foreground',
-                    )}
-                    title="Personal (built-in global workspace)"
-                    onClick={() => onSelectProject?.(PERSONAL_PROJECT_ID)}
-                  >
-                    <FolderIcon style={{ color: FOLDER_ACCENT }} />
-                    <span className="min-w-0 truncate">Personal</span>
-                    {isPersonalProjectActive ? <span className="ml-auto text-[9px] font-bold text-primary">ACTIVE</span> : null}
-                  </button>
-                  {projects?.filter((project) => project.id !== PERSONAL_PROJECT_ID).map((project) => {
-                    const isThisProjectActive = !isPersonalProjectActive && (project.active || activeProjectId === project.id)
-                    return (
-                      <button
-                        key={project.id}
-                        className={cn(
-                          'flex h-[23px] w-full items-center gap-2 rounded-md px-2 text-left text-xs transition-colors [&_svg]:size-3 [&_svg]:shrink-0',
-                          isThisProjectActive
-                            ? 'bg-selected-row text-selected-row-foreground hover:bg-selected-row'
-                            : 'text-soft hover:bg-accent hover:text-foreground',
-                        )}
-                        title={project.linked ? project.name : `${project.name} (workspace not linked)`}
-                        onClick={() => (!isThisProjectActive || isPersonalProjectActive) && onSelectProject?.(project.id)}
-                      >
-                        <FolderIcon style={{ color: FOLDER_ACCENT }} />
-                        <span className="min-w-0 truncate">{project.name}</span>
-                        {isThisProjectActive ? <span className="ml-auto text-[9px] font-bold text-primary">ACTIVE</span> : null}
-                      </button>
-                    )
-                  })}
-                </>
-              )
-            })()}
-          </div>
+          ) : null}
 
           <div className="mt-1.5 flex flex-col gap-1">
+            <div className="flex items-center justify-between">
+              <span className="px-2 text-[9px] font-semibold tracking-[0.08em] text-faint">CHATS</span>
+              <button
+                className={cn(
+                  'grid size-[22px] shrink-0 place-items-center rounded-[5px] transition-colors [&_svg]:size-[13px]',
+                  groupByDate ? 'bg-accent text-primary' : 'text-faint hover:bg-accent hover:text-foreground',
+                )}
+                title={groupByDate ? 'Chats grouped by date' : 'Chats listed together'}
+                aria-label={groupByDate ? 'Chats grouped by date' : 'Chats listed together'}
+                aria-pressed={groupByDate}
+                onClick={toggleGroupByDate}
+              >
+                <CalendarIcon />
+              </button>
+            </div>
             {sessionListError ? (
               <div role="status" className="flex items-center justify-between gap-2 rounded-md border border-border-soft px-2 py-1.5 text-[10px]/[1.45] text-faint">
                 <span>{sessionListError === SESSION_LIST_TIMEOUT_MESSAGE ? `ND Harness is slow to list chats${sessions.length ? '; showing the last known list' : ''}.` : `Couldn't refresh chats: ${sessionListError}`}</span>
@@ -1764,26 +1918,10 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
             ) : null}
             {!sessionsLoaded ? (
               <div className="px-0.5 py-2 text-[10px]/[1.5] text-faint">Loading sessions…</div>
-            ) : visibleSessions.length === 0 && visibleEngineSessions.length === 0 ? (
-              <div className="px-0.5 py-2 text-[10px]/[1.5] text-faint">{showArchived ? 'No archived chats' : 'No sessions yet'}</div>
             ) : (
               <>
-                {sessionTree.map((node) => renderSessionNode(node))}
-                {visibleEngineSessions.map((session) => (
-                  <SessionCard
-                    key={session.sessionId}
-                    active={activeSessionId === session.sessionId}
-                    busy={busySessions.has(session.sessionId) || Boolean(session.running)}
-                    title={cleanThreadTitle(session.title)}
-                    time={sessionTime({ updatedAt: session.updatedAt } as SessionSummary)}
-                    engineChip={engines.find((engine) => engine.id === session.engineId)?.name ?? session.engineId}
-                    cardTitle={`${engines.find((engine) => engine.id === session.engineId)?.name ?? session.engineId} chat`}
-                    archived={session.archived === true}
-                    onToggleArchive={() => void setSessionArchived(session.sessionId, session.archived !== true)}
-                    onClick={() => selectEngineSession(session)}
-                  />
-                ))}
-                {!harnessSessionsLoaded && visibleEngineSessions.length > 0 ? (
+                {chatSections.map(renderProjectSection)}
+                {!harnessSessionsLoaded && listedEngineSessions.length > 0 ? (
                   <div className="px-0.5 py-1 text-[9px]/[1.4] text-faint animate-pulse">Syncing harness chats…</div>
                 ) : null}
               </>
@@ -2682,6 +2820,10 @@ function countRunningSessionDescendants(node: SessionTreeNode, busySessions: Rea
  * Long titles truncate; a "See more" strip appears under the card only when
  * the title actually overflows and expands it to wrap (with "See less" to
  * collapse again). Hovering always exposes the full title as a tooltip.
+ *
+ * The engine chip and timestamp sit on their own line rather than beside the
+ * title: at the sidebar's default 220px they left the title ~20px, which clipped
+ * every chat to one letter and made the expanded wrap one word per line.
  */
 function SessionCard({ active, busy, title, time, engineChip, cardTitle, archived = false, leading = 'chat', onToggleArchive, onClick }: {
   active: boolean
@@ -2712,6 +2854,9 @@ function SessionCard({ active, busy, title, time, engineChip, cardTitle, archive
 
   const showTitleToggle = titleExpanded || titleOverflowing
   const tooltip = [cardTitle, title].filter(Boolean).join('\n')
+  // Keeps the meta line under the title text, which starts after the status dot
+  // plus whichever leading glyph this row carries (6px gaps either side).
+  const metaIndent = leading === 'chat' ? 'pl-[30px]' : leading === 'subagent' ? 'pl-[33px]' : 'pl-[11px]'
 
   return (
     <div
@@ -2724,11 +2869,11 @@ function SessionCard({ active, busy, title, time, engineChip, cardTitle, archive
     >
       <button
         type="button"
-        className="flex w-full items-center justify-between px-2.5 py-1.5 text-left"
+        className="flex w-full flex-col gap-px px-2.5 py-1.5 text-left"
         {...(tooltip ? { title: tooltip } : {})}
         onClick={onClick}
       >
-        <span className="flex min-w-0 items-center gap-1.5">
+        <span className="flex w-full min-w-0 items-center gap-1.5">
           <span className={cn('size-[5px] shrink-0 rounded-full', busy ? 'bg-primary' : 'bg-faint opacity-40')} />
           {leading === 'chat' ? (
             <ChatIcon className="size-[13px] shrink-0 text-faint" />
@@ -2739,17 +2884,19 @@ function SessionCard({ active, busy, title, time, engineChip, cardTitle, archive
           ) : null}
           <span
             ref={titleRef}
-            className={cn('min-w-0 font-medium', titleExpanded ? 'whitespace-pre-wrap break-words' : 'truncate')}
+            className={cn('min-w-0 flex-1 font-medium', titleExpanded ? 'whitespace-pre-wrap break-words' : 'truncate')}
           >
             {title}
           </span>
+        </span>
+        <span className={cn('flex w-full items-center gap-1.5 text-[9px] leading-[13px] text-faint', metaIndent)}>
           {engineChip ? (
-            <span className="shrink-0 rounded-md border border-border-soft px-1.5 py-px text-[9px] font-semibold uppercase tracking-[0.04em] text-soft">
+            <span className="min-w-0 truncate rounded-md border border-border-soft px-1.5 py-px font-semibold uppercase tracking-[0.04em] text-soft">
               {engineChip}
             </span>
           ) : null}
+          <span className="ml-auto shrink-0 transition-opacity group-hover:opacity-0">{time}</span>
         </span>
-        <span className="shrink-0 text-[10px] text-faint transition-opacity group-hover:opacity-0">{time}</span>
       </button>
       {showTitleToggle ? (
         <button
