@@ -49,6 +49,7 @@ import { validateSystemVolumeUpdate, type CoreSystemVolume } from './core/core-s
 import type { NdMediaKeyKind } from '../shared/media-session.js'
 import type { CoreVault } from './core/core-vault.js'
 import type { CoreDiskScan } from './core/core-disk.js'
+import type { CoreApiHttp } from './core/core-api-http.js'
 import type { HarnessService } from './harness/harness-service.js'
 import type { ProviderStore } from './providers.js'
 import type { QaService } from './qa/qa-service.js'
@@ -99,6 +100,8 @@ interface IpcDependencies {
   coreVault?: CoreVault
   /** nd-core-backed disk-usage scan surface for extensions. */
   coreDisk?: CoreDiskScan
+  /** nd-core-backed outbound HTTP for API Studio. */
+  coreApiHttp?: CoreApiHttp
   qa: QaService
   sessionArchive: SessionArchiveStore
   /** ND's durable token accounting, captured from the runtime event stream. */
@@ -304,6 +307,7 @@ export function registerIpc(deps: IpcDependencies): () => void {
     ...(deps.coreClipboard ? { coreClipboard: deps.coreClipboard } : {}),
     ...(deps.coreVault ? { coreVault: deps.coreVault } : {}),
     ...(deps.coreDisk ? { coreDisk: deps.coreDisk } : {}),
+    ...(deps.coreApiHttp ? { coreApiHttp: deps.coreApiHttp } : {}),
     onHomeChanged: () => { void syncHomeSessions() },
   })
   // Personal chats run outside the active workspace but must stay listed in the

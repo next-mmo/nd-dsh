@@ -25,6 +25,12 @@ export const FilesIcon = (props: IconProps) => (
 export const BrowserIcon = (props: IconProps) => (
   <IconBase {...props}><rect x="2.75" y="4" width="18.5" height="16" rx="2" /><path d="M2.75 8.25h18.5" /><path d="M6 6.15h.01M9 6.15h.01" /></IconBase>
 )
+export const GlobeIcon = (props: IconProps) => (
+  <IconBase {...props}><circle cx="12" cy="12" r="9" /><path d="M3 12h18" /><path d="M12 3c2.5 2.4 2.5 15.6 0 18M12 3c-2.5 2.4-2.5 15.6 0 18" /></IconBase>
+)
+export const StarIcon = (props: IconProps) => (
+  <IconBase {...props}><path d="m12 3.6 2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8L3.5 9.8l5.9-.9z" /></IconBase>
+)
 export const GridIcon = (props: IconProps) => (
   <IconBase {...props}><rect x="3.5" y="3.5" width="7" height="7" rx="1.5" /><rect x="13.5" y="3.5" width="7" height="7" rx="1.5" /><rect x="3.5" y="13.5" width="7" height="7" rx="1.5" /><rect x="13.5" y="13.5" width="7" height="7" rx="1.5" /></IconBase>
 )

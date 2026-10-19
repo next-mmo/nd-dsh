@@ -187,12 +187,13 @@ The canonical agent browser remains the visible embedded WebContentsView, with e
 
 ### Personal browser dialpad
 
-The Personal space presents the ND browser as its own full-size pane, and that pane opens on a dialpad: ND's top sites (Google, YouTube, Gmail, Maps, Translate, Wikipedia, GitHub, X, Reddit) plus the user's own saved links.
+The Personal space presents the ND browser as its own full-size pane, and a new tab in it opens on a dialpad: ND's top sites (Google, YouTube, Gmail, Maps, Translate, Wikipedia, GitHub, X, Reddit) plus the user's own saved links.
 
-- A tile opens a real tab of the embedded browser and the dialpad gets out of the way; the Dialpad control on the pane strip brings it back.
-- "Save this site" records the current address as a personal ND record in ND-managed user storage — the same store as notes, captures, and chats — and re-saving an address refreshes its tile instead of duplicating it.
+- The dialpad is the pane's new-tab page, not a toggle. It paints into the browser canvas while the active tab is blank and yields to the page as soon as one loads, so the native view and the speed dial never compete for the same rect.
+- A tile navigates the blank tab it is showing in, the way a browser's own new-tab shortcuts do. Reached while a site already holds the tab, it opens a new tab instead of losing the page.
+- The star in the browser toolbar records the current address as a personal ND record in ND-managed user storage — the same store as notes, captures, and chats — and re-saving an address refreshes its tile instead of duplicating it. It is disabled on a new tab, where there is nothing to save.
 - Saved links are Personal records: they are never written to company or project memory, and removing a tile deletes only the link.
-- Dialpad links belong to the personal context only. The Agent workbench browser stays a work surface without a personal speed dial.
+- Dialpad links belong to the personal context only. The Agent workbench browser stays a work surface without a personal speed dial, and its blank tab shows no dialpad.
 
 ## 9. Project Workflow pilot
 

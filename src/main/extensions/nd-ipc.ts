@@ -1,5 +1,5 @@
 import { RemoteExtensionCatalog } from './remote-catalog.js'
-import { app, clipboard, dialog, ipcMain, nativeImage, protocol, shell, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
+import { app, clipboard, dialog, ipcMain, nativeImage, protocol, safeStorage, shell, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { existsSync, promises as fs } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import process from 'node:process'
@@ -46,6 +46,14 @@ import {
 import { parseWallpaperLinkUrl, parseWallpaperLinksBundle, type WallpaperCollection, type WallpaperCollectionEntry, type WallpaperCollectionItemInput, type WallpaperLink } from '../../shared/wallpaper-links.js'
 import type { CoreMedia } from '../core/core-media.js'
 import type { CoreDiskScan } from '../core/core-disk.js'
+import type { CoreApiHttp } from '../core/core-api-http.js'
+import {
+  ApiStudioSpecStore,
+  ApiStudioWorkspaceSaveBuffer,
+  ApiStudioWorkspaceStore,
+  sanitizeApiStudioRequest,
+  type ApiStudioCipher,
+} from './api-studio-store.js'
 import { DiskScanService } from './disk-scan-service.js'
 import { listDiskVolumes, nodeDiskVolumeSources } from '../os/disk-volumes.js'
 import type { CoreClipboard } from '../core/core-clipboard.js'
@@ -125,6 +133,8 @@ export interface NdIpcDependencies {
    * surfaces; the disk scan host methods fail closed without it.
    */
   coreDisk?: CoreDiskScan
+  /** nd-core's outbound HTTP surface, used by API Studio's request runner. */
+  coreApiHttp?: CoreApiHttp
   /** Notified after ND Home records change, so other services can re-derive views. */
   onHomeChanged?: () => void
 }
@@ -139,6 +149,7 @@ const WIZARD_CHESS_ID = 'nd.wizard-chess-3d'
 const MINI_BROWSER_ID = 'nd.mini-browser'
 const PAY_GUARD_ID = 'nd.pay-guard'
 const DISK_CLEANER_ID = 'nd.disk-cleaner'
+const API_STUDIO_ID = 'nd.api-studio'
 
 /**
  * Development package sources. Release Discover uses separately published metadata.
@@ -164,6 +175,7 @@ const AVAILABLE_PACKAGES: readonly { id: string; path: () => string }[] = app.is
     { id: MINI_BROWSER_ID, path: miniBrowserPackagePath },
     { id: PAY_GUARD_ID, path: payGuardPackagePath },
     { id: DISK_CLEANER_ID, path: diskCleanerPackagePath },
+    { id: API_STUDIO_ID, path: apiStudioPackagePath },
   ]),
 ]
 
@@ -255,6 +267,12 @@ function diskCleanerPackagePath(): string {
   return app.isPackaged
     ? join(process.resourcesPath, 'nd-extensions', 'disk-cleaner')
     : join(app.getAppPath(), 'extensions', 'disk-cleaner')
+}
+
+function apiStudioPackagePath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'nd-extensions', 'api-studio')
+    : join(app.getAppPath(), 'extensions', 'api-studio')
 }
 
 /**
@@ -373,6 +391,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
           miniBrowserCatalogView(state),
           payGuardCatalogView(state),
           diskCleanerCatalogView(state),
+          apiStudioCatalogView(state),
         ]),
       ]),
     }
@@ -690,6 +709,7 @@ export function registerNativeHostHandlers(
   const media = deps.media
   const coreClipboard = deps.coreClipboard
   const coreVault = deps.coreVault
+  const coreApiHttp = deps.coreApiHttp
   const clipboardStore: ClipboardHistoryStore | undefined = clipboardHistory?.store
   const thumbnailCache = media ? new WallpaperThumbnailCache(media) : null
   const applyWallpaper = media
@@ -1963,6 +1983,142 @@ export function registerNativeHostHandlers(
     return ticTacToeStats.reset()
   })
 
+  // --- API Studio --------------------------------------------------------------
+  //
+  // The UI is a package web view with no network, so requests run through
+  // nd-core's Rust executor. The workspace is encrypted through Electron
+  // safeStorage when the OS keychain is available, and history is redacted
+  // host-side before it lands on disk: the frame is not trusted to decide what
+  // is safe to persist.
+
+  const apiStudioRoot = join(app.getPath('userData'), 'nd-api-studio')
+  const apiStudioCipher: ApiStudioCipher = {
+    available: () => safeStorage.isEncryptionAvailable(),
+    encrypt: (plain) => safeStorage.encryptString(plain).toString('base64'),
+    decrypt: (encoded) => safeStorage.decryptString(Buffer.from(encoded, 'base64')),
+  }
+  const apiStudioWorkspace = new ApiStudioWorkspaceStore(join(apiStudioRoot, 'workspace.json'), apiStudioCipher)
+  const apiStudioSpecs = new ApiStudioSpecStore(apiStudioRoot)
+  const requireApiStudioHttp = (): CoreApiHttp => {
+    if (!coreApiHttp) throw new Error('API Studio needs the ND runtime sidecar, which is unavailable')
+    return coreApiHttp
+  }
+  const apiStudioSpecName = (value: unknown): string | undefined =>
+    typeof value === 'string' && value.trim() ? value.trim().slice(0, 160) : undefined
+
+  // The nd.webview/1 bridge drops messages over 262,144 characters, so both
+  // directions of the workspace cross it in bounded chunks. The assembled
+  // payload is still capped and validated by the store.
+  const API_STUDIO_READ_CHUNK = 120_000
+  const API_STUDIO_SAVE_CHUNK = 180_000
+  const apiStudioSaveBuffer = new ApiStudioWorkspaceSaveBuffer()
+
+  host.register('apistudio.workspace.get', async (input, context) => {
+    requirePersonalContext(context)
+    const snapshot = await apiStudioWorkspace.read()
+    const serialized = JSON.stringify(snapshot.workspace)
+    const offset = typeof input.offset === 'number' && Number.isFinite(input.offset)
+      ? Math.max(0, Math.floor(input.offset))
+      : 0
+    if (offset > serialized.length) throw new Error('Workspace read offset is out of range')
+    const end = Math.min(serialized.length, offset + API_STUDIO_READ_CHUNK)
+    return {
+      chunk: serialized.slice(offset, end),
+      nextOffset: end,
+      done: end >= serialized.length,
+      encrypted: snapshot.encrypted,
+      ...(snapshot.warning ? { warning: snapshot.warning } : {}),
+    }
+  })
+
+  host.register('apistudio.workspace.save', async (input, context) => {
+    requirePersonalContext(context)
+    const saveId = requiredText(input.saveId, 'Save id', 64)
+    if (!/^[A-Za-z0-9._-]{1,64}$/.test(saveId)) throw new Error('Save id must be a simple identifier')
+    const chunk = typeof input.chunk === 'string' ? input.chunk : ''
+    if (chunk.length > API_STUDIO_SAVE_CHUNK) throw new Error('Workspace save chunk is too large')
+    const offset = typeof input.offset === 'number' && Number.isFinite(input.offset)
+      ? Math.max(0, Math.floor(input.offset))
+      : 0
+    const assembled = apiStudioSaveBuffer.append(saveId, offset, chunk, input.final === true)
+    if (!assembled.complete) return { accepted: true, received: assembled.received }
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(assembled.text ?? '')
+    } catch {
+      throw new Error('The API Studio workspace payload is not valid JSON')
+    }
+    return apiStudioWorkspace.write(parsed)
+  })
+
+  host.register('apistudio.spec.list', async (_input, context) => {
+    requirePersonalContext(context)
+    return { specs: await apiStudioSpecs.list() }
+  })
+
+  host.register('apistudio.spec.read', async (input, context) => {
+    requirePersonalContext(context)
+    const id = requiredText(input.id, 'Specification id', 64)
+    const offset = typeof input.offset === 'number' && Number.isFinite(input.offset) ? input.offset : 0
+    return apiStudioSpecs.readChunk(id, offset)
+  })
+
+  host.register('apistudio.spec.delete', async (input, context) => {
+    requirePersonalContext(context)
+    const id = requiredText(input.id, 'Specification id', 64)
+    return { deleted: await apiStudioSpecs.delete(id) }
+  })
+
+  host.register('apistudio.spec.import', async (input, context) => {
+    requirePersonalContext(context)
+    const documentText = typeof input.document === 'string' ? input.document : ''
+    const sourceUrl = typeof input.url === 'string' ? input.url.trim() : ''
+    if (documentText && sourceUrl) throw new Error('Import a specification from text or a URL, not both')
+    const specName = apiStudioSpecName(input.name)
+    if (documentText) {
+      if (documentText.length > 200_000) {
+        throw new Error('Specifications larger than 200,000 characters must be imported from a URL')
+      }
+      return apiStudioSpecs.import({ text: documentText, ...(specName ? { name: specName } : {}) })
+    }
+    if (!sourceUrl) throw new Error('Paste a specification or enter a URL')
+    const response = await requireApiStudioHttp().execute({
+      url: sourceUrl,
+      method: 'GET',
+      headers: [{ name: 'accept', value: 'application/json, application/yaml, text/yaml, */*' }],
+      timeoutMs: 30_000,
+      maxResponseBytes: 4 * 1024 * 1024,
+    })
+    if (response.status >= 400) {
+      throw new Error(`The specification URL returned ${response.status} ${response.statusText}`)
+    }
+    if (response.bodyEncoding !== 'utf8') throw new Error('The specification URL returned binary data')
+    if (response.truncated) throw new Error('The specification is larger than 4 MB')
+    const contentType = response.headers.find((header) => header.name.toLowerCase() === 'content-type')?.value
+    return apiStudioSpecs.import({
+      text: response.body,
+      sourceUrl,
+      ...(contentType ? { contentType } : {}),
+      ...(specName ? { name: specName } : {}),
+    })
+  })
+
+  host.register('apistudio.request.execute', async (input, context) => {
+    requirePersonalContext(context)
+    const request = sanitizeApiStudioRequest(input.request)
+    const headers = request.headers
+      .filter((header) => header.enabled && header.key.trim())
+      .map((header) => ({ name: header.key.trim(), value: header.value }))
+    return await requireApiStudioHttp().execute({
+      url: request.url,
+      method: request.method,
+      headers,
+      ...(request.body.mode !== 'none' && request.body.text ? { body: request.body.text } : {}),
+      timeoutMs: 30_000,
+      maxResponseBytes: 100_000,
+    })
+  })
+
   // --- Account Manager ---------------------------------------------------------
   //
   // Metadata only: service, email, mailbox/site links, and registration status.
@@ -2537,6 +2693,14 @@ async function diskCleanerCatalogView(state: NdExtensionsStateView): Promise<NdA
     name: 'ND Disk Cleaner',
     description: 'Scan a folder or drive to see what is using space — a zoomable sunburst of the biggest items, reveal in Finder/Explorer, and move selected items to the trash. Stays fully external to the app bundle.',
     permissions: ['disk.read', 'disk.write'],
+  })
+}
+
+async function apiStudioCatalogView(state: NdExtensionsStateView): Promise<NdAvailablePackageView> {
+  return packageCatalogView(state, API_STUDIO_ID, apiStudioPackagePath(), {
+    name: 'ND API Studio',
+    description: 'One workspace for OpenAPI docs, Try It Out, a Postman-style HTTP client, collections, environments, and request history. Requests run in the Rust runtime; the workspace is local-first and encrypted at rest when the OS keychain is available.',
+    permissions: ['apistudio.read', 'apistudio.write', 'apistudio.execute', 'clipboard.write'],
   })
 }
 

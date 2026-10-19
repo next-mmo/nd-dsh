@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { normalizeCodexFailure } from '../../../shared/codex-errors.js'
+import { codexChatGptModelMismatch, normalizeCodexFailure } from '../../../shared/codex-errors.js'
 import { stripWorkspaceContext } from '../../../shared/workspace-context.js'
 import type {
   DshEventFrame,
@@ -209,7 +209,7 @@ export class CodexCliEngine {
       const terminal = await settled.promise
       this.finishTurn(activeSession)
       if (terminal.status === 'failed') {
-        const message = normalizeCodexFailure(terminal.failureMessage ?? 'Codex turn failed')
+        const message = await this.describeFailure(terminal.failureMessage ?? 'Codex turn failed')
         this.emitFrame({ kind: 'agent-error', sessionId: activeSession.sessionId, message })
         throw new Error(message)
       }
@@ -219,11 +219,29 @@ export class CodexCliEngine {
       if (activeSession.turnSettled === settled) {
         this.finishTurn(activeSession)
         const original = error instanceof Error ? error.message : String(error)
-        const message = normalizeCodexFailure(original)
+        const message = await this.describeFailure(original)
         this.emitFrame({ kind: 'agent-error', sessionId: activeSession.sessionId, message })
         if (message !== original) throw new Error(message)
       }
       throw error
+    }
+  }
+
+  /**
+   * Normalize a Codex failure and, for ChatGPT account/model entitlement
+   * rejections, name the models the signed-in account actually serves so the
+   * notice points at working alternatives instead of only the refusal.
+   * Catalog lookup is best-effort: an unreachable catalog keeps the plain notice.
+   */
+  private async describeFailure(raw: string): Promise<string> {
+    const message = normalizeCodexFailure(raw)
+    if (!codexChatGptModelMismatch(raw)) return message
+    try {
+      const models = await this.listModels()
+      if (models.length === 0) return message
+      return `${message}\n\nModels served to this ChatGPT account on the Codex route: ${models.map((model) => model.id).join(', ')}.`
+    } catch {
+      return message
     }
   }
 

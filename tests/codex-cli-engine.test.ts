@@ -329,8 +329,10 @@ describe('CodexCliEngine', () => {
       const run = engine.run('hello', { sessionId })
       await expect(run).rejects.toThrow(/Codex model “gpt-6.1-sol” is not available with a ChatGPT account/)
       await expect(run).rejects.toThrow(/Choose a supported Codex model/)
+      await expect(run).rejects.toThrow(/Models served to this ChatGPT account on the Codex route: codex-test-model\./)
       const errorFrame = frames.find((frame) => frame.kind === 'agent-error')
       expect(errorFrame?.message).toContain('gpt-6.1-sol')
+      expect(errorFrame?.message).toContain('codex-test-model')
       expect(errorFrame?.message).not.toContain('invalid_request_error')
     } finally {
       await engine.close()

@@ -849,6 +849,8 @@ export interface DesktopApi {
     setQuickLauncherMode?(mode: QuickLauncherShortcutMode): Promise<QuickLauncherShortcutMode>
     toggleLauncherPopup?(): Promise<{ visible: boolean }>
     hideLauncherPopup?(): Promise<void>
+    /** Main reveals the launcher popup; the surface replays its entrance and resets. */
+    onLauncherPopupShow?(listener: () => void): () => void
     handoffLauncherPopup?(target: LauncherHandoffTarget, text?: string, context?: import('./nd-context.js').NdContext): Promise<void>
     /** A global capture hotkey fired in main; the renderer runs the matching flow. */
     onCaptureRequest?(listener: (action: GlobalShortcutId) => void): () => void
@@ -885,6 +887,7 @@ export const IPC = {
   windowQuickLauncherModeSet: 'window:quick-launcher-mode:set',
   windowToggleLauncherPopup: 'window:toggle-launcher-popup',
   windowHideLauncherPopup: 'window:hide-launcher-popup',
+  windowLauncherPopupShowEvent: 'window:launcher-popup-show-event',
   windowLauncherHandoff: 'window:launcher-handoff',
   windowLauncherHandoffEvent: 'window:launcher-handoff-event',
   browserState: 'browser:state',

@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use nd_protocol::errors::{self, CODE_INVALID_PARAMS, CODE_METHOD_FAILED, CODE_RUNTIME_BUSY};
 use nd_protocol::{PROTOCOL_VERSION, ProtocolWriter, read_request};
+use nd_runtime::api_http;
 use nd_runtime::artifacts;
 use nd_runtime::cache::{self, ResponseCache};
 use nd_runtime::clipboard::{
@@ -229,6 +230,7 @@ fn dispatch(
                     "deadline",
                     "cancellation",
                     "disk-scan",
+                    "api-http",
                     "metrics"
                 ],
                 "processCount": state.processes.process_count(),
@@ -242,6 +244,10 @@ fn dispatch(
             let params = from_params::<CancelRequestParams>(params)?;
             Ok(json!({ "canceled": state.interrupts.cancel(&params.request_id) }))
         }
+        "apiStudio.request" => to_value(api_http::execute(
+            from_params::<api_http::ApiHttpRequestParams>(params)?,
+            interrupt,
+        )?),
         "metrics.snapshot" => {
             let scheduler = state.scheduler.snapshot()?;
             let dispatch = state.dispatch_stats.snapshot();

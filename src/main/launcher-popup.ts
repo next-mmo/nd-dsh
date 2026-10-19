@@ -3,8 +3,8 @@ import { IPC } from '../shared/contracts.js'
 import type { NdContext } from '../shared/nd-context.js'
 import type { LauncherHandoffTarget } from '../shared/quick-launcher.js'
 
-const LAUNCHER_POPUP_WIDTH = 700
-const LAUNCHER_POPUP_HEIGHT = 540
+const LAUNCHER_POPUP_WIDTH = 900
+const LAUNCHER_POPUP_HEIGHT = 720
 
 export interface LauncherPopupController {
   /** Raycast-style: hidden → show, visible → hide. */
@@ -109,12 +109,19 @@ export function createLauncherPopup(options: {
 
   const showPopup = (target: BrowserWindow): void => {
     const { x, y, width, height } = displayForPopup().workArea
+    // The card is inset from the window edges so its CSS shadow has room to
+    // paint on the transparent window instead of being clipped at the border.
+    const popupWidth = Math.min(LAUNCHER_POPUP_WIDTH, Math.max(360, width - 24))
+    const popupHeight = Math.min(LAUNCHER_POPUP_HEIGHT, Math.max(320, height - 24))
     target.setBounds({
-      x: Math.round(x + (width - LAUNCHER_POPUP_WIDTH) / 2),
-      y: Math.round(y + Math.max(0, (height - LAUNCHER_POPUP_HEIGHT) / 3)),
-      width: LAUNCHER_POPUP_WIDTH,
-      height: LAUNCHER_POPUP_HEIGHT,
+      x: Math.round(x + (width - popupWidth) / 2),
+      y: Math.round(y + Math.max(0, (height - popupHeight) / 3)),
+      width: popupWidth,
+      height: popupHeight,
     })
+    // Tell the surface before the window appears so it can restart its
+    // entrance animation and drop any query left from the previous opening.
+    target.webContents.send(IPC.windowLauncherPopupShowEvent)
     target.show()
     target.focus()
   }

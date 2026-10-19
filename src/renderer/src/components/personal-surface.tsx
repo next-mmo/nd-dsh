@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import type { BrowserState } from '../../../shared/contracts'
-import { BrowserIcon, GridIcon, SparkIcon } from './Icons'
+import { BrowserIcon, SparkIcon } from './Icons'
 import { BrowserPane } from './BrowserPane'
 import { SurfaceErrorBoundary } from './surface-error-boundary'
 import { cn } from '../lib/utils'
@@ -13,11 +13,12 @@ interface PersonalSurfaceProps {
   active: boolean
   pane: PersonalPane
   onPaneChange(pane: PersonalPane): void
-  /** The speed dial above the browser pane. Collapsed while a site has the pane. */
-  dialpad: ReactNode
-  dialpadOpen: boolean
-  onDialpadOpenChange(open: boolean): void
   state: BrowserState | null
+  /** The browser pane's new-tab page — the dialpad, Personal only. */
+  newTabPage?: ReactNode | undefined
+  /** Saves the site the browser pane is showing to the dialpad. */
+  onSaveSite?: (() => void) | undefined
+  siteSaved?: boolean | undefined
   onSnapshot(result: string): void
   onError(message: string): void
   onOpenSettings(): void
@@ -46,10 +47,10 @@ export function PersonalSurface({
   active,
   pane,
   onPaneChange,
-  dialpad,
-  dialpadOpen,
-  onDialpadOpenChange,
   state,
+  newTabPage,
+  onSaveSite,
+  siteSaved,
   onSnapshot,
   onError,
   onOpenSettings,
@@ -65,18 +66,6 @@ export function PersonalSurface({
         <button className={paneTabClasses(pane === 'browser')} onClick={() => onPaneChange('browser')}>
           <BrowserIcon />
           <span>Browser</span>
-        </button>
-        <button
-          className={paneTabClasses(pane === 'browser' && dialpadOpen)}
-          aria-pressed={pane === 'browser' && dialpadOpen}
-          title="Show your dialpad — top sites and your own links"
-          onClick={() => {
-            onPaneChange('browser')
-            onDialpadOpenChange(!dialpadOpen)
-          }}
-        >
-          <GridIcon />
-          <span>Dialpad</span>
         </button>
         <span className="ml-1 truncate text-[10px] text-faint">
           {pane === 'browser' ? 'Personal browsing — your own, not company work' : 'Notes, captures, and chats'}
@@ -95,11 +84,13 @@ export function PersonalSurface({
           aria-label="Personal browser"
           className={cn('h-full w-full min-h-0 min-w-0 overflow-hidden', pane === 'browser' ? 'flex flex-col' : 'hidden')}
         >
-          {dialpadOpen ? dialpad : null}
           <SurfaceErrorBoundary label="Personal browser" resetKey={`personal-browser:${state?.url ?? ''}`} onError={onError}>
             <BrowserPane
               active={active && pane === 'browser'}
               state={state}
+              newTabPage={newTabPage}
+              onSaveSite={onSaveSite}
+              siteSaved={siteSaved}
               onSnapshot={onSnapshot}
               onError={onError}
               onOpenSettings={onOpenSettings}

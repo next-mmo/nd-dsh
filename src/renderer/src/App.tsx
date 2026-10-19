@@ -256,7 +256,6 @@ export default function App() {
   const [browserFocusNudge, setBrowserFocusNudge] = useState(0)
   const lastBrowserFocusAt = useRef(0)
   const [personalPane, setPersonalPane] = useState<PersonalPane>('records')
-  const [personalDialpadOpen, setPersonalDialpadOpen] = useState(true)
   useEffect(() => window.ndDsh.ndExtensions.onBrowserFocus((focus) => {
     lastBrowserFocusAt.current = Date.now()
     const context = asNdContext(focus.context)
@@ -1251,14 +1250,19 @@ export default function App() {
   }
 
   /**
-   * Personal browser dialpad: a tile opens a real ND browser tab and the pane
-   * gives the site the space, so the speed dial behaves like a new-tab page.
-   * Links are personal records in ND-managed storage — never company or project
-   * memory.
+   * The dialpad is the browser pane's new-tab page, so a tile fills the blank
+   * tab it is being shown in instead of stacking another one. Reached from
+   * anywhere that already has a site in the tab, it opens a new tab. Saved
+   * links are personal records in ND-managed storage — never company or
+   * project memory.
    */
   const openPersonalTab = (url: string): void => {
     setPersonalPane('browser')
-    setPersonalDialpadOpen(false)
+    const blankTab = !browserState?.loading && (browserState?.url ?? 'about:blank') === 'about:blank'
+    if (blankTab) {
+      void window.ndDsh.browser.navigate(url).catch((cause) => notify(errorMessage(cause)))
+      return
+    }
     void window.ndDsh.browserPlatform.createTab('builtin', url)
       .then(async (tab) => {
         await window.ndDsh.browserPlatform.activateTab('builtin', tab.id)
@@ -1266,6 +1270,8 @@ export default function App() {
       })
       .catch((cause) => notify(errorMessage(cause)))
   }
+
+  const personalSiteSaved = Boolean(browserState?.url && homeState?.links.some((link) => link.url === browserState.url))
 
   const savePersonalDialpadLink = (): void => {
     const url = browserState?.url
@@ -1475,7 +1481,6 @@ export default function App() {
       await window.ndDsh.browserPlatform.select({ mode: 'tab', targetId: 'builtin', tabId })
       setQuickLauncherOpen(false)
       setPersonalPane('browser')
-      setPersonalDialpadOpen(false)
       switchToWorkbench('home')
     } catch (cause) {
       notify(errorMessage(cause))
@@ -2013,19 +2018,16 @@ export default function App() {
                       active={view === 'home'}
                       pane={personalPane}
                       onPaneChange={setPersonalPane}
-                      dialpadOpen={personalDialpadOpen}
-                      onDialpadOpenChange={setPersonalDialpadOpen}
-                      dialpad={
+                      newTabPage={
                         <PersonalDialpad
                           links={homeState.links}
-                          currentUrl={browserState?.url}
-                          busy={homeBusy}
                           onOpen={openPersonalTab}
-                          onSaveCurrent={savePersonalDialpadLink}
                           onRemoveLink={removePersonalDialpadLink}
                           onError={notify}
                         />
                       }
+                      onSaveSite={savePersonalDialpadLink}
+                      siteSaved={personalSiteSaved}
                       state={browserState}
                       onSnapshot={(result) => {
                         navigator.clipboard.writeText(result)

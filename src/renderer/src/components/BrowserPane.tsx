@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
-import type { BrowserPlatformState } from '../../../shared/browser-platform'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react'
+import type { BrowserPlatformState, BrowserTabDescriptor } from '../../../shared/browser-platform'
 import type { BrowserState } from '../../../shared/contracts'
-import { ArrowLeftIcon, ArrowRightIcon, CameraIcon, ContextIcon, ExternalIcon, PencilIcon, PuzzleIcon, ReloadIcon } from './Icons'
+import { ArrowLeftIcon, ArrowRightIcon, CameraIcon, CloseIcon, ContextIcon, ExternalIcon, GlobeIcon, PencilIcon, PlusIcon, PuzzleIcon, ReloadIcon, SpinnerIcon, StarIcon } from './Icons'
 import { BridgePill } from './bridge-pill'
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover'
 import { SettingsSwitch } from './settings-primitives'
@@ -14,6 +14,15 @@ interface BrowserPaneProps {
   onError(message: string): void
   /** Opens Settings → General → Browser, the canonical extension manager. */
   onOpenSettings?(): void
+  /**
+   * The pane's new-tab page, shown in the canvas while the active tab is blank.
+   * Only Personal passes one: the Agent workbench stays a work surface without
+   * a personal speed dial.
+   */
+  newTabPage?: ReactNode | undefined
+  /** Saves the current site to the dialpad. Absent means no star is offered. */
+  onSaveSite?: (() => void) | undefined
+  siteSaved?: boolean | undefined
 }
 
 const iconButtonClasses = cn(
@@ -28,9 +37,26 @@ const activeIconButtonClasses = cn(
   'disabled:pointer-events-none disabled:opacity-45 [&_svg]:size-[15px]',
 )
 
-export function BrowserPane({ active, state, onSnapshot, onError, onOpenSettings }: BrowserPaneProps) {
+function tabLabel(tab: BrowserTabDescriptor, index: number): string {
+  if (tab.title && tab.title !== 'Browser') return tab.title
+  if (tab.url === 'about:blank') return 'New tab'
+  return tab.url.replace(/^https?:\/\//, '').split(/[/?]/)[0] || `Tab ${index + 1}`
+}
+
+/** Chrome's leading tab slot: spinner while loading, then the site icon. */
+function TabFavicon({ tab }: { tab: BrowserTabDescriptor }) {
+  const [failed, setFailed] = useState(false)
+  if (tab.loading) return <SpinnerIcon className="size-[13px] shrink-0 text-soft" />
+  if (tab.favicon && !failed) {
+    return <img src={tab.favicon} alt="" className="size-[14px] shrink-0 rounded-[3px] object-contain" onError={() => setFailed(true)} />
+  }
+  return <GlobeIcon className="size-[13px] shrink-0 text-faint" />
+}
+
+export function BrowserPane({ active, state, onSnapshot, onError, onOpenSettings, newTabPage, onSaveSite, siteSaved }: BrowserPaneProps) {
   const uiPreview = window.ndDshRuntimeMode === 'ui-preview'
   const surfaceRef = useRef<HTMLDivElement>(null)
+  const tabStripRef = useRef<HTMLDivElement>(null)
   const addressFocused = useRef(false)
   const [address, setAddress] = useState(state?.url ?? 'about:blank')
   const [platform, setPlatform] = useState<BrowserPlatformState | null>(null)
@@ -39,6 +65,10 @@ export function BrowserPane({ active, state, onSnapshot, onError, onOpenSettings
 
   const builtinTabs = state?.tabs ?? []
   const activeTabId = state?.activeTabId
+  // The native view is hidden for a blank tab, so this is the only thing the
+  // canvas can show there.
+  const showsNewTabPage = Boolean(newTabPage) && !state?.loading && (state?.url ?? 'about:blank') === 'about:blank'
+  const savableSite = /^https?:\/\//i.test(state?.url ?? '')
   const selectedTargetId = platform?.selection.targetId
     ?? (platform?.selection.mode === 'auto' ? 'auto' : 'builtin')
   const targetForTabs = selectedTargetId === 'auto' ? 'builtin' : selectedTargetId
@@ -119,6 +149,47 @@ export function BrowserPane({ active, state, onSnapshot, onError, onOpenSettings
       if (targetForTabs === 'builtin') await window.ndDsh.browserPlatform.activateTab('builtin', tabId)
     })
   }
+
+  /** A tab switched from the keyboard or an agent can sit outside the scrolled strip. */
+  useEffect(() => {
+    const selected = tabStripRef.current?.querySelector<HTMLElement>('[data-active="true"]')
+    selected?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [activeTabId, builtinTabs])
+
+  useEffect(() => {
+    if (!active) return
+    const cycleTab = (delta: number): void => {
+      if (builtinTabs.length < 2) return
+      const index = builtinTabs.findIndex((tab) => tab.id === activeTabId)
+      const next = builtinTabs[(Math.max(index, 0) + delta + builtinTabs.length) % builtinTabs.length]
+      if (next) switchTab(next.id)
+    }
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.defaultPrevented || event.altKey || !(event.ctrlKey || event.metaKey)) return
+      // Never steal a chord from a focused field: the composer and address bar own their keys.
+      if ((event.target as HTMLElement | null)?.closest('input, textarea, select, [contenteditable="true"], [role="textbox"]')) return
+      const key = event.key.toLowerCase()
+      if (key === 't') {
+        event.preventDefault()
+        createTab()
+      } else if (key === 'w') {
+        if (!activeTabId) return
+        event.preventDefault()
+        closeTab(activeTabId)
+      } else if (key === 'tab') {
+        event.preventDefault()
+        cycleTab(event.shiftKey ? -1 : 1)
+      } else if (/^[1-9]$/.test(key)) {
+        const tab = key === '9' ? builtinTabs[builtinTabs.length - 1] : builtinTabs[Number(key) - 1]
+        if (tab) {
+          event.preventDefault()
+          switchTab(tab.id)
+        }
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [active, activeTabId, builtinTabs])
 
   /**
    * Bounds only: the native view is one shared child view, so the app shell
@@ -211,6 +282,64 @@ export function BrowserPane({ active, state, onSnapshot, onError, onOpenSettings
 
   return (
     <section className="flex flex-1 flex-col h-full w-full min-h-0 min-w-0 bg-background" aria-label="Built-in browser">
+      <div
+        ref={tabStripRef}
+        role="tablist"
+        aria-label="Built-in browser tabs"
+        className="flex h-[38px] shrink-0 items-center gap-[3px] overflow-x-auto border-b border-border-soft bg-secondary px-2"
+      >
+        {builtinTabs.map((tab, index) => {
+          const tabActive = tab.id === activeTabId
+          const label = tabLabel(tab, index)
+          return (
+            <div
+              key={tab.id}
+              role="tab"
+              aria-selected={tabActive}
+              aria-label={label}
+              data-active={tabActive ? 'true' : undefined}
+              tabIndex={tabActive ? 0 : -1}
+              title={label}
+              className={cn(
+                'group flex h-[28px] min-w-[68px] max-w-[220px] basis-[190px] cursor-pointer items-center gap-[7px] rounded-[8px] px-[9px] text-[11px] outline-none transition-colors',
+                'focus-visible:ring-2 focus-visible:ring-(--border-focus)',
+                tabActive ? 'bg-background text-strong shadow-[0_1px_2px_rgb(0_0_0/18%)]' : 'text-soft hover:bg-accent/70',
+              )}
+              onClick={() => switchTab(tab.id)}
+              onAuxClick={(event) => { if (event.button === 1) { event.preventDefault(); closeTab(tab.id) } }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); switchTab(tab.id) }
+              }}
+            >
+              <TabFavicon key={tab.favicon ?? 'none'} tab={tab} />
+              <span className="min-w-0 flex-1 truncate leading-none">{label}</span>
+              <button
+                type="button"
+                aria-label={`Close ${label}`}
+                title="Close tab (Ctrl+W)"
+                className={cn(
+                  'grid size-[16px] shrink-0 place-items-center rounded-full text-faint opacity-0 transition-opacity hover:bg-border-soft hover:text-foreground',
+                  'focus-visible:opacity-100 group-hover:opacity-100',
+                  tabActive && 'opacity-100',
+                )}
+                onClick={(event) => { event.stopPropagation(); closeTab(tab.id) }}
+              >
+                <CloseIcon className="size-[11px]" />
+              </button>
+            </div>
+          )
+        })}
+        <button
+          type="button"
+          aria-label="New tab"
+          title="New tab (Ctrl+T)"
+          className="grid size-[28px] shrink-0 place-items-center rounded-[8px] text-soft transition-colors hover:bg-accent hover:text-foreground [&_svg]:size-[16px]"
+          onClick={createTab}
+        >
+          <PlusIcon />
+        </button>
+      </div>
+
       <div className="flex h-[39px] shrink-0 min-w-0 items-center gap-[3px] border-b border-border-soft bg-secondary px-[7px] py-[5px]">
         <button className={iconButtonClasses} disabled={!state?.canGoBack || state?.annotationMode} onClick={() => void runBrowserAction(() => window.ndDsh.browser.back())} title="Back"><ArrowLeftIcon /></button>
         <button className={iconButtonClasses} disabled={!state?.canGoForward || state?.annotationMode} onClick={() => void runBrowserAction(() => window.ndDsh.browser.forward())} title="Forward"><ArrowRightIcon /></button>
@@ -231,6 +360,17 @@ export function BrowserPane({ active, state, onSnapshot, onError, onOpenSettings
             className="min-w-0 flex-1 border-0 bg-transparent font-mono text-[9px] text-soft outline-none"
           />
         </form>
+        {onSaveSite ? (
+          <button
+            className={cn(iconButtonClasses, siteSaved && 'text-warning')}
+            aria-pressed={Boolean(siteSaved)}
+            disabled={!savableSite || Boolean(state?.annotationMode)}
+            onClick={onSaveSite}
+            title={siteSaved ? 'This site is already on your dialpad' : 'Save this site to your dialpad'}
+          >
+            <StarIcon fill={siteSaved ? 'currentColor' : 'none'} />
+          </button>
+        ) : null}
         <select
           aria-label="Agent browser target"
           className="h-7 max-w-[150px] rounded-[6px] border border-border bg-background px-1.5 text-[9px] text-soft outline-none"
@@ -411,51 +551,6 @@ export function BrowserPane({ active, state, onSnapshot, onError, onOpenSettings
         </BridgePill>
       </div>
 
-      <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border-soft bg-secondary px-[7px] py-[3px]" role="tablist" aria-label="Built-in browser tabs">
-        {builtinTabs.map((tab, index) => {
-          const tabActive = tab.id === activeTabId
-          const label = tab.title && tab.title !== 'Browser'
-            ? tab.title
-            : tab.url === 'about:blank'
-              ? `Tab ${index + 1}`
-              : tab.url.replace(/^https?:\/\//, '').split(/[/?]/)[0] || `Tab ${index + 1}`
-          return (
-            <div
-              key={tab.id}
-              role="tab"
-              aria-selected={tabActive}
-              className={cn(
-                'group flex max-w-[180px] shrink-0 cursor-pointer items-center gap-1.5 rounded-t-[5px] px-2 py-[3px] text-[9px]',
-                tabActive ? 'bg-surface-0 text-strong' : 'text-soft hover:bg-accent/60',
-              )}
-              title={tab.url}
-              onClick={() => switchTab(tab.id)}
-            >
-              <span className="truncate">{label}</span>
-              <button
-                type="button"
-                aria-label={`Close ${label}`}
-                className={cn(
-                  'shrink-0 rounded px-1 text-[10px] leading-none text-faint hover:bg-border-soft hover:text-foreground',
-                  tabActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
-                )}
-                onClick={(event) => { event.stopPropagation(); closeTab(tab.id) }}
-              >
-                ×
-              </button>
-            </div>
-          )
-        })}
-        <button
-          type="button"
-          className="shrink-0 rounded px-1.5 py-[2px] text-[11px] leading-none text-faint transition-colors hover:bg-accent hover:text-foreground"
-          title="New built-in browser tab"
-          onClick={createTab}
-        >
-          +
-        </button>
-      </div>
-
       {approval ? (
         <div className="flex shrink-0 items-center gap-2 border-b border-warning/40 bg-warning/10 px-3 py-1.5 text-[10px]">
           <strong className="text-strong">Browser approval</strong>
@@ -480,10 +575,14 @@ export function BrowserPane({ active, state, onSnapshot, onError, onOpenSettings
       ) : null}
 
       <div className="relative flex-1 min-h-0 min-w-0 overflow-hidden bg-browser" ref={surfaceRef}>
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-[10px] text-fainter">
-          {state?.loading ? <div className="size-[34px] animate-spin rounded-full border border-border-strong border-t-primary" /> : null}
-          <span>{state?.loading ? `Loading ${state.url}` : uiPreview ? 'Browser canvas is desktop-only; controls are simulated in UI preview.' : state?.url === 'about:blank' ? 'Enter a URL to open the ND browser.' : 'ND built-in browser surface'}</span>
-        </div>
+        {showsNewTabPage ? (
+          <div className="absolute inset-0 overflow-y-auto">{newTabPage}</div>
+        ) : (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-[10px] text-fainter">
+            {state?.loading ? <div className="size-[34px] animate-spin rounded-full border border-border-strong border-t-primary" /> : null}
+            <span>{state?.loading ? `Loading ${state.url}` : uiPreview ? 'Browser canvas is desktop-only; controls are simulated in UI preview.' : state?.url === 'about:blank' ? 'Enter a URL to open the ND browser.' : 'ND built-in browser surface'}</span>
+          </div>
+        )}
       </div>
     </section>
   )

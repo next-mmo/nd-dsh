@@ -46,6 +46,8 @@ describe('runtime failure notices', () => {
     expect(described).toContain('will repeat it')
     expect(described).toContain('Native model')
     expect(described).toContain('supported Codex model')
+    expect(described).toContain('does not serve')
+    expect(described).toContain('overrides it for this chat')
   })
 
   it('strips Electron IPC wrappers from user-facing notifications', () => {

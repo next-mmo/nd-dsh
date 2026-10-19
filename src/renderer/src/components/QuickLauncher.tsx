@@ -1,24 +1,31 @@
-import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   Building2,
   Camera,
   Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Clipboard,
   FolderOpen,
+  Globe,
+  Image,
   ListTodo,
   MessageSquare,
   MonitorUp,
   Pause,
   Play,
   Puzzle,
+  Shuffle,
   SkipBack,
   SkipForward,
   StickyNote,
+  Zap,
 } from 'lucide-react'
 import type { OrganizationSnapshot } from '../../../shared/organization'
 import type { NdMediaSessionState } from '../../../shared/media-session'
 import type { NdCommandView } from '../../../shared/nd-invocations'
-import type { ContextOption } from '../lib/nd-context-model'
+import { commandRunPlan, type ContextOption } from '../lib/nd-context-model'
 import { cn } from '@renderer/lib/utils'
 import { MediaArtwork } from './MediaArtwork'
 import { SystemVolumeControl } from './SystemVolumeControl'
@@ -35,7 +42,6 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
-  CommandSeparator,
   CommandShortcut,
 } from './ui/command'
 
@@ -85,6 +91,108 @@ function launcherIcon(command: LauncherCommandItem): ReactNode {
     company: <Building2 />,
   }
   return icons[command.icon]
+}
+
+function Keycap({ children }: { children: ReactNode }): ReactNode {
+  return (
+    <kbd className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-[5px] border border-border bg-surface-2/80 px-1 font-mono text-[10px] leading-none text-soft">
+      {children}
+    </kbd>
+  )
+}
+
+const QUICK_PICKS_EXPANDED_KEY = 'nd.launcher.quick-picks-expanded'
+const QUICK_PICKS_LIMIT = 16
+
+const QUICK_PICK_PRIORITY: ReadonlyArray<readonly [string, string]> = [
+  ['extensions', 'nd.wallpaper-manager:next-wallpaper'],
+  ['extensions', 'nd.wallpaper-manager:open-wallpaper-studio'],
+  ['extensions', 'nd.wallpaper-manager:previous-wallpaper'],
+  ['extensions', 'nd.wallpaper-manager:random-wallpaper'],
+  ['core.capture', 'capture-screen'],
+  ['core.capture', 'capture-clipboard'],
+  ['core.quick-actions', 'open-kanban'],
+  ['core.quick-actions', 'open-agent'],
+  ['extensions', 'nd.daily-essentials:capture-area'],
+  ['extensions', 'nd.daily-essentials:search-notes'],
+  ['extensions', 'nd.daily-essentials:open-google'],
+  ['core.capture', 'capture-tools'],
+]
+
+const QUICK_PICK_TITLES: Record<string, string> = {
+  'core.capture:capture-screen': 'Capture screen',
+  'core.capture:capture-clipboard': 'Clipboard',
+  'core.capture:capture-tools': 'Capture tools',
+  'core.quick-actions:open-kanban': 'Kanban',
+  'core.quick-actions:open-agent': 'Agent',
+  'nd.wallpaper-manager:next-wallpaper': 'Next wallpaper',
+  'nd.wallpaper-manager:previous-wallpaper': 'Previous wallpaper',
+  'nd.wallpaper-manager:random-wallpaper': 'Random wallpaper',
+  'nd.wallpaper-manager:open-wallpaper-studio': 'Wallpaper Studio',
+  'nd.daily-essentials:capture-area': 'Capture area',
+  'nd.daily-essentials:search-notes': 'Notes',
+  'nd.daily-essentials:open-google': 'Google',
+}
+
+const QUICK_PICK_SAFE_HOSTS = new Set([
+  'capture.area',
+  'capture.screen',
+  'clipboard.read',
+  'note.search',
+  'os.wallpaper.next',
+  'os.wallpaper.previous',
+  'os.wallpaper.random',
+  'os.wallpaper.status',
+])
+
+/** A quick pick must be able to run without typed input. */
+function quickPickRunnable(command: NdCommandView): boolean {
+  if (commandRunPlan(command, '').missing) return false
+  return Boolean(command.openViewId) || QUICK_PICK_SAFE_HOSTS.has(command.host)
+}
+
+function quickPickIcon(command: LauncherCommandItem): ReactNode {
+  const icons: Record<string, ReactNode> = {
+    'core.capture:capture-screen': <Camera />,
+    'core.capture:capture-clipboard': <Clipboard />,
+    'core.capture:capture-tools': <MonitorUp />,
+    'core.quick-actions:open-kanban': <ListTodo />,
+    'core.quick-actions:open-agent': <MessageSquare />,
+    'nd.wallpaper-manager:next-wallpaper': <ChevronRight />,
+    'nd.wallpaper-manager:previous-wallpaper': <ChevronLeft />,
+    'nd.wallpaper-manager:random-wallpaper': <Shuffle />,
+    'nd.wallpaper-manager:open-wallpaper-studio': <Image />,
+    'nd.daily-essentials:capture-area': <MonitorUp />,
+    'nd.daily-essentials:search-notes': <StickyNote />,
+    'nd.daily-essentials:open-google': <Globe />,
+  }
+  return icons[`${command.sourceId}:${command.id}`] ?? <Puzzle />
+}
+
+function readQuickPicksExpanded(): boolean {
+  try {
+    return globalThis.localStorage?.getItem(QUICK_PICKS_EXPANDED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function QuickPickChip({ command, onSelect }: { command: LauncherCommandItem; onSelect(): void }): ReactNode {
+  return (
+    <button
+      type="button"
+      title={command.title}
+      onClick={onSelect}
+      className="group inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full border border-border-soft bg-surface-2/60 px-2.5 text-[11px] font-medium text-soft transition-colors hover:border-border-strong hover:bg-surface-3 hover:text-strong focus-visible:outline-2 focus-visible:outline-primary"
+    >
+      <span className="text-faint transition-colors group-hover:text-primary [&_svg]:size-3.5">
+        {quickPickIcon(command)}
+      </span>
+      <span className="max-w-[140px] truncate">
+        {QUICK_PICK_TITLES[`${command.sourceId}:${command.id}`] ?? command.title}
+      </span>
+    </button>
+  )
 }
 
 export function QuickLauncher({
@@ -144,6 +252,53 @@ export function QuickLauncher({
     },
   })
   const groups = launcherCommandGroups(commands)
+  // The popup window is inset from its card so the CSS shadow can paint on the
+  // transparent surface. Anchor the card near the top like Raycast instead of
+  // centering it, so the footer can never fall below the window edge.
+  const popupSurface = window.location.hash.replace(/^#\/?/, '').split(/[/?]/)[0] === 'launcher'
+  const collapsedQuickPickCount = popupSurface ? 5 : 4
+
+  const [quickPicksExpanded, setQuickPicksExpanded] = useState(readQuickPicksExpanded)
+  useEffect(() => {
+    try {
+      globalThis.localStorage?.setItem(QUICK_PICKS_EXPANDED_KEY, quickPicksExpanded ? '1' : '0')
+    } catch {
+      // Storage can be unavailable in hardened profiles; the toggle still works per open.
+    }
+  }, [quickPicksExpanded])
+
+  // Quick picks surface the commands people reach for most without opening the
+  // full registry. Only no-input commands are eligible, so a click can never
+  // fail with a "type something first" validation.
+  const extensionViews = new Map<string, NdCommandView>(
+    extensionCommands.map((command) => [`${command.extensionId}:${command.contributionId}`, command] as const),
+  )
+  const quickPicks: LauncherCommandItem[] = []
+  const quickPickKeys = new Set<string>()
+  const addQuickPick = (sourceId: string, id: string): void => {
+    if (quickPicks.length >= QUICK_PICKS_LIMIT) return
+    const key = `${sourceId}:${id}`
+    if (quickPickKeys.has(key)) return
+    const command = commands.find((candidate) => candidate.sourceId === sourceId && candidate.id === id)
+    if (!command) return
+    quickPickKeys.add(key)
+    quickPicks.push(command)
+  }
+  for (const [sourceId, id] of QUICK_PICK_PRIORITY) addQuickPick(sourceId, id)
+  for (const command of commands) {
+    if (quickPicks.length >= QUICK_PICKS_LIMIT) break
+    // Daily Essentials duplicates core capture/notes actions under different
+    // ids; its unique commands are already in the priority list.
+    if (command.sourceId !== 'extensions' || command.id.startsWith('nd.daily-essentials:')) continue
+    if (quickPickKeys.has(`extensions:${command.id}`)) continue
+    const view = extensionViews.get(command.id)
+    if (!view || !quickPickRunnable(view)) continue
+    quickPickKeys.add(`extensions:${command.id}`)
+    quickPicks.push(command)
+  }
+  const showQuickPicks = query.trim().length === 0 && quickPicks.length > 0
+  const leadingQuickPicks = quickPicks.slice(0, collapsedQuickPickCount)
+  const extraQuickPicks = quickPicks.slice(collapsedQuickPickCount)
 
   // The transport row mirrors whatever the embedded browser is playing; main
   // pushes changes, so pausing from the page updates the row too.
@@ -180,11 +335,6 @@ export function QuickLauncher({
     onOpenChange(next)
   }
 
-  // The Raycast popup window is only 540px tall; centering the card at 42%
-  // lets a full command list push the card above the window edge, clipping
-  // the header. Anchor the popup card to the top instead.
-  const popupSurface = window.location.hash.replace(/^#\/?/, '').split(/[/?]/)[0] === 'launcher'
-
   return (
     <CommandDialog
       open={open}
@@ -192,51 +342,117 @@ export function QuickLauncher({
       title="ND Quick Launcher"
       description="Search one registry of ND, company, project, and extension commands."
       className={cn(
-        'max-w-[680px] rounded-xl border-border-strong bg-surface-1/98 shadow-[0_28px_90px_rgba(0,0,0,0.58)] backdrop-blur-xl',
-        popupSurface ? 'top-3 translate-y-0' : 'top-[42%]',
+        'rounded-[18px] border-border-strong bg-surface-1/98',
+        popupSurface
+          ? 'top-10 h-[min(640px,calc(100vh-80px))] translate-y-0 max-w-[780px] sm:max-w-[780px]'
+          : 'max-w-[720px] shadow-[0_28px_90px_rgba(0,0,0,0.58)] sm:max-w-[720px]',
       )}
       showCloseButton={false}
     >
-      <div className="flex items-center gap-2 border-b border-border-soft px-3 pb-2.5 pt-3">
-        <span className="grid size-6 shrink-0 place-items-center rounded-[7px] border border-primary/30 bg-primary/10 text-sm font-extrabold tracking-[0.08em] text-primary">ND</span>
-        <span className="truncate text-sm font-semibold tracking-tight text-strong">Quick Launcher</span>
+      <div className="flex shrink-0 items-center gap-3 border-b border-border-soft px-4">
+        <span className="grid size-7 shrink-0 place-items-center rounded-[8px] bg-gradient-to-br from-primary to-[#0066e6] text-[10px] font-extrabold tracking-[0.08em] text-white shadow-[0_2px_10px_rgba(10,132,255,0.35)]">
+          ND
+        </span>
+        <CommandInput
+          autoFocus
+          showIcon={false}
+          wrapperClassName="h-14 flex-1 border-b-0 px-0"
+          className="h-14 text-base placeholder:text-faint"
+          value={query}
+          onValueChange={setQuery}
+          placeholder="Search ND or type something to capture…"
+        />
       </div>
-      <CommandInput
-        autoFocus
-        wrapperClassName="border-b-0"
-        value={query}
-        onValueChange={setQuery}
-        placeholder="Search ND or type something to capture…"
-      />
-      <CommandList className={popupSurface ? (media ? 'max-h-[300px]' : 'max-h-[350px]') : 'max-h-[384px]'}>
+      {quickPicks.length > 0 ? (
+        <div
+          id="launcher-quick-picks"
+          inert={!showQuickPicks}
+          aria-hidden={!showQuickPicks}
+          className={cn(
+            'shrink-0 overflow-hidden transition-[max-height,opacity] duration-200 ease-out',
+            showQuickPicks ? (quickPicksExpanded ? 'max-h-48 opacity-100' : 'max-h-11 opacity-100') : 'max-h-0 opacity-0',
+          )}
+        >
+          <div className="border-b border-border-soft">
+            <div className="flex items-center gap-2 px-4 py-2">
+              <span className="flex shrink-0 items-center gap-1 text-[9px] font-semibold uppercase tracking-[0.1em] text-fainter">
+                <Zap className="size-3" />
+                Quick
+              </span>
+              <div className="flex min-w-0 flex-1 gap-1.5 overflow-hidden">
+                {leadingQuickPicks.map((command) => (
+                  <QuickPickChip
+                    key={`${command.sourceId}:${command.id}`}
+                    command={command}
+                    onSelect={() => closeAndRun(command)}
+                  />
+                ))}
+              </div>
+              {quickPicks.length > collapsedQuickPickCount ? (
+                <button
+                  type="button"
+                  aria-expanded={quickPicksExpanded}
+                  aria-controls="launcher-quick-picks"
+                  aria-label={quickPicksExpanded ? 'Collapse quick picks' : `Show all ${quickPicks.length} quick picks`}
+                  title={quickPicksExpanded ? 'Collapse quick picks' : `Show all ${quickPicks.length} quick picks`}
+                  onClick={() => setQuickPicksExpanded((value) => !value)}
+                  className="grid size-6 shrink-0 place-items-center rounded-md text-faint transition-colors hover:bg-surface-2 hover:text-strong focus-visible:outline-2 focus-visible:outline-primary"
+                >
+                  <ChevronDown
+                    className={cn('size-3.5 transition-transform duration-200', quickPicksExpanded ? 'rotate-0' : '-rotate-90')}
+                  />
+                </button>
+              ) : null}
+            </div>
+            {quickPicksExpanded && extraQuickPicks.length > 0 ? (
+              <div className="flex flex-wrap gap-1.5 px-4 pb-2">
+                {extraQuickPicks.map((command) => (
+                  <QuickPickChip
+                    key={`${command.sourceId}:${command.id}`}
+                    command={command}
+                    onSelect={() => closeAndRun(command)}
+                  />
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+      <CommandList
+        className={cn(
+          'px-2 py-1.5',
+          popupSurface
+            ? 'min-h-0 max-h-none flex-1'
+            : 'max-h-[420px]',
+        )}
+      >
         <CommandEmpty>No matching ND command.</CommandEmpty>
 
-        {groups.map((group, index) => (
-          <Fragment key={group.group}>
-            {index > 0 ? <CommandSeparator /> : null}
-            <CommandGroup heading={group.group}>
-              {group.items.map((command) => (
-                <CommandItem
-                  key={`${command.sourceId}:${command.id}`}
-                  value={command.searchText}
-                  onSelect={() => closeAndRun(command)}
-                >
+        {groups.map((group) => (
+          <CommandGroup key={group.group} heading={group.group}>
+            {group.items.map((command) => (
+              <CommandItem
+                key={`${command.sourceId}:${command.id}`}
+                value={command.searchText}
+                onSelect={() => closeAndRun(command)}
+              >
+                <span className="grid size-7 shrink-0 place-items-center rounded-[7px] border border-border-soft bg-surface-2/70 text-soft">
                   {launcherIcon(command)}
-                  <span className="min-w-0 flex-1 truncate">{command.title}</span>
-                  {command.shortcut ? (
-                    <CommandShortcut className={command.id === 'capture-url' ? 'max-w-[230px] truncate normal-case tracking-normal' : undefined}>
-                      {command.shortcut}
-                    </CommandShortcut>
-                  ) : null}
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </Fragment>
+                </span>
+                <span className="min-w-0 flex-1 truncate">{command.title}</span>
+                {command.shortcut ? (
+                  <CommandShortcut className={command.id === 'capture-url' ? 'max-w-[230px] truncate' : undefined}>
+                    {command.shortcut}
+                  </CommandShortcut>
+                ) : null}
+              </CommandItem>
+            ))}
+          </CommandGroup>
         ))}
       </CommandList>
 
       {media ? (
-        <div className="flex items-center gap-2 border-t border-border-soft px-3 py-2">
+        <div className="flex shrink-0 items-center gap-2 border-t border-border-soft px-4 py-2">
           <button
             type="button"
             aria-label={`Open ${media.site || 'media'} in browser`}
@@ -289,11 +505,18 @@ export function QuickLauncher({
 
       <SystemVolumeControl active={open} />
 
-      <div className="flex items-center justify-between gap-3 border-t border-border-soft px-3 py-2 text-[10px] text-faint">
-        <span className="truncate">
-          {contextLabel ?? (activeCompany?.name ?? 'No company')}{activeProject && !contextLabel ? ` · ${activeProject.name}` : ''}
+      <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border-soft px-4 py-2 text-[10px] text-faint">
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="size-1.5 shrink-0 rounded-full bg-primary/70" />
+          <span className="truncate">
+            {contextLabel ?? (activeCompany?.name ?? 'No company')}{activeProject && !contextLabel ? ` · ${activeProject.name}` : ''}
+          </span>
         </span>
-        <span className="shrink-0 font-mono">↑↓ navigate · Enter run · Esc close</span>
+        <span className="flex shrink-0 items-center gap-3">
+          <span className="flex items-center gap-1"><Keycap>↑</Keycap><Keycap>↓</Keycap>Navigate</span>
+          <span className="flex items-center gap-1"><Keycap>↵</Keycap>Run</span>
+          <span className="flex items-center gap-1"><Keycap>esc</Keycap>Close</span>
+        </span>
       </div>
     </CommandDialog>
   )

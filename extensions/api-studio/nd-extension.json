@@ -1,0 +1,44 @@
+{
+  "protocol": "nd.extension/1",
+  "id": "nd.api-studio",
+  "name": "ND API Studio",
+  "description": "Design, document, test, and debug HTTP APIs in one local-first workspace: OpenAPI browsing with Try It Out, a Postman-style request builder, collections, environments, and request history. Requests run in ND's Rust runtime.",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "contexts": ["personal"],
+  "permissions": ["apistudio.read", "apistudio.write", "apistudio.execute", "clipboard.write"],
+  "settings": [],
+  "contributions": {
+    "commands": [
+      {
+        "id": "open",
+        "title": "Open API Studio",
+        "description": "Open the API documentation and HTTP client workspace.",
+        "keywords": ["api", "openapi", "swagger", "knife4j", "postman", "http", "rest", "debug", "test", "client"],
+        "host": "apistudio.workspace.get",
+        "openViewId": "studio",
+        "contexts": ["personal"]
+      }
+    ],
+    "views": [
+      {
+        "id": "studio",
+        "title": "API Studio",
+        "description": "OpenAPI docs, request builder, collections, environments, and history.",
+        "kind": "web",
+        "entry": "ui/index.html",
+        "contexts": ["personal"],
+        "actions": [
+          { "id": "workspace-read", "title": "Read the API Studio workspace", "host": "apistudio.workspace.get" },
+          { "id": "workspace-save", "title": "Save the API Studio workspace", "host": "apistudio.workspace.save" },
+          { "id": "spec-list", "title": "List imported API specifications", "host": "apistudio.spec.list" },
+          { "id": "spec-read", "title": "Read an imported API specification", "host": "apistudio.spec.read" },
+          { "id": "spec-import", "title": "Import an API specification", "host": "apistudio.spec.import" },
+          { "id": "spec-delete", "title": "Delete an imported API specification", "host": "apistudio.spec.delete" },
+          { "id": "execute", "title": "Send an HTTP request", "host": "apistudio.request.execute" },
+          { "id": "copy", "title": "Copy text to the clipboard", "host": "clipboard.write" }
+        ]
+      }
+    ]
+  }
+}

@@ -57,6 +57,9 @@
           "payguard.write",
           "disk.read",
           "disk.write",
+          "apistudio.read",
+          "apistudio.write",
+          "apistudio.execute",
           "chat.start",
           "workflow.read"
         ]
@@ -265,6 +268,13 @@
         "disk.scan.cancel",
         "disk.trash.move",
         "disk.reveal",
+        "apistudio.workspace.get",
+        "apistudio.workspace.save",
+        "apistudio.spec.list",
+        "apistudio.spec.read",
+        "apistudio.spec.import",
+        "apistudio.spec.delete",
+        "apistudio.request.execute",
         "browser.openUrl",
         "browser.translate",
         "browser.translate.history",

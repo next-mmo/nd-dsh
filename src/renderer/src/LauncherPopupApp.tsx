@@ -35,6 +35,14 @@ export default function LauncherPopupApp(): React.ReactNode {
   // resets the selector so a stale project context can never linger.
   const [launcherContextId, setLauncherContextId] = useState('personal')
   const [extensionCommands, setExtensionCommands] = useState<NdCommandView[]>([])
+  // Each reveal remounts the launcher so its entrance replays and no stale
+  // query survives from the previous opening.
+  const [revealEpoch, setRevealEpoch] = useState(0)
+
+  useEffect(() => {
+    const off = window.ndDsh.window?.onLauncherPopupShow?.(() => setRevealEpoch((value) => value + 1))
+    return () => off?.()
+  }, [])
 
   useEffect(() => {
     let mounted = true
@@ -322,6 +330,7 @@ export default function LauncherPopupApp(): React.ReactNode {
   return (
     <div className="launcher-popup-mode h-screen w-screen overflow-hidden bg-transparent p-2 font-sans">
       <QuickLauncher
+        key={`launcher-${revealEpoch}`}
         open
         closeBeforeRun={false}
         onOpenChange={hidePopup}

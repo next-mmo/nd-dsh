@@ -33,6 +33,8 @@ export interface BrowserTabDescriptor {
   title: string
   url: string
   origin?: string | undefined
+  /** Page icon for the tab strip, restricted to renderer-loadable schemes. */
+  favicon?: string | undefined
   active: boolean
   visible: boolean
   loading?: boolean | undefined

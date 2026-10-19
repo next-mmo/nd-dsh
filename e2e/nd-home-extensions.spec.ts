@@ -97,16 +97,24 @@ test('the Personal space gives its browser a full-size pane, not a side panel', 
 })
 
 
-test('the Personal dialpad offers top sites and the user\'s own links', async () => {
+test('the Personal dialpad is the browser pane\'s new-tab page', async () => {
   const page = launched.page
   await page.getByLabel('ND-DSH navigation').getByRole('button', { name: 'Personal' }).click()
-  await page.getByRole('tablist', { name: 'Personal panes' }).getByRole('button', { name: 'Browser' }).click()
+  const panes = page.getByRole('tablist', { name: 'Personal panes' })
+  await panes.getByRole('button', { name: 'Browser' }).click()
 
+  // A blank tab belongs to the shell, so the speed dial paints into the canvas
+  // itself. It needs no control of its own: it is gone once a site loads.
+  await page.getByRole('button', { name: 'New tab' }).click()
   const dialpad = page.getByRole('region', { name: 'Personal dialpad' })
   await expect(dialpad).toBeVisible()
+  await expect(panes.getByRole('button', { name: 'Dialpad' })).toHaveCount(0)
   for (const site of ['Google', 'YouTube', 'Wikipedia']) {
     await expect(dialpad.getByRole('button', { name: site, exact: true })).toBeVisible()
   }
+
+  // There is no page to save from a new tab, so the star waits for one.
+  await expect(page.getByTitle('Save this site to your dialpad')).toBeDisabled()
 
   // A saved link is a personal ND record; the tile joins the top sites.
   await page.evaluate(async () => {
@@ -124,13 +132,6 @@ test('the Personal dialpad offers top sites and the user\'s own links', async ()
     return state.links.length
   })
   expect(links).toBe(0)
-
-  // The pane strip's Dialpad control puts the speed dial away and back.
-  const panes = page.getByRole('tablist', { name: 'Personal panes' })
-  await panes.getByRole('button', { name: 'Dialpad' }).click()
-  await expect(dialpad).toBeHidden()
-  await panes.getByRole('button', { name: 'Dialpad' }).click()
-  await expect(dialpad).toBeVisible()
   expect(rendererErrors).toEqual([])
 })
 

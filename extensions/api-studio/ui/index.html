@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'none'; script-src nd-extension-ui:; style-src nd-extension-ui: 'unsafe-inline'; img-src nd-extension-ui: data: blob:; font-src nd-extension-ui:; connect-src 'none'; base-uri 'none'; form-action 'none'" />
+  <title>API Studio</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 5.5h16M4 12h10M4 18.5h16" />
+          <circle cx="18" cy="12" r="2.2" />
+          <circle cx="8" cy="12" r="2.2" />
+        </svg>
+        <span class="brand-name">API Studio</span>
+        <span id="storage-chip" class="chip" title="How the workspace is stored"></span>
+      </div>
+      <div class="top-actions">
+        <label class="env-picker">
+          <span>Env</span>
+          <select id="env-select" aria-label="Active environment"></select>
+        </label>
+        <button id="import-button" class="btn" type="button">Import</button>
+        <span id="save-state" class="save-state" role="status" aria-live="polite"></span>
+      </div>
+    </header>
+
+    <nav class="section-nav" aria-label="API Studio sections">
+      <button type="button" class="nav-item" data-view="collections">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10" /></svg>
+        Collections
+      </button>
+      <button type="button" class="nav-item" data-view="docs">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h9l3 3v13H6z" /><path d="M9 10h6M9 14h6M9 18h4" /></svg>
+        Docs
+      </button>
+      <button type="button" class="nav-item" data-view="environments">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /><circle cx="8" cy="7" r="1.6" /><circle cx="15" cy="12" r="1.6" /><circle cx="10" cy="17" r="1.6" /></svg>
+        Environments
+      </button>
+      <button type="button" class="nav-item" data-view="history">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" /><path d="M12 7v5l3 2" /></svg>
+        History
+      </button>
+    </nav>
+
+    <div class="body">
+      <aside id="sidebar" class="sidebar" aria-label="Section sidebar"></aside>
+      <main id="main" class="main">
+        <div id="boot" class="boot" role="status">Connecting to ND…</div>
+      </main>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <div id="modal" class="modal" hidden></div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

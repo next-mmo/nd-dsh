@@ -40,6 +40,7 @@ import { createCoreMediaKeys } from './core/core-media-keys.js'
 import { createCoreSystemVolume } from './core/core-system-volume.js'
 import { createCoreVault } from './core/core-vault.js'
 import { createCoreDiskScan } from './core/core-disk.js'
+import { createCoreApiHttp } from './core/core-api-http.js'
 import { createCoreWorkspaceFileSystem } from './core/core-workspace.js'
 import { createCoreWorktreeGit } from './core/core-worktree-git.js'
 import { DesignService } from './design/design-service.js'
@@ -508,7 +509,8 @@ async function createWindow(cdpPort: number): Promise<void> {
   const coreMediaKeys = createCoreMediaKeys(core)
   const coreSystemVolume = createCoreSystemVolume(core)
   const coreVault = createCoreVault(core)
-  const disposeIpc = registerIpc({ window, preloadPath: preload, launcherPopup, shortcuts: shortcutRegistry, browser, browserPlatform, dshSurface, engines, engineRouter, nativeToolBroker: nativeBroker, harness, projectWorkspace, workspaces, theme, providers, externalElements, recentPicks, git, corePackageSnapshot: createCorePackageSnapshot(core), coreGit: coreGit.exec.bind(coreGit), coreMedia, coreClipboard, coreMediaKeys, coreSystemVolume, coreVault, coreDisk: createCoreDiskScan(core), qa, sessionArchive, usageLedger, capabilities, organizationStore })
+  const coreApiHttp = createCoreApiHttp(core)
+  const disposeIpc = registerIpc({ window, preloadPath: preload, launcherPopup, shortcuts: shortcutRegistry, browser, browserPlatform, dshSurface, engines, engineRouter, nativeToolBroker: nativeBroker, harness, projectWorkspace, workspaces, theme, providers, externalElements, recentPicks, git, corePackageSnapshot: createCorePackageSnapshot(core), coreGit: coreGit.exec.bind(coreGit), coreMedia, coreClipboard, coreMediaKeys, coreSystemVolume, coreVault, coreApiHttp, coreDisk: createCoreDiskScan(core), qa, sessionArchive, usageLedger, capabilities, organizationStore })
   if (nativeAgent.ready()) void nativeAgent.start().catch((error) => {
     console.warn('ND Agent private runtime could not initialize:', error instanceof Error ? error.message : String(error))
   })

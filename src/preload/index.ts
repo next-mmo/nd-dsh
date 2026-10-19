@@ -195,6 +195,11 @@ const api: DesktopApi = {
     setQuickLauncherMode: (mode) => ipcRenderer.invoke(IPC.windowQuickLauncherModeSet, mode),
     toggleLauncherPopup: () => ipcRenderer.invoke(IPC.windowToggleLauncherPopup),
     hideLauncherPopup: () => ipcRenderer.invoke(IPC.windowHideLauncherPopup),
+    onLauncherPopupShow: (listener) => {
+      const handler = () => listener()
+      ipcRenderer.on(IPC.windowLauncherPopupShowEvent, handler)
+      return () => ipcRenderer.removeListener(IPC.windowLauncherPopupShowEvent, handler)
+    },
     handoffLauncherPopup: (target, text, context) => ipcRenderer.invoke(IPC.windowLauncherHandoff, target, text, context),
     onCaptureRequest: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, action: Parameters<typeof listener>[0]) => listener(action)

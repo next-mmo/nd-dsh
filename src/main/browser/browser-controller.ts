@@ -80,6 +80,7 @@ interface BrowserTabRuntime {
   state: {
     url: string
     title: string
+    favicon?: string
     loading: boolean
     canGoBack: boolean
     canGoForward: boolean
@@ -370,7 +371,10 @@ export class BrowserController {
     if (previous.state.annotationMode) await previous.annotator.cancel().catch(() => undefined)
     previous.state.annotationMode = false
 
-    if (this.binding) await this.binding.catch(() => undefined)
+    // Never wait for the agent re-bind here: a cold agent-browser daemon takes
+    // seconds to pin a target, and this call owns the tab pill the user just
+    // clicked. ensureAgentBinding() re-binds for the new active tab when the
+    // in-flight attempt finishes.
     this.activeTabIdValue = tabId
     this.lastBoundTarget = undefined
     this.agentBrowser.resetBinding()
@@ -385,7 +389,6 @@ export class BrowserController {
     if (!tab) return false
     if (this.extensionPopup?.hostWebContentsId === tab.view.webContents.id) this.closeExtensionPopup()
     const wasActive = tabId === this.activeTabIdValue
-    if (wasActive && this.binding) await this.binding.catch(() => undefined)
     await Promise.allSettled([tab.inspector.stop(), tab.annotator.cancel()])
     try {
       if (!this.window.isDestroyed()) this.window.contentView.removeChildView(tab.view)
@@ -915,6 +918,7 @@ export class BrowserController {
     })
     contents.on('did-navigate', (_event, url) => {
       tab.state.url = url
+      delete tab.state.favicon
       this.refreshNavigationState(tab)
       this.emitState()
       void this.recordHistory(tab)
@@ -933,6 +937,12 @@ export class BrowserController {
     contents.on('page-title-updated', (event, title) => {
       event.preventDefault()
       tab.state.title = title || 'Browser'
+      this.emitState()
+    })
+    contents.on('page-favicon-updated', (_event, favicons) => {
+      const favicon = displayableFavicon(favicons)
+      if (!favicon || favicon === tab.state.favicon) return
+      tab.state.favicon = favicon
       this.emitState()
     })
     contents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
@@ -978,6 +988,7 @@ export class BrowserController {
       profileId: BUILTIN_BROWSER_PROFILE_ID,
       title: tab.state.title,
       url: tab.state.url,
+      ...(tab.state.favicon ? { favicon: tab.state.favicon } : {}),
       ...(pageOrigin(tab.state.url) ? { origin: pageOrigin(tab.state.url) } : {}),
       active: tab.id === this.activeTabIdValue,
       visible: tab.id === this.activeTabIdValue && this.visible,
@@ -1014,8 +1025,11 @@ export class BrowserController {
         continue
       }
       const active = tab.id === this.activeTabIdValue
+      // A blank tab belongs to the shell, not the page: the native view steps
+      // aside so the renderer can paint its new-tab page into the same rect.
+      // The WebContents stays alive, so the agent still drives a blank tab.
       tab.view.setBounds(this.bounds)
-      tab.view.setVisible(active && this.visible)
+      tab.view.setVisible(active && this.visible && tab.state.url !== DEFAULT_BROWSER_URL)
     }
     if (this.extensionPopup) {
       this.syncExtensionPopupBounds()
@@ -1052,6 +1066,9 @@ export class BrowserController {
     tab.state.url = tab.view.webContents.getURL() || tab.state.url
     tab.state.canGoBack = history.canGoBack()
     tab.state.canGoForward = history.canGoForward()
+    // The address can cross to or from blank here, which is what decides
+    // whether the native view or the shell's new-tab page owns the rect.
+    this.syncViewVisibility()
   }
 
   private async ensureAgentBinding(): Promise<void> {
@@ -1154,6 +1171,15 @@ function pageOrigin(value: string): string | undefined {
   } catch {
     return undefined
   }
+}
+
+/**
+ * The tab strip is a sandboxed renderer whose CSP only loads https and data
+ * images, so an http:// or chrome-extension:// icon would render as a broken
+ * frame. Pick the first icon the shell can actually display.
+ */
+function displayableFavicon(favicons: string[]): string | undefined {
+  return favicons.find((favicon) => favicon.startsWith('https://') || favicon.startsWith('data:image/'))
 }
 
 const SEMANTIC_DRIVER_SCRIPT = `(() => {

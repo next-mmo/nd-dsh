@@ -41,7 +41,7 @@ export function ipcFailureMessage(message: string): string {
 
 function hintFor(message: string): string | undefined {
   if (isCodexChatGptModelMismatch(message)) {
-    return 'This is an account/model entitlement mismatch, not a sign-in failure: signing in again with the same ChatGPT account will repeat it. When the picker is on “Native model”, Codex inherits the model from ~/.codex/config.toml.'
+    return 'This is an account/model entitlement mismatch, not a sign-in failure: signing in again with the same ChatGPT account will repeat it. When the picker is on “Native model”, Codex inherits the model from ~/.codex/config.toml. The Codex desktop app can leave a model in that file which the subscription CLI route does not serve; picking a model in ND’s picker overrides it for this chat.'
   }
   if (UPSTREAM_FAILURE.test(message)) {
     return 'This came from the model provider’s servers after ND delivered the request — not from ND tools or your prompt. OpenRouter-style envelopes often carry no further detail. Retry, or switch routes in Model settings.'
