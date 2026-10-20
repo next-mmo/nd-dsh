@@ -4,12 +4,7 @@ import { join } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import { describe, expect, it, vi } from 'vitest'
 import { PageGuardError } from '../src/main/browser/page-driver.js'
-import {
-  ChatGptWebEngine,
-  chatGptSyncBranchName,
-  compileChatGptGitPrompt,
-  sanitizeRemoteForPrompt,
-} from '../src/main/engines/chatgpt-web/chatgpt-web-engine.js'
+import { ChatGptWebEngine } from '../src/main/engines/chatgpt-web/chatgpt-web-engine.js'
 import { discardWebImages } from '../src/main/engines/web-attachments.js'
 import { WebTurnProgress } from '../src/main/engines/web-turn.js'
 import {
@@ -18,10 +13,10 @@ import {
   matchProjectByNameOrPrefix,
 } from '../src/main/engines/chatgpt-web/chatgpt-project-binding.js'
 
-describe('ChatGPT Web Git sync helpers', () => {
+describe('ChatGPT Web engine', () => {
   it('captures declared assistant turns and shared completion without a nested author-role node', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'nd-chatgpt-dom-'))
-    const engine = new ChatGptWebEngine({ browser: {} as never, git: {} as never, workspace: {} as never, storePath: join(directory, 'sessions.json') })
+    const engine = new ChatGptWebEngine({ browser: {} as never, workspace: {} as never, storePath: join(directory, 'sessions.json') })
     class FakeElement {
       constructor(readonly role: string, readonly innerText: string) {}
       getAttribute(attribute: string) { return attribute === 'data-turn' ? this.role : null }
@@ -41,41 +36,15 @@ describe('ChatGPT Web Git sync helpers', () => {
       expect(await internals.captureSnapshot(cdp)).toMatchObject({ complete: false, turns: [] })
     } finally { await engine.close(); rmSync(directory, { recursive: true, force: true }) }
   })
-  it('keeps chats without a remote independent of Git and preserves the selected branch for Git chats', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'nd-chatgpt-optional-'))
-    let remotes: string[] = []
-    const git = { refresh: async () => ({ remotes, branch: 'feature/readable' }), remoteUrl: async () => 'https://example.com/repo.git', head: async () => 'abc', ensureBranch: vi.fn(async () => {}), pushBranch: vi.fn(async () => {}), remoteBranchHead: async () => 'abc', hasUncommittedChanges: async () => false }
-    const engine = new ChatGptWebEngine({ browser: {} as never, workspace: { state: () => ({ root: '/workspace' }) } as never, git: git as never, storePath: join(directory, 'sessions.json') })
-    const internals = engine as unknown as { sessions: Map<string, { transcript: Array<{ type: string }> }>; prepareGit: (session: unknown, signal: AbortSignal) => Promise<{ branch: string } | null> }
-    try {
-      const { sessionId } = await engine.createSession({ cwd: '/workspace' })
-      const session = internals.sessions.get(sessionId)!
-      expect(await internals.prepareGit(session, new AbortController().signal)).toBeNull()
-      expect(git.pushBranch).not.toHaveBeenCalled()
-      session.transcript.push({ type: 'user/message' })
-      remotes = ['origin']
-      expect(await internals.prepareGit(session, new AbortController().signal)).toBeNull()
-      const next = await engine.createSession({ cwd: '/workspace' })
-      expect(await internals.prepareGit(internals.sessions.get(next.sessionId), new AbortController().signal)).toMatchObject({ branch: 'feature/readable' })
-      expect(git.ensureBranch).toHaveBeenCalledWith('feature/readable')
-    } finally { await engine.close(); rmSync(directory, { recursive: true, force: true }) }
-  })
-  it.each(['opening', 'branch', 'composer'])('stops before further side effects during %s', async (stage) => {
+  it.each(['opening', 'composer'])('stops before further side effects during %s', async (stage) => {
     const directory = mkdtempSync(join(tmpdir(), 'nd-chatgpt-cancel-'))
     let release!: () => void
     const gate = new Promise<void>((resolve) => { release = resolve })
     let entered!: () => void
     const reached = new Promise<void>((resolve) => { entered = resolve })
     const pause = async () => { entered(); await gate }
-    const git = {
-      refresh: async () => ({ remotes: ['origin'] }),
-      remoteUrl: async () => 'https://example.com/repo.git', head: async () => 'abc',
-      ensureBranch: vi.fn(async () => { if (stage === 'branch') await pause() }),
-      pushBranch: vi.fn(async () => {}), remoteBranchHead: async () => 'abc',
-      hasUncommittedChanges: async () => false,
-    }
     const engine = new ChatGptWebEngine({ browser: { state: () => ({ url: 'about:blank' }) } as never,
-      workspace: { state: () => ({ root: '/workspace' }) } as never, git: git as never,
+      workspace: { state: () => ({ root: '/workspace' }) } as never,
       storePath: join(directory, 'sessions.json') })
     const cdp = { close: vi.fn(), evaluate: vi.fn(async () => { await pause(); return { ok: true } }) }
     const internals = engine as unknown as {
@@ -92,7 +61,6 @@ describe('ChatGPT Web Git sync helpers', () => {
       await engine.stop(sessionId)
       release()
       await rejected
-      if (stage !== 'composer') expect(git.pushBranch).not.toHaveBeenCalled()
       expect(cdp.evaluate).toHaveBeenCalledTimes(stage === 'composer' ? 1 : 0)
       expect(cdp.close).toHaveBeenCalledOnce()
       expect(engine.listSessions()[0]?.running).toBe(false)
@@ -101,7 +69,7 @@ describe('ChatGPT Web Git sync helpers', () => {
 
   it('imports only the completed browser reply, once', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'nd-chatgpt-stream-'))
-    const engine = new ChatGptWebEngine({ browser: {} as never, git: {} as never, workspace: {} as never, storePath: join(directory, 'sessions.json') })
+    const engine = new ChatGptWebEngine({ browser: {} as never, workspace: {} as never, storePath: join(directory, 'sessions.json') })
     const internals = engine as unknown as { sessions: Map<string, unknown>; importUnseenTurns: (session: unknown, snapshot: unknown) => void }
     try {
       const { sessionId } = await engine.createSession({ cwd: '/workspace' })
@@ -115,38 +83,7 @@ describe('ChatGPT Web Git sync helpers', () => {
     } finally { await engine.close(); rmSync(directory, { recursive: true, force: true }) }
   })
 
-  it('derives a stable safe branch from the ND chat id', () => {
-    const branch = chatGptSyncBranchName('chatgpt-web-ABC-123_def')
-    expect(branch).toBe('nd/chat-abc123def')
-    expect(branch).toBe(chatGptSyncBranchName('chatgpt-web-ABC-123_def'))
-    expect(branch).not.toBe('main')
-    expect(branch).not.toBe('master')
-  })
-
-  it('removes URL credentials and metadata before repository data enters a web prompt', () => {
-    expect(sanitizeRemoteForPrompt('https://user:secret@github.com/acme/demo.git')).toBe('https://github.com/acme/demo.git')
-    expect(sanitizeRemoteForPrompt('https://user:secret@github.com/acme/demo.git?token=oops#private')).toBe('https://github.com/acme/demo.git')
-    expect(sanitizeRemoteForPrompt('ssh://user:secret@github.com/acme/demo.git?token=oops#private')).toBe('ssh://github.com/acme/demo.git')
-    expect(sanitizeRemoteForPrompt('git@github.com:acme/demo.git')).toBe('git@github.com:acme/demo.git')
-  })
-
-  it('tells ChatGPT the exact safe branch and refuses to imply unavailable writes', () => {
-    const prompt = compileChatGptGitPrompt('Make the header smaller.', {
-      remote: 'origin',
-      remoteUrl: 'https://github.com/acme/demo.git',
-      branch: 'nd/chat-a1b2c3',
-      head: '1234567890abcdef',
-      dirty: false,
-    })
-
-    expect(prompt).toContain('Branch: nd/chat-a1b2c3')
-    expect(prompt).toContain('Expected local HEAD: 1234567890abcdef')
-    expect(prompt).toContain('Never push this task directly to main or master.')
-    expect(prompt).toContain('do not claim code was pushed')
-    expect(prompt).toContain('Make the header smaller.')
-  })
-
-  it('normalizes tampered persisted branch and conversation bindings before use', async () => {
+  it('normalizes tampered persisted conversation bindings before use', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'nd-chatgpt-store-'))
     const storePath = join(directory, 'chatgpt-web-sessions.json')
     const sessionId = 'chatgpt-web-ABC-123_def'
@@ -165,23 +102,19 @@ describe('ChatGPT Web Git sync helpers', () => {
           transcript: [],
           seenTurnKeys: [],
           sentPromptHashes: [],
-          branch: '--invalid',
         }],
       }), 'utf8')
 
       const engine = new ChatGptWebEngine({
         browser: {} as never,
-        git: {} as never,
         workspace: {} as never,
         storePath,
       })
       await engine.close()
 
       const persisted = JSON.parse(readFileSync(storePath, 'utf8')) as {
-        sessions: Array<{ branch: string; conversationUrl?: string; running: boolean }>
+        sessions: Array<{ conversationUrl?: string; running: boolean }>
       }
-      expect(persisted.sessions[0]?.branch).toBe(chatGptSyncBranchName(sessionId))
-      expect(persisted.sessions[0]?.branch).not.toBe('main')
       expect(persisted.sessions[0]?.conversationUrl).toBeUndefined()
       expect(persisted.sessions[0]?.running).toBe(false)
     } finally {
@@ -197,7 +130,7 @@ describe('ChatGPT Web browser transports', () => {
     const directory = mkdtempSync(join(tmpdir(), 'nd-chatgpt-mode-'))
     const storePath = storeFor(directory)
     try {
-      const engine1 = new ChatGptWebEngine({ browser: {} as never, git: {} as never, workspace: {} as never, storePath })
+      const engine1 = new ChatGptWebEngine({ browser: {} as never, workspace: {} as never, storePath })
       expect(engine1.getModeSettings()).toEqual({ mode: 'auto', agentFallback: false, visualRecovery: true })
       expect(engine1.setModeSettings({ mode: 'browser-agent', visualRecovery: false })).toEqual({
         mode: 'browser-agent',
@@ -205,7 +138,7 @@ describe('ChatGPT Web browser transports', () => {
         visualRecovery: false,
       })
       await engine1.close()
-      const engine2 = new ChatGptWebEngine({ browser: {} as never, git: {} as never, workspace: {} as never, storePath })
+      const engine2 = new ChatGptWebEngine({ browser: {} as never, workspace: {} as never, storePath })
       expect(engine2.getModeSettings()).toEqual({ mode: 'browser-agent', agentFallback: false, visualRecovery: false })
       await engine2.close()
     } finally {
@@ -217,7 +150,6 @@ describe('ChatGPT Web browser transports', () => {
     const directory = mkdtempSync(join(tmpdir(), 'nd-chatgpt-busy-'))
     const engine = new ChatGptWebEngine({
       browser: { state: () => ({ url: 'https://chatgpt.com/' }), activeTabId: () => 'tab-1' } as never,
-      git: {} as never,
       workspace: { state: () => ({ root: '/workspace' }) } as never,
       storePath: storeFor(directory),
     })
@@ -253,7 +185,7 @@ describe('ChatGPT Web browser transports', () => {
 
   it('keeps a post-click confirmation timeout as uncertain instead of not submitted', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'nd-chatgpt-uncertain-'))
-    const engine = new ChatGptWebEngine({ browser: {} as never, git: {} as never, workspace: {} as never, storePath: storeFor(directory) })
+    const engine = new ChatGptWebEngine({ browser: {} as never, workspace: {} as never, storePath: storeFor(directory) })
     const prompt = 'Hello there'
     let now = 1_000_000
     const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
@@ -293,7 +225,6 @@ describe('ChatGPT Web browser transports', () => {
         state: () => ({ url: 'https://chatgpt.com/', cdpPort: 9222 }),
         activeTabId: () => 'tab-1',
       } as never,
-      git: {} as never,
       workspace: { state: () => ({ root: '/workspace' }) } as never,
       storePath: storeFor(directory),
     })
@@ -328,7 +259,6 @@ describe('ChatGPT Web browser transports', () => {
     }
     const engine = new ChatGptWebEngine({
       browser: browser as never,
-      git: {} as never,
       workspace: { state: () => ({ root: '/workspace' }) } as never,
       storePath: storeFor(directory),
     })
@@ -364,7 +294,7 @@ describe('ChatGPT Web browser transports', () => {
 
   it('does not duplicate an image turn when ChatGPT echoes only the preview', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'nd-chatgpt-echo-'))
-    const engine = new ChatGptWebEngine({ browser: {} as never, git: {} as never, workspace: {} as never, storePath: storeFor(directory) })
+    const engine = new ChatGptWebEngine({ browser: {} as never, workspace: {} as never, storePath: storeFor(directory) })
     const internals = engine as unknown as {
       sessions: Map<string, unknown>
       recordUserMessage: (session: unknown, text: string, images?: readonly { data: string; mediaType: string; name: string }[]) => void
@@ -490,7 +420,6 @@ describe('ChatGPT Web project binding management and persistence', () => {
     try {
       const engine1 = new ChatGptWebEngine({
         browser: {} as never,
-        git: {} as never,
         workspace: { state: () => ({ root: '/workspace/app', projectName: 'app' }) } as never,
         storePath,
       })
@@ -513,7 +442,6 @@ describe('ChatGPT Web project binding management and persistence', () => {
       // Reload in a new engine instance
       const engine2 = new ChatGptWebEngine({
         browser: {} as never,
-        git: {} as never,
         workspace: { state: () => ({ root: '/workspace/app', projectName: 'app' }) } as never,
         storePath,
       })
@@ -535,54 +463,6 @@ describe('ChatGPT Web project binding management and persistence', () => {
     }
   })
 
-  it('degrades gracefully to non-git mode if git push fails in prepareGit', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'nd-chatgpt-push-fail-'))
-    const storePath = join(directory, 'chatgpt-web-sessions.json')
-
-    try {
-      const git = {
-        refresh: async () => ({ remotes: ['origin'], branch: 'feature/test' }),
-        remoteUrl: async () => 'https://example.com/repo.git',
-        head: async () => 'abc',
-        ensureBranch: vi.fn(async () => {}),
-        pushBranch: vi.fn(async () => {
-          throw new Error('Connection refused to remote git server')
-        }),
-        remoteBranchHead: async () => 'abc',
-        hasUncommittedChanges: async () => false,
-      }
-
-      const engine = new ChatGptWebEngine({
-        browser: {} as never,
-        workspace: { state: () => ({ root: '/workspace' }) } as never,
-        git: git as never,
-        storePath,
-      })
-
-      const internals = engine as unknown as {
-        sessions: Map<string, { transcript: Array<{ type: string; message?: { content?: Array<{ type: string; text?: string }> } }> }>
-        prepareGit: (session: unknown, signal: AbortSignal) => Promise<{ branch: string } | null>
-      }
-
-      const { sessionId } = await engine.createSession({ cwd: '/workspace' })
-      const session = internals.sessions.get(sessionId)!
-
-      // prepareGit should catch push failure, record a reasoning note, and return null instead of throwing
-      const gitInfo = await internals.prepareGit(session, new AbortController().signal)
-      expect(gitInfo).toBeNull()
-
-      // Verify reasoning entry was recorded
-      expect(session.transcript.some((entry) =>
-        entry.type === 'agent/reasoning' &&
-        (entry as { data?: { text?: string } }).data?.text?.includes('Connection refused to remote git server'),
-      )).toBe(true)
-
-      await engine.close()
-    } finally {
-      rmSync(directory, { recursive: true, force: true })
-    }
-  })
-
   it('never requires a project and auto-binds one when the browser is already inside it', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'nd-chatgpt-resolve-'))
     const storePath = join(directory, 'chatgpt-web-sessions.json')
@@ -591,7 +471,6 @@ describe('ChatGPT Web project binding management and persistence', () => {
       const navigate = vi.fn(async () => {})
       const unbound = new ChatGptWebEngine({
         browser: { state: () => ({ url: 'https://chatgpt.com/' }), navigate } as never,
-        git: {} as never,
         workspace: { state: () => ({ root: '/workspace/unbound', projectName: 'unbound' }) } as never,
         storePath,
       })
@@ -601,7 +480,6 @@ describe('ChatGPT Web project binding management and persistence', () => {
 
       const auto = new ChatGptWebEngine({
         browser: { state: () => ({ url: 'https://chatgpt.com/g/g-p-6a9bf2a6a8c8191ba1ee77c51bc0967-app/project' }) } as never,
-        git: {} as never,
         workspace: { state: () => ({ root: '/workspace/unbound', projectName: 'unbound' }) } as never,
         storePath,
       })
@@ -622,13 +500,16 @@ describe('ChatGPT Web project binding management and persistence', () => {
 
     try {
       const navigate = vi.fn(async () => {})
+      const createTab = vi.fn(async (url: string) => ({ id: 'tab-1', url }))
       const engine = new ChatGptWebEngine({
         browser: {
           state: () => ({ url: 'about:blank' }),
           navigate,
+          createTab,
+          activateTab: vi.fn(async () => ({})),
+          tabUrl: () => undefined,
           ensureAgentReady: async () => {},
         } as never,
-        git: {} as never,
         workspace: { state: () => ({ root: '/workspace/direct', projectName: 'direct' }) } as never,
         storePath,
       })
@@ -640,11 +521,56 @@ describe('ChatGPT Web project binding management and persistence', () => {
         const { sessionId } = await engine.createSession({ cwd: '/workspace/direct' })
         const session = internals.sessions.get(sessionId)
         await expect(internals.openBoundConversation(session, new AbortController().signal)).rejects.toThrow('no CDP target id')
-        expect(navigate).toHaveBeenLastCalledWith('https://chatgpt.com/')
+        expect(createTab).toHaveBeenLastCalledWith('https://chatgpt.com/', true)
 
         await engine.setProjectBinding('/workspace/direct', 'https://chatgpt.com/g/g-p-6a9bf2a6a8c8191ba1ee77c51bc0967-app/project')
         await expect(internals.openBoundConversation(session, new AbortController().signal)).rejects.toThrow('no CDP target id')
-        expect(navigate).toHaveBeenLastCalledWith('https://chatgpt.com/g/g-p-6a9bf2a6a8c8191ba1ee77c51bc0967-app/project')
+        expect(createTab).toHaveBeenLastCalledWith('https://chatgpt.com/g/g-p-6a9bf2a6a8c8191ba1ee77c51bc0967-app/project', true)
+      } finally {
+        await engine.close()
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('gives each chat one browser tab and reuses it on later turns', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nd-chatgpt-tabs-'))
+    const storePath = join(directory, 'chatgpt-web-sessions.json')
+    try {
+      let open = false
+      const createTab = vi.fn(async (url: string) => {
+        open = true
+        return { id: 'tab-1', url }
+      })
+      const activateTab = vi.fn(async () => ({}))
+      const navigate = vi.fn(async () => {})
+      const engine = new ChatGptWebEngine({
+        browser: {
+          state: () => ({ url: 'https://chatgpt.com/' }),
+          createTab,
+          activateTab,
+          navigate,
+          tabUrl: (tabId: string) => (open && tabId === 'tab-1' ? 'https://chatgpt.com/' : undefined),
+          ensureAgentReady: async () => {},
+        } as never,
+        workspace: { state: () => ({ root: '/workspace/tabs' }) } as never,
+        storePath,
+      })
+      const internals = engine as unknown as {
+        sessions: Map<string, { browserTabId?: string }>
+        ensureSessionTab: (session: unknown, url: string) => Promise<string>
+      }
+      try {
+        const { sessionId } = await engine.createSession({ cwd: '/workspace/tabs' })
+        const session = internals.sessions.get(sessionId)
+        expect(await internals.ensureSessionTab(session, 'https://chatgpt.com/')).toBe('tab-1')
+        expect(session?.browserTabId).toBe('tab-1')
+        expect(await internals.ensureSessionTab(session, 'https://chatgpt.com/')).toBe('tab-1')
+        expect(createTab).toHaveBeenCalledTimes(1)
+        expect(activateTab).toHaveBeenCalledWith('tab-1')
+        expect(navigate).not.toHaveBeenCalled()
+        expect(engine.listSessions()[0]?.browserTabId).toBe('tab-1')
       } finally {
         await engine.close()
       }
@@ -658,14 +584,16 @@ describe('ChatGPT Web project binding management and persistence', () => {
     const storePath = join(directory, 'chatgpt-web-sessions.json')
 
     try {
-      const navigate = vi.fn(async () => {})
+      const createTab = vi.fn(async (url: string) => ({ id: 'tab-1', url }))
       const engine = new ChatGptWebEngine({
         browser: {
           state: () => ({ url: 'about:blank' }),
-          navigate,
+          navigate: vi.fn(async () => {}),
+          createTab,
+          activateTab: vi.fn(async () => ({})),
+          tabUrl: () => undefined,
           ensureAgentReady: async () => {},
         } as never,
-        git: {} as never,
         workspace: { state: () => ({ root: '/workspace/guest', projectName: 'guest' }) } as never,
         storePath,
       })
@@ -679,7 +607,7 @@ describe('ChatGPT Web project binding management and persistence', () => {
         if (!session) throw new Error('guest session missing')
         session.conversationUrl = 'https://chatgpt.com/uc/6aaac7f2-abcd-ef01'
         await expect(internals.openBoundConversation(session, new AbortController().signal)).rejects.toThrow('no CDP target id')
-        expect(navigate).toHaveBeenLastCalledWith('https://chatgpt.com/uc/6aaac7f2-abcd-ef01')
+        expect(createTab).toHaveBeenLastCalledWith('https://chatgpt.com/uc/6aaac7f2-abcd-ef01', true)
       } finally {
         await engine.close()
       }
@@ -694,7 +622,6 @@ describe('ChatGPT Web project binding management and persistence', () => {
     try {
       const engine = new ChatGptWebEngine({
         browser: {} as never,
-        git: {} as never,
         workspace: { state: () => ({ root: '/workspace/habit', projectName: 'habit-tracker' }) } as never,
         storePath,
       })
@@ -789,7 +716,6 @@ describe('ChatGPT Web project binding management and persistence', () => {
     try {
       const engine = new ChatGptWebEngine({
         browser: {} as never,
-        git: {} as never,
         workspace: { state: () => ({ root: '/workspace' }) } as never,
         storePath,
       })
@@ -833,7 +759,6 @@ describe('ChatGPT Web project binding management and persistence', () => {
     const directory = mkdtempSync(join(tmpdir(), 'nd-chatgpt-user-images-'))
     const engine = new ChatGptWebEngine({
       browser: {} as never,
-      git: {} as never,
       workspace: { state: () => ({ root: '/workspace' }) } as never,
       storePath: join(directory, 'chatgpt-web-sessions.json'),
     })
@@ -867,7 +792,6 @@ describe('ChatGPT Web project binding management and persistence', () => {
     const directory = mkdtempSync(join(tmpdir(), 'nd-chatgpt-attach-'))
     const engine = new ChatGptWebEngine({
       browser: {} as never,
-      git: {} as never,
       workspace: { state: () => ({ root: '/workspace' }) } as never,
       storePath: join(directory, 'chatgpt-web-sessions.json'),
     })
@@ -877,7 +801,7 @@ describe('ChatGPT Web project binding management and persistence', () => {
       evaluate: vi.fn(async (script: string) => {
         if (script.includes('add files')) return true
         if (script.includes('!== null')) return true
-        if (script.includes('Attached images')) return uploaded ? { count: 1 } : { count: 0 }
+        if (script.includes('Attached images')) return uploaded ? { count: 1, settled: true } : { count: 0, settled: true }
         return undefined
       }),
       setFilesOnInput: vi.fn(async (_expression: string, files: string[]) => {

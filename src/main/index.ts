@@ -420,7 +420,6 @@ async function createWindow(cdpPort: number): Promise<void> {
   })
   const engineRouter = new EngineSessionRouter(harness, codexEngine, workspace, antigravityEngine, {
     browser,
-    git,
     storePath: join(userData, 'chatgpt-web-sessions.json'),
     log: (line) => console.warn(line),
   }, {

@@ -123,6 +123,8 @@ interface ChatPanelProps {
   onSessionOpenConsumed?(): void
   /** Bumped by the titlebar when a picked element is staged or removed. */
   elementAttachmentVersion?: number
+  /** Reveals and activates the browser tab owned by a web-engine chat. */
+  onActivateBrowserTab?(tabId: string): void
 }
 
 const PERMISSION_MODES = [
@@ -232,7 +234,7 @@ function fileMentionTag(relativePath: string): string {
   return extension ? extension.toUpperCase().slice(0, 5) : 'FILE'
 }
 
-export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelected, workspaceProjectId, onOpenWorkspace, sessionsCollapsed, sessionProjectScope, projects, onSelectProject, onError, onOpenSettings, onOpenFile, onOpenLink, externalPrompt, onExternalPromptConsumed, incomingImage, onIncomingImageConsumed, sessionOpenRequest, onSessionOpenConsumed, elementAttachmentVersion, onGitEditableChange }: ChatPanelProps) {
+export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelected, workspaceProjectId, onOpenWorkspace, sessionsCollapsed, sessionProjectScope, projects, onSelectProject, onError, onOpenSettings, onOpenFile, onOpenLink, externalPrompt, onExternalPromptConsumed, incomingImage, onIncomingImageConsumed, sessionOpenRequest, onSessionOpenConsumed, elementAttachmentVersion, onGitEditableChange, onActivateBrowserTab }: ChatPanelProps) {
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [collapsedSessionParents, setCollapsedSessionParents] = useState<Set<string>>(new Set())
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
@@ -683,8 +685,15 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   const selectEngineSession = useCallback((summary: EngineSessionSummary): void => {
     setDraftEngineId(null)
     setActiveSessionId(summary.sessionId)
+    if (summary.engineId === 'chatgpt-web' || summary.engineId === 'gemini-web') {
+      // The engine owns (and persists) the tab mapping; it recreates the tab
+      // when the user closed it or the app restarted.
+      void window.ndDsh.engines.browserTab(summary.sessionId)
+        .then((tabId) => { if (tabId) onActivateBrowserTab?.(tabId) })
+        .catch(() => undefined)
+    }
     if (!threads[summary.sessionId]) void loadEngineTranscript(summary.sessionId)
-  }, [threads, loadEngineTranscript])
+  }, [threads, loadEngineTranscript, onActivateBrowserTab])
 
   // Archival is a desktop-side flag; refetching both listings re-applies the
   // annotated flags exactly like every other session mutation does.
@@ -1445,10 +1454,10 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
       selectedSkillScope.current = null
       storeSessionProject(result.sessionId, activeProjectId ?? PERSONAL_PROJECT_ID)
       setActiveSessionId(result.sessionId)
-      if (draftEngine !== null) {
-        setDraftEngineId(null)
-        void refreshEngineSessions()
-      }
+      if (draftEngine !== null) setDraftEngineId(null)
+      // Engine turns can create the chat's browser tab; refresh so selecting
+      // the chat activates it.
+      void refreshEngineSessions()
       void refreshElementChips()
       // User messages arrive through session events, including on retry.
       if (!sessions.some((s) => s.sessionId === result.sessionId)) void refreshSessions()

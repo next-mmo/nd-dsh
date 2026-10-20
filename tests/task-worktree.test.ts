@@ -29,6 +29,8 @@ async function repoFixture(): Promise<string> {
   await exec('git', ['init', repo])
   await exec('git', ['config', 'user.email', 'nd@example.test'], { cwd: repo })
   await exec('git', ['config', 'user.name', 'ND Test'], { cwd: repo })
+  // Keep checked-out bytes independent of the host's global line-ending policy.
+  await exec('git', ['config', 'core.autocrlf', 'false'], { cwd: repo })
   await writeFile(join(repo, 'app.ts'), 'export const value = 1\n')
   await exec('git', ['add', 'app.ts'], { cwd: repo })
   await exec('git', ['commit', '-m', 'initial'], { cwd: repo })

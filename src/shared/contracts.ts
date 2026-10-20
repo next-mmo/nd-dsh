@@ -289,6 +289,8 @@ export interface EngineSessionSummary {
   createdAt: number
   updatedAt: number
   running: boolean
+  /** Browser tab owned by this chat; selecting it activates that tab. */
+  browserTabId?: string
   /** ND-side archival flag, resolved from the desktop archive store. */
   archived?: boolean
 }
@@ -687,6 +689,8 @@ export interface DesktopApi {
     assignments(): Promise<Record<string, string>>
     assign(agentId: string, engineId: string): Promise<Record<string, string>>
     sessions(): Promise<EngineSessionSummary[]>
+    /** Activate (or recreate) the browser tab owned by a web-engine chat. */
+    browserTab(sessionId: string): Promise<string | null>
     transcript(sessionId: string): Promise<EngineSessionTranscript>
     /** Native model catalog for engines that expose one; empty for the rest. */
     models(engineId: string): Promise<EngineModelOption[]>
@@ -983,6 +987,7 @@ export const IPC = {
   enginesAssignments: 'engines:assignments',
   enginesAssign: 'engines:assign',
   enginesSessions: 'engines:sessions',
+  enginesBrowserTab: 'engines:browser-tab',
   enginesTranscript: 'engines:transcript',
   enginesModels: 'engines:models',
   zcodeConfigRead: 'zcode-config:read',

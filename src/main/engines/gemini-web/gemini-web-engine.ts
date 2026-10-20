@@ -79,6 +79,8 @@ const IMAGE_ECHO_PATTERN = /^(?:\s*!\[[^\]]*\]\([^)]*\)\s*)+$/
 interface StoredGeminiWebSession {
   sessionId: string
   conversationUrl?: string
+  /** ND browser tab owned by this chat; recreated if the user closes it. */
+  browserTabId?: string
   cwd?: string
   title: string
   createdAt: number
@@ -234,6 +236,17 @@ export class GeminiWebEngine {
     return null
   }
 
+  /** Open (or recreate) this chat's browser tab without running a turn. */
+  async ensureBrowserTab(sessionId: string): Promise<string | null> {
+    const session = this.sessions.get(sessionId)
+    if (!session) return null
+    const binding = this.getGemBinding(session.cwd ?? this.options.workspace.state().root)
+    const targetUrl = session.conversationUrl && isGeminiConversationUrl(session.conversationUrl)
+      ? session.conversationUrl
+      : binding?.gemUrl ?? GEMINI_HOME_URL
+    return await this.ensureSessionTab(session, targetUrl)
+  }
+
   setEmitter(emit: (frame: DshEventFrame) => void): void {
     this.onEvent = emit
   }
@@ -261,6 +274,7 @@ export class GeminiWebEngine {
         createdAt: session.createdAt,
         updatedAt: session.updatedAt,
         running: session.running,
+        ...(session.browserTabId ? { browserTabId: session.browserTabId } : {}),
       }))
   }
 
@@ -409,6 +423,21 @@ export class GeminiWebEngine {
     this.persistStore()
   }
 
+  /** Each chat owns its browser tab so switching chats switches conversations. */
+  private async ensureSessionTab(session: StoredGeminiWebSession, targetUrl: string): Promise<string> {
+    const browser = this.options.browser
+    const existing = session.browserTabId
+    if (existing && browser.tabUrl(existing) !== undefined) {
+      await browser.activateTab(existing)
+      if (!sameGeminiUrl(browser.state().url, targetUrl)) await browser.navigate(targetUrl, existing)
+      return existing
+    }
+    const tab = await browser.createTab(targetUrl, true)
+    session.browserTabId = tab.id
+    this.persistStore()
+    return tab.id
+  }
+
   private async openBoundConversation(
     session: StoredGeminiWebSession,
     signal: AbortSignal,
@@ -422,13 +451,11 @@ export class GeminiWebEngine {
       ? session.conversationUrl
       : (binding?.gemUrl ?? GEMINI_HOME_URL)
 
-    const currentUrl = typeof this.options.browser?.state === 'function' ? this.options.browser.state()?.url ?? '' : ''
-    if (!sameGeminiUrl(currentUrl, targetUrl)) await this.options.browser.navigate(targetUrl)
+    const tabId = await this.ensureSessionTab(session, targetUrl)
     assertTurnActive(signal)
     await this.options.browser.ensureAgentReady()
     assertTurnActive(signal)
 
-    const tabId = typeof this.options.browser?.activeTabId === 'function' ? this.options.browser.activeTabId() : 'active'
     const targetId = typeof this.options.browser?.state === 'function' ? this.options.browser.state()?.targetId : undefined
     const driver: PageDriver = transport === 'extension'
       ? new ElectronPageDriver(this.options.browser, tabId, GEMINI_ORIGINS)
@@ -1249,6 +1276,7 @@ export class GeminiWebEngine {
         const session = candidate as StoredGeminiWebSession
         if (typeof session.sessionId !== 'string' || !session.sessionId.startsWith('gemini-web-')) continue
         if (typeof session.conversationUrl !== 'string' || !isGeminiConversationUrl(session.conversationUrl)) delete session.conversationUrl
+        if (typeof session.browserTabId !== 'string' || session.browserTabId === '') delete session.browserTabId
         session.running = false
         session.transcript = Array.isArray(session.transcript) ? session.transcript.slice(-MAX_TRANSCRIPT_EVENTS) : []
         session.seenTurnKeys = Array.isArray(session.seenTurnKeys) ? session.seenTurnKeys.slice(-500) : []

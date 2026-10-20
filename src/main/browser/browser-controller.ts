@@ -594,6 +594,7 @@ export class BrowserController {
     return contents.executeJavaScriptInIsolatedWorld(917, [{ code: expression }], true)
   }
 
+
   /**
    * Attach a tab offscreen so provider pages keep rendering while the app UI
    * covers the browser surface. Hidden views report a zero viewport and a
@@ -917,6 +918,12 @@ export class BrowserController {
     })
     contents.on('will-navigate', (event, url) => {
       if (!isAllowedBrowserUrl(url)) event.preventDefault()
+    })
+    // ND owns navigation in the embedded pane, and Electron has no native
+    // leave prompt: without this, any page with a beforeunload guard (YouTube
+    // Music, web editors) vetoes every subsequent load with ERR_ABORTED.
+    contents.on('will-prevent-unload', (event) => {
+      event.preventDefault()
     })
     contents.on('did-start-loading', () => {
       tab.inspector.reset()

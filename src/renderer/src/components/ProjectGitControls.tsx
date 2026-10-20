@@ -42,7 +42,7 @@ export function ProjectGitControls({ root, editable, workspaceBinding, onError }
     <PopoverContent align="start" className="w-80 rounded-2xl p-2">
       {!workspaceAvailable ? <p className="p-3 text-xs text-faint">Link a workspace to this project before configuring Git.</p> : setup || !exactRepo ? <form className="grid gap-3 p-2" onSubmit={(event) => { event.preventDefault(); void run(() => window.ndDsh.git.configureRemote(root, name.trim(), url.trim())) }}>
         <strong className="text-sm">Connect Git remote</strong>
-        <p className="text-xs text-faint">Git is optional. Connecting a remote enables ChatGPT Web Git sync. Nothing is pushed during setup.</p>
+        <p className="text-xs text-faint">Git is optional. Nothing is pushed during setup.</p>
         {state?.repoRoot && !exactRepo ? <p className="text-xs text-faint">This project is inside another repository. Connecting will create a dedicated Git repository here; the parent repository will not be used.</p> : null}
         <input aria-label="Git remote name" placeholder="Remote name" value={name} onChange={(event) => setName(event.target.value)} className="rounded-md border bg-transparent p-2 text-sm" required />
         <input aria-label="Git remote URL" placeholder="https://github.com/owner/repo.git" value={url} onChange={(event) => setUrl(event.target.value)} className="rounded-md border bg-transparent p-2 text-sm" required />

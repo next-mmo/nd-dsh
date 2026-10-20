@@ -28,7 +28,6 @@ import {
 import { CHATGPT_DOM_TURNS_SCRIPT } from '../../browser/chatgpt-dom-turns.js'
 import { ElectronPageDriver, PageGuardError, type PageDriver } from '../../browser/page-driver.js'
 import { VisibleCdpConnection } from '../../browser/visible-cdp-connection.js'
-import type { GitService } from '../../git/git-service.js'
 import type { WorkspaceService } from '../../workspace/workspace-service.js'
 import { discardWebImages, stageWebImages, type StagedWebImages } from '../web-attachments.js'
 import {
@@ -60,9 +59,25 @@ const CHATGPT_IMAGE_INPUT_EXPRESSION = `(() => {
 })()`
 const CHATGPT_ATTACHMENT_STATE_SCRIPT = `(() => {
   const scope = document.querySelector('form') || document;
-  const removers = scope.querySelectorAll('button[aria-label^="Remove file:"], button[aria-label^="Remove image:"]');
+  const isRemover = (label) => /^Remove (?:file:|image:)/i.test(label) || /^Remove .+\\.[a-z0-9]{1,8}$/i.test(label);
+  const removers = Array.from(scope.querySelectorAll('button[aria-label]'))
+    .map((el) => el.getAttribute('aria-label') || '')
+    .filter(isRemover)
+    .map((label) => label.replace(/^Remove\\s+/i, '').trim());
   const images = scope.querySelectorAll('[aria-label="Attached images"] img');
-  return { count: Math.max(removers.length, images.length) };
+  const chips = Array.from(scope.querySelectorAll('[role="button"][aria-label]')).filter((el) => {
+    const label = (el.getAttribute('aria-label') || '').toLowerCase();
+    return ['.png', '.jpg', '.jpeg', '.gif', '.webp'].some((extension) => label.endsWith(extension));
+  });
+  // The composer enables Send while an image still uploads: the tile shows a
+  // spinner and a blob: preview until the upload finishes and the preview
+  // switches to the uploaded data URL.
+  const uploading = chips.some((chip) => {
+    const image = chip.querySelector('img');
+    const spinner = chip.querySelector('[role="progressbar"], progress, .animate-spin');
+    return Boolean(spinner) || !image || !image.complete || image.naturalWidth === 0 || String(image.src || '').startsWith('blob:');
+  });
+  return { count: Math.max(new Set(removers).size, images.length), settled: !uploading };
 })()`
 const TRANSCRIPT_EVENT_TYPES = new Set(['user/message', 'assistant/message', 'agent/reasoning'])
 const MAX_TRANSCRIPT_EVENTS = 500
@@ -72,18 +87,18 @@ const CHATGPT_TURN_TIMEOUT_MS = 10 * 60_000
 const ATTACHMENT_TIMEOUT_MS = 30_000
 const ATTACHMENT_POLL_MS = 250
 const SUBMIT_CONFIRM_POLL_MS = 150
-const SUBMIT_CONFIRM_TIMEOUT_MS = 6_000
+const SUBMIT_CONFIRM_TIMEOUT_MS = 10_000
 const TURN_POLL_MS = 350
 // Gemini-style DOM echo of an image-only turn: the preview no longer carries
 // the prompt text, so a text-hash match alone would import it twice.
 const IMAGE_ECHO_PATTERN = /^(?:\s*!\[[^\]]*\]\([^)]*\)\s*)+$/
-const REMOTE_POLL_MS = 2_000
 const BACKGROUND_WATCH_MS = 5_000
-const BACKGROUND_REMOTE_POLL_MS = 10_000
 
 interface StoredChatGptWebSession {
   sessionId: string
   conversationUrl?: string
+  /** ND browser tab owned by this chat; recreated if the user closes it. */
+  browserTabId?: string
   cwd?: string
   title: string
   createdAt: number
@@ -94,10 +109,6 @@ interface StoredChatGptWebSession {
   seenTurnKeys: string[]
   sentPromptHashes: string[]
   uncertainPromptHashes?: string[]
-  branch: string
-  remote?: string
-  lastRemoteSha?: string
-  gitMode?: 'none' | 'sync'
   chatGptProjectRef?: string
   chatGptChatId?: string
 }
@@ -132,76 +143,22 @@ interface ChatGptDomSnapshot {
   turns: ChatGptDomTurn[]
 }
 
-export interface ChatGptGitContext {
-  remote: string
-  remoteUrl: string
-  branch: string
-  head: string
-  dirty: boolean
-}
-
 export interface ChatGptWebEngineOptions {
   browser: BrowserController
-  git: GitService
   workspace: WorkspaceService
   storePath: string
   log?: (line: string) => void
 }
 
-/** Stable, Git-safe branch name derived from one ND engine session. */
-export function chatGptSyncBranchName(sessionId: string): string {
-  const suffix = sessionId.replace(/^chatgpt-web-/, '').replace(/[^a-zA-Z0-9]/g, '').slice(0, 10)
-    || createHash('sha256').update(sessionId).digest('hex').slice(0, 10)
-  return `nd/chat-${suffix.toLowerCase()}`
-}
-
-/** Never leak credentials or credential-like URL metadata into a web prompt. */
-export function sanitizeRemoteForPrompt(remoteUrl: string): string {
-  const trimmed = remoteUrl.trim()
-  try {
-    const parsed = new URL(trimmed)
-    parsed.username = ''
-    parsed.password = ''
-    parsed.search = ''
-    parsed.hash = ''
-    return parsed.toString()
-  } catch {
-    // SCP-style SSH remotes such as git@github.com:owner/repo.git are not URLs.
-    return trimmed
-  }
-}
-
-export function compileChatGptGitPrompt(prompt: string, context: ChatGptGitContext): string {
-  return [
-    '<nd-git-sync>',
-    `Remote: ${sanitizeRemoteForPrompt(context.remoteUrl)}`,
-    `Remote name: ${context.remote}`,
-    `Branch: ${context.branch}`,
-    `Expected local HEAD: ${context.head}`,
-    `Local working tree: ${context.dirty ? 'dirty (uncommitted local changes are NOT on the remote)' : 'clean'}`,
-    '',
-    'Use this Git branch as the shared code transport for this ND chat.',
-    `Before editing, read/pull the latest ${context.remote}/${context.branch}.`,
-    `If your connected ChatGPT coding/Git tools allow writes, commit and push completed code changes to ${context.remote}/${context.branch}.`,
-    'Never push this task directly to main or master.',
-    'If you do not have a writable Git/coding tool in ChatGPT, say that clearly and do not claim code was pushed.',
-    '</nd-git-sync>',
-    '',
-    prompt,
-  ].join('\n')
-}
-
 /**
  * ChatGPT Web is a conversation transport, not a second local harness. It
  * drives ND's already-visible browser target through the shared Extension /
- * CDP / Browser Agent transports; code moves through the user's Git remote and
- * GitService remains the only local mutation authority.
+ * CDP / Browser Agent transports.
  */
 export class ChatGptWebEngine {
   private readonly sessions = new Map<string, StoredChatGptWebSession>()
   private readonly projectBindings = new Map<string, ChatGptProjectBinding>()
   private readonly activeTurns = new Map<string, ActiveChatGptTurn>()
-  private readonly remoteCheckedAt = new Map<string, number>()
   private modeSettings: WebBrowserModeSettings = { ...DEFAULT_WEB_BROWSER_MODE_SETTINGS }
   private onEvent: ((frame: DshEventFrame) => void) | undefined
   private watcherBusy = false
@@ -338,6 +295,17 @@ export class ChatGptWebEngine {
     return null
   }
 
+  /** Open (or recreate) this chat's browser tab without running a turn. */
+  async ensureBrowserTab(sessionId: string): Promise<string | null> {
+    const session = this.sessions.get(sessionId)
+    if (!session) return null
+    const binding = this.getProjectBinding(session.cwd ?? this.options.workspace.state().root)
+    const targetUrl = session.conversationUrl && isChatGptConversationUrl(session.conversationUrl)
+      ? session.conversationUrl
+      : binding?.chatGptProjectUrl ?? CHATGPT_HOME_URL
+    return await this.ensureSessionTab(session, targetUrl)
+  }
+
   setEmitter(emit: (frame: DshEventFrame) => void): void {
     this.onEvent = emit
   }
@@ -365,6 +333,7 @@ export class ChatGptWebEngine {
         createdAt: session.createdAt,
         updatedAt: session.updatedAt,
         running: session.running,
+        ...(session.browserTabId ? { browserTabId: session.browserTabId } : {}),
       }))
   }
 
@@ -387,7 +356,6 @@ export class ChatGptWebEngine {
       transcript: [],
       seenTurnKeys: [],
       sentPromptHashes: [],
-      branch: chatGptSyncBranchName(sessionId),
     }
     this.sessions.set(sessionId, session)
     this.persistStore()
@@ -509,8 +477,6 @@ export class ChatGptWebEngine {
       } else {
         if (before.busy || before.pendingSend) throw this.pageBusyError()
         this.importUnseenTurns(session, before)
-        const gitContext = await this.prepareGit(session, signal)
-        const compiledPrompt = gitContext ? compileChatGptGitPrompt(cleanedPrompt, gitContext) : cleanedPrompt
         assertTurnActive(signal)
         await this.clearStaleAttachments(driver)
         if ((images?.length ?? 0) > 0) {
@@ -520,10 +486,9 @@ export class ChatGptWebEngine {
         }
         assertTurnActive(signal)
         progress.enter('compose')
-        await this.submitPrompt(driver, compiledPrompt, signal, progress)
+        await this.submitPrompt(driver, cleanedPrompt, signal, progress)
         this.recordUserMessage(session, cleanedPrompt, images)
-        this.rememberSentPrompt(session, compiledPrompt)
-        if (compiledPrompt !== cleanedPrompt) this.rememberSentPrompt(session, cleanedPrompt)
+        this.rememberSentPrompt(session, cleanedPrompt)
         if (session.uncertainPromptHashes?.length) {
           session.uncertainPromptHashes = session.uncertainPromptHashes.filter((hash) => hash !== hashText(cleanedPrompt))
         }
@@ -538,7 +503,6 @@ export class ChatGptWebEngine {
       progress.enter('read')
       this.recordAssistantMessage(session, assistant.text.trim())
       this.markAllTurnsSeen(session, completed)
-      await this.syncRemoteIfChanged(session, true)
       return { sessionId: session.sessionId }
     } finally {
       discardWebImages(stagedImages)
@@ -582,8 +546,6 @@ export class ChatGptWebEngine {
       } else {
         if (before.busy || before.pendingSend) throw this.pageBusyError()
         this.importUnseenTurns(session, before)
-        const gitContext = await this.prepareGit(session, signal)
-        const compiledPrompt = gitContext ? compileChatGptGitPrompt(cleanedPrompt, gitContext) : cleanedPrompt
         assertTurnActive(signal)
         await this.clearStaleAttachments(driver)
         if ((images?.length ?? 0) > 0) {
@@ -611,7 +573,7 @@ export class ChatGptWebEngine {
               if (newChat) return { kind: 'click', ref: newChat.ref, reason: 'open new chat for composer' }
               return null
             }
-            return { kind: 'fill', ref: composer.ref, text: compiledPrompt }
+            return { kind: 'fill', ref: composer.ref, text: cleanedPrompt }
           },
           verify: (after) => Boolean(findComposerElement(after)),
         })
@@ -640,10 +602,9 @@ export class ChatGptWebEngine {
         if (sendFailure) {
           this.options.log?.(`[chatgpt-web] browser-agent send step could not verify itself (${sendFailure instanceof Error ? sendFailure.message : String(sendFailure)}); confirming against the page`)
         }
-        await this.confirmSubmission(driver, compiledPrompt, signal, progress)
+        await this.confirmSubmission(driver, cleanedPrompt, signal, progress)
         this.recordUserMessage(session, cleanedPrompt, images)
-        this.rememberSentPrompt(session, compiledPrompt)
-        if (compiledPrompt !== cleanedPrompt) this.rememberSentPrompt(session, cleanedPrompt)
+        this.rememberSentPrompt(session, cleanedPrompt)
         if (session.uncertainPromptHashes?.length) {
           session.uncertainPromptHashes = session.uncertainPromptHashes.filter((hash) => hash !== hashText(cleanedPrompt))
         }
@@ -658,7 +619,6 @@ export class ChatGptWebEngine {
       progress.enter('read')
       this.recordAssistantMessage(session, assistant.text.trim())
       this.markAllTurnsSeen(session, completed)
-      await this.syncRemoteIfChanged(session, true)
       return { sessionId: session.sessionId }
     } finally {
       discardWebImages(stagedImages)
@@ -712,13 +672,12 @@ export class ChatGptWebEngine {
     const targetUrl = session.conversationUrl && isChatGptConversationUrl(session.conversationUrl)
       ? session.conversationUrl
       : binding?.chatGptProjectUrl || CHATGPT_HOME_URL
-    const currentUrl = this.options.browser.state().url
-    if (!sameConversationUrl(currentUrl, targetUrl)) await this.options.browser.navigate(targetUrl)
+    const tabId = await this.ensureSessionTab(session, targetUrl)
     assertTurnActive(signal)
     await this.options.browser.ensureAgentReady()
     assertTurnActive(signal)
     const driver: PageDriver = transport === 'extension'
-      ? new ElectronPageDriver(this.options.browser, this.options.browser.activeTabId(), CHATGPT_ORIGINS)
+      ? new ElectronPageDriver(this.options.browser, tabId, CHATGPT_ORIGINS)
       : await VisibleCdpConnection.connect(this.options.browser, {
         targetId: this.options.browser.state()?.targetId,
         allowedOrigins: CHATGPT_ORIGINS,
@@ -745,10 +704,13 @@ export class ChatGptWebEngine {
             const r = el.getBoundingClientRect?.();
             return !r || (r.width > 0 && r.height > 0);
           };
-          const btn = Array.from(document.querySelectorAll('button, a')).filter(isVisible).find(el => {
-            const text = el.innerText?.trim() || '';
-            return text.includes('New chat in') || text.includes('New chat');
-          });
+          const candidates = Array.from(document.querySelectorAll('button, a')).filter(isVisible);
+          const label = (el) => \`\${el.innerText?.trim() || ''} \${el.getAttribute?.('aria-label') || ''}\`;
+          // Project pages expose an icon-only "New chat in <project>" button
+          // whose accessible name is the only text, and the scoped button must
+          // win over the global sidebar "New chat".
+          const btn = candidates.find(el => label(el).includes('New chat in'))
+            || candidates.find(el => label(el).includes('New chat') || label(el).includes('New conversation'));
           if (btn instanceof HTMLElement) { btn.click(); return true; }
           return false;
         })()`).catch(() => false)
@@ -762,70 +724,19 @@ export class ChatGptWebEngine {
     }
   }
 
-  private async prepareGit(session: StoredChatGptWebSession, signal: AbortSignal): Promise<ChatGptGitContext | null> {
-    assertTurnActive(signal)
-    const workspaceRoot = this.options.workspace.state().root
-    if (session.cwd !== workspaceRoot) {
-      throw new Error('This ChatGPT Web chat belongs to a different workspace. Reopen the chat from its original project before syncing Git.')
+  /** Each chat owns its browser tab so switching chats switches conversations. */
+  private async ensureSessionTab(session: StoredChatGptWebSession, targetUrl: string): Promise<string> {
+    const browser = this.options.browser
+    const existing = session.browserTabId
+    if (existing && browser.tabUrl(existing) !== undefined) {
+      await browser.activateTab(existing)
+      if (!sameConversationUrl(browser.state().url, targetUrl)) await browser.navigate(targetUrl, existing)
+      return existing
     }
-
-    // Validate the shared remote and committed HEAD before changing branches.
-    // A project that is not ready for Git sync must fail without mutating its checkout.
-    const initialState = await this.options.git.refresh()
-    assertTurnActive(signal)
-    const started = session.transcript.some((event) => event.type === 'user/message')
-    // Git is optional for every project. This also repairs sessions created
-    // before project Git became root-scoped: a nested project must not inherit
-    // its parent's remote and then fail during Web sync.
-    if (initialState.remotes.length === 0) {
-      session.gitMode = 'none'
-      delete session.remote
-      delete session.lastRemoteSha
-      return null
-    }
-    if (started && session.gitMode === 'none') return null
-    if (!started && initialState.branch) session.branch = initialState.branch
-    session.gitMode = 'sync'
-    const remote = session.remote && initialState.remotes.includes(session.remote)
-      ? session.remote
-      : initialState.remotes.includes('origin') ? 'origin' : initialState.remotes[0]
-    if (!remote) throw new Error('ChatGPT Web Git sync requires a configured Git remote for this workspace.')
-    const remoteUrl = await this.options.git.remoteUrl(remote)
-    assertTurnActive(signal)
-    if (!remoteUrl) throw new Error(`Git remote ${remote} has no fetch/push URL.`)
-    if (!await this.options.git.head()) {
-      throw new Error('ChatGPT Web Git sync requires at least one local commit before the first turn.')
-    }
-
-    try {
-      assertTurnActive(signal)
-      await this.options.git.ensureBranch(session.branch)
-      assertTurnActive(signal)
-      await this.options.git.pushBranch(remote, session.branch)
-      assertTurnActive(signal)
-      const head = await this.options.git.head()
-      if (!head) throw new Error('ChatGPT Web Git sync requires a committed Git HEAD before the first turn.')
-      const remoteSha = await this.options.git.remoteBranchHead(remote, session.branch)
-      if (!remoteSha) throw new Error(`Git remote ${remote}/${session.branch} did not expose the pushed branch.`)
-      session.remote = remote
-      session.lastRemoteSha = remoteSha
-      this.persistStore()
-      return {
-        remote,
-        remoteUrl,
-        branch: session.branch,
-        head,
-        dirty: await this.options.git.hasUncommittedChanges(),
-      }
-    } catch (error) {
-      session.gitMode = 'none'
-      delete session.remote
-      delete session.lastRemoteSha
-      this.persistStore()
-      const message = error instanceof Error ? error.message : String(error)
-      this.recordReasoning(session, `Git sync to ${remote}/${session.branch} was skipped (${message}). Continuing in non-git conversation mode.`)
-      return null
-    }
+    const tab = await browser.createTab(targetUrl, true)
+    session.browserTabId = tab.id
+    this.persistStore()
+    return tab.id
   }
 
   /**
@@ -873,8 +784,8 @@ export class ChatGptWebEngine {
       const deadline = Date.now() + ATTACHMENT_TIMEOUT_MS
       while (Date.now() < deadline) {
         assertTurnActive(signal)
-        const state = await driver.evaluate<{ count: number }>(CHATGPT_ATTACHMENT_STATE_SCRIPT)
-        if (state.count >= baseline.count + images.length) return staged
+        const state = await driver.evaluate<{ count: number; settled: boolean }>(CHATGPT_ATTACHMENT_STATE_SCRIPT)
+        if (state.count >= baseline.count + images.length && state.settled) return staged
         await sleep(ATTACHMENT_POLL_MS)
       }
       throw new Error('ChatGPT Web did not finish attaching the image in time. Make sure chatgpt.com accepts uploads in ND\'s Browser pane, then resend this message.')
@@ -886,7 +797,8 @@ export class ChatGptWebEngine {
 
   private async clearStaleAttachments(driver: PageDriver): Promise<void> {
     await driver.evaluate<boolean>(`(() => {
-      const stale = Array.from(document.querySelectorAll('button[aria-label^="Remove file:"], button[aria-label^="Remove image:"], button[aria-label*="Remove attachment" i]'));
+      const isRemover = (label) => /^Remove (?:file:|image:)/i.test(label) || /^Remove .+\\.[a-z0-9]{1,8}$/i.test(label);
+      const stale = Array.from(document.querySelectorAll('button[aria-label]')).filter((el) => isRemover(el.getAttribute('aria-label') || ''));
       stale.forEach((el) => el.click());
       return stale.length > 0;
     })()`).catch(() => false)
@@ -1029,12 +941,14 @@ export class ChatGptWebEngine {
     if (!accepted) throw new Error('ChatGPT Web composer did not keep the full message. Reload ChatGPT and retry.')
 
     progress.enter('submit')
+    let attempted = false
+    let attempts = 0
     let sent = false
-    for (let index = 0; index < 50; index += 1) {
+    for (let index = 0; index < 100 && !sent; index += 1) {
       assertTurnActive(signal)
       // The click may register even if its result never reaches ND, so the
       // submission stays uncertain until confirmation.
-      progress.submission = 'uncertain'
+      progress.submission = attempted ? 'uncertain' : 'none'
       const clicked = await driver.evaluate<boolean>(`(() => {
         const composerSelector = ${JSON.stringify(CHATGPT_COMPOSER_SELECTOR)};
         const isVisible = (el) => {
@@ -1084,19 +998,33 @@ export class ChatGptWebEngine {
           ?? docButtons.at(-1)
           ?? document.querySelector?.('button[data-testid="send-button"], button[aria-label*="Send"]');
         if (button instanceof HTMLButtonElement && !button.disabled && button.getAttribute('aria-disabled') !== 'true') {
+          // ChatGPT ignores scripted button clicks, but its form submit handler
+          // is the same path a real Send press runs.
+          const form = button.form ?? (typeof button.closest === 'function' ? button.closest('form') : null);
+          if (form && typeof form.requestSubmit === 'function') {
+            form.requestSubmit();
+            return true;
+          }
           button.click();
           return true;
         }
         return false;
       })()`)
       if (clicked) {
-        sent = true
-        break
+        attempted = true
+        attempts += 1
+        progress.submission = 'uncertain'
+        // A submit issued while the composer is still settling (for example
+        // while an image uploads) can be ignored. Retrying is safe only while
+        // the composer still holds the full prompt; a real submit clears it.
+        await sleep(400)
+        sent = composerKey(await this.readComposerText(driver)) !== expected
+        if (!sent && attempts >= 3) break
+        continue
       }
-      progress.submission = 'none'
       await sleep(100)
     }
-    if (!sent) {
+    if (!sent && !attempted) {
       throw progress.fail('not-submitted', 'ChatGPT Web could not find an enabled Send control. Reload ChatGPT and retry.')
     }
     await this.confirmSubmission(driver, prompt, signal, progress)
@@ -1202,7 +1130,6 @@ export class ChatGptWebEngine {
     const deadline = Date.now() + CHATGPT_TURN_TIMEOUT_MS
     let stableText = ''
     let stableCount = 0
-    let lastRemotePoll = 0
     while (Date.now() < deadline) {
       if (signal.aborted) throw new Error('ChatGPT Web turn was stopped.')
       const snapshot = await this.captureSnapshot(driver)
@@ -1217,12 +1144,6 @@ export class ChatGptWebEngine {
           stableCount = 0
         }
         if ((snapshot.complete || (!snapshot.busy && stableCount >= 2)) && !snapshot.busy) return snapshot
-      }
-      if (Date.now() - lastRemotePoll >= REMOTE_POLL_MS) {
-        lastRemotePoll = Date.now()
-        await this.syncRemoteIfChanged(session, false).catch((error) => {
-          this.options.log?.(`[chatgpt-web] remote sync deferred: ${error instanceof Error ? error.message : String(error)}`)
-        })
       }
       await sleep(TURN_POLL_MS)
     }
@@ -1274,20 +1195,6 @@ export class ChatGptWebEngine {
         turns,
       };
     })()`)
-  }
-
-  private async syncRemoteIfChanged(session: StoredChatGptWebSession, announce: boolean): Promise<void> {
-    if (!session.remote || !session.lastRemoteSha) return
-    if (session.cwd !== this.options.workspace.state().root) return
-    const state = this.options.git.current
-    if (state.branch !== session.branch) return
-    const remoteSha = await this.options.git.remoteBranchHead(session.remote, session.branch)
-    if (!remoteSha || remoteSha === session.lastRemoteSha) return
-    await this.options.git.fastForwardBranch(session.remote, session.branch)
-    session.lastRemoteSha = remoteSha
-    session.updatedAt = Date.now()
-    this.persistStore()
-    if (announce) this.recordReasoning(session, `Git sync fast-forwarded ${session.remote}/${session.branch} to ${remoteSha.slice(0, 8)}. Local preview files are up to date.`)
   }
 
   private importUnseenTurns(session: StoredChatGptWebSession, snapshot: ChatGptDomSnapshot): void {
@@ -1381,18 +1288,6 @@ export class ChatGptWebEngine {
         } catch (error) {
           this.options.log?.(`[chatgpt-web] visible conversation sync skipped: ${error instanceof Error ? error.message : String(error)}`)
         }
-      }
-
-      const now = Date.now()
-      for (const session of this.sessions.values()) {
-        if (session.running || !session.remote || !session.lastRemoteSha) continue
-        if (session.cwd !== this.options.workspace.state().root) continue
-        if (this.options.git.current.branch !== session.branch) continue
-        if (now - (this.remoteCheckedAt.get(session.sessionId) ?? 0) < BACKGROUND_REMOTE_POLL_MS) continue
-        this.remoteCheckedAt.set(session.sessionId, now)
-        await this.syncRemoteIfChanged(session, true).catch((error) => {
-          this.options.log?.(`[chatgpt-web] background remote sync skipped: ${error instanceof Error ? error.message : String(error)}`)
-        })
       }
     } finally {
       this.watcherBusy = false
@@ -1500,8 +1395,8 @@ export class ChatGptWebEngine {
         if (!candidate || typeof candidate !== 'object') continue
         const session = candidate as StoredChatGptWebSession
         if (typeof session.sessionId !== 'string' || !session.sessionId.startsWith('chatgpt-web-')) continue
-        if (typeof session.branch !== 'string' || !/^[\w][\w.\-/]{0,255}$/.test(session.branch) || session.branch.includes('..') || session.branch.endsWith('.lock')) session.branch = chatGptSyncBranchName(session.sessionId)
         if (typeof session.conversationUrl !== 'string' || !isChatGptConversationUrl(session.conversationUrl)) delete session.conversationUrl
+        if (typeof session.browserTabId !== 'string' || session.browserTabId === '') delete session.browserTabId
         session.running = false
         session.transcript = Array.isArray(session.transcript) ? session.transcript.slice(-MAX_TRANSCRIPT_EVENTS) : []
         session.seenTurnKeys = Array.isArray(session.seenTurnKeys) ? session.seenTurnKeys.slice(-500) : []

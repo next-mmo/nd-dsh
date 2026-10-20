@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs'
 import { readdir } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { posix, win32 } from 'node:path'
 
 export interface DiskVolume {
   /** Absolute mount root; what a scan of this volume starts from. */
@@ -40,7 +40,7 @@ export async function listDiskVolumes(sources: DiskVolumeSources): Promise<DiskV
     if (!stat || stat.blocks <= 0 || stat.bsize <= 0) continue
     volumes.push({
       path,
-      name: volumeName(path),
+      name: volumeName(path, platform),
       bytes: stat.blocks * stat.bsize,
       available: Math.max(0, stat.bavail * stat.bsize),
     })
@@ -48,9 +48,10 @@ export async function listDiskVolumes(sources: DiskVolumeSources): Promise<DiskV
   return volumes
 }
 
-function volumeName(path: string): string {
+function volumeName(path: string, platform: NodeJS.Platform): string {
   if (path === '/') return 'System'
-  const base = basename(path.replace(/[/\\]+$/, ''))
+  if (platform === 'win32' && /^[A-Za-z]:[\\/]?$/.test(path)) return path.slice(0, 2)
+  const base = (platform === 'win32' ? win32 : posix).basename(path.replace(/[/\\]+$/, ''))
   return base || path
 }
 
@@ -75,7 +76,7 @@ async function childDirectories(parent: string, sources: DiskVolumeSources): Pro
   const names = await sources.readdir(parent).catch(() => [])
   const out: string[] = []
   for (const name of names.slice(0, MAX_MOUNTS_PER_ROOT)) {
-    const path = join(parent, name)
+    const path = posix.join(parent, name)
     if (await sources.isDirectory(path).catch(() => false)) out.push(path)
   }
   return out

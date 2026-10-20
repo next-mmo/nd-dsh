@@ -207,7 +207,7 @@ and acceptance criteria. Record engine/runtime versions, provider/model settings
 session freshness, cache/warm-up state, concurrency, and transport differences.
 Declare whether the comparison measures whole products with their native tools
 or equal tools and models; the first release measures whole product delivery.
-Separate shared output-only cases from code-delivery cases that include Git sync.
+Separate shared output-only cases from code-delivery cases.
 
 Show pass rate, median verified duration, duration range, and paired speed ratio.
 For successful matched pairs, `GPT duration / ND duration` greater than 1 means ND

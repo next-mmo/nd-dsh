@@ -156,7 +156,7 @@ flowchart TD
       DOM confirmation, uncertain-prompt adoption, and post-submit-only Stop
 - [x] Page-busy pre-compose, auth/Cloudflare redirect classification,
       image-echo dedupe, stale attachment clearing, active-turn temp cleanup
-- [x] Git sync behavior preserved (prepareGit skipped for adopted turns)
+- [x] Git sync removed (2026-10-21): ChatGPT Web is a conversation transport only
 - [x] Tests: mode persistence, page busy, post-click uncertainty, guard
       redirects, stop gating, image echoes; live text/image/cancel verified
 

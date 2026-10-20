@@ -526,6 +526,7 @@ const desktopApi: DesktopApi = {
     assignments: async () => assignments,
     assign: async (agentId, engineId) => (assignments = { ...assignments, [agentId]: engineId }),
     sessions: async () => [],
+    browserTab: async () => null,
     transcript: async (sessionId) => ({ sessionId, engineId: 'codex-cli', events: [] }),
     models: async () => [
       { id: 'gemini-3.1-pro-high', name: 'Gemini 3.1 Pro (High)' },

@@ -35,7 +35,6 @@ import {
 import type { BrowserController } from '../browser/browser-controller.js'
 import { appendWorkspaceContext, stripWorkspaceContext } from '../../shared/workspace-context.js'
 import type { ExtensionRouter } from '../extensions/extension-router.js'
-import type { GitService } from '../git/git-service.js'
 import type { HarnessService } from '../harness/harness-service.js'
 import type { SessionJournalStore } from '../harness/session-journal-store.js'
 import { taskMetricsRecorder } from '../metrics/task-metrics.js'
@@ -70,7 +69,6 @@ const STRUCTURED_TRANSCRIPT_ENGINE_IDS = new Set([
 
 export interface ChatGptWebRuntime {
   browser: BrowserController
-  git?: GitService
   storePath?: string
   log?: (line: string) => void
   engine?: ChatGptWebEngine
@@ -182,7 +180,6 @@ export class EngineSessionRouter {
       this.chatGptWebLog = chatGptWebRuntime.log
       this.chatGptWeb = chatGptWebRuntime.engine ?? new ChatGptWebEngine({
         browser: chatGptWebRuntime.browser,
-        git: chatGptWebRuntime.git!,
         workspace,
         storePath: chatGptWebRuntime.storePath!,
         ...(chatGptWebRuntime.log ? { log: chatGptWebRuntime.log } : {}),
@@ -575,6 +572,13 @@ export class EngineSessionRouter {
       .filter(([engineId]) => !this.isWorkspaceDirectEngine(engineId))
       .flatMap(([, direct]) => direct.listSessions())
     return [...workspaceSessions, ...interactiveSessions]
+  }
+
+  /** Activate the chat's owned browser tab, creating it after a restart. */
+  async ensureEngineBrowserTab(sessionId: string): Promise<string | null> {
+    if (this.chatGptWeb?.ownsSession(sessionId)) return await this.chatGptWeb.ensureBrowserTab(sessionId)
+    if (this.geminiWeb?.ownsSession(sessionId)) return await this.geminiWeb.ensureBrowserTab(sessionId)
+    return null
   }
 
   async transcript(sessionId: string): Promise<EngineSessionTranscript> {

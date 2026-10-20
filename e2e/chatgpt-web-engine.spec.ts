@@ -59,7 +59,7 @@ for (const [name, markup] of [
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
     const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/composer`
     const engine = new ChatGptWebEngine({ browser: {} as never, workspace: {} as never,
-      git: {} as never, storePath: join(launched.userDataDir, 'composer-test-sessions.json') })
+      storePath: join(launched.userDataDir, 'composer-test-sessions.json') })
     const cdp = {
       evaluate: <T>(expression: string): Promise<T> => launched.app.evaluate(async ({ webContents }, input) => {
         const target = webContents.getAllWebContents().find((contents) => contents.getURL() === input.url)

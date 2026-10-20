@@ -1487,6 +1487,16 @@ export default function App() {
     }
   }
 
+  /** Selecting a web chat reveals the browser tab that chat owns. */
+  const openChatBrowserTab = async (tabId: string): Promise<void> => {
+    setAgentPane('browser')
+    try {
+      await window.ndDsh.browserPlatform.select({ mode: 'tab', targetId: 'builtin', tabId })
+    } catch {
+      // The engine already activated the tab; focus state is best effort.
+    }
+  }
+
   // Handoffs arrive from the launcher popup surface (a separate sandboxed
   // renderer) after main brings this window forward. The ref keeps the
   // subscription stable while the handler always sees the latest closures.
@@ -2001,6 +2011,7 @@ export default function App() {
                   sessionOpenRequest={sessionOpenRequest}
                   onSessionOpenConsumed={() => setSessionOpenRequest(null)}
                   elementAttachmentVersion={elementAttachmentVersion}
+                  onActivateBrowserTab={(tabId) => void openChatBrowserTab(tabId)}
                 />
               </SurfaceErrorBoundary>
             </Panel>

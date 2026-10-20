@@ -43,7 +43,7 @@ export function chatGptWebEngineDescriptor(): CodingEngineDescriptor {
       streaming: false,
       persistentSessions: true,
     },
-    workerInstructions: '\nExecution engine: ChatGPT Web with Git sync. Conversation transport is the signed-in ChatGPT website in ND\'s visible browser; local code transport is the session-owned Git branch. Do not assume direct ND filesystem or shell tools exist inside ChatGPT. Require actual remote commits before claiming code synchronized. Never push directly to main or master.\n',
+    workerInstructions: '\nExecution engine: ChatGPT Web. Conversation transport is the signed-in ChatGPT website in ND\'s visible browser. Do not assume direct ND filesystem or shell tools exist inside ChatGPT.\n',
   }
 }
 
