@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <!-- Mirrors the CSP the ND asset server sets on this document; defense in depth. -->
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'none'; script-src nd-extension-ui:; style-src nd-extension-ui: 'unsafe-inline'; img-src nd-extension-ui: data: blob:; font-src nd-extension-ui:; connect-src 'none'; base-uri 'none'; form-action 'none'" />
+  <title>ND Computer Use</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #131519;
+      --panel: #1b1e25;
+      --border: #2a2f3a;
+      --text: #e7e9ee;
+      --faint: #9aa3b2;
+      --accent: #a3e635;
+      --danger: #f87171;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 12px 14px;
+      background: var(--bg);
+      color: var(--text);
+      font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    h1 { margin: 0; font-size: 15px; font-weight: 600; }
+    .badge {
+      font-size: 10px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--accent);
+      border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+      background: color-mix(in srgb, var(--accent) 12%, transparent);
+      border-radius: 999px;
+      padding: 2px 7px;
+    }
+    .faint { color: var(--faint); font-size: 12px; }
+    .controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    select {
+      flex: 1;
+      min-width: 220px;
+      font: inherit;
+      color: var(--text);
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 6px 9px;
+    }
+    button {
+      font: inherit;
+      color: var(--text);
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 6px 11px;
+      cursor: pointer;
+    }
+    button:hover { border-color: #3d4452; }
+    button:disabled { opacity: 0.45; cursor: default; }
+    button.primary { border-color: var(--accent); color: var(--accent); }
+    label.toggle { display: inline-flex; align-items: center; gap: 6px; color: var(--faint); }
+    #status { min-height: 20px; font-size: 12px; color: var(--faint); }
+    #status.error { color: var(--danger); }
+    .split { display: flex; flex: 1; gap: 10px; min-height: 0; }
+    .panel {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      min-height: 0;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      overflow: hidden;
+    }
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 6px 9px;
+      border-bottom: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--faint);
+    }
+    .shot-wrap { display: flex; align-items: center; justify-content: center; min-height: 120px; overflow: auto; padding: 8px; }
+    #shot { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 6px; }
+    #shot.hidden { display: none; }
+    #shot-empty { color: var(--faint); font-size: 12px; text-align: center; padding: 12px; }
+    #tree {
+      flex: 1;
+      margin: 0;
+      padding: 9px;
+      overflow: auto;
+      white-space: pre;
+      font: 11px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
+      color: #d7dbe3;
+      user-select: text;
+    }
+    #tree-panel { flex: 1.2; }
+    #shot-panel { flex: 0.8; }
+    @media (max-width: 760px) {
+      .split { flex-direction: column; }
+      #shot-panel { flex: 0 0 34%; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Computer Use</h1>
+    <span class="badge">Read only</span>
+    <span class="faint">Screenshot and accessibility state for one running app window.</span>
+  </header>
+
+  <div class="controls">
+    <select id="app-select" aria-label="App window">
+      <option value="">Loading running apps…</option>
+    </select>
+    <button id="refresh" type="button">Refresh apps</button>
+    <button id="read" class="primary" type="button" disabled>Read state</button>
+    <label class="toggle"><input id="full-tree" type="checkbox" /> Full tree</label>
+  </div>
+
+  <div id="status">Connecting to ND…</div>
+
+  <div class="split">
+    <section class="panel" id="shot-panel">
+      <div class="panel-head">
+        <span>Window screenshot</span>
+        <button id="copy" type="button" disabled>Copy tree</button>
+      </div>
+      <div class="shot-wrap">
+        <img id="shot" class="hidden" alt="Screenshot of the selected app window" />
+        <div id="shot-empty">Read a window to capture its current state.</div>
+      </div>
+    </section>
+    <section class="panel" id="tree-panel">
+      <div class="panel-head"><span>Accessibility tree</span><span id="tree-meta"></span></div>
+      <pre id="tree">No state read yet.</pre>
+    </section>
+  </div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

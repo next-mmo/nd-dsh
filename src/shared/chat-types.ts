@@ -14,8 +14,16 @@ export interface AskQuestion {
   multiSelect?: boolean
 }
 
+/** A user-attached image shown with its chat turn (base64, no data-URL prefix). */
+export interface ThreadImage {
+  id: string
+  name: string
+  mediaType: string
+  data: string
+}
+
 export type ThreadEntry =
-  | { kind: 'user'; id: string; text: string; skillMention?: import('./skill-catalog.js').SkillSuggestion }
+  | { kind: 'user'; id: string; text: string; images?: ThreadImage[]; skillMention?: import('./skill-catalog.js').SkillSuggestion }
   | { kind: 'assistant'; id: string; text: string; streaming?: boolean }
   | { kind: 'reasoning'; id: string; text: string }
   | { kind: 'context'; id: string; source: string; text: string }

@@ -214,7 +214,8 @@ pub fn priority_for_method(method: &str) -> Priority {
         | "process.cancel"
         | "scheduler.heartbeat"
         | "scheduler.release"
-        | "scheduler.bind" => Priority::High,
+        | "scheduler.bind"
+        | "computer.session.reset" => Priority::High,
         "scheduler.snapshot"
         | "process.snapshot"
         | "workspace.list"

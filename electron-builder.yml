@@ -50,6 +50,7 @@ extraResources:
       - nd-browser-companion-runtime.mjs
       - nd-agent-browser-cli.mjs
       - nd-background-process.cjs
+      - nd-vault-cli.mjs
       - register-browser-native-host.mjs
   - from: node_modules/agent-browser
     to: node_modules/agent-browser

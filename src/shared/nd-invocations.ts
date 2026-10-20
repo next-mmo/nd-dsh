@@ -39,13 +39,25 @@ export interface NdInvocationResult {
   error?: NdInvocationError
 }
 
+/**
+ * Host labels a grant, approval, or audit row can carry. Contributions may only
+ * name members of `NdHostMethod`; `vault.resolve` is an internal label for the
+ * secure CLI broker, which resolves entries itself and never exposes a host
+ * handler to package manifests.
+ */
+export type NdGrantHost = NdHostMethod | 'vault.resolve'
+
 export interface NdPendingApprovalView {
   approvalId: string
   extensionId: string
   contributionId: string
-  host: NdHostMethod
+  host: NdGrantHost
   context: NdContext
   title: string
+  /** Non-secret explanation for the user: entry titles, command, project. */
+  detail?: string
+  /** Resource-scoped approvals name the records a grant will cover. */
+  resources?: string[]
   requestedAt: number
 }
 
@@ -169,7 +181,7 @@ export type NdGrantScope = 'once' | 'remembered'
 export interface NdGrantView {
   id: string
   extensionId: string
-  host: NdHostMethod
+  host: NdGrantHost
   contextKey: string
   scope: NdGrantScope
   grantedAt: number
@@ -183,7 +195,7 @@ export interface NdAuditEntryView {
   at: number
   extensionId: string
   contributionId: string
-  host: NdHostMethod
+  host: NdGrantHost
   contextKey: string
   caller: NdCallerKind
   decision: NdAuditDecision

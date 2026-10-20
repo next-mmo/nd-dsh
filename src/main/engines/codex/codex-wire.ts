@@ -129,15 +129,17 @@ export class CodexAppServerWire {
     return [...models.values()]
   }
 
-  /** Submit one text-only user turn and return the turn id. */
-  async startTurn(threadId: string, texts: readonly string[], selectedModel?: string): Promise<string> {
+  /** Submit one user turn and return the turn id. */
+  async startTurn(threadId: string, texts: readonly string[], selectedModel?: string, imagePaths: readonly string[] = []): Promise<string> {
     // turn/start overrides persist; explicitly restore the original native
     // model when the picker returns to Native default.
     const model = selectedModel ?? this.nativeModels.get(threadId)
+    const input: Array<Record<string, unknown>> = texts.map((text) => ({ type: 'text', text, text_elements: [] }))
+    for (const path of imagePaths) input.push({ type: 'localImage', path })
     const response = asRecord(await this.request('turn/start', {
       threadId,
       ...(model === undefined ? {} : { model }),
-      input: texts.map((text) => ({ type: 'text', text, text_elements: [] })),
+      input,
     }), 'turn/start response')
     const turn = asRecord(response.turn, 'turn/start turn')
     return asText(turn.id, 'turn/start turn id')

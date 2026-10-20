@@ -2,6 +2,7 @@ import type { LauncherHandoffTarget, QuickLauncherShortcutMode } from './quick-l
 import type { GlobalShortcutId, GlobalShortcutState, CaptureDelaySeconds } from './shortcuts.js'
 import type { NdMediaSessionState, NdSystemVolumeState, NdSystemVolumeUpdate } from './media-session.js'
 import type { WorkspaceProfile } from './workspace-profile.js'
+import type { WebBrowserModeSettings } from './browser-modes.js'
 
 export interface BrowserBounds {
   x: number
@@ -248,6 +249,14 @@ export interface HarnessRunImage {
   name: string
 }
 
+/** A non-image file riding with a chat turn; `relativePath` preserves folder drops. */
+export interface HarnessRunFile {
+  data: string
+  mediaType: string
+  name: string
+  relativePath?: string
+}
+
 export interface HarnessRunOptions {
   /** Opaque ND catalog scope; checked again before skill dispatch. */
   skillScope?: string
@@ -259,6 +268,8 @@ export interface HarnessRunOptions {
   image?: HarnessRunImage
   /** User-pasted images riding with this prompt (base64 payloads, no data URL prefix). */
   images?: HarnessRunImage[]
+  /** Non-image files/folder entries riding with this prompt (base64, no data URL prefix). */
+  files?: HarnessRunFile[]
   permissionMode?: string
   /**
    * Exact working directory for this session/turn. It is used when a session
@@ -821,11 +832,15 @@ export interface DesktopApi {
     getProjectBinding(workspaceRoot?: string): Promise<ChatGptProjectBinding | null>
     setProjectBinding(workspaceRoot: string, input: string): Promise<ChatGptProjectBinding>
     clearProjectBinding(workspaceRoot: string): Promise<void>
+    getModeSettings(): Promise<WebBrowserModeSettings>
+    setModeSettings(settings: Partial<WebBrowserModeSettings>): Promise<WebBrowserModeSettings>
   }
   geminiWeb: {
     getGemBinding(workspaceRoot?: string): Promise<GeminiGemBinding | null>
     setGemBinding(workspaceRoot: string, input: string): Promise<GeminiGemBinding>
     clearGemBinding(workspaceRoot: string): Promise<void>
+    getModeSettings(): Promise<WebBrowserModeSettings>
+    setModeSettings(settings: Partial<WebBrowserModeSettings>): Promise<WebBrowserModeSettings>
   }
   /** OS-style media transport over whatever the embedded browser is playing. */
   media?: {
@@ -1005,7 +1020,11 @@ export const IPC = {
   chatGptWebProjectGet: 'chatgpt-web:project-get',
   chatGptWebProjectSet: 'chatgpt-web:project-set',
   chatGptWebProjectClear: 'chatgpt-web:project-clear',
+  chatGptWebModeGet: 'chatgpt-web:mode-get',
+  chatGptWebModeSet: 'chatgpt-web:mode-set',
   geminiWebGemGet: 'gemini-web:gem-get',
   geminiWebGemSet: 'gemini-web:gem-set',
   geminiWebGemClear: 'gemini-web:gem-clear',
+  geminiWebModeGet: 'gemini-web:mode-get',
+  geminiWebModeSet: 'gemini-web:mode-set',
 } as const

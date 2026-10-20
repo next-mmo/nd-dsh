@@ -6,14 +6,38 @@ import type {
   DshEventFrame,
   EngineSessionSummary,
   EngineSessionTranscript,
+  HarnessRunImage,
   SessionEventEnvelope,
 } from '../../../shared/contracts.js'
 import { CHATGPT_WEB_ENGINE_ID } from '../../../shared/coding-engines.js'
+import {
+  DEFAULT_WEB_BROWSER_MODE_SETTINGS,
+  normalizeWebBrowserModeSettings,
+  type WebBrowserModeSettings,
+  type WebBrowserTransport,
+} from '../../../shared/browser-modes.js'
 import { stripWorkspaceContext } from '../../../shared/workspace-context.js'
 import type { BrowserController } from '../../browser/browser-controller.js'
+import {
+  BrowserAgentRunner,
+  findCloseAttachmentElements,
+  findComposerElement,
+  findNewChatElement,
+  findSendButtonElement,
+} from '../../browser/browser-agent.js'
 import { CHATGPT_DOM_TURNS_SCRIPT } from '../../browser/chatgpt-dom-turns.js'
+import { ElectronPageDriver, PageGuardError, type PageDriver } from '../../browser/page-driver.js'
+import { VisibleCdpConnection } from '../../browser/visible-cdp-connection.js'
 import type { GitService } from '../../git/git-service.js'
 import type { WorkspaceService } from '../../workspace/workspace-service.js'
+import { discardWebImages, stageWebImages, type StagedWebImages } from '../web-attachments.js'
+import {
+  canSwitchTransport,
+  planWebTransports,
+  WebTurnError,
+  WebTurnProgress,
+  type WebTransportAvailability,
+} from '../web-turn.js'
 import {
   type DiscoveredProjectItem,
   matchProjectByNameOrPrefix,
@@ -22,17 +46,37 @@ import {
 } from './chatgpt-project-binding.js'
 
 const CHATGPT_HOME_URL = 'https://chatgpt.com/'
+const CHATGPT_ORIGINS = ['https://chatgpt.com'] as const
 // Signed-in project pages use ProseMirror without the old prompt ID or Lexical
 // attribute; signed-out guest chats use the mobile composer textarea instead.
 const CHATGPT_COMPOSER_SELECTOR = '[data-testid="prompt-textarea"], #prompt-textarea, #mobile-composer-prompt, [contenteditable="true"][data-lexical-editor="true"], form .ProseMirror[contenteditable="true"], form .ProseMirror[contenteditable="plaintext-only"]'
+// Camera/photo-capture inputs cannot be driven by CDP file assignment.
+const CHATGPT_IMAGE_INPUT_EXPRESSION = `(() => {
+  const imageInputs = Array.from(document.querySelectorAll('input[type="file"]')).filter((el) => el instanceof HTMLInputElement
+    && !el.disabled
+    && !el.hasAttribute('capture')
+    && (el.accept || '').toLowerCase().includes('image/'));
+  return imageInputs.at(-1) ?? null;
+})()`
+const CHATGPT_ATTACHMENT_STATE_SCRIPT = `(() => {
+  const scope = document.querySelector('form') || document;
+  const removers = scope.querySelectorAll('button[aria-label^="Remove file:"], button[aria-label^="Remove image:"]');
+  const images = scope.querySelectorAll('[aria-label="Attached images"] img');
+  return { count: Math.max(removers.length, images.length) };
+})()`
 const TRANSCRIPT_EVENT_TYPES = new Set(['user/message', 'assistant/message', 'agent/reasoning'])
 const MAX_TRANSCRIPT_EVENTS = 500
 const MAX_PROMPT_CHARS = 100_000
 const CHATGPT_READY_TIMEOUT_MS = 15_000
 const CHATGPT_TURN_TIMEOUT_MS = 10 * 60_000
-const CDP_CONNECT_TIMEOUT_MS = 5_000
-const CDP_CALL_TIMEOUT_MS = 15_000
+const ATTACHMENT_TIMEOUT_MS = 30_000
+const ATTACHMENT_POLL_MS = 250
+const SUBMIT_CONFIRM_POLL_MS = 150
+const SUBMIT_CONFIRM_TIMEOUT_MS = 6_000
 const TURN_POLL_MS = 350
+// Gemini-style DOM echo of an image-only turn: the preview no longer carries
+// the prompt text, so a text-hash match alone would import it twice.
+const IMAGE_ECHO_PATTERN = /^(?:\s*!\[[^\]]*\]\([^)]*\)\s*)+$/
 const REMOTE_POLL_MS = 2_000
 const BACKGROUND_WATCH_MS = 5_000
 const BACKGROUND_REMOTE_POLL_MS = 10_000
@@ -49,6 +93,7 @@ interface StoredChatGptWebSession {
   transcript: SessionEventEnvelope[]
   seenTurnKeys: string[]
   sentPromptHashes: string[]
+  uncertainPromptHashes?: string[]
   branch: string
   remote?: string
   lastRemoteSha?: string
@@ -61,6 +106,12 @@ interface PersistedChatGptWebStore {
   version: 1
   sessions: StoredChatGptWebSession[]
   projectBindings?: Record<string, ChatGptProjectBinding>
+  modeSettings?: WebBrowserModeSettings
+}
+
+interface ActiveChatGptTurn {
+  controller: AbortController
+  progress?: WebTurnProgress | undefined
 }
 
 interface ChatGptDomTurn {
@@ -74,6 +125,10 @@ interface ChatGptDomSnapshot {
   composer: boolean
   busy: boolean
   complete: boolean
+  pendingSend: boolean
+  challenge: boolean
+  loginRequired: boolean
+  rateLimited: boolean
   turns: ChatGptDomTurn[]
 }
 
@@ -83,26 +138,6 @@ export interface ChatGptGitContext {
   branch: string
   head: string
   dirty: boolean
-}
-
-interface CdpTarget {
-  id?: string
-  webSocketDebuggerUrl?: string
-}
-
-interface CdpResponse {
-  id?: number
-  result?: {
-    result?: { value?: unknown }
-    exceptionDetails?: { text?: string; exception?: { description?: string } }
-  }
-  error?: { message?: string }
-}
-
-interface PendingCdpCall {
-  resolve: (value: unknown) => void
-  reject: (error: Error) => void
-  timer: ReturnType<typeof setTimeout>
 }
 
 export interface ChatGptWebEngineOptions {
@@ -158,15 +193,16 @@ export function compileChatGptGitPrompt(prompt: string, context: ChatGptGitConte
 
 /**
  * ChatGPT Web is a conversation transport, not a second local harness. It
- * drives ND's already-visible browser target over the loopback CDP endpoint;
- * code moves through the user's Git remote and GitService remains the only
- * local mutation authority.
+ * drives ND's already-visible browser target through the shared Extension /
+ * CDP / Browser Agent transports; code moves through the user's Git remote and
+ * GitService remains the only local mutation authority.
  */
 export class ChatGptWebEngine {
   private readonly sessions = new Map<string, StoredChatGptWebSession>()
   private readonly projectBindings = new Map<string, ChatGptProjectBinding>()
-  private readonly activeTurns = new Map<string, AbortController>()
+  private readonly activeTurns = new Map<string, ActiveChatGptTurn>()
   private readonly remoteCheckedAt = new Map<string, number>()
+  private modeSettings: WebBrowserModeSettings = { ...DEFAULT_WEB_BROWSER_MODE_SETTINGS }
   private onEvent: ((frame: DshEventFrame) => void) | undefined
   private watcherBusy = false
   private readonly watchTimer: ReturnType<typeof setInterval>
@@ -177,10 +213,22 @@ export class ChatGptWebEngine {
     this.watchTimer.unref?.()
   }
 
+  getModeSettings(): WebBrowserModeSettings {
+    return { ...this.modeSettings }
+  }
+
+  setModeSettings(settings: Partial<WebBrowserModeSettings>): WebBrowserModeSettings {
+    this.modeSettings = normalizeWebBrowserModeSettings({ ...this.modeSettings, ...settings })
+    this.persistStore()
+    return { ...this.modeSettings }
+  }
+
   getProjectBinding(workspaceRoot: string): ChatGptProjectBinding | null {
     const direct = this.projectBindings.get(workspaceRoot)
     if (direct) return direct
+    // Never resolve a requested root against the currently open project's name.
     const wsState = this.options.workspace.state()
+    if (wsState.root !== workspaceRoot) return null
     const name = wsState.projectName || wsState.name
     if (name && this.projectBindings.has(name)) return this.projectBindings.get(name) ?? null
     return null
@@ -253,9 +301,9 @@ export class ChatGptWebEngine {
     try {
       if (signal) assertTurnActive(signal)
       if (isChatGptPageUrl(currentUrl)) {
-        const cdp = await VisibleCdpConnection.connect(this.options.browser)
+        const driver = new ElectronPageDriver(this.options.browser, this.options.browser.activeTabId(), CHATGPT_ORIGINS)
         try {
-          const items = await cdp.evaluate<DiscoveredProjectItem[]>(`(() => {
+          const items = await driver.evaluate<DiscoveredProjectItem[]>(`(() => {
             const anchors = Array.from(document.querySelectorAll('a[href*="/g/g-p-"], [role="button"][href*="/g/g-p-"]'));
             return anchors.map(a => ({
               name: a.innerText?.trim() || a.getAttribute('aria-label') || '',
@@ -280,7 +328,7 @@ export class ChatGptWebEngine {
             return binding
           }
         } finally {
-          cdp.close()
+          driver.close()
         }
       }
     } catch {
@@ -347,7 +395,7 @@ export class ChatGptWebEngine {
     return { sessionId }
   }
 
-  async run(prompt: string, input: { sessionId?: string; cwd?: string } = {}): Promise<{ sessionId: string }> {
+  async run(prompt: string, input: { sessionId?: string; cwd?: string; images?: HarnessRunImage[] } = {}): Promise<{ sessionId: string }> {
     const cleaned = stripWorkspaceContext(prompt).trim()
     if (!cleaned) throw new Error('Prompt cannot be empty')
     if (cleaned.length > MAX_PROMPT_CHARS) throw new Error(`Prompt exceeds the ${MAX_PROMPT_CHARS.toLocaleString()} character limit`)
@@ -364,41 +412,53 @@ export class ChatGptWebEngine {
       throw new Error('ChatGPT Web uses ND\'s single visible browser pane. Finish the active ChatGPT Web turn before starting another one.')
     }
 
+    const hasImages = (input.images?.length ?? 0) > 0
+    const availability: WebTransportAvailability = {
+      extension: true,
+      cdp: Boolean(this.options.browser.state().cdpPort),
+      browserAgent: true,
+    }
+    const plan = planWebTransports({ settings: this.modeSettings, hasImages, available: availability })
+    if (plan.transports.length === 0) {
+      const reason = plan.skipped.map((skipped) => `${skipped.transport}: ${skipped.reason}`).join(', ')
+      throw new Error(`No browser transport available for mode "${this.modeSettings.mode}" (${reason || 'unavailable'})`)
+    }
+
     session.cwd = input.cwd ?? session.cwd ?? this.options.workspace.state().root
     const abort = new AbortController()
-    this.activeTurns.set(session.sessionId, abort)
+    const activeTurn: ActiveChatGptTurn = { controller: abort }
+    this.activeTurns.set(session.sessionId, activeTurn)
     session.running = true
     session.updatedAt = Date.now()
     this.persistStore()
     this.emitFrame({ kind: 'session-status', sessionId: session.sessionId, running: true })
 
     try {
-      const cdp = await this.openBoundConversation(session, abort.signal)
-      try {
-        assertTurnActive(abort.signal)
-        const before = await this.captureSnapshot(cdp)
-        assertTurnActive(abort.signal)
-        this.importUnseenTurns(session, before)
-        const gitContext = await this.prepareGit(session, abort.signal)
-        const compiledPrompt = gitContext ? compileChatGptGitPrompt(cleaned, gitContext) : cleaned
-        const baselineAssistantCount = before.turns.filter((turn) => turn.role === 'assistant').length
-        assertTurnActive(abort.signal)
-        await this.submitPrompt(cdp, compiledPrompt, abort.signal)
-        this.recordUserMessage(session, cleaned)
-        this.rememberSentPrompt(session, compiledPrompt)
-        if (compiledPrompt !== cleaned) this.rememberSentPrompt(session, cleaned)
-        if (session.title === 'New ChatGPT Web chat') session.title = cleaned.slice(0, 80)
-        const completed = await this.waitForAssistant(cdp, session, baselineAssistantCount, abort.signal)
-        this.captureConversationUrl(session, completed.url)
-        const assistant = [...completed.turns].reverse().find((turn) => turn.role === 'assistant')
-        if (!assistant?.text.trim()) throw new Error('ChatGPT Web completed without a readable assistant message')
-        this.recordAssistantMessage(session, assistant.text.trim())
-        this.markAllTurnsSeen(session, completed)
-        await this.syncRemoteIfChanged(session, true)
-        return { sessionId: session.sessionId }
-      } finally {
-        cdp.close()
+      let lastError: unknown
+      for (let index = 0; index < plan.transports.length; index += 1) {
+        const transport = plan.transports[index]!
+        const progress = new WebTurnProgress(transport)
+        activeTurn.progress = progress
+        try {
+          if (transport === 'browser-agent') {
+            return await this.runWithBrowserAgent(session, cleaned, input.images, abort.signal, progress)
+          }
+          return await this.runWithPageDriver(transport, session, cleaned, input.images, abort.signal, progress)
+        } catch (error) {
+          lastError = error
+          const turnError = this.classifyTurnError(progress, error)
+          if (turnError.submission === 'uncertain') {
+            session.uncertainPromptHashes = trimArray([...(session.uncertainPromptHashes ?? []), hashText(cleaned)], 50)
+            this.persistStore()
+          }
+          if (index < plan.transports.length - 1 && canSwitchTransport(turnError)) {
+            this.options.log?.(`[chatgpt-web] ${transport} failed (${turnError.message}); falling back to ${plan.transports[index + 1]}`)
+            continue
+          }
+          throw turnError
+        }
       }
+      throw lastError ?? new Error('No browser transport succeeded')
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       this.emitFrame({ kind: 'agent-error', sessionId: session.sessionId, message })
@@ -412,19 +472,222 @@ export class ChatGptWebEngine {
     }
   }
 
+  private async runWithPageDriver(
+    transport: WebBrowserTransport,
+    session: StoredChatGptWebSession,
+    cleanedPrompt: string,
+    images: readonly HarnessRunImage[] | undefined,
+    signal: AbortSignal,
+    progress: WebTurnProgress,
+  ): Promise<{ sessionId: string }> {
+    progress.enter('open')
+    const driver = await this.openBoundConversation(session, signal, transport)
+    let stagedImages: StagedWebImages | undefined
+    try {
+      assertTurnActive(signal)
+      progress.enter('observe')
+      const before = await this.captureSnapshot(driver)
+      assertTurnActive(signal)
+      this.throwStopConditions(before)
+
+      const lastUserIndex = before.turns.map((turn) => turn.role).lastIndexOf('user')
+      const lastUserTurn = lastUserIndex >= 0 ? before.turns[lastUserIndex] : undefined
+      const isUncertain = session.uncertainPromptHashes?.includes(hashText(cleanedPrompt))
+      const alreadyInDom = Boolean(lastUserTurn && promptMatchesDom(lastUserTurn.text, cleanedPrompt))
+      let baselineAssistantCount = before.turns.filter((turn) => turn.role === 'assistant').length
+
+      if (alreadyInDom && isUncertain) {
+        progress.submission = 'confirmed'
+        session.uncertainPromptHashes = (session.uncertainPromptHashes ?? []).filter((hash) => hash !== hashText(cleanedPrompt))
+        this.rememberSentPrompt(session, cleanedPrompt)
+        baselineAssistantCount = before.turns.slice(0, lastUserIndex).filter((turn) => turn.role === 'assistant').length
+        this.importUnseenTurns(session, { ...before, turns: before.turns.slice(0, lastUserIndex) })
+        const hasUserTurn = [...session.transcript].reverse().some((event) =>
+          event.type === 'user/message' && userMessageText(event)?.trim() === cleanedPrompt,
+        )
+        if (!hasUserTurn) this.recordUserMessage(session, cleanedPrompt, images)
+      } else {
+        if (before.busy || before.pendingSend) throw this.pageBusyError()
+        this.importUnseenTurns(session, before)
+        const gitContext = await this.prepareGit(session, signal)
+        const compiledPrompt = gitContext ? compileChatGptGitPrompt(cleanedPrompt, gitContext) : cleanedPrompt
+        assertTurnActive(signal)
+        await this.clearStaleAttachments(driver)
+        if ((images?.length ?? 0) > 0) {
+          progress.enter('attach')
+          assertTurnActive(signal)
+          stagedImages = await this.attachImages(driver, images ?? [], signal)
+        }
+        assertTurnActive(signal)
+        progress.enter('compose')
+        await this.submitPrompt(driver, compiledPrompt, signal, progress)
+        this.recordUserMessage(session, cleanedPrompt, images)
+        this.rememberSentPrompt(session, compiledPrompt)
+        if (compiledPrompt !== cleanedPrompt) this.rememberSentPrompt(session, cleanedPrompt)
+        if (session.uncertainPromptHashes?.length) {
+          session.uncertainPromptHashes = session.uncertainPromptHashes.filter((hash) => hash !== hashText(cleanedPrompt))
+        }
+      }
+
+      if (session.title === 'New ChatGPT Web chat') session.title = cleanedPrompt.slice(0, 80)
+      progress.enter('wait')
+      const completed = await this.waitForAssistant(driver, session, baselineAssistantCount, signal)
+      this.captureConversationUrl(session, completed.url)
+      const assistant = [...completed.turns].reverse().find((turn) => turn.role === 'assistant')
+      if (!assistant?.text.trim()) throw new Error('ChatGPT Web completed without a readable assistant message')
+      progress.enter('read')
+      this.recordAssistantMessage(session, assistant.text.trim())
+      this.markAllTurnsSeen(session, completed)
+      await this.syncRemoteIfChanged(session, true)
+      return { sessionId: session.sessionId }
+    } finally {
+      discardWebImages(stagedImages)
+      driver.close()
+    }
+  }
+
+  private async runWithBrowserAgent(
+    session: StoredChatGptWebSession,
+    cleanedPrompt: string,
+    images: readonly HarnessRunImage[] | undefined,
+    signal: AbortSignal,
+    progress: WebTurnProgress,
+  ): Promise<{ sessionId: string }> {
+    progress.enter('open')
+    const driver = await this.openBoundConversation(session, signal, 'extension')
+    let stagedImages: StagedWebImages | undefined
+    try {
+      assertTurnActive(signal)
+      progress.enter('observe')
+      const before = await this.captureSnapshot(driver)
+      assertTurnActive(signal)
+      this.throwStopConditions(before)
+
+      const lastUserIndex = before.turns.map((turn) => turn.role).lastIndexOf('user')
+      const lastUserTurn = lastUserIndex >= 0 ? before.turns[lastUserIndex] : undefined
+      const isUncertain = session.uncertainPromptHashes?.includes(hashText(cleanedPrompt))
+      const alreadyInDom = Boolean(lastUserTurn && promptMatchesDom(lastUserTurn.text, cleanedPrompt))
+      let baselineAssistantCount = before.turns.filter((turn) => turn.role === 'assistant').length
+
+      if (alreadyInDom && isUncertain) {
+        progress.submission = 'confirmed'
+        session.uncertainPromptHashes = (session.uncertainPromptHashes ?? []).filter((hash) => hash !== hashText(cleanedPrompt))
+        this.rememberSentPrompt(session, cleanedPrompt)
+        baselineAssistantCount = before.turns.slice(0, lastUserIndex).filter((turn) => turn.role === 'assistant').length
+        this.importUnseenTurns(session, { ...before, turns: before.turns.slice(0, lastUserIndex) })
+        const hasUserTurn = [...session.transcript].reverse().some((event) =>
+          event.type === 'user/message' && userMessageText(event)?.trim() === cleanedPrompt,
+        )
+        if (!hasUserTurn) this.recordUserMessage(session, cleanedPrompt, images)
+      } else {
+        if (before.busy || before.pendingSend) throw this.pageBusyError()
+        this.importUnseenTurns(session, before)
+        const gitContext = await this.prepareGit(session, signal)
+        const compiledPrompt = gitContext ? compileChatGptGitPrompt(cleanedPrompt, gitContext) : cleanedPrompt
+        assertTurnActive(signal)
+        await this.clearStaleAttachments(driver)
+        if ((images?.length ?? 0) > 0) {
+          progress.enter('attach')
+          assertTurnActive(signal)
+          stagedImages = await this.attachImages(driver, images ?? [], signal)
+        }
+        const tabId = this.options.browser.activeTabId()
+        const agent = new BrowserAgentRunner({
+          port: this.options.browser,
+          tabId,
+          allowedOrigins: CHATGPT_ORIGINS,
+          signal,
+          visualRecovery: this.modeSettings.visualRecovery,
+          log: this.options.log,
+        })
+        progress.enter('compose')
+        await agent.runStep({
+          name: 'fill-composer',
+          maxAttempts: 5,
+          plan: (observation) => {
+            const composer = findComposerElement(observation.snapshot)
+            if (!composer) {
+              const newChat = findNewChatElement(observation.snapshot)
+              if (newChat) return { kind: 'click', ref: newChat.ref, reason: 'open new chat for composer' }
+              return null
+            }
+            return { kind: 'fill', ref: composer.ref, text: compiledPrompt }
+          },
+          verify: (after) => Boolean(findComposerElement(after)),
+        })
+
+        progress.enter('submit')
+        let sendAttempted = false
+        let sendFailure: unknown
+        try {
+          await agent.runStep({
+            name: 'send-prompt',
+            maxAttempts: 1,
+            plan: (observation) => {
+              const sendButton = findSendButtonElement(observation.snapshot)
+              if (!sendButton) return null
+              sendAttempted = true
+              progress.submission = 'uncertain'
+              return { kind: 'click', ref: sendButton.ref }
+            },
+          })
+        } catch (error) {
+          sendFailure = error
+        }
+        if (!sendAttempted) {
+          throw progress.fail('layout-changed', 'ChatGPT Web did not expose an enabled Send control. Reload ChatGPT and retry.', sendFailure)
+        }
+        if (sendFailure) {
+          this.options.log?.(`[chatgpt-web] browser-agent send step could not verify itself (${sendFailure instanceof Error ? sendFailure.message : String(sendFailure)}); confirming against the page`)
+        }
+        await this.confirmSubmission(driver, compiledPrompt, signal, progress)
+        this.recordUserMessage(session, cleanedPrompt, images)
+        this.rememberSentPrompt(session, compiledPrompt)
+        if (compiledPrompt !== cleanedPrompt) this.rememberSentPrompt(session, cleanedPrompt)
+        if (session.uncertainPromptHashes?.length) {
+          session.uncertainPromptHashes = session.uncertainPromptHashes.filter((hash) => hash !== hashText(cleanedPrompt))
+        }
+      }
+
+      if (session.title === 'New ChatGPT Web chat') session.title = cleanedPrompt.slice(0, 80)
+      progress.enter('wait')
+      const completed = await this.waitForAssistant(driver, session, baselineAssistantCount, signal)
+      this.captureConversationUrl(session, completed.url)
+      const assistant = [...completed.turns].reverse().find((turn) => turn.role === 'assistant')
+      if (!assistant?.text.trim()) throw new Error('ChatGPT Web completed without a readable assistant message')
+      progress.enter('read')
+      this.recordAssistantMessage(session, assistant.text.trim())
+      this.markAllTurnsSeen(session, completed)
+      await this.syncRemoteIfChanged(session, true)
+      return { sessionId: session.sessionId }
+    } finally {
+      discardWebImages(stagedImages)
+      driver.close()
+    }
+  }
+
   async stop(sessionId?: string): Promise<void> {
     const targets = sessionId === undefined
       ? [...this.sessions.values()].filter((session) => session.running)
       : [this.sessions.get(sessionId)].filter((session): session is StoredChatGptWebSession => session?.running === true)
     for (const session of targets) {
-      this.activeTurns.get(session.sessionId)?.abort()
+      const activeTurn = this.activeTurns.get(session.sessionId)
+      activeTurn?.controller.abort()
+      // Only stop the page after ND submitted; otherwise the user's own
+      // in-pane reply could be cancelled.
+      if (!activeTurn?.progress || activeTurn.progress.submission === 'none') continue
       if (!this.browserMayHostSession(session)) continue
       try {
-        const cdp = await VisibleCdpConnection.connect(this.options.browser)
+        const driver = new ElectronPageDriver(this.options.browser, this.options.browser.activeTabId(), CHATGPT_ORIGINS)
         try {
-          await cdp.evaluate<boolean>(`(() => { const button = document.querySelector('button[data-testid="stop-button"]'); if (!(button instanceof HTMLElement)) return false; button.click(); return true })()`)
+          await driver.evaluate<boolean>(`(() => {
+            const button = document.querySelector('button[data-testid="stop-button"], main form button[aria-label="Stop generating"], main form button[aria-label="Stop streaming"], main form button[aria-label="Stop"]');
+            if (!(button instanceof HTMLElement)) return false;
+            button.click();
+            return true;
+          })()`)
         } finally {
-          cdp.close()
+          driver.close()
         }
       } catch {
         // Local cancellation remains authoritative even when the page changed.
@@ -434,13 +697,13 @@ export class ChatGptWebEngine {
 
   async close(): Promise<void> {
     clearInterval(this.watchTimer)
-    for (const controller of this.activeTurns.values()) controller.abort()
+    for (const activeTurn of this.activeTurns.values()) activeTurn.controller.abort()
     this.activeTurns.clear()
     for (const session of this.sessions.values()) session.running = false
     this.persistStore()
   }
 
-  private async openBoundConversation(session: StoredChatGptWebSession, signal: AbortSignal): Promise<VisibleCdpConnection> {
+  private async openBoundConversation(session: StoredChatGptWebSession, signal: AbortSignal, transport: WebBrowserTransport = 'cdp'): Promise<PageDriver> {
     assertTurnActive(signal)
     const binding = await this.resolveProjectBinding(session.cwd ?? this.options.workspace.state().root, signal)
     if (binding) session.chatGptProjectRef = binding.chatGptProjectRef
@@ -454,15 +717,21 @@ export class ChatGptWebEngine {
     assertTurnActive(signal)
     await this.options.browser.ensureAgentReady()
     assertTurnActive(signal)
-    const cdp = await VisibleCdpConnection.connect(this.options.browser)
+    const driver: PageDriver = transport === 'extension'
+      ? new ElectronPageDriver(this.options.browser, this.options.browser.activeTabId(), CHATGPT_ORIGINS)
+      : await VisibleCdpConnection.connect(this.options.browser, {
+        targetId: this.options.browser.state()?.targetId,
+        allowedOrigins: CHATGPT_ORIGINS,
+      })
     try {
       const deadline = Date.now() + CHATGPT_READY_TIMEOUT_MS
       while (Date.now() < deadline) {
         assertTurnActive(signal)
-        const snapshot = await this.captureSnapshot(cdp)
+        const snapshot = await this.captureSnapshot(driver)
         assertTurnActive(signal)
-        if (snapshot.composer) return cdp
-        await cdp.evaluate<boolean>(`(() => {
+        this.throwStopConditions(snapshot)
+        if (snapshot.composer) return driver
+        await driver.evaluate<boolean>(`(() => {
           const isVisible = (el) => {
             if (!(el instanceof HTMLElement)) return false;
             if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') return true;
@@ -488,7 +757,7 @@ export class ChatGptWebEngine {
       const projectScope = binding?.chatGptProjectRef ? ` for project "${binding.projectName}"` : ''
       throw new Error(`ChatGPT Web is open in ND's visible Browser pane, but the composer${projectScope} is unavailable. Sign in to chatgpt.com and ensure the chat composer is accessible, then resend this message.`)
     } catch (error) {
-      cdp.close()
+      driver.close()
       throw error
     }
   }
@@ -559,69 +828,214 @@ export class ChatGptWebEngine {
     }
   }
 
-  private async submitPrompt(cdp: VisibleCdpConnection, prompt: string, signal: AbortSignal): Promise<void> {
+  /**
+   * Pasted images ride ChatGPT's own uploader so the model receives a real
+   * attachment. The turn only starts after the preview tiles appear.
+   */
+  private async attachImages(
+    driver: PageDriver,
+    images: readonly HarnessRunImage[],
+    signal: AbortSignal,
+  ): Promise<StagedWebImages | undefined> {
+    if (images.length === 0) return undefined
+    assertTurnActive(signal)
+    let staged: StagedWebImages | undefined
+    try {
+      staged = stageWebImages(images)
+      const mounted = await driver.evaluate<boolean>(`(() => {
+        if (${CHATGPT_IMAGE_INPUT_EXPRESSION}) return true;
+        const button = Array.from(document.querySelectorAll('button')).find((el) => /add files|add photos|attach|upload/i.test(el.getAttribute('aria-label') || ''));
+        if (!(button instanceof HTMLElement)) return false;
+        button.click();
+        return true;
+      })()`)
+      if (!mounted) {
+        throw new Error('ChatGPT Web has no file attachment control in ND\'s Browser pane. Open chatgpt.com and sign in, then resend this message.')
+      }
+      let inputReady = false
+      for (let attempt = 0; attempt < 20 && !inputReady; attempt += 1) {
+        assertTurnActive(signal)
+        inputReady = await driver.evaluate<boolean>(`${CHATGPT_IMAGE_INPUT_EXPRESSION} !== null`)
+        if (!inputReady) await sleep(100)
+      }
+      if (!inputReady) {
+        throw new Error('ChatGPT Web did not expose an image input. Reload ChatGPT and resend this message.')
+      }
+      // ND owns this turn: drop chips left by an earlier browser draft so the
+      // message never carries a stale image alongside the new ones.
+      await this.clearStaleAttachments(driver)
+      await sleep(200)
+      const baseline = await driver.evaluate<{ count: number }>(CHATGPT_ATTACHMENT_STATE_SCRIPT)
+      assertTurnActive(signal)
+      if (!await driver.setFilesOnInput(CHATGPT_IMAGE_INPUT_EXPRESSION, staged.files)) {
+        throw new Error('ChatGPT Web did not expose an image input. Reload ChatGPT and resend this message.')
+      }
+      const deadline = Date.now() + ATTACHMENT_TIMEOUT_MS
+      while (Date.now() < deadline) {
+        assertTurnActive(signal)
+        const state = await driver.evaluate<{ count: number }>(CHATGPT_ATTACHMENT_STATE_SCRIPT)
+        if (state.count >= baseline.count + images.length) return staged
+        await sleep(ATTACHMENT_POLL_MS)
+      }
+      throw new Error('ChatGPT Web did not finish attaching the image in time. Make sure chatgpt.com accepts uploads in ND\'s Browser pane, then resend this message.')
+    } catch (error) {
+      discardWebImages(staged)
+      throw error
+    }
+  }
+
+  private async clearStaleAttachments(driver: PageDriver): Promise<void> {
+    await driver.evaluate<boolean>(`(() => {
+      const stale = Array.from(document.querySelectorAll('button[aria-label^="Remove file:"], button[aria-label^="Remove image:"], button[aria-label*="Remove attachment" i]'));
+      stale.forEach((el) => el.click());
+      return stale.length > 0;
+    })()`).catch(() => false)
+  }
+
+  private throwStopConditions(snapshot: ChatGptDomSnapshot): void {
+    if (snapshot.challenge) {
+      throw new WebTurnError({
+        code: 'challenge',
+        message: "Cloudflare or ChatGPT is showing a verification challenge in ND's Browser pane. Complete the challenge and resend this message.",
+        phase: 'observe',
+      })
+    }
+    if (snapshot.loginRequired) {
+      throw new WebTurnError({
+        code: 'login-required',
+        message: "ChatGPT Web needs you signed in to chatgpt.com in ND's visible Browser pane (or a working guest chat). Sign in there, then resend this message.",
+        phase: 'observe',
+      })
+    }
+    if (snapshot.rateLimited) {
+      throw new WebTurnError({
+        code: 'rate-limited',
+        message: 'ChatGPT has rate limited requests. Please wait a few moments and try again.',
+        phase: 'observe',
+      })
+    }
+  }
+
+  private pageBusyError(): WebTurnError {
+    return new WebTurnError({
+      code: 'page-busy',
+      message: "ChatGPT is still answering or uploading in ND's Browser pane. Let it finish (or stop it), then resend this message.",
+      phase: 'observe',
+    })
+  }
+
+  private classifyTurnError(progress: WebTurnProgress, error: unknown): WebTurnError {
+    const classified = progress.classify(error)
+    if (!(error instanceof PageGuardError)) return classified
+    const host = (() => { try { return new URL(error.origin).hostname } catch { return '' } })()
+    if (host === 'auth.openai.com' || host === 'auth0.openai.com' || host === 'login.openai.com') {
+      return new WebTurnError({
+        code: 'login-required',
+        message: "ChatGPT Web needs you signed in to chatgpt.com in ND's visible Browser pane. Sign in there, then resend this message.",
+        phase: classified.phase,
+        submission: classified.submission,
+        ...(classified.transport ? { transport: classified.transport } : {}),
+        cause: error,
+      })
+    }
+    if (host === 'challenges.cloudflare.com') {
+      return new WebTurnError({
+        code: 'challenge',
+        message: "Cloudflare is showing a verification challenge in ND's Browser pane. Complete the challenge and resend this message.",
+        phase: classified.phase,
+        submission: classified.submission,
+        ...(classified.transport ? { transport: classified.transport } : {}),
+        cause: error,
+      })
+    }
+    return new WebTurnError({
+      code: 'wrong-page',
+      message: classified.message,
+      phase: classified.phase,
+      submission: classified.submission,
+      ...(classified.transport ? { transport: classified.transport } : {}),
+      cause: error,
+    })
+  }
+
+  private async submitPrompt(driver: PageDriver, prompt: string, signal: AbortSignal, progress: WebTurnProgress): Promise<void> {
     assertTurnActive(signal)
     const source = JSON.stringify(prompt)
-    const result = await cdp.evaluate<{ ok: boolean; reason?: string }>(`(async () => {
-      const composerSelector = ${JSON.stringify(CHATGPT_COMPOSER_SELECTOR)};
-      const isVisible = (el) => {
-        if (!el) return false;
-        if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') return true;
-        let cur = el;
-        while (cur && cur.nodeType === 1) {
-          if (cur.hidden || cur.getAttribute?.('aria-hidden') === 'true') return false;
-          const style = window.getComputedStyle(cur);
-          if (style.display === 'none' || style.visibility === 'hidden') return false;
-          cur = cur.parentElement;
+    const expected = composerKey(prompt)
+    let accepted = false
+    for (let attempt = 0; attempt < 3 && !accepted; attempt += 1) {
+      assertTurnActive(signal)
+      const result = await driver.evaluate<{ ok: boolean; reason?: string }>(`(async () => {
+        const composerSelector = ${JSON.stringify(CHATGPT_COMPOSER_SELECTOR)};
+        const isVisible = (el) => {
+          if (!el) return false;
+          if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') return true;
+          let cur = el;
+          while (cur && cur.nodeType === 1) {
+            if (cur.hidden || cur.getAttribute?.('aria-hidden') === 'true') return false;
+            const style = window.getComputedStyle(cur);
+            if (style.display === 'none' || style.visibility === 'hidden') return false;
+            cur = cur.parentElement;
+          }
+          if (typeof el.getBoundingClientRect === 'function') {
+            const r = el.getBoundingClientRect();
+            return r.width > 0 && r.height > 0;
+          }
+          return true;
+        };
+        const allComposers = typeof document.querySelectorAll === 'function'
+          ? Array.from(document.querySelectorAll(composerSelector)).filter(isVisible)
+          : [];
+        const composer = allComposers.at(-1) ?? (() => {
+          const single = document.querySelector?.(composerSelector) ?? null;
+          return isVisible(single) ? single : null;
+        })();
+        if (!(composer instanceof HTMLElement)) return { ok: false, reason: 'composer-missing' };
+        const text = ${source};
+        composer.focus?.();
+        if (composer instanceof HTMLTextAreaElement || composer instanceof HTMLInputElement) {
+          const proto = composer instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+          const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+          setter?.call(composer, text);
+          composer.dispatchEvent(new Event('input', { bubbles: true }));
+        } else if (composer.classList?.contains('ProseMirror') && typeof document.createElement === 'function' && typeof composer.replaceChildren === 'function') {
+          const paragraphs = text.split('\\n').map((line) => {
+            const p = document.createElement('p');
+            if (line) p.textContent = line;
+            else p.appendChild(document.createElement('br'));
+            return p;
+          });
+          composer.replaceChildren(...paragraphs);
+          composer.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+        } else {
+          const selection = window.getSelection?.();
+          const range = document.createRange?.();
+          if (selection && range) {
+            range.selectNodeContents(composer);
+            selection.removeAllRanges();
+            selection.addRange(range);
+          }
+          document.execCommand?.('delete');
+          if (!document.execCommand?.('insertText', false, text)) composer.textContent = text;
+          composer.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
         }
-        if (typeof el.getBoundingClientRect === 'function') {
-          const r = el.getBoundingClientRect();
-          return r.width > 0 && r.height > 0;
-        }
-        return true;
-      };
-      const allComposers = typeof document.querySelectorAll === 'function'
-        ? Array.from(document.querySelectorAll(composerSelector)).filter(isVisible)
-        : [];
-      const composer = allComposers.at(-1) ?? (() => {
-        const single = document.querySelector?.(composerSelector) ?? null;
-        return isVisible(single) ? single : null;
-      })();
-      if (!(composer instanceof HTMLElement)) return { ok: false, reason: 'composer-missing' };
-      const text = ${source};
-      composer.focus?.();
-      if (composer instanceof HTMLTextAreaElement || composer instanceof HTMLInputElement) {
-        const proto = composer instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-        const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-        setter?.call(composer, text);
-        composer.dispatchEvent(new Event('input', { bubbles: true }));
-      } else if (composer.classList?.contains('ProseMirror') && typeof document.createElement === 'function' && typeof composer.replaceChildren === 'function') {
-        const paragraphs = text.split('\\n').map((line) => {
-          const p = document.createElement('p');
-          if (line) p.textContent = line;
-          else p.appendChild(document.createElement('br'));
-          return p;
-        });
-        composer.replaceChildren(...paragraphs);
-        composer.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
-      } else {
-        const selection = window.getSelection?.();
-        const range = document.createRange?.();
-        if (selection && range) {
-          range.selectNodeContents(composer);
-          selection.removeAllRanges();
-          selection.addRange(range);
-        }
-        document.execCommand?.('delete');
-        if (!document.execCommand?.('insertText', false, text)) composer.textContent = text;
-        composer.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
-      }
-      return { ok: true };
-    })()`)
-    if (!result?.ok) throw new Error('ChatGPT Web composer is unavailable.')
+        return { ok: true };
+      })()`)
+      if (!result?.ok) throw new Error('ChatGPT Web composer is unavailable.')
+      await sleep(250)
+      accepted = composerKey(await this.readComposerText(driver)) === expected
+      if (!accepted) await sleep(200)
+    }
+    if (!accepted) throw new Error('ChatGPT Web composer did not keep the full message. Reload ChatGPT and retry.')
+
+    progress.enter('submit')
+    let sent = false
     for (let index = 0; index < 50; index += 1) {
       assertTurnActive(signal)
-      const sent = await cdp.evaluate<boolean>(`(() => {
+      // The click may register even if its result never reaches ND, so the
+      // submission stays uncertain until confirmation.
+      progress.submission = 'uncertain'
+      const clicked = await driver.evaluate<boolean>(`(() => {
         const composerSelector = ${JSON.stringify(CHATGPT_COMPOSER_SELECTOR)};
         const isVisible = (el) => {
           if (!el) return false;
@@ -675,15 +1089,112 @@ export class ChatGptWebEngine {
         }
         return false;
       })()`)
-      if (sent) return
+      if (clicked) {
+        sent = true
+        break
+      }
+      progress.submission = 'none'
       await sleep(100)
     }
-    assertTurnActive(signal)
-    throw new Error('ChatGPT Web could not send the message (send-button-unavailable). Reload ChatGPT and retry.')
+    if (!sent) {
+      throw progress.fail('not-submitted', 'ChatGPT Web could not find an enabled Send control. Reload ChatGPT and retry.')
+    }
+    await this.confirmSubmission(driver, prompt, signal, progress)
+  }
+
+  private async readComposerText(driver: PageDriver): Promise<string> {
+    return await driver.evaluate<string>(`(() => {
+      const composerSelector = ${JSON.stringify(CHATGPT_COMPOSER_SELECTOR)};
+      const isVisible = (el) => {
+        if (!el) return false;
+        if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') return true;
+        let cur = el;
+        while (cur && cur.nodeType === 1) {
+          if (cur.hidden || cur.getAttribute?.('aria-hidden') === 'true') return false;
+          const style = window.getComputedStyle(cur);
+          if (style.display === 'none' || style.visibility === 'hidden') return false;
+          cur = cur.parentElement;
+        }
+        if (typeof el.getBoundingClientRect === 'function') {
+          const r = el.getBoundingClientRect();
+          return r.width > 0 && r.height > 0;
+        }
+        return true;
+      };
+      const allComposers = typeof document.querySelectorAll === 'function'
+        ? Array.from(document.querySelectorAll(composerSelector)).filter(isVisible)
+        : [];
+      const composer = allComposers.at(-1) ?? (() => {
+        const single = document.querySelector?.(composerSelector) ?? null;
+        return isVisible(single) ? single : null;
+      })();
+      if (!(composer instanceof HTMLElement)) return '';
+      return composer instanceof HTMLTextAreaElement || composer instanceof HTMLInputElement ? composer.value : composer.innerText;
+    })()`)
+  }
+
+  /**
+   * Confirmation is the only proof ChatGPT accepted the prompt. A timeout or
+   * cancellation after the click stays `uncertain` so a retry cannot duplicate.
+   */
+  private async confirmSubmission(driver: PageDriver, prompt: string, signal: AbortSignal, progress: WebTurnProgress): Promise<void> {
+    progress.enter('confirm')
+    if (progress.submission === 'none') progress.submission = 'uncertain'
+    const expected = JSON.stringify(composerKey(prompt))
+    const confirmDeadline = Date.now() + SUBMIT_CONFIRM_TIMEOUT_MS
+    let confirmed = false
+    while (Date.now() < confirmDeadline) {
+      if (signal.aborted) break
+      const state = await driver.evaluate<{ composerCleared: boolean; busy: boolean; sendVisible: boolean; sendDisabled: boolean }>(`(() => {
+        const composerSelector = ${JSON.stringify(CHATGPT_COMPOSER_SELECTOR)};
+        const isVisible = (el) => {
+          if (!el) return false;
+          if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') return true;
+          let cur = el;
+          while (cur && cur.nodeType === 1) {
+            if (cur.hidden || cur.getAttribute?.('aria-hidden') === 'true') return false;
+            const style = window.getComputedStyle(cur);
+            if (style.display === 'none' || style.visibility === 'hidden') return false;
+            cur = cur.parentElement;
+          }
+          if (typeof el.getBoundingClientRect === 'function') {
+            const r = el.getBoundingClientRect();
+            return r.width > 0 && r.height > 0;
+          }
+          return true;
+        };
+        const composers = Array.from(document.querySelectorAll(composerSelector)).filter(isVisible);
+        const composer = composers.at(-1) ?? document.querySelector(composerSelector);
+        const text = composer instanceof HTMLTextAreaElement || composer instanceof HTMLInputElement ? composer.value : (composer?.innerText || '');
+        const stop = document.querySelector('button[data-testid="stop-button"], main form button[aria-label*="Stop" i]');
+        const send = document.querySelector('button[data-testid="send-button"], button[data-testid="fruitjuice-send-button"], button[aria-label*="Send" i]');
+        return {
+          composerCleared: text.replace(/\\s+/g, '') !== ${expected},
+          busy: isVisible(stop),
+          sendVisible: isVisible(send),
+          sendDisabled: send instanceof HTMLButtonElement ? Boolean(send.disabled || send.getAttribute('aria-disabled') === 'true') : true,
+        };
+      })()`).catch(() => undefined)
+      if (state && state.composerCleared && (state.busy || !state.sendVisible || state.sendDisabled)) {
+        confirmed = true
+        break
+      }
+      await sleep(SUBMIT_CONFIRM_POLL_MS)
+    }
+    if (!confirmed) {
+      throw new WebTurnError({
+        code: 'submission-uncertain',
+        message: "ChatGPT Web did not confirm that it accepted the message. The message may already have been sent — check ND's Browser pane before resending; ND will not resend it automatically.",
+        phase: 'confirm',
+        submission: 'uncertain',
+        transport: progress.transport,
+      })
+    }
+    progress.submission = 'confirmed'
   }
 
   private async waitForAssistant(
-    cdp: VisibleCdpConnection,
+    driver: PageDriver,
     session: StoredChatGptWebSession,
     baselineAssistantCount: number,
     signal: AbortSignal,
@@ -694,7 +1205,8 @@ export class ChatGptWebEngine {
     let lastRemotePoll = 0
     while (Date.now() < deadline) {
       if (signal.aborted) throw new Error('ChatGPT Web turn was stopped.')
-      const snapshot = await this.captureSnapshot(cdp)
+      const snapshot = await this.captureSnapshot(driver)
+      this.throwStopConditions(snapshot)
       this.captureConversationUrl(session, snapshot.url)
       const assistants = snapshot.turns.filter((turn) => turn.role === 'assistant')
       const latest = assistants.at(-1)?.text.trim() ?? ''
@@ -717,8 +1229,8 @@ export class ChatGptWebEngine {
     throw new Error('ChatGPT Web turn exceeded the 10 minute completion deadline.')
   }
 
-  private async captureSnapshot(cdp: VisibleCdpConnection): Promise<ChatGptDomSnapshot> {
-    return cdp.evaluate<ChatGptDomSnapshot>(`(() => {
+  private async captureSnapshot(driver: PageDriver): Promise<ChatGptDomSnapshot> {
+    return driver.evaluate<ChatGptDomSnapshot>(`(() => {
       ${CHATGPT_DOM_TURNS_SCRIPT}
       const composerSelector = ${JSON.stringify(CHATGPT_COMPOSER_SELECTOR)};
       const isVisible = (el) => {
@@ -746,12 +1258,19 @@ export class ChatGptWebEngine {
         ? Array.from(document.querySelectorAll(stopSelector)).filter(isVisible)
         : [];
       const hasStop = visibleStops.length > 0 || isVisible(document.querySelector?.(stopSelector));
+      const host = location.hostname;
+      const bodyText = document.body?.innerText || '';
+      const titleAndBody = String(document.title || '') + ' ' + bodyText;
       return {
         url: location.href,
         title: document.title,
         composer: hasComposer,
         busy: hasStop || lastAssistant?.imagesPending === true,
         complete: lastAssistant?.complete === true,
+        pendingSend: false,
+        challenge: host === 'challenges.cloudflare.com' || /just a moment|checking your browser|verify you are human|unusual traffic/i.test(titleAndBody),
+        loginRequired: host === 'auth.openai.com' || host === 'auth0.openai.com' || host === 'login.openai.com' || location.pathname.includes('/auth/'),
+        rateLimited: /rate limit|too many requests|usage limit|you(?:'|’)ve reached|try again later/i.test(bodyText),
         turns,
       };
     })()`)
@@ -781,6 +1300,7 @@ export class ChatGptWebEngine {
       .map((turn, idx) => (turn.role === 'assistant' ? idx : -1))
       .filter((idx) => idx >= 0)
     let changed = false
+    let awaitingEcho = session.transcript.at(-1)?.type === 'user/message'
     snapshot.turns.forEach((turn, index) => {
       const key = domTurnKey(turn, index)
       if (seen.has(key)) return
@@ -794,17 +1314,20 @@ export class ChatGptWebEngine {
           const offsetFromEnd = pos >= 0 ? assistantIndices.length - 1 - pos : 0
           this.updateAssistantMessageFromEnd(session, turn.text, offsetFromEnd)
         }
+        awaitingEcho = false
         changed = true
         return
       }
       const strippedUserText = turn.role === 'user' ? (stripWorkspaceContext(turn.text).trim() || turn.text) : turn.text
-      if (turn.role === 'user' && (sent.has(hashText(turn.text)) || sent.has(hashText(strippedUserText)))) {
+      if (turn.role === 'user' && (sent.has(hashText(turn.text)) || sent.has(hashText(strippedUserText)) || (awaitingEcho && IMAGE_ECHO_PATTERN.test(turn.text)))) {
         seen.add(key)
+        awaitingEcho = false
         changed = true
         return
       }
       if (turn.role === 'user') this.recordUserMessage(session, strippedUserText)
       else this.recordAssistantMessage(session, turn.text)
+      awaitingEcho = false
       seen.add(key)
       changed = true
     })
@@ -837,6 +1360,7 @@ export class ChatGptWebEngine {
 
   private async watchTick(): Promise<void> {
     if (this.watcherBusy) return
+    if (typeof this.options.browser?.state !== 'function' || typeof this.options.browser?.activeTabId !== 'function') return
     this.watcherBusy = true
     try {
       const currentUrl = this.options.browser.state().url
@@ -845,14 +1369,14 @@ export class ChatGptWebEngine {
       )
       if (visibleSessions.length > 0) {
         try {
-          const cdp = await VisibleCdpConnection.connect(this.options.browser)
+          const driver = new ElectronPageDriver(this.options.browser, this.options.browser.activeTabId(), CHATGPT_ORIGINS)
           try {
-            const snapshot = await this.captureSnapshot(cdp)
+            const snapshot = await this.captureSnapshot(driver)
             for (const visibleSession of visibleSessions) {
               this.importUnseenTurns(visibleSession, snapshot)
             }
           } finally {
-            cdp.close()
+            driver.close()
           }
         } catch (error) {
           this.options.log?.(`[chatgpt-web] visible conversation sync skipped: ${error instanceof Error ? error.message : String(error)}`)
@@ -875,10 +1399,23 @@ export class ChatGptWebEngine {
     }
   }
 
-  private recordUserMessage(session: StoredChatGptWebSession, text: string): void {
+  private recordUserMessage(session: StoredChatGptWebSession, text: string, images?: readonly HarnessRunImage[]): void {
     this.recordEnvelope(session, {
       type: 'user/message',
-      data: { message: { role: 'user', content: [{ type: 'text', text }] } },
+      data: {
+        message: {
+          role: 'user',
+          content: [
+            { type: 'text', text },
+            ...(images ?? []).map((image, index) => ({
+              type: 'image',
+              mediaType: image.mediaType,
+              name: image.name || `attached-${index + 1}`,
+              data: image.data,
+            })),
+          ],
+        },
+      },
     })
   }
 
@@ -969,6 +1506,7 @@ export class ChatGptWebEngine {
         session.transcript = Array.isArray(session.transcript) ? session.transcript.slice(-MAX_TRANSCRIPT_EVENTS) : []
         session.seenTurnKeys = Array.isArray(session.seenTurnKeys) ? session.seenTurnKeys.slice(-500) : []
         session.sentPromptHashes = Array.isArray(session.sentPromptHashes) ? session.sentPromptHashes.slice(-100) : []
+        session.uncertainPromptHashes = Array.isArray(session.uncertainPromptHashes) ? session.uncertainPromptHashes.slice(-50) : []
         session.sequence = Number.isSafeInteger(session.sequence) ? session.sequence : session.transcript.at(-1)?.seq ?? 0
         if (typeof session.chatGptProjectRef !== 'string') delete session.chatGptProjectRef
         if (typeof session.chatGptChatId !== 'string') delete session.chatGptChatId
@@ -980,6 +1518,9 @@ export class ChatGptWebEngine {
             this.projectBindings.set(key, binding)
           }
         }
+      }
+      if (parsed.modeSettings && typeof parsed.modeSettings === 'object') {
+        this.modeSettings = normalizeWebBrowserModeSettings(parsed.modeSettings)
       }
     } catch (error) {
       this.options.log?.(`[chatgpt-web] ignoring unreadable session store: ${error instanceof Error ? error.message : String(error)}`)
@@ -998,6 +1539,7 @@ export class ChatGptWebEngine {
       version: 1,
       sessions: [...this.sessions.values()],
       projectBindings: bindingsObj,
+      modeSettings: this.modeSettings,
     }
     try {
       writeFileSync(tmp, `${JSON.stringify(payload, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
@@ -1008,107 +1550,22 @@ export class ChatGptWebEngine {
   }
 }
 
-class VisibleCdpConnection {
-  private nextId = 1
-  private readonly pending = new Map<number, PendingCdpCall>()
-
-  private constructor(private readonly socket: WebSocket) {
-    socket.onmessage = (event) => {
-      let parsed: CdpResponse
-      try { parsed = JSON.parse(String(event.data)) as CdpResponse } catch { return }
-      if (parsed.id === undefined) return
-      const pending = this.pending.get(parsed.id)
-      if (!pending) return
-      this.pending.delete(parsed.id)
-      clearTimeout(pending.timer)
-      if (parsed.error?.message) {
-        pending.reject(new Error(parsed.error.message))
-        return
-      }
-      const exception = parsed.result?.exceptionDetails
-      if (exception) {
-        pending.reject(new Error(exception.exception?.description ?? exception.text ?? 'CDP Runtime.evaluate failed'))
-        return
-      }
-      pending.resolve(parsed.result?.result?.value)
-    }
-    socket.onclose = () => {
-      for (const pending of this.pending.values()) {
-        clearTimeout(pending.timer)
-        pending.reject(new Error('Visible browser CDP connection closed'))
-      }
-      this.pending.clear()
-    }
-  }
-
-  static async connect(browser: BrowserController): Promise<VisibleCdpConnection> {
-    await browser.ensureAgentReady()
-    const state = browser.state()
-    if (!state.targetId) throw new Error('ND visible browser has no CDP target id')
-    const response = await fetch(`http://127.0.0.1:${state.cdpPort}/json/list`, { signal: AbortSignal.timeout(CDP_CONNECT_TIMEOUT_MS) })
-    if (!response.ok) throw new Error(`ND visible browser CDP target list failed (${response.status})`)
-    const targets = await response.json() as CdpTarget[]
-    const target = targets.find((candidate) => candidate.id === state.targetId)
-    if (!target?.webSocketDebuggerUrl) throw new Error('ND visible browser target is not available through loopback CDP')
-    const socket = new WebSocket(target.webSocketDebuggerUrl)
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        try { socket.close() } catch { /* not open yet */ }
-        reject(new Error('Timed out connecting to ND visible browser CDP'))
-      }, CDP_CONNECT_TIMEOUT_MS)
-      socket.onopen = () => {
-        clearTimeout(timer)
-        resolve()
-      }
-      socket.onerror = () => {
-        clearTimeout(timer)
-        reject(new Error('Could not connect to ND visible browser CDP'))
-      }
-    })
-    return new VisibleCdpConnection(socket)
-  }
-
-  async evaluate<T>(expression: string): Promise<T> {
-    const id = this.nextId++
-    const promise = new Promise<unknown>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id)
-        reject(new Error(`Visible browser CDP call timed out after ${CDP_CALL_TIMEOUT_MS}ms`))
-      }, CDP_CALL_TIMEOUT_MS)
-      this.pending.set(id, { resolve, reject, timer })
-    })
-    try {
-      this.socket.send(JSON.stringify({
-        id,
-        method: 'Runtime.evaluate',
-        params: {
-          expression,
-          returnByValue: true,
-          awaitPromise: true,
-          userGesture: true,
-        },
-      }))
-    } catch (error) {
-      const pending = this.pending.get(id)
-      if (pending) clearTimeout(pending.timer)
-      this.pending.delete(id)
-      throw error
-    }
-    return await promise as T
-  }
-
-  close(): void {
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timer)
-      pending.reject(new Error('Visible browser CDP connection closed'))
-    }
-    this.pending.clear()
-    try { this.socket.close() } catch { /* already closed */ }
-  }
-}
-
 function hashText(value: string): string {
   return createHash('sha256').update(value.trim()).digest('hex')
+}
+
+function composerKey(text: string): string {
+  return text.replace(/\s+/g, '')
+}
+
+function promptMatchesDom(domText: string, prompt: string): boolean {
+  const text = domText.trim()
+  return text === prompt.trim() || text.includes(prompt.trim())
+}
+
+function userMessageText(event: SessionEventEnvelope): string | undefined {
+  const message = (event.data as { message?: { content?: Array<{ type?: string; text?: string }> } } | undefined)?.message
+  return message?.content?.find((content) => content.type === 'text')?.text
 }
 
 function domTurnKey(turn: ChatGptDomTurn, index: number): string {

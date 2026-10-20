@@ -46,7 +46,9 @@ import {
 import { parseWallpaperLinkUrl, parseWallpaperLinksBundle, type WallpaperCollection, type WallpaperCollectionEntry, type WallpaperCollectionItemInput, type WallpaperLink } from '../../shared/wallpaper-links.js'
 import type { CoreMedia } from '../core/core-media.js'
 import type { CoreDiskScan } from '../core/core-disk.js'
+import type { CoreComputer } from '../core/core-computer.js'
 import type { CoreApiHttp } from '../core/core-api-http.js'
+import { ComputerUseService } from './computer-use-service.js'
 import {
   ApiStudioSpecStore,
   ApiStudioWorkspaceSaveBuffer,
@@ -133,6 +135,11 @@ export interface NdIpcDependencies {
    * surfaces; the disk scan host methods fail closed without it.
    */
   coreDisk?: CoreDiskScan
+  /**
+   * nd-core's read-only desktop observation surface. Optional like the other
+   * sidecar surfaces; Computer Use host methods fail closed without it.
+   */
+  coreComputer?: CoreComputer
   /** nd-core's outbound HTTP surface, used by API Studio's request runner. */
   coreApiHttp?: CoreApiHttp
   /** Notified after ND Home records change, so other services can re-derive views. */
@@ -150,6 +157,7 @@ const MINI_BROWSER_ID = 'nd.mini-browser'
 const PAY_GUARD_ID = 'nd.pay-guard'
 const DISK_CLEANER_ID = 'nd.disk-cleaner'
 const API_STUDIO_ID = 'nd.api-studio'
+const COMPUTER_USE_ID = 'nd.computer-use'
 
 /**
  * Development package sources. Release Discover uses separately published metadata.
@@ -176,6 +184,7 @@ const AVAILABLE_PACKAGES: readonly { id: string; path: () => string }[] = app.is
     { id: PAY_GUARD_ID, path: payGuardPackagePath },
     { id: DISK_CLEANER_ID, path: diskCleanerPackagePath },
     { id: API_STUDIO_ID, path: apiStudioPackagePath },
+    { id: COMPUTER_USE_ID, path: computerUsePackagePath },
   ]),
 ]
 
@@ -273,6 +282,12 @@ function apiStudioPackagePath(): string {
   return app.isPackaged
     ? join(process.resourcesPath, 'nd-extensions', 'api-studio')
     : join(app.getAppPath(), 'extensions', 'api-studio')
+}
+
+function computerUsePackagePath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'nd-extensions', 'nd-computer-use')
+    : join(app.getAppPath(), 'extensions', 'nd-computer-use')
 }
 
 /**
@@ -392,6 +407,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
           payGuardCatalogView(state),
           diskCleanerCatalogView(state),
           apiStudioCatalogView(state),
+          computerUseCatalogView(state),
         ]),
       ]),
     }
@@ -406,7 +422,11 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
     deps.window.webContents.send(ND_HOME_IPC.changedEvent, await homeView())
   }
 
-  const disposeNativeHost = registerNativeHostHandlers(deps, clipboardHistory)
+  const computerUse = deps.coreComputer ? new ComputerUseService(deps.coreComputer) : null
+  const resetComputerUse = (id: string, key: string): void => {
+    if (id === COMPUTER_USE_ID) void computerUse?.reset(id, key).catch(() => undefined)
+  }
+  const disposeNativeHost = registerNativeHostHandlers(deps, clipboardHistory, computerUse)
 
   deps.broker.setOnApprovalRequested(() => { void emitState() })
   deps.home.setOnChanged(() => { void emitHome(); deps.onHomeChanged?.() })
@@ -490,6 +510,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
     if (!sourcePath) throw new Error('This package records no local source; choose the updated package folder')
     await deps.packages.installFromDirectory(sourcePath, { expectId: id })
     webViews.revokeExtension(id)
+    resetComputerUse(id, contextKey({ kind: 'personal' }))
     syncClipboardWatcher()
     await emitState()
     return stateView()
@@ -499,6 +520,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
     const id = shortId(extensionId, 'Extension id')
     await deps.packages.rollback(id)
     webViews.revokeExtension(id)
+    resetComputerUse(id, contextKey({ kind: 'personal' }))
     syncClipboardWatcher()
     await emitState()
     return stateView()
@@ -512,6 +534,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
     // captures are user data and stay untouched.
     await deps.state.revokeActivationsForExtension(id)
     await deps.state.revokeGrantsForExtension(id)
+    resetComputerUse(id, contextKey({ kind: 'personal' }))
     syncClipboardWatcher()
     if (id === PAY_GUARD_ID) refreshPayGuardScheduler?.()
     await emitState()
@@ -527,6 +550,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
     if (enabled !== true) {
       await deps.state.revokeGrantsForExtension(id, target)
       webViews.revokeExtension(id, contextKey(target))
+      resetComputerUse(id, contextKey(target))
     }
     if (id === WALLPAPER_MANAGER_ID) void syncWallpaperRotation()
     if (id === CLIPBOARD_HISTORY_ID) syncClipboardWatcher()
@@ -700,6 +724,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
 export function registerNativeHostHandlers(
   deps: NdIpcDependencies,
   clipboardHistory?: ClipboardHistoryAttachment,
+  computerUse?: ComputerUseService | null,
 ): { dispose: () => void } {
   const { host, providers } = deps
   const organization = deps.organization
@@ -2595,6 +2620,34 @@ export function registerNativeHostHandlers(
   host.register('process.quit', async (input) => quitProcess(input, false))
   host.register('process.forceQuit', async (input) => quitProcess(input, true))
 
+  // --- ND Computer Use ---------------------------------------------------------
+  //
+  // Read-only by construction: enumeration, UIA, and capture run in nd-core,
+  // and these handlers expose no input, activation, or launch path. Window
+  // titles are stripped for agent callers; the screenshot/tree read is marked
+  // sensitive so agent callers always need an explicit grant.
+
+  const requireComputerUse = (): ComputerUseService => {
+    if (!computerUse) throw new Error('The nd-core sidecar is required for Computer Use reads')
+    return computerUse
+  }
+  host.register('computer.apps.list', async (_input, context) => {
+    requirePersonalContext(context)
+    return await requireComputerUse().listApps({
+      extensionId: context.extensionId,
+      contextKey: contextKey(context.context),
+      caller: context.caller,
+    })
+  })
+  host.register('computer.app.state', async (input, context) => {
+    requirePersonalContext(context)
+    return await requireComputerUse().appState(input, {
+      extensionId: context.extensionId,
+      contextKey: contextKey(context.context),
+      caller: context.caller,
+    })
+  })
+
   host.register('chat.ask', async (input, context) => {
     if (context.caller === 'agent') throw new Error('Starting a chat on ND’s behalf is a user action; ask the user to open ND Home')
     const text = requiredText(input.text, 'Chat prompt', 20_000)
@@ -2701,6 +2754,14 @@ async function apiStudioCatalogView(state: NdExtensionsStateView): Promise<NdAva
     name: 'ND API Studio',
     description: 'One workspace for OpenAPI docs, Try It Out, a Postman-style HTTP client, collections, environments, and request history. Requests run in the Rust runtime; the workspace is local-first and encrypted at rest when the OS keychain is available.',
     permissions: ['apistudio.read', 'apistudio.write', 'apistudio.execute', 'clipboard.write'],
+  })
+}
+
+async function computerUseCatalogView(state: NdExtensionsStateView): Promise<NdAvailablePackageView> {
+  return packageCatalogView(state, COMPUTER_USE_ID, computerUsePackagePath(), {
+    name: 'ND Computer Use',
+    description: 'Read a running app window as a screenshot plus an indexed accessibility tree. Read-only: it cannot click, type, launch, or activate anything.',
+    permissions: ['computer.read'],
   })
 }
 

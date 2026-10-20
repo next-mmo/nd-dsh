@@ -15,6 +15,7 @@ import type {
   NdCallerKind,
   NdCommandView,
   NdExtensionsStateView,
+  NdGrantHost,
   NdGrantScope,
   NdInvocationError,
   NdInvocationRequest,
@@ -42,6 +43,15 @@ interface PendingApproval {
   view: NdPendingApprovalView
   request: NdInvocationRequest
   input: Record<string, unknown>
+  /**
+   * A non-extension caller (the secure CLI) registered a waiter instead of an
+   * invokable contribution. Approval only records the grants; it must never
+   * execute the request or return a value to the renderer.
+   */
+  external?: {
+    resources: string[]
+    resolve: (decision: { approved: boolean; remember: boolean }) => void
+  }
 }
 
 interface RunCredential {
@@ -166,7 +176,7 @@ export class InvocationBroker {
     const extensionId = typeof request.extensionId === 'string' ? request.extensionId.trim() : ''
     const contributionId = typeof request.contributionId === 'string' ? request.contributionId.trim() : ''
     const input = isRecord(request.input) ? request.input : {}
-    const audit = (decision: NdAuditDecision, reason: string, extra?: { outcome?: 'ok' | 'failed'; host?: NdHostMethod; contextKey?: string }) =>
+    const audit = (decision: NdAuditDecision, reason: string, extra?: { outcome?: 'ok' | 'failed'; host?: NdGrantHost; contextKey?: string }) =>
       this.deps.state.recordAudit({
         extensionId: extensionId || 'unknown',
         contributionId: contributionId || 'unknown',
@@ -263,13 +273,120 @@ export class InvocationBroker {
     })
   }
 
+  /**
+   * Ask the user to authorize a non-extension caller (the secure vault CLI) for
+   * a set of resources. Approval records per-resource grants and resolves this
+   * waiter; it never executes anything or returns a secret to the renderer.
+   */
+  requestAccess(input: {
+    extensionId: string
+    host: NdGrantHost
+    context: NdContext
+    title: string
+    detail?: string
+    resources: string[]
+    timeoutMs?: number
+  }): { approvalId: string; decision: Promise<{ approved: boolean; remember: boolean }> } {
+    const resources = [...new Set(input.resources.filter((item) => typeof item === 'string' && item.length > 0))].slice(0, 64)
+    if (resources.length === 0) {
+      return { approvalId: '', decision: Promise.resolve({ approved: false, remember: false }) }
+    }
+    const approvalId = randomUUID()
+    const request: NdInvocationRequest = {
+      extensionId: input.extensionId,
+      contributionId: 'secure-cli-access',
+      contributionKind: 'command',
+      context: input.context,
+      caller: 'agent',
+      input: {},
+    }
+    const view: NdPendingApprovalView = {
+      approvalId,
+      extensionId: input.extensionId,
+      contributionId: request.contributionId,
+      host: input.host,
+      context: input.context,
+      title: input.title,
+      ...(input.detail ? { detail: input.detail } : {}),
+      resources,
+      requestedAt: Date.now(),
+    }
+    const decision = new Promise<{ approved: boolean; remember: boolean }>((resolve) => {
+      const timer = setTimeout(() => {
+        void this.cancelAccess(approvalId, 'approval timed out')
+      }, input.timeoutMs ?? 120_000)
+      this.pending.set(approvalId, {
+        view,
+        request,
+        input: {},
+        external: {
+          resources,
+          resolve: (result) => {
+            clearTimeout(timer)
+            resolve(result)
+          },
+        },
+      })
+      this.onApprovalRequested?.(view)
+    })
+    return { approvalId, decision }
+  }
+
+  /** Resolve an external approval without a user gesture (timeout, disconnect). */
+  async cancelAccess(approvalId: string, reason = 'approval cancelled'): Promise<boolean> {
+    const pending = this.pending.get(approvalId)
+    if (!pending) return false
+    this.pending.delete(approvalId)
+    pending.external?.resolve({ approved: false, remember: false })
+    await this.deps.state.recordAudit({
+      extensionId: pending.request.extensionId,
+      contributionId: pending.request.contributionId,
+      host: pending.view.host,
+      contextKey: contextKey(pending.request.context),
+      caller: 'agent',
+      decision: 'denied',
+      reason,
+    }).catch(() => undefined)
+    return true
+  }
+
   /** Approve a pending agent request: grant (once or remembered), then run it. */
   async approve(approvalId: string, remember = false): Promise<NdInvocationResult> {
     const pending = this.pending.get(approvalId)
     if (!pending) return failure('invalid', 'That approval request is no longer pending')
     this.pending.delete(approvalId)
     const manifest = await this.deps.packages.activeManifest(pending.request.extensionId)
-    if (!manifest) return failure('unavailable', 'The extension package is no longer installed')
+    if (!manifest) {
+      pending.external?.resolve({ approved: false, remember: false })
+      return failure('unavailable', 'The extension package is no longer installed')
+    }
+    if (pending.external) {
+      try {
+        for (const resource of pending.external.resources) {
+          await this.deps.state.addGrant({
+            extensionId: pending.request.extensionId,
+            host: pending.view.host,
+            context: pending.request.context,
+            scope: remember ? 'remembered' : 'once',
+            resource,
+          })
+        }
+      } catch (error) {
+        pending.external.resolve({ approved: false, remember: false })
+        return failure('failed', message(error))
+      }
+      await this.deps.state.recordAudit({
+        extensionId: pending.request.extensionId,
+        contributionId: pending.request.contributionId,
+        host: pending.view.host,
+        contextKey: contextKey(pending.request.context),
+        caller: 'agent',
+        decision: 'allowed',
+        reason: pending.view.title,
+      }).catch(() => undefined)
+      pending.external.resolve({ approved: true, remember })
+      return { ok: true, value: { approved: true } }
+    }
     // Resolve exactly like invoke() does: a view call may name one of its
     // actions in the input, and web views only exist through those actions.
     const pendingActionId = typeof pending.input.action === 'string' ? pending.input.action : undefined
@@ -288,6 +405,7 @@ export class InvocationBroker {
     const pending = this.pending.get(approvalId)
     if (!pending) return
     this.pending.delete(approvalId)
+    pending.external?.resolve({ approved: false, remember: false })
     await this.deps.state.recordAudit({
       extensionId: pending.request.extensionId,
       contributionId: pending.request.contributionId,
@@ -476,7 +594,7 @@ export class InvocationBroker {
     settings: Record<string, unknown>
     caller: NdCallerKind
     runId?: string
-    audit: (decision: NdAuditDecision, reason: string, extra?: { outcome?: 'ok' | 'failed'; host?: NdHostMethod; contextKey?: string }) => Promise<void>
+    audit: (decision: NdAuditDecision, reason: string, extra?: { outcome?: 'ok' | 'failed'; host?: NdGrantHost; contextKey?: string }) => Promise<void>
   }): Promise<NdInvocationResult> {
     const callContext: NdHostCallContext = {
       extensionId: params.manifest.id,

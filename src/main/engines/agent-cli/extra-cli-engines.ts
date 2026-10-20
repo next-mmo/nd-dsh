@@ -1,4 +1,5 @@
-import { spawn } from 'node:child_process'
+import { execFile, execFileSync, spawn } from 'node:child_process'
+import type { EngineModelOption } from '../../../shared/contracts.js'
 import {
   GOOSE_CLI_ENGINE_ID,
   HERMES_CLI_ENGINE_ID,
@@ -38,14 +39,107 @@ function errorMessage(value: unknown, fallback: string): string {
     ?? fallback
 }
 
+const opencodeStandalone = new Map<string, boolean>()
+
+/**
+ * OpenCode v2 `run` attaches to a shared background service by default, which
+ * keeps the first caller's project directory and config. ND needs every turn in
+ * its own workspace, so it runs v2 standalone (v1 has no such mode).
+ */
+function opencodeSupportsStandalone(bin: string): boolean {
+  const cached = opencodeStandalone.get(bin)
+  if (cached !== undefined) return cached
+  const read = (command: string, args: string[]): string => execFileSync(command, args, {
+    encoding: 'utf8',
+    timeout: 10_000,
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'ignore'],
+  })
+  let supported = false
+  try {
+    supported = /--standalone\b/.test(read(bin, ['run', '--help']))
+  } catch {
+    if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(bin)) {
+      try {
+        supported = /--standalone\b/.test(read(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', `"${bin}" run --help`]))
+      } catch {}
+    }
+  }
+  opencodeStandalone.set(bin, supported)
+  return supported
+}
+
+/**
+ * Picker rows from `opencode models`: one provider/model slug per line.
+ * Free models lead the list so the no-cost routes are reachable without
+ * scrolling through every paid model first.
+ */
+export function parseOpencodeModelList(stdout: string): EngineModelOption[] {
+  const seen = new Set<string>()
+  const free: EngineModelOption[] = []
+  const paid: EngineModelOption[] = []
+  for (const line of stdout.split(/\r?\n/)) {
+    const id = line.trim()
+    if (!id || /\s/.test(id) || !id.includes('/') || seen.has(id)) continue
+    seen.add(id)
+    const model = { id }
+    if (/-free$/i.test(id)) free.push(model)
+    else paid.push(model)
+  }
+  return [...free, ...paid]
+}
+
+function execFileText(command: string, args: string[]): Promise<string> {
+  return new Promise((resolveText, reject) => {
+    execFile(command, args, {
+      encoding: 'utf8',
+      timeout: 30_000,
+      windowsHide: true,
+      maxBuffer: 1024 * 1024,
+    }, (error, stdout) => {
+      if (error) reject(error)
+      else resolveText(stdout)
+    })
+  })
+}
+
+let opencodeModelCache: { bin: string; at: number; models: EngineModelOption[] } | undefined
+
+async function loadOpencodeModels(bin: string): Promise<EngineModelOption[]> {
+  const cached = opencodeModelCache
+  if (cached && cached.bin === bin && Date.now() - cached.at < 60_000) return cached.models
+  const args = ['models']
+  if (opencodeSupportsStandalone(bin)) args.push('--standalone')
+  let stdout: string
+  try {
+    stdout = await execFileText(bin, args)
+  } catch {
+    if (process.platform !== 'win32' || !/\.(cmd|bat)$/i.test(bin)) return []
+    try {
+      stdout = await execFileText(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', `"${bin}" ${args.join(' ')}`])
+    } catch {
+      return []
+    }
+  }
+  const models = parseOpencodeModelList(stdout)
+  opencodeModelCache = { bin, at: Date.now(), models }
+  return models
+}
+
 export const opencodeAdapter: StructuredCliAdapter = {
   id: OPENCODE_CLI_ENGINE_ID,
   label: 'OpenCode',
   sessionPrefix: 'opencode',
   binary: opencodeBinPath,
-  unavailableMessage: 'The OpenCode CLI is not installed. Install OpenCode or set ND_DSH_OPENCODE_BINARY.',
+  unavailableMessage: 'The OpenCode CLI is not installed. Install the OpenCode CLI or the OpenCode Desktop app, or set ND_DSH_OPENCODE_BINARY.',
+  listModels: async () => {
+    const bin = opencodeBinPath()
+    return bin ? loadOpencodeModels(bin) : []
+  },
   buildArgs: ({ prompt, model, nativeSessionId }) => {
     const args = ['run', '--format', 'json']
+    const bin = opencodeBinPath()
+    if (bin && opencodeSupportsStandalone(bin)) args.push('--standalone')
     if (nativeSessionId) args.push('--session', nativeSessionId)
     if (model) args.push('--model', model)
     args.push(prompt)

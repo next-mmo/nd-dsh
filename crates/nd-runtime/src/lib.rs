@@ -7,6 +7,7 @@ pub mod api_http;
 pub mod artifacts;
 pub mod cache;
 pub mod clipboard;
+pub mod computer_use;
 pub mod deadline;
 pub mod decision;
 pub mod disk_scan;

@@ -3,12 +3,15 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import { describe, expect, it, vi } from 'vitest'
+import { PageGuardError } from '../src/main/browser/page-driver.js'
 import {
   ChatGptWebEngine,
   chatGptSyncBranchName,
   compileChatGptGitPrompt,
   sanitizeRemoteForPrompt,
 } from '../src/main/engines/chatgpt-web/chatgpt-web-engine.js'
+import { discardWebImages } from '../src/main/engines/web-attachments.js'
+import { WebTurnProgress } from '../src/main/engines/web-turn.js'
 import {
   parseChatGptProjectInput,
   parseChatGptConversationUrl,
@@ -182,6 +185,211 @@ describe('ChatGPT Web Git sync helpers', () => {
       expect(persisted.sessions[0]?.conversationUrl).toBeUndefined()
       expect(persisted.sessions[0]?.running).toBe(false)
     } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('ChatGPT Web browser transports', () => {
+  const storeFor = (directory: string): string => join(directory, 'chatgpt-web-sessions.json')
+
+  it('manages browser mode settings and persists them across engine reloads', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nd-chatgpt-mode-'))
+    const storePath = storeFor(directory)
+    try {
+      const engine1 = new ChatGptWebEngine({ browser: {} as never, git: {} as never, workspace: {} as never, storePath })
+      expect(engine1.getModeSettings()).toEqual({ mode: 'auto', agentFallback: false, visualRecovery: true })
+      expect(engine1.setModeSettings({ mode: 'browser-agent', visualRecovery: false })).toEqual({
+        mode: 'browser-agent',
+        agentFallback: false,
+        visualRecovery: false,
+      })
+      await engine1.close()
+      const engine2 = new ChatGptWebEngine({ browser: {} as never, git: {} as never, workspace: {} as never, storePath })
+      expect(engine2.getModeSettings()).toEqual({ mode: 'browser-agent', agentFallback: false, visualRecovery: false })
+      await engine2.close()
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('stops before composing when ChatGPT is already answering', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nd-chatgpt-busy-'))
+    const engine = new ChatGptWebEngine({
+      browser: { state: () => ({ url: 'https://chatgpt.com/' }), activeTabId: () => 'tab-1' } as never,
+      git: {} as never,
+      workspace: { state: () => ({ root: '/workspace' }) } as never,
+      storePath: storeFor(directory),
+    })
+    const driver = { evaluate: vi.fn(async () => true), setFilesOnInput: vi.fn(async () => true), close: vi.fn() }
+    const internals = engine as unknown as {
+      openBoundConversation: () => Promise<typeof driver>
+      captureSnapshot: () => Promise<unknown>
+      submitPrompt: ReturnType<typeof vi.fn>
+    }
+    internals.openBoundConversation = async () => driver
+    internals.captureSnapshot = async () => ({
+      url: 'https://chatgpt.com/',
+      title: 'ChatGPT',
+      composer: true,
+      busy: true,
+      complete: false,
+      pendingSend: false,
+      challenge: false,
+      loginRequired: false,
+      rateLimited: false,
+      turns: [],
+    })
+    internals.submitPrompt = vi.fn()
+    try {
+      await expect(engine.run('hello')).rejects.toMatchObject({ code: 'page-busy', submission: 'none' })
+      expect(internals.submitPrompt).not.toHaveBeenCalled()
+      expect(driver.close).toHaveBeenCalledOnce()
+    } finally {
+      await engine.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps a post-click confirmation timeout as uncertain instead of not submitted', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nd-chatgpt-uncertain-'))
+    const engine = new ChatGptWebEngine({ browser: {} as never, git: {} as never, workspace: {} as never, storePath: storeFor(directory) })
+    const prompt = 'Hello there'
+    let now = 1_000_000
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    const driver = {
+      evaluate: vi.fn(async (script: string) => {
+        if (script.includes('composerCleared')) {
+          now += 10_000
+          return { composerCleared: false, busy: false, sendVisible: true, sendDisabled: false }
+        }
+        if (script.includes('button.click()')) return true
+        if (script.includes('return composer instanceof HTMLTextAreaElement')) return prompt
+        if (script.includes('return { ok: true }')) return { ok: true }
+        return undefined
+      }),
+      setFilesOnInput: vi.fn(async () => true),
+      close: vi.fn(),
+    }
+    const internals = engine as unknown as {
+      submitPrompt: (driver: unknown, prompt: string, signal: AbortSignal, progress: WebTurnProgress) => Promise<void>
+    }
+    const progress = new WebTurnProgress('extension')
+    try {
+      await expect(internals.submitPrompt(driver, prompt, new AbortController().signal, progress))
+        .rejects.toMatchObject({ name: 'WebTurnError', code: 'submission-uncertain', phase: 'confirm', submission: 'uncertain' })
+      expect(progress.submission).toBe('uncertain')
+    } finally {
+      nowSpy.mockRestore()
+      await engine.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('maps off-site guard failures to stop conditions without transport fallback', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nd-chatgpt-guard-'))
+    const engine = new ChatGptWebEngine({
+      browser: {
+        state: () => ({ url: 'https://chatgpt.com/', cdpPort: 9222 }),
+        activeTabId: () => 'tab-1',
+      } as never,
+      git: {} as never,
+      workspace: { state: () => ({ root: '/workspace' }) } as never,
+      storePath: storeFor(directory),
+    })
+    const internals = engine as unknown as { openBoundConversation: () => Promise<never> }
+    try {
+      for (const [origin, code] of [
+        ['https://auth.openai.com', 'login-required'],
+        ['https://challenges.cloudflare.com', 'challenge'],
+        ['https://example.com', 'wrong-page'],
+      ] as const) {
+        const openBoundConversation = vi.fn(async () => { throw new PageGuardError('wrong-page', origin, 'left the page') })
+        internals.openBoundConversation = openBoundConversation
+        const { sessionId } = await engine.createSession({ cwd: '/workspace' })
+        await expect(engine.run('hello', { sessionId })).rejects.toMatchObject({ code, submission: 'none' })
+        expect(openBoundConversation).toHaveBeenCalledTimes(1)
+      }
+    } finally {
+      await engine.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('clicks the page Stop control only after ND submitted', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nd-chatgpt-stop-click-'))
+    const evaluateInTab = vi.fn(async () => true)
+    const browser = {
+      state: () => ({ url: 'https://chatgpt.com/', cdpPort: 9222 }),
+      activeTabId: () => 'tab-1',
+      tabUrl: () => 'https://chatgpt.com/',
+      evaluateInTab,
+      ensureAgentReady: async () => {},
+    }
+    const engine = new ChatGptWebEngine({
+      browser: browser as never,
+      git: {} as never,
+      workspace: { state: () => ({ root: '/workspace' }) } as never,
+      storePath: storeFor(directory),
+    })
+    engine.setModeSettings({ mode: 'extension' })
+    const driver = { evaluate: vi.fn(async () => true), setFilesOnInput: vi.fn(async () => true), close: vi.fn() }
+    const internals = engine as unknown as {
+      openBoundConversation: () => Promise<typeof driver>
+      activeTurns: Map<string, { progress?: { submission: string } }>
+    }
+    try {
+      for (const submitted of [false, true]) {
+        let release!: () => void
+        const gate = new Promise<void>((resolve) => { release = resolve })
+        let entered!: () => void
+        const reached = new Promise<void>((resolve) => { entered = resolve })
+        internals.openBoundConversation = async () => { entered(); await gate; return driver }
+        const { sessionId } = await engine.createSession({ cwd: '/workspace' })
+        const run = engine.run('hello', { sessionId })
+        const rejected = expect(run).rejects.toThrow('stopped')
+        await reached
+        if (submitted) internals.activeTurns.get(sessionId)!.progress!.submission = 'confirmed'
+        await engine.stop(sessionId)
+        release()
+        await rejected
+        expect(evaluateInTab).toHaveBeenCalledTimes(submitted ? 1 : 0)
+        evaluateInTab.mockClear()
+      }
+    } finally {
+      await engine.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('does not duplicate an image turn when ChatGPT echoes only the preview', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nd-chatgpt-echo-'))
+    const engine = new ChatGptWebEngine({ browser: {} as never, git: {} as never, workspace: {} as never, storePath: storeFor(directory) })
+    const internals = engine as unknown as {
+      sessions: Map<string, unknown>
+      recordUserMessage: (session: unknown, text: string, images?: readonly { data: string; mediaType: string; name: string }[]) => void
+      rememberSentPrompt: (session: unknown, prompt: string) => void
+      importUnseenTurns: (session: unknown, snapshot: unknown) => void
+    }
+    try {
+      const { sessionId } = await engine.createSession({ cwd: '/workspace' })
+      const session = internals.sessions.get(sessionId)
+      const prompt = 'What color is this image?'
+      internals.recordUserMessage(session, prompt, [{ data: 'AAAA', mediaType: 'image/png', name: 'blue.png' }])
+      internals.rememberSentPrompt(session, prompt)
+      internals.importUnseenTurns(session, {
+        url: 'https://chatgpt.com/c/conv',
+        busy: false,
+        turns: [
+          { role: 'user', text: '![Uploaded image preview](https://chatgpt.com/preview)' },
+          { role: 'assistant', text: 'Blue' },
+        ],
+      })
+      const events = engine.transcript(sessionId).events
+      expect(events.filter((event) => event.type === 'user/message')).toHaveLength(1)
+      expect(events.filter((event) => event.type === 'assistant/message')).toHaveLength(1)
+    } finally {
+      await engine.close()
       rmSync(directory, { recursive: true, force: true })
     }
   })
@@ -555,10 +763,15 @@ describe('ChatGPT Web project binding management and persistence', () => {
         }),
       }
 
+      const progress = new WebTurnProgress('cdp')
       const internals = engine as unknown as {
-        submitPrompt: (cdp: unknown, prompt: string, signal: AbortSignal) => Promise<void>
+        submitPrompt: (driver: unknown, prompt: string, signal: AbortSignal, progress: WebTurnProgress) => Promise<void>
+        confirmSubmission: (driver: unknown, prompt: string, signal: AbortSignal, progress: WebTurnProgress) => Promise<void>
       }
-      await internals.submitPrompt(cdp, 'Track daily water intake', new AbortController().signal)
+      internals.confirmSubmission = vi.fn(async (_driver, _prompt, _signal, turnProgress: WebTurnProgress) => {
+        turnProgress.submission = 'confirmed'
+      })
+      await internals.submitPrompt(cdp, 'Track daily water intake', new AbortController().signal, progress)
 
       expect(hiddenComposer.innerText).toBe('')
       expect(visibleComposer.innerText).toBe('Track daily water intake')
@@ -612,6 +825,85 @@ describe('ChatGPT Web project binding management and persistence', () => {
 
       await engine.close()
     } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('records attached images on the user turn for thread previews', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nd-chatgpt-user-images-'))
+    const engine = new ChatGptWebEngine({
+      browser: {} as never,
+      git: {} as never,
+      workspace: { state: () => ({ root: '/workspace' }) } as never,
+      storePath: join(directory, 'chatgpt-web-sessions.json'),
+    })
+    const internals = engine as unknown as {
+      sessions: Map<string, unknown>
+      recordUserMessage: (session: unknown, text: string, images?: unknown[]) => void
+    }
+    try {
+      const { sessionId } = await engine.createSession({ cwd: '/workspace' })
+      internals.recordUserMessage(internals.sessions.get(sessionId), 'describe these', [
+        { data: 'QUJD', mediaType: 'image/png', name: 'blue.png' },
+        { data: 'REVG', mediaType: 'image/jpeg', name: 'red.jpg' },
+      ])
+      expect(engine.transcript(sessionId).events.at(-1)?.data).toMatchObject({
+        message: {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'describe these' },
+            { type: 'image', mediaType: 'image/png', name: 'blue.png', data: 'QUJD' },
+            { type: 'image', mediaType: 'image/jpeg', name: 'red.jpg', data: 'REVG' },
+          ],
+        },
+      })
+    } finally {
+      await engine.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('attaches pasted images through the ChatGPT uploader before sending', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nd-chatgpt-attach-'))
+    const engine = new ChatGptWebEngine({
+      browser: {} as never,
+      git: {} as never,
+      workspace: { state: () => ({ root: '/workspace' }) } as never,
+      storePath: join(directory, 'chatgpt-web-sessions.json'),
+    })
+    let uploaded = false
+    let stagedFiles: string[] = []
+    const cdp = {
+      evaluate: vi.fn(async (script: string) => {
+        if (script.includes('add files')) return true
+        if (script.includes('!== null')) return true
+        if (script.includes('Attached images')) return uploaded ? { count: 1 } : { count: 0 }
+        return undefined
+      }),
+      setFilesOnInput: vi.fn(async (_expression: string, files: string[]) => {
+        stagedFiles = files
+        uploaded = true
+        return true
+      }),
+    }
+    const internals = engine as unknown as {
+      attachImages: (connection: typeof cdp, images: unknown[], signal: AbortSignal) => Promise<{ directory: string; files: string[] } | undefined>
+    }
+    let staged: { directory: string; files: string[] } | undefined
+    try {
+      staged = await internals.attachImages(cdp, [{
+        data: Buffer.from('chatgpt-image').toString('base64'),
+        mediaType: 'image/jpeg',
+        name: 'screen shot.jpg',
+      }], new AbortController().signal)
+      expect(staged?.files).toHaveLength(1)
+      expect(stagedFiles).toEqual(staged?.files)
+      expect(readFileSync(stagedFiles[0]!, 'utf8')).toBe('chatgpt-image')
+      expect(stagedFiles[0]).toMatch(/screen-shot-1\.jpg$/)
+      expect(cdp.setFilesOnInput).toHaveBeenCalledTimes(1)
+    } finally {
+      discardWebImages(staged)
+      await engine.close()
       rmSync(directory, { recursive: true, force: true })
     }
   })

@@ -4,6 +4,7 @@ import type {
   DshEventFrame,
   EngineSessionSummary,
   EngineSessionTranscript,
+  HarnessRunImage,
   SessionEventEnvelope,
 } from '../../../shared/contracts.js'
 import { CLAUDE_CODE_CLI_ENGINE_ID } from '../../../shared/coding-engines.js'
@@ -151,7 +152,7 @@ export class ClaudeCodeCliEngine {
    * id is given). Progress streams out as frames; the promise settles with the
    * turn, which is exactly one `result` event on the child's stdout.
    */
-  async run(prompt: string, options: { sessionId?: string; cwd?: string; model?: string } = {}): Promise<{ sessionId: string }> {
+  async run(prompt: string, options: { sessionId?: string; cwd?: string; model?: string; images?: HarnessRunImage[] } = {}): Promise<{ sessionId: string }> {
     const cleaned = prompt.trim()
     if (!cleaned) throw new Error('Prompt cannot be empty')
     if (cleaned.length > 100_000) throw new Error('Prompt exceeds the 100,000 character limit')
@@ -183,9 +184,16 @@ export class ClaudeCodeCliEngine {
       activeSession.running = true
       activeSession.updatedAt = Date.now()
       this.emitFrame({ kind: 'session-status', sessionId: activeSession.sessionId, running: true })
+      const content: Array<Record<string, unknown>> = [{ type: 'text', text: cleaned }]
+      for (const image of options.images ?? []) {
+        content.push({
+          type: 'image',
+          source: { type: 'base64', media_type: image.mediaType, data: image.data },
+        })
+      }
       child.stdin?.write(`${JSON.stringify({
         type: 'user',
-        message: { role: 'user', content: [{ type: 'text', text: cleaned }] },
+        message: { role: 'user', content },
         parent_tool_use_id: null,
       })}\n`)
       const terminal = await settled.promise

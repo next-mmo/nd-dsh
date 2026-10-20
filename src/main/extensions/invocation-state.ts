@@ -4,10 +4,10 @@ import { promises as fs } from 'node:fs'
 import { dirname, join } from 'node:path'
 import process from 'node:process'
 import { contextKey, type NdContext } from '../../shared/nd-context.js'
-import type { NdHostMethod } from '../../shared/extension-package.js'
 import type {
   NdActivationView,
   NdAuditEntryView,
+  NdGrantHost,
   NdGrantScope,
   NdGrantView,
 } from '../../shared/nd-invocations.js'
@@ -133,16 +133,26 @@ export class InvocationStateStore {
     return this.value.grants.map((grant) => structuredClone(grant))
   }
 
-  async findGrant(extensionId: string, host: NdHostMethod, context: NdContext): Promise<GrantRecord | undefined> {
+  async findGrant(
+    extensionId: string,
+    host: NdGrantHost,
+    context: NdContext,
+    resource?: string,
+  ): Promise<GrantRecord | undefined> {
     await this.load()
     const key = contextKey(context)
-    const grant = this.value.grants.find((item) => item.extensionId === extensionId && item.host === host && item.contextKey === key)
+    const grant = this.value.grants.find((item) =>
+      item.extensionId === extensionId
+      && item.host === host
+      && item.contextKey === key
+      && (resource === undefined ? item.resource === undefined : item.resource === resource),
+    )
     return grant ? structuredClone(grant) : undefined
   }
 
   async addGrant(input: {
     extensionId: string
-    host: NdHostMethod
+    host: NdGrantHost
     context: NdContext
     scope: NdGrantScope
     resource?: string

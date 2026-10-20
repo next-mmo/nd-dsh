@@ -63,6 +63,7 @@ const EXTENSION_ACCENTS: Record<string, { icon: LucideIcon; tileClassName: strin
   'nd.pay-guard': { icon: ShieldCheck, tileClassName: 'border-indigo-500/25 bg-indigo-500/15 text-indigo-500' },
   'nd.disk-cleaner': { icon: HardDrive, tileClassName: 'border-cyan-500/25 bg-cyan-500/15 text-cyan-500' },
   'nd.api-studio': { icon: Braces, tileClassName: 'border-fuchsia-500/25 bg-fuchsia-500/15 text-fuchsia-500' },
+  'nd.computer-use': { icon: MonitorPlay, tileClassName: 'border-lime-500/25 bg-lime-500/15 text-lime-500' },
 }
 
 function ExtensionIconTile({ id, large = false }: { id: string; large?: boolean }): React.ReactNode {
@@ -279,9 +280,14 @@ export function ExtensionPackagesCard({ state, organization, contexts, requested
           <div className="mt-3 space-y-2">
             {state.pendingApprovals.map((approval) => (
               <div key={approval.approvalId} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border-soft bg-surface-0/50 p-3">
-                <span className="min-w-0 flex-1 truncate text-xs text-soft">
-                  {approval.title} · {describeContextForUi(approval.context, organization)}
-                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-xs text-soft">
+                    {approval.title} · {describeContextForUi(approval.context, organization)}
+                  </div>
+                  {approval.detail ? (
+                    <div className="mt-0.5 text-[10px] leading-4 text-faint">{approval.detail}</div>
+                  ) : null}
+                </div>
                 <div className="flex items-center gap-2">
                   <Button size="sm" className="h-7" disabled={busy} onClick={() => void run(() => window.ndDsh.ndExtensions.approve(approval.approvalId))}>Allow once</Button>
                   <Button size="sm" variant="outline" className="h-7" disabled={busy} onClick={() => void run(() => window.ndDsh.ndExtensions.approve(approval.approvalId, true))}>Allow always</Button>
@@ -3787,6 +3793,7 @@ const PERMISSION_LABELS: Record<string, string> = {
   'os.wallpaper.write': 'Change desktop wallpaper',
   'process.read': 'See running processes',
   'process.quit': 'Quit running processes',
+  'computer.read': 'Read app window screenshots and accessibility trees',
   'vault.read': 'Read saved vault secrets',
   'vault.write': 'Create and delete vault entries',
   'workflow.read': 'Read the project task board',

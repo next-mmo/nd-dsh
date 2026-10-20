@@ -169,6 +169,35 @@ describe('ClaudeCodeCliEngine', () => {
     }
   }, 15_000)
 
+  it('passes images as native base64 content blocks', async () => {
+    process.env.ND_DSH_CLAUDE_BINARY = process.execPath
+    const cli = new FakeCli()
+    const engine = new ClaudeCodeCliEngine({ log: () => {}, spawnProcess: cli.spawn() as never })
+    try {
+      const { sessionId } = await engine.createSession({ cwd: '/workspace' })
+      const run = engine.run('what is this?', {
+        sessionId,
+        images: [{ data: 'QUJD', mediaType: 'image/png', name: 'shot.png' }],
+      })
+      await flush()
+      const message = JSON.parse(cli.writes[0] ?? '{}') as { message?: { content?: unknown[] } }
+      expect(message.message?.content).toEqual([
+        { type: 'text', text: 'what is this?' },
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'QUJD' } },
+      ])
+      cli.line({ type: 'system', subtype: 'init', session_id: 'native-images' })
+      cli.line({
+        type: 'assistant',
+        session_id: 'native-images',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'image seen' }] },
+      })
+      cli.line({ type: 'result', subtype: 'success', session_id: 'native-images', result: 'done' })
+      await expect(run).resolves.toEqual({ sessionId })
+    } finally {
+      await engine.close()
+    }
+  }, 15_000)
+
   it('resumes the native conversation on a respawned child', async () => {
     process.env.ND_DSH_CLAUDE_BINARY = process.execPath
     const cli = new FakeCli()

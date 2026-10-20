@@ -87,6 +87,7 @@ if (!configOnly) {
     'scripts/nd-browser-companion-runtime.mjs',
     'scripts/nd-agent-browser-cli.mjs',
     'scripts/nd-background-process.cjs',
+    'scripts/nd-vault-cli.mjs',
     'scripts/register-browser-native-host.mjs',
     '.release/harness/lib/bin.js',
     '.release/harness/LICENSE',

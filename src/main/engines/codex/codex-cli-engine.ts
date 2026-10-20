@@ -11,6 +11,7 @@ import type {
 } from '../../../shared/contracts.js'
 import { CODEX_CLI_ENGINE_ID } from '../../../shared/coding-engines.js'
 import { codexBinPath } from '../../app-paths.js'
+import { engineEnvironment } from '../agent-cli/agent-cli-support.js'
 import { asText, CodexAppServerWire, isObject, pickDecision, type JsonObject } from './codex-wire.js'
 
 /**
@@ -164,7 +165,7 @@ export class CodexCliEngine {
    * Submit one prompt to a codex-backed session (created lazily when no id is
    * given). Progress streams out as frames; the promise settles with the turn.
    */
-  async run(prompt: string, options: { sessionId?: string; cwd?: string; model?: string } = {}): Promise<{ sessionId: string }> {
+  async run(prompt: string, options: { sessionId?: string; cwd?: string; model?: string; imagePaths?: string[] } = {}): Promise<{ sessionId: string }> {
     const cleaned = prompt.trim()
     if (!cleaned) throw new Error('Prompt cannot be empty')
     if (cleaned.length > 100_000) throw new Error('Prompt exceeds the 100,000 character limit')
@@ -195,12 +196,12 @@ export class CodexCliEngine {
       }
       let turnId: string
       try {
-        turnId = await wire.startTurn(activeSession.threadId, [cleaned], options.model)
+        turnId = await wire.startTurn(activeSession.threadId, [cleaned], options.model, options.imagePaths)
       } catch (error: unknown) {
         if (!isThreadNotFound(error)) throw error
         await this.recreateThread(activeSession)
         wire = await this.ensureStarted()
-        turnId = await wire.startTurn(activeSession.threadId, [cleaned], options.model)
+        turnId = await wire.startTurn(activeSession.threadId, [cleaned], options.model, options.imagePaths)
       }
       activeSession.turnId = turnId
       activeSession.running = true
@@ -340,11 +341,7 @@ export class CodexCliEngine {
     if (!bin) throw new Error('The bundled Codex CLI payload is missing from this install. Set the runtime up in Settings → Capabilities, or reinstall ND.')
 
     const argv = bin.toLowerCase().endsWith('.js') ? [process.execPath, bin, 'app-server', '--stdio'] : [bin, 'app-server', '--stdio']
-    const environment: NodeJS.ProcessEnv = {}
-    for (const [key, value] of Object.entries(process.env)) {
-      if (key.startsWith('ND_DSH_') || key.startsWith('DSH_')) continue
-      environment[key] = value
-    }
+    const environment = engineEnvironment()
     if (argv[0] === process.execPath && bin.toLowerCase().endsWith('.js')) environment.ELECTRON_RUN_AS_NODE = '1'
 
     const log = this.options.log ?? ((line: string) => console.warn(line))

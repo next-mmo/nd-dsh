@@ -1,5 +1,6 @@
 import type { HarnessRunImage } from '../shared/contracts.js'
-import { MAX_PASTED_IMAGE_LENGTH, MAX_PASTED_IMAGES } from '../shared/images.js'
+import { MAX_CHAT_ATTACHMENTS } from '../shared/attachments.js'
+import { MAX_PASTED_IMAGE_LENGTH } from '../shared/images.js'
 
 const MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/
@@ -8,7 +9,7 @@ const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/
 export function asRunImages(value: unknown): HarnessRunImage[] | undefined {
   if (value === undefined) return undefined
   if (!Array.isArray(value) || value.length === 0) throw new Error('images must be a non-empty list')
-  if (value.length > MAX_PASTED_IMAGES) throw new Error(`Attach at most ${MAX_PASTED_IMAGES} images per message`)
+  if (value.length > MAX_CHAT_ATTACHMENTS) throw new Error(`Attach at most ${MAX_CHAT_ATTACHMENTS} images per message`)
   return value.map((entry, index) => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new Error(`Image ${index + 1} must be an object`)
     const image = entry as Record<string, unknown>

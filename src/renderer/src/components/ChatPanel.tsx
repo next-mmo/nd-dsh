@@ -1,11 +1,12 @@
 import { foldEvent, foldHistory, type HistoryEventEnvelope } from '../../../shared/chat-events'
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type CSSProperties, type DragEvent, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react'
 import type {
   CodingEngineDescriptor,
   DshEventFrame,
   EngineModelOption,
   EngineSessionSummary,
   ExternalElementAttachmentView,
+  HarnessRunFile,
   HarnessStatus,
   ChatGptProjectBinding,
   GeminiGemBinding,
@@ -17,6 +18,7 @@ import type {
   WorkspaceSuggestion,
 } from '../../../shared/contracts'
 import { ANTIGRAVITY_ENGINE_ID, CHATGPT_WEB_ENGINE_ID, CODEX_CLI_ENGINE_ID, GEMINI_WEB_ENGINE_ID, ND_HARNESS_ENGINE_ID, ND_NATIVE_ENGINE_ID, PI_CODING_ENGINE_ID, ZCODE_CLI_ENGINE_ID } from '../../../shared/coding-engines'
+import { OPENCODE_CLI_ENGINE_ID } from '../../../shared/extra-coding-engines'
 import { DisplayGroup, groupEntries, parseFileChanges, toolPreview, type ContextBlock } from '../../../shared/chat-grouping'
 import { filterSessionsInProjectScope, isSessionInProjectScope, PERSONAL_PROJECT_ID } from '../../../shared/session-project-scope'
 import { storeSessionProject } from '../lib/session-project-registry'
@@ -26,17 +28,23 @@ import {
   type SidebarProjectSection,
   type SidebarSessionEntry,
 } from '../../../shared/session-date-group'
+import {
+  type WebBrowserMode,
+  type WebBrowserModeSettings,
+} from '../../../shared/browser-modes'
+import { BrowserModeSelector } from './BrowserModeSelector'
 import type { SettingsTab } from '../lib/settings-route'
 import { splitAssistantSegments, type ReviewVerdict } from '../../../shared/structured-output'
 import type { ProjectPlanInput } from '../../../shared/organization'
-import type { AskQuestion, ThreadEntry, TodoItem } from '../lib/types'
+import type { AskQuestion, ThreadEntry, ThreadImage, TodoItem } from '../lib/types'
 import { FOLDER_ACCENT, SKILL_ACCENT, fileExtensionOf, fileAccent } from '../lib/file-accents'
 import { applyMention, detectMentionTrigger } from '../../../shared/mentions'
 import type { BrowserPlatformState, BrowserSelection } from '../../../shared/browser-platform'
 import { openSkillPicker, parseSkillCatalog, skillSelectionScope, type SkillSuggestion } from '../../../shared/skill-catalog'
 import { isVisionModel, resolveModelSelectionDisplay, type ModelCatalogState } from '../lib/model-selection'
 import { archiveableVisibleSessionIds, cleanThreadTitle, nextSessionAfterArchive } from '../../../shared/session-archive-selection'
-import { imageMediaType, isImageDataUrl, MAX_PASTED_IMAGE_BYTES, MAX_PASTED_IMAGES } from '../../../shared/images'
+import { imageMediaType, isImageDataUrl, MAX_PASTED_IMAGE_BYTES } from '../../../shared/images'
+import { MAX_CHAT_ATTACHMENTS, MAX_RUN_ATTACHMENT_BYTES, MAX_RUN_FILE_BYTES, attachmentMediaType, formatAttachmentBytes } from '../../../shared/attachments'
 import { describeAgentError, ipcFailureMessage, type AgentErrorRoute } from '../lib/runtime-notices'
 import {
   ArchiveIcon,
@@ -71,7 +79,7 @@ import { ChatContextPopover } from './ChatContextPopover'
 import { ZcodeModelConfigDialog } from './ZcodeModelConfigDialog'
 import { ChatGptProjectDialog } from './ChatGptProjectDialog'
 import { GeminiGemDialog } from './GeminiGemDialog'
-import { ImagePreviewDialog, MarkdownLite } from './MarkdownLite'
+import { ImageGalleryDialog, ImagePreviewDialog, MarkdownLite } from './MarkdownLite'
 import { Button } from './ui/button'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from './ui/dropdown-menu'
@@ -239,6 +247,9 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   const [permissionMode, setPermissionMode] = useState('workspace-write')
   const [prompt, setPrompt] = useState('')
   const [pendingImages, setPendingImages] = useState<string[]>([])
+  const [pendingFiles, setPendingFiles] = useState<HarnessRunFile[]>([])
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const folderInputRef = useRef<HTMLInputElement | null>(null)
   const [previewPendingImage, setPreviewPendingImage] = useState<{ url: string; alt: string } | null>(null)
   const [harnessSessionsLoaded, setHarnessSessionsLoaded] = useState(false)
   const [sessionListError, setSessionListError] = useState<string | null>(null)
@@ -319,6 +330,8 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   // Gemini Gem binding is optional: unbound chats use the default Gemini conversation.
   const [geminiGemBinding, setGeminiGemBinding] = useState<GeminiGemBinding | null>(null)
   const [geminiGemModalOpen, setGeminiGemModalOpen] = useState(false)
+  const [geminiModeSettings, setGeminiModeSettings] = useState<WebBrowserModeSettings>({ mode: 'auto', agentFallback: false, visualRecovery: true })
+  const [chatGptModeSettings, setChatGptModeSettings] = useState<WebBrowserModeSettings>({ mode: 'auto', agentFallback: false, visualRecovery: true })
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -380,7 +393,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
       ? draftEngineId
       : ND_HARNESS_ENGINE_ID
   const onHarnessThread = activeEngineId === ND_HARNESS_ENGINE_ID
-  const supportsEngineModels = activeEngineId === ANTIGRAVITY_ENGINE_ID || activeEngineId === CODEX_CLI_ENGINE_ID || activeEngineId === ZCODE_CLI_ENGINE_ID || activeEngineId === ND_NATIVE_ENGINE_ID || activeEngineId === PI_CODING_ENGINE_ID
+  const supportsEngineModels = activeEngineId === ANTIGRAVITY_ENGINE_ID || activeEngineId === CODEX_CLI_ENGINE_ID || activeEngineId === ZCODE_CLI_ENGINE_ID || activeEngineId === ND_NATIVE_ENGINE_ID || activeEngineId === PI_CODING_ENGINE_ID || activeEngineId === OPENCODE_CLI_ENGINE_ID
   const engineModel = engineModelSelections[activeEngineId] ?? null
   const setEngineModel = (model: string | null): void => {
     setEngineModelSelections((current) => ({ ...current, [activeEngineId]: model }))
@@ -405,6 +418,9 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   useEffect(() => {
     if (activeEngineId === CHATGPT_WEB_ENGINE_ID) {
       void refreshChatGptProjectBinding()
+      void window.ndDsh?.chatGptWeb?.getModeSettings?.().then((settings) => {
+        if (settings) setChatGptModeSettings(settings)
+      })
     }
   }, [activeEngineId, activeWorkspaceRoot, refreshChatGptProjectBinding])
 
@@ -421,8 +437,28 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   useEffect(() => {
     if (activeEngineId === GEMINI_WEB_ENGINE_ID) {
       void refreshGeminiGemBinding()
+      void window.ndDsh?.geminiWeb?.getModeSettings?.().then((settings) => {
+        if (settings) setGeminiModeSettings(settings)
+      })
     }
   }, [activeEngineId, activeWorkspaceRoot, refreshGeminiGemBinding])
+
+  const handleSelectGeminiMode = useCallback(async (mode: WebBrowserMode) => {
+    try {
+      const updated = await window.ndDsh?.geminiWeb?.setModeSettings?.({ mode })
+      if (updated) setGeminiModeSettings(updated)
+    } catch {
+      // ignore
+    }
+  }, [])
+  const handleSelectChatGptMode = useCallback(async (mode: WebBrowserMode) => {
+    try {
+      const updated = await window.ndDsh?.chatGptWeb?.setModeSettings?.({ mode })
+      if (updated) setChatGptModeSettings(updated)
+    } catch {
+      // ignore
+    }
+  }, [])
   // Extra chat engines come straight from the catalog; unavailable ones never render.
   const chatEngines = useMemo(() => engines.filter((engine) => engine.available && engine.id !== ND_HARNESS_ENGINE_ID), [engines])
   // Header engine selector shows only active or available/enabled engines.
@@ -1277,7 +1313,8 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   }, [])
 
   const addPastedImages = (files: File[]): void => {
-    const candidates = files.filter((file) => file.type.startsWith('image/')).slice(0, MAX_PASTED_IMAGES)
+    const room = Math.max(0, MAX_CHAT_ATTACHMENTS - pendingFiles.length)
+    const candidates = files.filter((file) => file.type.startsWith('image/')).slice(0, room)
     if (candidates.length === 0) return
     const oversized = candidates.some((file) => file.size > MAX_PASTED_IMAGE_BYTES)
     void Promise.all(candidates.map((file) => new Promise<string | null>((resolve) => {
@@ -1288,28 +1325,106 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
     }))).then((results) => {
       const valid = results.filter((url): url is string => url !== null && isImageDataUrl(url))
       if (oversized) onError(`Images must be under ${Math.floor(MAX_PASTED_IMAGE_BYTES / 1024 / 1024)} MB each.`)
-      if (valid.length > 0) setPendingImages((prev) => [...prev, ...valid].slice(0, MAX_PASTED_IMAGES))
+      if (valid.length > 0) {
+        setPendingImages((prev) => [...prev, ...valid].slice(0, Math.max(0, MAX_CHAT_ATTACHMENTS - pendingFiles.length)))
+      }
     })
+  }
+
+  const readFileAttachment = (file: File): Promise<HarnessRunFile | null> => new Promise((resolve) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result !== 'string') return resolve(null)
+      const comma = reader.result.indexOf(',')
+      if (comma === -1) return resolve(null)
+      const relativePath = typeof (file as File & { webkitRelativePath?: string }).webkitRelativePath === 'string'
+        ? (file as File & { webkitRelativePath?: string }).webkitRelativePath
+        : undefined
+      resolve({
+        data: reader.result.slice(comma + 1),
+        mediaType: attachmentMediaType(file.type, file.name),
+        name: file.name,
+        ...(relativePath ? { relativePath } : {}),
+      })
+    }
+    reader.onerror = () => resolve(null)
+    reader.readAsDataURL(file)
+  })
+
+  const addFiles = (files: File[]): void => {
+    if (files.length === 0) return
+    const imageFiles = files.filter((file) => file.type.startsWith('image/'))
+    if (imageFiles.length > 0) addPastedImages(imageFiles)
+    const otherFiles = files.filter((file) => !file.type.startsWith('image/'))
+    if (otherFiles.length === 0) return
+    const oversized = otherFiles.some((file) => file.size > MAX_RUN_FILE_BYTES)
+    if (oversized) onError(`Files must be under ${Math.floor(MAX_RUN_FILE_BYTES / 1024 / 1024)} MB each.`)
+    const room = Math.max(0, MAX_CHAT_ATTACHMENTS - pendingImages.length - pendingFiles.length)
+    const candidates = otherFiles.filter((file) => file.size <= MAX_RUN_FILE_BYTES).slice(0, room)
+    if (candidates.length === 0) return
+    if (otherFiles.length > room) onError(`Attach at most ${MAX_CHAT_ATTACHMENTS} items per message.`)
+    void Promise.all(candidates.map(readFileAttachment)).then((results) => {
+      const valid = results.filter((file): file is HarnessRunFile => file !== null)
+      if (valid.length === 0) {
+        onError('Those files could not be read.')
+        return
+      }
+      setPendingFiles((prev) => {
+        const next = [...prev]
+        let bytes = pendingImages.reduce((total, image) => total + Math.ceil((image.length - image.indexOf(',') - 1) * 3 / 4), 0)
+        for (const file of next) bytes += Math.ceil(file.data.length * 3 / 4)
+        for (const file of valid) {
+          if (next.length + pendingImages.length >= MAX_CHAT_ATTACHMENTS) break
+          const size = Math.ceil(file.data.length * 3 / 4)
+          if (bytes + size > MAX_RUN_ATTACHMENT_BYTES) {
+            onError(`Attachments must total under ${Math.floor(MAX_RUN_ATTACHMENT_BYTES / 1024 / 1024)} MB.`)
+            break
+          }
+          next.push(file)
+          bytes += size
+        }
+        return next
+      })
+    })
+  }
+
+  const handleComposerDrop = (event: DragEvent<HTMLDivElement>): void => {
+    const files = Array.from(event.dataTransfer.files)
+    const hasDirectory = Array.from(event.dataTransfer.items).some((item) => item.webkitGetAsEntry()?.isDirectory === true)
+    if (files.length === 0 && hasDirectory) {
+      event.preventDefault()
+      onError('Use the folder button to attach a directory.')
+      return
+    }
+    if (files.length === 0) return
+    event.preventDefault()
+    addFiles(files)
   }
 
   const run = async (): Promise<void> => {
     const input = prompt
-    if ((!input.trim() && pendingImages.length === 0) || busy || submitting) return
+    const attachmentCount = pendingImages.length + pendingFiles.length
+    if ((!input.trim() && attachmentCount === 0) || busy || submitting) return
+    const outbound = input.trim() ? input : 'Please review the attached file(s) and continue.'
     const selection = /^\s*\//.test(input) ? selectedSkillScope.current : null
     let selectedScope: string | undefined
     try { selectedScope = skillSelectionScope(selection, skillsScope) } catch (cause) {
       onError(cause instanceof Error ? cause.message : String(cause))
       return
     }
-    const imageOption = pendingImages.length > 0
-      ? { images: pendingImages.map((dataUrl, index) => {
+    const images = pendingImages
+    const files = pendingFiles
+    const imageOption = images.length > 0
+      ? { images: images.map((dataUrl, index) => {
           const mediaType = imageMediaType(dataUrl) ?? 'image/png'
           return { data: dataUrl.slice(dataUrl.indexOf(',') + 1), mediaType, name: `pasted-${index + 1}.${mediaType.slice('image/'.length)}` }
         }) }
       : {}
+    const fileOption = files.length > 0 ? { files } : {}
     setSubmitting(true)
     setPrompt('')
     setPendingImages([])
+    setPendingFiles([])
     setMentionCaret(0)
     setMentionDismissed(null)
     // A drafted engine chat has no session yet: the first send creates it on
@@ -1326,7 +1441,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
         : { permissionMode }
     try {
       const catalog = /^\s*\//.test(input) ? await window.ndDsh.skills.catalog(activeProjectId ?? null) : undefined
-      const result = await window.ndDsh.harness.run(input, { ...options, ...imageOption, ...(catalog ? { skillScope: selectedScope ?? catalog.scope, ...(selection?.selectionId ? { skillSelectionId: selection.selectionId } : {}) } : {}) })
+      const result = await window.ndDsh.harness.run(outbound, { ...options, ...imageOption, ...fileOption, ...(catalog ? { skillScope: selectedScope ?? catalog.scope, ...(selection?.selectionId ? { skillSelectionId: selection.selectionId } : {}) } : {}) })
       selectedSkillScope.current = null
       storeSessionProject(result.sessionId, activeProjectId ?? PERSONAL_PROJECT_ID)
       setActiveSessionId(result.sessionId)
@@ -1339,6 +1454,10 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
       if (!sessions.some((s) => s.sessionId === result.sessionId)) void refreshSessions()
     } catch (cause) {
       if (activeSessionId) markSessionNotBusy(activeSessionId)
+      // A rejected turn did not consume the attachments; put them back so the
+      // user can fix the route and retry.
+      if (images.length > 0) setPendingImages(images)
+      if (files.length > 0) setPendingFiles(files)
       onError(ipcFailureMessage(cause instanceof Error ? cause.message : String(cause)))
     } finally {
       setSubmitting(false)
@@ -2077,9 +2196,10 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
         ) : null}
 
         {activeEngineId === CHATGPT_WEB_ENGINE_ID ? (
-          <div className="mx-3 mt-2.5 flex items-center justify-between gap-2 rounded-[7px] border border-border-soft bg-surface-1 px-2.5 py-1.5 text-[10px]">
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="shrink-0 font-medium text-soft">ChatGPT Project:</span>
+          <div className="mx-3 mt-2.5 space-y-1.5">
+            <div className="flex items-center justify-between gap-2 rounded-[7px] border border-border-soft bg-surface-1 px-2.5 py-1.5 text-[10px]">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="shrink-0 font-medium text-soft">ChatGPT Project:</span>
               {chatGptProjectBinding ? (
                 <span className="flex min-w-0 items-center gap-1.5 truncate">
                   <strong className="truncate font-semibold text-foreground">
@@ -2125,58 +2245,64 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
                 {chatGptProjectBinding ? 'Change' : 'Link Project'}
               </button>
             </div>
+            </div>
+            <BrowserModeSelector mode={chatGptModeSettings.mode} onSelect={(mode) => void handleSelectChatGptMode(mode)} />
           </div>
         ) : null}
 
         {activeEngineId === GEMINI_WEB_ENGINE_ID ? (
-          <div className="mx-3 mt-2.5 flex items-center justify-between gap-2 rounded-[7px] border border-border-soft bg-surface-1 px-2.5 py-1.5 text-[10px]">
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="shrink-0 font-medium text-soft">Gemini Skill:</span>
-              {geminiGemBinding ? (
-                <span className="flex min-w-0 items-center gap-1.5 truncate">
-                  <strong className="truncate font-semibold text-foreground">
-                    {geminiGemBinding.gemRef}
-                  </strong>
-                  {geminiGemBinding.source === 'auto' ? (
-                    <span className="shrink-0 rounded bg-accent px-1 py-0.5 text-[8px] text-faint">
-                      auto-matched
-                    </span>
-                  ) : null}
-                </span>
-              ) : (
-                <span className="truncate text-faint">
-                  No skill linked — chats use your default Gemini (optional)
-                </span>
-              )}
-            </div>
-            <div className="flex shrink-0 items-center gap-1.5">
-              {geminiGemBinding?.gemUrl ? (
+          <div className="mx-3 mt-2.5 space-y-1.5">
+            <div className="flex items-center justify-between gap-2 rounded-[7px] border border-border-soft bg-surface-1 px-2.5 py-1.5 text-[10px]">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="shrink-0 font-medium text-soft">Gemini Skill:</span>
+                {geminiGemBinding ? (
+                  <span className="flex min-w-0 items-center gap-1.5 truncate">
+                    <strong className="truncate font-semibold text-foreground">
+                      {geminiGemBinding.gemRef}
+                    </strong>
+                    {geminiGemBinding.source === 'auto' ? (
+                      <span className="shrink-0 rounded bg-accent px-1 py-0.5 text-[8px] text-faint">
+                        auto-matched
+                      </span>
+                    ) : null}
+                  </span>
+                ) : (
+                  <span className="truncate text-faint">
+                    No skill linked — chats use your default Gemini (optional)
+                  </span>
+                )}
+              </div>
+              <div className="flex shrink-0 items-center gap-1.5">
+                {geminiGemBinding?.gemUrl ? (
+                  <button
+                    type="button"
+                    className="rounded border border-border-soft px-1.5 py-0.5 text-[9px] text-faint hover:bg-accent hover:text-foreground"
+                    onClick={() => onOpenLink?.(geminiGemBinding.gemUrl)}
+                    title="Open in Gemini"
+                  >
+                    Open in Gemini
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="rounded border border-border-soft px-1.5 py-0.5 text-[9px] text-faint hover:bg-accent hover:text-foreground"
+                    onClick={() => onOpenLink?.('https://gemini.google.com/customize/skills')}
+                    title="Browse Gemini skills"
+                  >
+                    gemini.google.com/customize/skills
+                  </button>
+                )}
                 <button
                   type="button"
-                  className="rounded border border-border-soft px-1.5 py-0.5 text-[9px] text-faint hover:bg-accent hover:text-foreground"
-                  onClick={() => onOpenLink?.(geminiGemBinding.gemUrl)}
-                  title="Open in Gemini"
+                  className="rounded bg-primary/10 px-2 py-0.5 text-[9px] font-medium text-primary hover:bg-primary/20"
+                  onClick={() => setGeminiGemModalOpen(true)}
                 >
-                  Open in Gemini
+                  {geminiGemBinding ? 'Change' : 'Link Skill'}
                 </button>
-              ) : (
-                <button
-                  type="button"
-                  className="rounded border border-border-soft px-1.5 py-0.5 text-[9px] text-faint hover:bg-accent hover:text-foreground"
-                  onClick={() => onOpenLink?.('https://gemini.google.com/customize/skills')}
-                  title="Browse Gemini skills"
-                >
-                  gemini.google.com/customize/skills
-                </button>
-              )}
-              <button
-                type="button"
-                className="rounded bg-primary/10 px-2 py-0.5 text-[9px] font-medium text-primary hover:bg-primary/20"
-                onClick={() => setGeminiGemModalOpen(true)}
-              >
-                {geminiGemBinding ? 'Change' : 'Link Skill'}
-              </button>
+              </div>
             </div>
+
+            <BrowserModeSelector mode={geminiModeSettings.mode} onSelect={(mode) => void handleSelectGeminiMode(mode)} />
           </div>
         ) : null}
 
@@ -2272,7 +2398,17 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
 
         {activeProjectId && activeProjectId !== PERSONAL_PROJECT_ID ? <ProjectServerControl key={activeProjectId} projectId={activeProjectId} /> : null}
 
-        <div className="mx-3 my-1.5 flex flex-col rounded-xl border border-border bg-surface-1 px-2.5 py-2 shadow-[0_4px_16px_rgba(0,0,0,0.18)]" ref={menuRef}>
+        <div
+          className="mx-3 my-1.5 flex flex-col rounded-xl border border-border bg-surface-1 px-2.5 py-2 shadow-[0_4px_16px_rgba(0,0,0,0.18)]"
+          ref={menuRef}
+          onDragOver={(event) => {
+            if (Array.from(event.dataTransfer.types).includes('Files')) {
+              event.preventDefault()
+              event.dataTransfer.dropEffect = 'copy'
+            }
+          }}
+          onDrop={handleComposerDrop}
+        >
           {elementChips.length > 0 ? (
             <div className="mb-[7px] flex flex-wrap gap-[5px]" aria-label="Staged UI elements">
               {elementChips.map((chip) => (
@@ -2400,6 +2536,36 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
                 ))}
               </div>
             ) : null}
+            {pendingFiles.length > 0 ? (
+              <div className="mb-1.5 flex flex-wrap gap-1.5" aria-label="Attached files">
+                {pendingFiles.map((file, index) => {
+                  const bytes = Math.ceil(file.data.length * 3 / 4)
+                  const label = file.relativePath ?? file.name
+                  return (
+                    <div
+                      key={`${label}-${index}`}
+                      className="flex max-w-[240px] items-center gap-1.5 rounded-md border border-border bg-secondary px-1.5 py-1 text-[10px]"
+                      title={label}
+                    >
+                      {file.relativePath?.includes('/') ? <FolderIcon className="size-3 shrink-0 text-faint" /> : <FileIcon className="size-3 shrink-0 text-faint" />}
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-foreground">{file.name}</span>
+                        <span className="block text-faint">{formatAttachmentBytes(bytes)}</span>
+                      </span>
+                      <button
+                        type="button"
+                        className="grid size-3.5 shrink-0 place-items-center rounded-full text-faint transition-colors hover:bg-accent hover:text-foreground"
+                        aria-label={`Remove ${file.name}`}
+                        title="Remove this file"
+                        onClick={() => setPendingFiles((files) => files.filter((_, item) => item !== index))}
+                      >
+                        <CloseIcon className="size-2.5" />
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : null}
             {previewPendingImage ? (
               <ImagePreviewDialog
                 open={previewPendingImage !== null}
@@ -2408,6 +2574,31 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
                 alt={previewPendingImage.alt}
               />
             ) : null}
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(event) => {
+                const files = Array.from(event.target.files ?? [])
+                event.target.value = ''
+                addFiles(files)
+              }}
+            />
+            <input
+              ref={(node) => {
+                folderInputRef.current = node
+                if (node) node.setAttribute('webkitdirectory', '')
+              }}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(event) => {
+                const files = Array.from(event.target.files ?? [])
+                event.target.value = ''
+                addFiles(files)
+              }}
+            />
             <textarea
               ref={textareaRef}
               value={prompt}
@@ -2461,6 +2652,18 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
 
           <div className="mt-[5px] flex flex-nowrap items-center justify-between gap-1 border-t border-border pt-[5px]">
             <div className="flex min-w-0 items-center gap-1">
+              <button type="button" className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-[3px] text-[10px] text-soft hover:bg-accent [&_svg]:size-3"
+                title="Attach files to this message (images and text/code/binary files up to 20 items)."
+                aria-label="Attach files"
+                onClick={() => fileInputRef.current?.click()}>
+                <PlusIcon />
+              </button>
+              <button type="button" className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-[3px] text-[10px] text-soft hover:bg-accent [&_svg]:size-3"
+                title="Attach a folder. Workspace engines read the staged files; web chats inline text/code files."
+                aria-label="Attach a folder"
+                onClick={() => folderInputRef.current?.click()}>
+                <FolderIcon />
+              </button>
               <button type="button" className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-[3px] text-[10px] text-soft hover:bg-accent [&_svg]:size-3"
                 title="Browse this session's available skills. Skills use a leading /name; select one, then describe the task. Browser work uses live-browser when present in the catalog."
                 onClick={() => {
@@ -2750,7 +2953,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
               ) : (
                 <button
                   className="grid size-[25px] shrink-0 place-items-center rounded-[7px] bg-primary text-primary-foreground transition-[filter] enabled:hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-35 [&_svg]:size-3.5"
-                  disabled={!prompt.trim() && pendingImages.length === 0}
+                  disabled={!prompt.trim() && pendingImages.length === 0 && pendingFiles.length === 0}
                   onClick={() => void run()}
                   title="Send"
                 >
@@ -3036,15 +3239,59 @@ interface ThreadEntryViewProps {
 /** Streaming replaces only the changed entry, so every other row skips re-rendering. */
 const MemoThreadEntryView = memo(ThreadEntryView)
 
+function UserMessageImages({ images }: { images: ThreadImage[] }) {
+  const [galleryIndex, setGalleryIndex] = useState<number | null>(null)
+  const gallery = images.map((image) => ({
+    url: `data:${image.mediaType};base64,${image.data}`,
+    alt: image.name,
+  }))
+  return (
+    <>
+      <div className={cn('mb-1.5 grid gap-1.5', images.length === 1 ? 'grid-cols-1' : 'grid-cols-2')}>
+        {images.map((image, index) => (
+          <button
+            key={image.id}
+            type="button"
+            className="group/att relative overflow-hidden rounded-lg border border-border-soft bg-surface-1 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+            title={`${image.name} — click to preview`}
+            onClick={() => setGalleryIndex(index)}
+          >
+            <img
+              src={gallery[index]!.url}
+              alt={image.name}
+              referrerPolicy="no-referrer"
+              className={cn('w-full object-cover transition-opacity group-hover/att:opacity-90', images.length === 1 ? 'max-h-52' : 'h-28')}
+            />
+            {images.length > 1 ? (
+              <span className="absolute right-1 top-1 rounded bg-black/60 px-1 py-px text-[9px] font-medium text-white">{index + 1}/{images.length}</span>
+            ) : null}
+          </button>
+        ))}
+      </div>
+      {galleryIndex !== null ? (
+        <ImageGalleryDialog
+          open
+          onOpenChange={(open) => { if (!open) setGalleryIndex(null) }}
+          images={gallery}
+          startIndex={galleryIndex}
+        />
+      ) : null}
+    </>
+  )
+}
+
 function ThreadEntryView({ entry, isLastAssistant, retryPrompt, onAnswerApproval, onOpenFile, onOpenLink, onRetry, onSwitchModel, onSwitchAccount, onConfigureModel }: ThreadEntryViewProps) {
   switch (entry.kind) {
     case 'user':
       return (
         <div className="group mb-4 flex justify-end">
           <div className="flex max-w-[85%] items-end gap-1.5">
-            <CopyMessageButton text={entry.text} />
+            {entry.text.trim() ? <CopyMessageButton text={entry.text} /> : null}
             <article className="rounded-2xl rounded-br-sm bg-info/[0.13] px-3.5 py-2.5">
-              <div className="whitespace-pre-wrap [overflow-wrap:anywhere] text-[12.5px]/[1.65] text-foreground"><SkillMessage text={entry.text} skill={entry.skillMention} {...(onOpenLink ? { onOpenLink } : {})} /></div>
+              {entry.images && entry.images.length > 0 ? <UserMessageImages images={entry.images} /> : null}
+              {entry.text.trim() ? (
+                <div className="whitespace-pre-wrap [overflow-wrap:anywhere] text-[12.5px]/[1.65] text-foreground"><SkillMessage text={entry.text} skill={entry.skillMention} {...(onOpenLink ? { onOpenLink } : {})} /></div>
+              ) : null}
             </article>
           </div>
         </div>

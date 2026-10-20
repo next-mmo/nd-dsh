@@ -22,16 +22,27 @@ async function loadManifest(): Promise<NdExtensionManifest> {
 }
 
 describe('Password Vault ND extension package', () => {
-  it('validates with no missing permissions and stays Personal-only', async () => {
+  it('validates with no missing permissions and enables agent CLI access per context', async () => {
     const parsed: unknown = JSON.parse(await readFile(manifestPath, 'utf8'))
     const result = validateNdExtensionManifest(parsed)
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(manifestPermissionIssues(result.manifest)).toEqual([])
     expect(result.manifest.id).toBe('nd.password-vault')
-    expect(result.manifest.contexts).toEqual(['personal'])
+    expect(result.manifest.version).toBe('1.1.0')
+    expect(result.manifest.contexts).toEqual(['personal', 'company', 'project'])
     expect(result.manifest.permissions).toEqual(['vault.read', 'vault.write'])
+    expect(result.manifest.settings?.find((setting) => setting.key === 'agentCli')).toMatchObject({
+      type: 'boolean',
+      default: true,
+    })
     expect(result.manifest.executable).toBeUndefined()
+  })
+
+  it('keeps vault management in Personal while allowing project activation', async () => {
+    const manifest = await loadManifest()
+    for (const command of manifest.contributions.commands) expect(command.contexts).toEqual(['personal'])
+    for (const view of manifest.contributions.views) expect(view.contexts).toEqual(['personal'])
   })
 
   it('contributes the commands, view, and row actions it documents', async () => {

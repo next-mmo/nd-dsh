@@ -54,6 +54,7 @@ export const ND_EXTENSION_PERMISSIONS = [
   'apistudio.execute',
   'chat.start',
   'workflow.read',
+  'computer.read',
 ] as const
 
 export type NdExtensionPermission = (typeof ND_EXTENSION_PERMISSIONS)[number]
@@ -183,6 +184,8 @@ export const ND_HOST_METHODS = [
   { id: 'chat.ask', title: 'Ask ND', permission: 'chat.start', contexts: ['personal', 'company', 'project'], sensitive: false },
   { id: 'workflow.list', title: 'Read repository tasks', permission: 'workflow.read', contexts: ['project'], sensitive: false },
   { id: 'workflow.refresh', title: 'Refresh repository tasks', permission: 'workflow.read', contexts: ['project'], sensitive: false },
+  { id: 'computer.apps.list', title: 'List running apps and windows', permission: 'computer.read', contexts: ['personal'], sensitive: false },
+  { id: 'computer.app.state', title: 'Read a window screenshot and accessibility tree', permission: 'computer.read', contexts: ['personal'], sensitive: true },
 ] as const satisfies readonly NdHostMethodDescriptor[]
 
 export type NdHostMethod = (typeof ND_HOST_METHODS)[number]['id']

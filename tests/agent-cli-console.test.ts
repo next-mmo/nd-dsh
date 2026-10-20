@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import { spawnCliCommand } from '../src/main/engines/agent-cli/agent-cli-support.js'
 
@@ -17,7 +17,11 @@ describe('ND background CLI launch policy', () => {
       windowsHide, cwd: root, env: environment, stdio: ['pipe', 'pipe', 'pipe'], detached: false,
     })).toBe(child)
     expect(spawnProcess).toHaveBeenCalledWith('fixture-cli', ['--stdio'], {
-      windowsHide: true, cwd: root, env: environment, stdio: ['pipe', 'pipe', 'pipe'], detached: false,
+      windowsHide: true,
+      cwd: root,
+      env: { ...environment, PWD: resolve(root) },
+      stdio: ['pipe', 'pipe', 'pipe'],
+      detached: false,
     })
   })
 })

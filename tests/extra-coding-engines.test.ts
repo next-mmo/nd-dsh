@@ -1,9 +1,13 @@
 import { EventEmitter } from 'node:events'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
 import { PassThrough } from 'node:stream'
 import type { ChildProcess } from 'node:child_process'
 import { afterAll, describe, expect, it } from 'vitest'
 import { EngineSessionRouter } from '../src/main/engines/engine-session-router.js'
-import { createExtraCliEngines, gooseAdapter, hermesAdapter, jcodeAdapter, opencodeAdapter } from '../src/main/engines/agent-cli/extra-cli-engines.js'
+import { createExtraCliEngines, gooseAdapter, hermesAdapter, jcodeAdapter, opencodeAdapter, parseOpencodeModelList } from '../src/main/engines/agent-cli/extra-cli-engines.js'
+import { opencodeBinPath } from '../src/main/engines/agent-cli/extra-cli-paths.js'
 import { StructuredCliEngine, type StructuredCliAdapter } from '../src/main/engines/agent-cli/structured-cli-engine.js'
 import {
   buildExtraCodingEngineCatalog,
@@ -117,6 +121,102 @@ describe('extra coding engines', () => {
       type: 'error',
       error: { name: 'ProviderError', data: { message: 'authentication failed' } },
     })).toEqual([{ kind: 'error', message: 'authentication failed' }])
+  })
+
+  it('parses the OpenCode v2 text, shell tool and step_finish wire format', () => {
+    expect(opencodeAdapter.parse({
+      type: 'text',
+      sessionID: 'ses_v2',
+      part: { id: 'prt_text', type: 'text', text: 'DONE', time: { start: 1, end: 2 } },
+    })).toEqual([
+      { kind: 'session', sessionId: 'ses_v2' },
+      { kind: 'text', text: 'DONE' },
+    ])
+
+    expect(opencodeAdapter.parse({
+      type: 'tool_use',
+      sessionID: 'ses_v2',
+      part: {
+        id: 'call_1',
+        type: 'tool',
+        tool: 'shell',
+        state: { status: 'completed', input: { command: 'echo hi > touched.txt' }, output: '(no output)' },
+      },
+    })).toEqual([
+      { kind: 'session', sessionId: 'ses_v2' },
+      { kind: 'tool-result', callId: 'call_1', name: 'shell', output: '(no output)' },
+    ])
+
+    expect(opencodeAdapter.parse({
+      type: 'step_finish',
+      sessionID: 'ses_v2',
+      part: { type: 'step-finish', reason: 'stop', cost: 0, tokens: { input: 12, output: 3, reasoning: 0, cache: { read: 0, write: 0 } } },
+    })).toEqual([
+      { kind: 'session', sessionId: 'ses_v2' },
+      { kind: 'step', usage: { inputTokens: 12, outputTokens: 3 } },
+    ])
+  })
+
+  it('parses OpenCode model slugs into picker rows and passes the pick to run', () => {
+    expect(parseOpencodeModelList([
+      'openai/gpt-5.5',
+      'opencode/mimo-v2.6-flash-free',
+      '',
+      '  anthropic/claude-sonnet-4  ',
+      'openai/gpt-5.5',
+      'opencode/nemotron-3.5-super-vl-free',
+      'not a model line',
+      'noslash',
+    ].join('\n'))).toEqual([
+      { id: 'opencode/mimo-v2.6-flash-free' },
+      { id: 'opencode/nemotron-3.5-super-vl-free' },
+      { id: 'openai/gpt-5.5' },
+      { id: 'anthropic/claude-sonnet-4' },
+    ])
+
+    const args = opencodeAdapter.buildArgs({
+      prompt: 'hello',
+      cwd: process.cwd(),
+      sessionId: 'opencode-nd-session',
+      isContinuation: false,
+      model: 'openai/gpt-5.5',
+    })
+    expect(args).toContain('--model')
+    expect(args[args.indexOf('--model') + 1]).toBe('openai/gpt-5.5')
+  })
+
+  it('exposes an adapter model catalog through the shared structured engine', async () => {
+    const engine = new StructuredCliEngine({ ...opencodeAdapter, listModels: async () => [{ id: 'mock/toy' }] })
+    await expect(engine.listModels()).resolves.toEqual([{ id: 'mock/toy' }])
+  })
+
+  it('discovers the CLI bundled with OpenCode Desktop', () => {
+    if (process.platform !== 'win32') return
+    const root = mkdtempSync(join(tmpdir(), 'nd-opencode-desktop-'))
+    const previous = {
+      LOCALAPPDATA: process.env.LOCALAPPDATA,
+      APPDATA: process.env.APPDATA,
+      USERPROFILE: process.env.USERPROFILE,
+      ProgramData: process.env.ProgramData,
+      ND_DSH_OPENCODE_BINARY: process.env.ND_DSH_OPENCODE_BINARY,
+    }
+    try {
+      const bin = join(root, 'Programs', '@opencodedesktop', 'resources', 'opencode-cli.exe')
+      mkdirSync(dirname(bin), { recursive: true })
+      writeFileSync(bin, '')
+      process.env.LOCALAPPDATA = root
+      process.env.APPDATA = join(root, 'appdata')
+      process.env.USERPROFILE = join(root, 'home')
+      process.env.ProgramData = join(root, 'programdata')
+      delete process.env.ND_DSH_OPENCODE_BINARY
+      expect(opencodeBinPath()).toBe(resolve(bin))
+    } finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   it('matches current Goose nested tool payloads and stable named-session resume', () => {
@@ -254,6 +354,54 @@ describe('extra coding engines', () => {
         callId: (call?.data as Record<string, unknown>)?.callId,
         message: { content: [{ type: 'text', text: 'ok' }] },
       })
+    } finally {
+      await engine.close()
+    }
+  })
+
+  it('scopes the composer model to its turn so Native default returns to CLI config', async () => {
+    const clis: FakeStructuredCli[] = []
+    const models: Array<string | undefined> = []
+    const adapter: StructuredCliAdapter = {
+      id: 'model-cli',
+      label: 'Model',
+      sessionPrefix: 'model',
+      binary: () => process.execPath,
+      unavailableMessage: 'missing',
+      buildArgs: (input) => {
+        models.push(input.model)
+        return []
+      },
+      parse: (wire) => (wire.type === 'done' ? [{ kind: 'done' }] : []),
+    }
+    const spawnProcess = ((_file: string, _args: string[], options: { windowsHide?: boolean }) => {
+      expect(options.windowsHide).toBe(true)
+      const cli = new FakeStructuredCli()
+      clis.push(cli)
+      return cli.child
+    }) as never
+    const engine = new StructuredCliEngine(adapter, { spawnProcess })
+    try {
+      const first = engine.run('first', { cwd: process.cwd(), model: 'openai/gpt-5.5' })
+      await tick()
+      const sessionId = engine.listSessions()[0]!.sessionId
+      clis.at(-1)!.raw(JSON.stringify({ type: 'done' }) + '\n')
+      clis.at(-1)!.close(0, null)
+      await first
+
+      const second = engine.run('second', { sessionId })
+      await tick()
+      clis.at(-1)!.raw(JSON.stringify({ type: 'done' }) + '\n')
+      clis.at(-1)!.close(0, null)
+      await second
+
+      const third = engine.run('third', { sessionId, model: 'anthropic/claude-sonnet-4' })
+      await tick()
+      clis.at(-1)!.raw(JSON.stringify({ type: 'done' }) + '\n')
+      clis.at(-1)!.close(0, null)
+      await third
+
+      expect(models).toEqual(['openai/gpt-5.5', undefined, 'anthropic/claude-sonnet-4'])
     } finally {
       await engine.close()
     }

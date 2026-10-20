@@ -1,8 +1,11 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { EngineSessionRouter, isRestorableBrowserUrl } from '../src/main/engines/engine-session-router.js'
 import type { WorkspaceState } from '../src/shared/contracts.js'
 import { ND_WORKSPACE_CONTEXT_MARKER } from '../src/shared/workspace-context.js'
-import { ND_NATIVE_ENGINE_ID } from '../src/shared/coding-engines.js'
+import { CHATGPT_WEB_ENGINE_ID, CLAUDE_CODE_CLI_ENGINE_ID, CODEX_CLI_ENGINE_ID, GEMINI_WEB_ENGINE_ID, ND_NATIVE_ENGINE_ID } from '../src/shared/coding-engines.js'
 import { ND_NATIVE_PRIVATE_SELECTION_ENV } from '../src/main/engines/nd-native/native-selection-gate.js'
 
 const workspaceState: WorkspaceState = {
@@ -380,5 +383,128 @@ describe('ChatGPT Web browser restoration', () => {
     expect(isRestorableBrowserUrl('ABOUT:BLANK')).toBe(false)
     expect(isRestorableBrowserUrl('https://chatgpt.com/c/abc')).toBe(false)
     expect(isRestorableBrowserUrl('http://localhost:5173/')).toBe(true)
+  })
+})
+
+async function withTempWorkspace(fn: (root: string) => Promise<void>): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), 'nd-router-workspace-'))
+  const previous = workspaceState.root
+  workspaceState.root = root
+  try {
+    await fn(root)
+  } finally {
+    workspaceState.root = previous
+    await rm(root, { recursive: true, force: true })
+  }
+}
+
+describe('Direct engine attachments', () => {
+  it('stages files into the session workspace and references them in the prompt', async () => {
+    await withTempWorkspace(async (root) => {
+      const { router, run } = fixture()
+      const files = [{ data: Buffer.from('hello').toString('base64'), mediaType: 'text/plain', name: 'notes.txt' }]
+      await router.run('review these notes', { engineId: CODEX_CLI_ENGINE_ID, files })
+      const call = run.mock.calls[0] as unknown as [string, { cwd?: string; images?: unknown }] | undefined
+      expect(call?.[0]).toContain('<nd-attachments>')
+      expect(call?.[0]).toContain('notes.txt')
+      expect(call?.[0]).toContain('.nd-dsh/attachments/')
+      expect(call?.[1]).toMatchObject({ cwd: root })
+      expect(call?.[1]?.images).toBeUndefined()
+    })
+  })
+
+  it('passes images natively to Claude instead of staging them', async () => {
+    await withTempWorkspace(async () => {
+      const { router, run } = fixture()
+      const images = [{ data: Buffer.from('image').toString('base64'), mediaType: 'image/png', name: 'shot.png' }]
+      await router.run('describe this', { engineId: CLAUDE_CODE_CLI_ENGINE_ID, images })
+      const call = run.mock.calls[0] as unknown as [string, { images?: unknown }] | undefined
+      expect(call?.[0]).not.toContain('- image:')
+      expect(call?.[1]?.images).toEqual(images)
+    })
+  })
+
+  it('passes native local-image paths to Codex', async () => {
+    await withTempWorkspace(async () => {
+      const { router, run } = fixture()
+      const images = [{ data: Buffer.from('image').toString('base64'), mediaType: 'image/png', name: 'shot.png' }]
+      await router.run('describe this', { engineId: CODEX_CLI_ENGINE_ID, images })
+      const call = run.mock.calls[0] as unknown as [string, { imagePaths?: string[] }] | undefined
+      expect(call?.[0]).not.toContain('- image:')
+      expect(call?.[1]?.imagePaths).toHaveLength(1)
+      expect(call?.[1]?.imagePaths?.[0]).toMatch(/shot\.png$/)
+    })
+  })
+})
+
+describe('Web chat image attachments', () => {
+  it.each([CHATGPT_WEB_ENGINE_ID, GEMINI_WEB_ENGINE_ID])('forwards pasted images to %s', async (engineId) => {
+    const sessionId = `${engineId}-session-1`
+    const images = [{ data: Buffer.from('image').toString('base64'), mediaType: 'image/png', name: 'shot.png' }]
+    const run = vi.fn(async () => ({ sessionId }))
+    const engine = {
+      run,
+      listSessions: () => [{ sessionId, engineId, title: 'image chat', cwd: workspaceState.root, createdAt: 1, updatedAt: 1, running: false }],
+      ownsSession: (id: string) => id === sessionId,
+      stop: vi.fn(),
+      createSession: vi.fn(async () => ({ sessionId })),
+    }
+    const browser = { state: () => ({ url: 'https://example.com/preview' }), navigate: vi.fn(async () => {}) }
+    const harness = { status: () => ({ state: 'ready' }), run: vi.fn(), gatewayRpc: vi.fn(), stop: vi.fn() }
+    const workspace = { state: () => workspaceState, assertUsable: vi.fn() }
+    const runtime = { browser, git: {} as never, storePath: 'unused', engine }
+    const router = new EngineSessionRouter(
+      harness as never,
+      { ownsSession: () => false } as never,
+      workspace as never,
+      undefined,
+      engineId === CHATGPT_WEB_ENGINE_ID ? runtime as never : undefined,
+      engineId === GEMINI_WEB_ENGINE_ID ? runtime as never : undefined,
+    )
+
+    await router.run('describe this image', { sessionId, images })
+
+    expect(run).toHaveBeenCalledWith('describe this image', expect.objectContaining({
+      sessionId,
+      cwd: workspaceState.root,
+      images,
+    }))
+  })
+
+  it.each([CHATGPT_WEB_ENGINE_ID, GEMINI_WEB_ENGINE_ID])('inlines text files for %s and rejects binary files', async (engineId) => {
+    const sessionId = `${engineId}-session-files`
+    const run = vi.fn(async () => ({ sessionId }))
+    const engine = {
+      run,
+      listSessions: () => [{ sessionId, engineId, title: 'file chat', cwd: workspaceState.root, createdAt: 1, updatedAt: 1, running: false }],
+      ownsSession: (id: string) => id === sessionId,
+      stop: vi.fn(),
+      createSession: vi.fn(async () => ({ sessionId })),
+    }
+    const browser = { state: () => ({ url: 'https://example.com/preview' }), navigate: vi.fn(async () => {}) }
+    const harness = { status: () => ({ state: 'ready' }), run: vi.fn(), gatewayRpc: vi.fn(), stop: vi.fn() }
+    const workspace = { state: () => workspaceState, assertUsable: vi.fn() }
+    const runtime = { browser, git: {} as never, storePath: 'unused', engine }
+    const router = new EngineSessionRouter(
+      harness as never,
+      { ownsSession: () => false } as never,
+      workspace as never,
+      undefined,
+      engineId === CHATGPT_WEB_ENGINE_ID ? runtime as never : undefined,
+      engineId === GEMINI_WEB_ENGINE_ID ? runtime as never : undefined,
+    )
+
+    await router.run('summarize', {
+      sessionId,
+      files: [{ data: Buffer.from('const value = 1').toString('base64'), mediaType: 'text/typescript', name: 'a.ts' }],
+    })
+    const prompts = run.mock.calls as unknown as Array<[string]>
+    expect(prompts[0]?.[0]).toContain('const value = 1')
+    expect(prompts[0]?.[0]).toContain('<attached-files>')
+
+    await expect(router.run('open this', {
+      sessionId,
+      files: [{ data: Buffer.from('%PDF').toString('base64'), mediaType: 'application/pdf', name: 'brief.pdf' }],
+    })).rejects.toThrow(/text\/code files only/)
   })
 })

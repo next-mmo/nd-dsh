@@ -1,4 +1,4 @@
-import type { ThreadEntry, TodoItem } from './chat-types.js'
+import type { ThreadEntry, ThreadImage, TodoItem } from './chat-types.js'
 import { stripWorkspaceContext } from './workspace-context.js'
 
 const RESULT_MAX_CHARS = 2_000
@@ -52,8 +52,9 @@ function foldEventInto(entries: ThreadEntry[], envelope: HistoryEventEnvelope, o
   const data = (envelope.data ?? {}) as Record<string, unknown>
   switch (envelope.type) {
     case 'user/message': {
-      const text = messageText(data.message) ?? messageText(data)
-      if (!text) return
+      const text = messageText(data.message) ?? messageText(data) ?? ''
+      const images = messageImages(data.message) ?? messageImages(data)
+      if (!text && !images) return
       const source = messageSourceKind(data)
       // A turn carries the user's own prompt plus synthetic context messages —
       // workspace instructions, the runtime context snapshot, and the skill
@@ -61,21 +62,30 @@ function foldEventInto(entries: ThreadEntry[], envelope: HistoryEventEnvelope, o
       // is the user's message; the rest is internal and must not be attributed
       // to the user or rendered as something they typed.
       if (source !== undefined && source !== USER_MESSAGE_SOURCE) {
+        if (!text) return
         const last = entries.at(-1)
         if (last?.kind === 'context' && last.source === source && last.text === text) return
         entries.push({ kind: 'context', id: crypto.randomUUID(), source, text })
         return
       }
       const hasLegacyUserPrefix = /^(?:#+\s*)?You said\b/i.test(text)
-      const visible = stripWorkspaceContext(text)
-        .replace(/^(?:#+\s*)?You said\b[^\n]*\n+/i, '')
-        .replace(/^You said:\s*/i, '')
-        .trim()
-      if (!visible) return
+      const visible = text
+        ? stripWorkspaceContext(text)
+          .replace(/^(?:#+\s*)?You said\b[^\n]*\n+/i, '')
+          .replace(/^You said:\s*/i, '')
+          .trim()
+        : ''
+      if (!visible && !images) return
       const last = entries.at(-1)
-      if (last?.kind === 'user' && last.text === visible) return
-      if (hasLegacyUserPrefix && entries.some((entry) => entry.kind === 'user' && entry.text === visible)) return
-      entries.push({ kind: 'user', id: crypto.randomUUID(), text: visible, ...(data.skillMention ? { skillMention: data.skillMention as import('./skill-catalog.js').SkillSuggestion } : {}) })
+      if (last?.kind === 'user' && last.text === visible && sameImages(last.images, images)) return
+      if (hasLegacyUserPrefix && entries.some((entry) => entry.kind === 'user' && entry.text === visible && sameImages(entry.images, images))) return
+      entries.push({
+        kind: 'user',
+        id: crypto.randomUUID(),
+        text: visible,
+        ...(images ? { images } : {}),
+        ...(data.skillMention ? { skillMention: data.skillMention as import('./skill-catalog.js').SkillSuggestion } : {}),
+      })
       return
     }
     case 'assistant/chunk': {
@@ -210,5 +220,31 @@ export function messageText(message: unknown): string | undefined {
     }
   }
   return parts.length > 0 ? parts.join('\n') : undefined
+}
+
+/** Image blocks riding a user turn, normalized for the thread surface. */
+export function messageImages(message: unknown): ThreadImage[] | undefined {
+  if (!message || typeof message !== 'object') return undefined
+  const record = message as Record<string, unknown>
+  if (!Array.isArray(record.content)) return undefined
+  const images: ThreadImage[] = []
+  for (const block of record.content) {
+    if (!block || typeof block !== 'object') continue
+    const part = block as Record<string, unknown>
+    if (part.type !== 'image' || typeof part.data !== 'string' || !part.data) continue
+    images.push({
+      id: crypto.randomUUID(),
+      name: typeof part.name === 'string' && part.name.trim() ? part.name.trim() : `attached-${images.length + 1}`,
+      mediaType: typeof part.mediaType === 'string' && part.mediaType ? part.mediaType : 'image/png',
+      data: part.data,
+    })
+  }
+  return images.length > 0 ? images : undefined
+}
+
+function sameImages(left: ThreadImage[] | undefined, right: ThreadImage[] | undefined): boolean {
+  if ((left?.length ?? 0) !== (right?.length ?? 0)) return false
+  if (!left || !right) return true
+  return left.every((image, index) => image.data === right[index]?.data)
 }
 

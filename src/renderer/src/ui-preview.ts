@@ -923,6 +923,8 @@ const desktopApi: DesktopApi = {
       updatedAt: Date.now(),
     }),
     clearProjectBinding: async () => undefined,
+    getModeSettings: async () => ({ mode: 'auto', agentFallback: false, visualRecovery: true }),
+    setModeSettings: async (settings) => ({ mode: 'auto', agentFallback: false, visualRecovery: true, ...settings }),
   },
   geminiWeb: {
     getGemBinding: async () => null,
@@ -936,6 +938,8 @@ const desktopApi: DesktopApi = {
       updatedAt: Date.now(),
     }),
     clearGemBinding: async () => undefined,
+    getModeSettings: async () => ({ mode: 'auto', agentFallback: false, visualRecovery: true }),
+    setModeSettings: async (settings) => ({ mode: 'auto', agentFallback: false, visualRecovery: true, ...settings }),
   },
   window: {
     setFloatMode: async () => ({ float: false }),

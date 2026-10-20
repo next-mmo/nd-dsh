@@ -6,6 +6,8 @@ import type {
   EngineSessionSummary,
   EngineSessionTranscript,
   SessionEventEnvelope,
+  HarnessRunFile,
+  HarnessRunImage,
   HarnessRunOptions,
   HarnessRunResult,
   HarnessStatus,
@@ -52,6 +54,12 @@ import type { PiCodingEngine } from './pi/pi-coding-engine.js'
 import type { ZcodeCliEngine } from './zcode/zcode-cli-engine.js'
 import type { NdNativeEngine } from './nd-native/nd-native-engine.js'
 import { nativePrivateSelectionEnabled } from './nd-native/native-selection-gate.js'
+import { inlineTextAttachments, stageAttachments } from './attachment-delivery.js'
+
+/** Direct engines that accept native base64 image blocks (Claude stream-json). */
+const BASE64_IMAGE_DIRECT_ENGINES = new Set([CLAUDE_CODE_CLI_ENGINE_ID])
+/** Direct engines that accept native local-image paths (Codex app-server). */
+const LOCAL_IMAGE_DIRECT_ENGINES = new Set([CODEX_CLI_ENGINE_ID])
 
 const STRUCTURED_TRANSCRIPT_ENGINE_IDS = new Set([
   OPENCODE_CLI_ENGINE_ID,
@@ -81,7 +89,7 @@ export interface GeminiWebRuntime {
  * never branch on engine ids.
  */
 export interface DirectWorkspaceEngine {
-  run(prompt: string, options?: { sessionId?: string; cwd?: string; provider?: string; model?: string; permissionMode?: string }): Promise<{ sessionId: string }>
+  run(prompt: string, options?: { sessionId?: string; cwd?: string; provider?: string; model?: string; permissionMode?: string; images?: HarnessRunImage[]; imagePaths?: string[] }): Promise<{ sessionId: string }>
   createSession(input?: { cwd?: string; model?: string }): Promise<{ sessionId: string }>
   stop(sessionId?: string): Promise<void>
   listSessions(): EngineSessionSummary[]
@@ -111,6 +119,7 @@ export class EngineSessionRouter {
   private extensions: ExtensionRouter | undefined
   private skills: import('../skills/nd-skill-service.js').NdSkillService | undefined
   private browserAccess: { issueSessionAccess(sessionId: string): string; revokeSessionAccess(sessionId: string): void } | undefined
+  private vaultAccess: { hint(): Promise<string | undefined> } | undefined
   private worktreeGuard: ((cwd: string) => boolean) | undefined
 
   setSkillService(service: import('../skills/nd-skill-service.js').NdSkillService): void {
@@ -119,6 +128,10 @@ export class EngineSessionRouter {
 
   setBrowserAccessProvider(provider: { issueSessionAccess(sessionId: string): string; revokeSessionAccess(sessionId: string): void } | undefined): void {
     this.browserAccess = provider
+  }
+
+  setVaultAccessProvider(provider: { hint(): Promise<string | undefined> } | undefined): void {
+    this.vaultAccess = provider
   }
   /** Logical engine ids for harness-backed sessions such as delegated Codex. */
   private readonly logicalEngineBySession = new Map<string, string>()
@@ -274,6 +287,15 @@ export class EngineSessionRouter {
       const token = this.browserAccess.issueSessionAccess(options.sessionId)
       routedPrompt += `\n\n<nd-browser-access>\nOpaque browser access token for this ND session: ${token}\nPass it unchanged as accessToken on every nd_browser_call. Do not expose it in user-facing output.\n</nd-browser-access>`
     }
+    // The vault hint is only useful to engines that can run a command. Web
+    // engines and the Rust agent have no shell, so they never see it.
+    if (this.vaultAccess
+      && requested !== ND_NATIVE_ENGINE_ID
+      && requested !== CHATGPT_WEB_ENGINE_ID
+      && requested !== GEMINI_WEB_ENGINE_ID) {
+      const hint = await this.vaultAccess.hint().catch(() => undefined)
+      if (hint) routedPrompt += `\n\n${hint}`
+    }
     // Built-in Token Saver is deliberately applied at the common engine
     // boundary, after ND has added trusted extension context and before either
     // the Harness or direct engines receive the turn.
@@ -304,26 +326,48 @@ export class EngineSessionRouter {
       metrics?.notePrompt(options.sessionId, optimizedPrompt)
     }
     if (direct) {
+      const files = options?.files ?? []
+      const images = options?.images ?? []
+      const base64Images = BASE64_IMAGE_DIRECT_ENGINES.has(requested) ? images : []
+      const localImageEngine = LOCAL_IMAGE_DIRECT_ENGINES.has(requested)
+      const stagedImages = base64Images.length === images.length ? [] : images
       if (!this.isWorkspaceDirectEngine(requested)) {
-        return direct.run(optimizedPrompt, {
-          ...(options?.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
-          ...(options?.model !== undefined ? { model: options.model } : {}),
-        })
+        const staged = await stageAttachments(files, stagedImages, undefined, { manifestImages: !localImageEngine })
+        const promptWithAttachments = staged.suffix ? `${optimizedPrompt}\n\n${staged.suffix}` : optimizedPrompt
+        try {
+          return await direct.run(promptWithAttachments, {
+            ...(options?.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
+            ...(options?.model !== undefined ? { model: options.model } : {}),
+            ...(base64Images.length > 0 ? { images: base64Images } : {}),
+            ...(localImageEngine && staged.imagePaths.length > 0 ? { imagePaths: staged.imagePaths } : {}),
+          })
+        } finally {
+          await staged.cleanup()
+        }
       }
       this.workspace.assertUsable()
       const workspace = this.workspace.state()
-      return direct.run(appendWorkspaceContext(optimizedPrompt, workspace, sessionCwd ?? workspace.root), {
-        ...(options?.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
-        ...(options?.model !== undefined ? { model: options.model } : {}),
-        ...(options?.provider !== undefined ? { provider: options.provider } : {}),
-        ...(options?.permissionMode !== undefined ? { permissionMode: options.permissionMode } : {}),
-        // A session keeps the root it was created with. Re-rooting every turn
-        // at the active workspace would run an isolated task worktree's worker
-        // against the base checkout, which is exactly what per-task isolation
-        // exists to prevent; the workspace root is only the default for a
-        // session that has no root of its own.
-        cwd: sessionCwd ?? workspace.root,
-      })
+      const cwd = sessionCwd ?? workspace.root
+      const staged = await stageAttachments(files, stagedImages, cwd, { manifestImages: !localImageEngine })
+      const promptWithAttachments = staged.suffix ? `${optimizedPrompt}\n\n${staged.suffix}` : optimizedPrompt
+      try {
+        return await direct.run(appendWorkspaceContext(promptWithAttachments, workspace, cwd), {
+          ...(options?.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
+          ...(options?.model !== undefined ? { model: options.model } : {}),
+          ...(options?.provider !== undefined ? { provider: options.provider } : {}),
+          ...(options?.permissionMode !== undefined ? { permissionMode: options.permissionMode } : {}),
+          ...(base64Images.length > 0 ? { images: base64Images } : {}),
+          ...(localImageEngine && staged.imagePaths.length > 0 ? { imagePaths: staged.imagePaths } : {}),
+          // A session keeps the root it was created with. Re-rooting every turn
+          // at the active workspace would run an isolated task worktree's worker
+          // against the base checkout, which is exactly what per-task isolation
+          // exists to prevent; the workspace root is only the default for a
+          // session that has no root of its own.
+          cwd,
+        })
+      } finally {
+        await staged.cleanup()
+      }
     }
     if (requested === CHATGPT_WEB_ENGINE_ID) {
       const harnessState = this.harness.status().state
@@ -343,9 +387,10 @@ export class EngineSessionRouter {
       }
       const browser = this.chatGptWebBrowser
       const returnUrl = browser?.state().url
-      const result = await engine.run(optimizedPrompt, {
+      const result = await engine.run(appendWebTextFiles(optimizedPrompt, options?.files ?? [], 'ChatGPT Web'), {
         ...(options?.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
         cwd: workspaceRoot,
+        ...(options?.images?.length ? { images: options.images } : {}),
       })
       // ChatGPT temporarily owns the canonical visible browser while the turn
       // is active. After a successful turn, restore the user's app preview so
@@ -379,9 +424,10 @@ export class EngineSessionRouter {
       }
       const browser = this.geminiWebBrowser
       const returnUrl = browser?.state().url
-      const result = await engine.run(optimizedPrompt, {
+      const result = await engine.run(appendWebTextFiles(optimizedPrompt, options?.files ?? [], 'Gemini Web'), {
         ...(options?.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
         cwd: workspaceRoot,
+        ...(options?.images?.length ? { images: options.images } : {}),
       })
       // Like ChatGPT Web, Gemini owns the canonical visible browser while the
       // turn is active; restore the user's app preview afterwards. On
@@ -397,7 +443,13 @@ export class EngineSessionRouter {
       throw new Error('ND Harness and its Web chats share the visible browser. Finish the active web chat turn before starting ND Harness.')
     }
     const harnessCwd = sessionCwd ?? requestedRunCwd
-    return this.harness.run(optimizedPrompt, harnessCwd ? { ...options, workspaceCwd: harnessCwd } : options)
+    const staged = await stageAttachments(options?.files ?? [], [], harnessCwd)
+    const harnessPrompt = staged.suffix ? `${optimizedPrompt}\n\n${staged.suffix}` : optimizedPrompt
+    try {
+      return await this.harness.run(harnessPrompt, harnessCwd ? { ...options, workspaceCwd: harnessCwd } : options)
+    } finally {
+      await staged.cleanup()
+    }
   }
 
   /**
@@ -667,6 +719,17 @@ export class EngineSessionRouter {
     }
     return this.geminiWeb
   }
+}
+
+function appendWebTextFiles(prompt: string, files: readonly HarnessRunFile[], engineName: string): string {
+  if (files.length === 0) return prompt
+  const inline = inlineTextAttachments(files)
+  if (inline.unsupported.length > 0) {
+    const names = inline.unsupported.slice(0, 6).map((file) => file.relativePath ?? file.name).join(', ')
+    const more = inline.unsupported.length > 6 ? ` and ${inline.unsupported.length - 6} more` : ''
+    throw new Error(`${engineName} can attach images and text/code files only. Use a CLI engine for binary files or folders: ${names}${more}`)
+  }
+  return inline.suffix ? `${prompt}\n\n${inline.suffix}` : prompt
 }
 
 function isChatGptUrl(value: string): boolean {

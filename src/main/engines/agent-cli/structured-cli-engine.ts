@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import type {
   DshEventFrame,
+  EngineModelOption,
   EngineSessionSummary,
   EngineSessionTranscript,
   SessionEventEnvelope,
@@ -43,6 +44,7 @@ export interface StructuredCliAdapter {
   unavailableMessage: string
   buildArgs(input: { prompt: string; cwd: string; sessionId: string; isContinuation: boolean; model?: string; nativeSessionId?: string }): string[]
   parse(value: Record<string, unknown>): StructuredCliEvent[]
+  listModels?(): Promise<EngineModelOption[]>
 }
 
 interface TurnOutcome {
@@ -113,8 +115,8 @@ export class StructuredCliEngine {
     throw new Error(`Unknown ${this.adapter.id} approval: ${rpcId}`)
   }
 
-  async listModels(): Promise<never[]> {
-    return []
+  async listModels(): Promise<EngineModelOption[]> {
+    return this.adapter.listModels ? this.adapter.listModels() : []
   }
 
   listSessions(): EngineSessionSummary[] {
@@ -170,15 +172,17 @@ export class StructuredCliEngine {
     if (!session) {
       const created = await this.createSession({
         ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
-        ...(options.model === undefined ? {} : { model: options.model }),
       })
       session = this.sessions.get(created.sessionId)
     }
     if (!session) throw new Error(`${this.adapter.id} session could not be created`)
     if (session.running) throw new Error(`This ${this.adapter.label} chat already has an active turn`)
     if (options.cwd !== undefined) session.cwd = options.cwd
-    if (options.model !== undefined) session.model = options.model
     const cwd = session.cwd ?? process.cwd()
+    // The composer sends its current pick on every turn, so the model is
+    // turn-scoped: choosing "Native default" must fall back to the CLI's own
+    // configuration instead of reviving a model from an earlier turn.
+    const model = options.model ?? session.model
 
     const settled = deferred<TurnOutcome>()
     session.turnSettled = settled
@@ -192,7 +196,7 @@ export class StructuredCliEngine {
     if (session.title === `New ${this.adapter.label} chat`) session.title = userPrompt.slice(0, 80)
 
     try {
-      this.spawnTurn(session, cleaned, cwd)
+      this.spawnTurn(session, cleaned, cwd, model)
       session.running = true
       session.updatedAt = Date.now()
       this.emitFrame({ kind: 'session-status', sessionId: session.sessionId, running: true })
@@ -235,7 +239,7 @@ export class StructuredCliEngine {
     this.stopping = false
   }
 
-  private spawnTurn(session: StructuredCliSession, prompt: string, cwd: string): void {
+  private spawnTurn(session: StructuredCliSession, prompt: string, cwd: string, model?: string): void {
     const bin = this.adapter.binary()
     if (!bin) throw new Error(this.adapter.unavailableMessage)
     const args = this.adapter.buildArgs({
@@ -243,7 +247,7 @@ export class StructuredCliEngine {
       cwd,
       sessionId: session.sessionId,
       isContinuation: session.continuationReady,
-      ...(session.model === undefined ? {} : { model: session.model }),
+      ...(model === undefined ? {} : { model }),
       ...(session.nativeSessionId === undefined ? {} : { nativeSessionId: session.nativeSessionId }),
     })
     const spawnProcess = this.options.spawnProcess ?? spawn

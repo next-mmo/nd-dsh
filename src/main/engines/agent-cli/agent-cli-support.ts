@@ -90,6 +90,12 @@ export function spawnCliCommand(
   // This is ND's background CLI boundary, including Windows shell shims.
   // Keep console policy here so a future caller cannot accidentally opt out.
   const backgroundOptions = { ...options, windowsHide: true }
+  if (typeof backgroundOptions.cwd === 'string' && backgroundOptions.cwd) {
+    // Node does not update PWD when spawn sets `cwd`. OpenCode v2 resolves its
+    // tool working directory from PWD, so an inherited PWD from the shell that
+    // launched ND would run tools in that directory instead of the workspace.
+    backgroundOptions.env = { ...(backgroundOptions.env ?? process.env), PWD: resolve(backgroundOptions.cwd) }
+  }
   const shimmed = /\.(cmd|bat)$/i.test(bin)
   if (!shimmed) return spawnProcess(bin, args, backgroundOptions)
   const target = resolveShimTarget(bin)
@@ -180,6 +186,17 @@ export async function killProcessTree(child: ChildProcess | undefined): Promise<
   })
 }
 
+let engineVaultEnvironment: (() => NodeJS.ProcessEnv) | undefined
+
+/**
+ * The secure vault broker supplies its loopback URL, token, and shim PATH here.
+ * It is a provider rather than a process.env mutation so user terminals and
+ * unrelated children never inherit the agent-only token.
+ */
+export function setEngineVaultEnvironmentProvider(provider: (() => NodeJS.ProcessEnv) | undefined): void {
+  engineVaultEnvironment = provider
+}
+
 /**
  * Environment intentionally forwarded to user-installed coding CLIs.
  * ND control-plane variables and safeStorage provider credentials are not
@@ -191,6 +208,14 @@ export function engineEnvironment(): NodeJS.ProcessEnv {
   for (const [key, value] of Object.entries(process.env)) {
     if (key.startsWith('ND_DSH_') || key.startsWith('DSH_')) continue
     environment[key] = value
+  }
+  const vault = engineVaultEnvironment?.()
+  if (vault) {
+    for (const [key, value] of Object.entries(vault)) {
+      if (value !== undefined) environment[key] = value
+    }
+    if (vault.PATH !== undefined) delete environment.Path
+    if (vault.Path !== undefined) delete environment.PATH
   }
   return environment
 }

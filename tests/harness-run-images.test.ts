@@ -12,15 +12,10 @@ describe('asRunImages', () => {
     expect(asRunImages([{ data: 'QUJD', mediaType: 'image/webp' }])).toEqual([{ data: 'QUJD', mediaType: 'image/webp' }])
   })
 
-  it('rejects non-list shapes, empty lists, and more than three images', () => {
+  it('rejects non-list shapes, empty lists, and more than twenty images', () => {
     expect(() => asRunImages({})).toThrow('images must be a non-empty list')
     expect(() => asRunImages([])).toThrow('images must be a non-empty list')
-    expect(() => asRunImages([
-      { data: 'QQ==', mediaType: 'image/png' },
-      { data: 'QQ==', mediaType: 'image/png' },
-      { data: 'QQ==', mediaType: 'image/png' },
-      { data: 'QQ==', mediaType: 'image/png' },
-    ])).toThrow('at most 3 images')
+    expect(() => asRunImages(Array.from({ length: 21 }, () => ({ data: 'QQ==', mediaType: 'image/png' })))).toThrow('at most 20 images')
   })
 
   it('rejects non-object entries, unsupported media types, and non-base64 data', () => {

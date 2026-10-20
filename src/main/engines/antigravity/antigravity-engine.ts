@@ -10,6 +10,7 @@ import type {
 import { ANTIGRAVITY_ENGINE_ID } from '../../../shared/coding-engines.js'
 import { stripWorkspaceContext } from '../../../shared/workspace-context.js'
 import { antigravityBinPath } from '../../app-paths.js'
+import { engineEnvironment } from '../agent-cli/agent-cli-support.js'
 
 /**
  * ND-owned direct Google Antigravity engine. Each ND session hosts one
@@ -381,11 +382,7 @@ export class AntigravityEngine {
     if (session.cwd !== undefined) argv.push('--add-dir', session.cwd)
 
     // Engines must never see ND's control-plane configuration.
-    const environment: NodeJS.ProcessEnv = {}
-    for (const [key, value] of Object.entries(process.env)) {
-      if (key.startsWith('ND_DSH_') || key.startsWith('DSH_')) continue
-      environment[key] = value
-    }
+    const environment = engineEnvironment()
 
     const log = this.options.log ?? ((line: string) => console.warn(line))
     const spawnProcess = this.options.spawnProcess ?? spawn

@@ -1,0 +1,34 @@
+{
+  "protocol": "nd.extension/1",
+  "id": "nd.computer-use",
+  "name": "ND Computer Use",
+  "description": "Read a running app window as a screenshot plus an indexed accessibility tree. Read-only: no clicking, typing, launching, or activation.",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "contexts": ["personal"],
+  "permissions": ["computer.read"],
+  "settings": [],
+  "contributions": {
+    "commands": [{
+      "id": "open-computer-use",
+      "title": "ND Computer Use",
+      "description": "List running apps and read a window's current state.",
+      "keywords": ["computer use", "desktop", "windows", "accessibility", "screen", "app state"],
+      "host": "computer.apps.list",
+      "openViewId": "computer-use",
+      "contexts": ["personal"]
+    }],
+    "views": [{
+      "id": "computer-use",
+      "title": "Computer Use",
+      "description": "No running apps with windows were found. Refresh to try again.",
+      "kind": "web",
+      "entry": "ui/index.html",
+      "contexts": ["personal"],
+      "actions": [
+        { "id": "apps", "title": "List running apps and windows", "host": "computer.apps.list" },
+        { "id": "state", "title": "Read a window screenshot and accessibility tree", "host": "computer.app.state" }
+      ]
+    }]
+  }
+}

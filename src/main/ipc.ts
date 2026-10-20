@@ -2,6 +2,7 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, screen, sh
 import { join } from 'node:path'
 import { CAPABILITIES_IPC, type CapabilityKind, type CapabilityProviderStatus, type CapabilitySubjectType } from '../shared/capabilities.js'
 import { asRunImages } from './run-images.js'
+import { asRunFiles, assertRunAttachmentBudget } from './run-files.js'
 import type { AppInspectArea, AppInspectMode, AppInspectOptions, BrowserBounds, DshSurface, HarnessRunOptions, InspectScope, ModelProvider, QaSuiteId, ThemeMode } from '../shared/contracts.js'
 import { IPC } from '../shared/contracts.js'
 import { EXTENSIONS_IPC } from '../shared/extensions.js'
@@ -12,9 +13,10 @@ import { isLauncherHandoffTarget, isQuickLauncherShortcutMode } from '../shared/
 import { isCaptureDelaySeconds, isGlobalShortcutId, type GlobalShortcutId } from '../shared/shortcuts.js'
 import { isWorkspaceProfile } from '../shared/workspace-profile.js'
 import { asNdContext, isNdContext } from '../shared/nd-context.js'
+import { DEFAULT_WEB_BROWSER_MODE_SETTINGS, type WebBrowserModeSettings } from '../shared/browser-modes.js'
 import type { LauncherPopupController } from './launcher-popup.js'
 import type { ShortcutRegistry } from './shortcut-registry.js'
-import { projectRoot, presetSourceDir } from './app-paths.js'
+import { projectRoot, presetSourceDir, bundledResourceRoot, harnessNodeBinPath } from './app-paths.js'
 import { NdSkillService } from './skills/nd-skill-service.js'
 import { capturePrimaryDisplay, captureSelfWindow } from './capture/app-capture.js'
 import { describePick, ExternalElementStage, formatExternalElementContext, pickElementInExternalApp, RecentPickStore, type ExternalPick } from './capture/external-inspect.js'
@@ -26,6 +28,8 @@ import type { CodingEngineRegistry } from './engines/coding-engine-registry.js'
 import type { EngineSessionRouter } from './engines/engine-session-router.js'
 import type { NdNativeToolBroker } from './engines/nd-native/nd-native-tool-broker.js'
 import { nativeExtensionProjectContext } from './engines/nd-native/native-extension-context.js'
+import { setEngineVaultEnvironmentProvider } from './engines/agent-cli/agent-cli-support.js'
+import { VaultAccessService } from './vault/vault-access-service.js'
 import { readZcodeCliConfig, writeZcodeCliConfig } from './engines/zcode/zcode-config.js'
 import type { ZcodeCliConfigUpdate } from '../shared/zcode-config.js'
 import { ExtensionDemoService } from './extensions/extension-demo-service.js'
@@ -49,6 +53,7 @@ import { validateSystemVolumeUpdate, type CoreSystemVolume } from './core/core-s
 import type { NdMediaKeyKind } from '../shared/media-session.js'
 import type { CoreVault } from './core/core-vault.js'
 import type { CoreDiskScan } from './core/core-disk.js'
+import type { CoreComputer } from './core/core-computer.js'
 import type { CoreApiHttp } from './core/core-api-http.js'
 import type { HarnessService } from './harness/harness-service.js'
 import type { ProviderStore } from './providers.js'
@@ -77,6 +82,8 @@ interface IpcDependencies {
   capabilities: CapabilityRegistry
   engineRouter: EngineSessionRouter
   nativeToolBroker?: Pick<NdNativeToolBroker, 'setExtensionInvoker'>
+  /** ND-owned task worktrees are valid vault command roots too. */
+  ownsWorktree?: (cwd: string) => boolean
   harness: HarnessService
   projectWorkspace: ProjectWorkspaceCoordinator
   workspaces: WorkspaceRegistry
@@ -100,6 +107,8 @@ interface IpcDependencies {
   coreVault?: CoreVault
   /** nd-core-backed disk-usage scan surface for extensions. */
   coreDisk?: CoreDiskScan
+  /** nd-core-backed read-only desktop observation for Computer Use. */
+  coreComputer?: CoreComputer
   /** nd-core-backed outbound HTTP for API Studio. */
   coreApiHttp?: CoreApiHttp
   qa: QaService
@@ -270,6 +279,34 @@ export function registerIpc(deps: IpcDependencies): () => void {
     host: nativeHost,
     organization: deps.organizationStore,
   })
+  // The secure vault broker is an agent capability, not an extension host: it
+  // resolves entries inside this process and injects them into a child or file.
+  // Values never cross its loopback API, and its token lives only in the
+  // environment of shell-capable engines.
+  const vaultAccess = deps.coreVault
+    ? new VaultAccessService({
+        coreVault: deps.coreVault,
+        vaultPath: join(userDataRoot, 'nd-vault', 'vault.ndvault'),
+        packages: packageStore,
+        state: invocationState,
+        broker: invocationBroker,
+        organization: deps.organizationStore,
+        workspace: deps.projectWorkspace,
+        ownsWorktree: deps.ownsWorktree ?? (() => false),
+        userDataPath: userDataRoot,
+        resourceRoot: bundledResourceRoot(),
+        nodeBin: harnessNodeBinPath(),
+        log: (line) => console.warn(line),
+      })
+    : undefined
+  if (vaultAccess) {
+    setEngineVaultEnvironmentProvider(() => vaultAccess.environment())
+    deps.harness.setVaultEnvironmentProvider(() => vaultAccess.environment())
+    deps.engineRouter.setVaultAccessProvider({ hint: () => vaultAccess.hint() })
+    void vaultAccess.start().catch((error) => {
+      console.warn('ND vault CLI broker could not start:', error instanceof Error ? error.message : String(error))
+    })
+  }
   deps.nativeToolBroker?.setExtensionInvoker(async ({ sessionId, cwd, worktree, extensionId, contributionId, input }) => {
     const organization = await deps.organizationStore.state()
     const context = nativeExtensionProjectContext(organization, sessionId, cwd, worktree)
@@ -307,6 +344,7 @@ export function registerIpc(deps: IpcDependencies): () => void {
     ...(deps.coreClipboard ? { coreClipboard: deps.coreClipboard } : {}),
     ...(deps.coreVault ? { coreVault: deps.coreVault } : {}),
     ...(deps.coreDisk ? { coreDisk: deps.coreDisk } : {}),
+    ...(deps.coreComputer ? { coreComputer: deps.coreComputer } : {}),
     ...(deps.coreApiHttp ? { coreApiHttp: deps.coreApiHttp } : {}),
     onHomeChanged: () => { void syncHomeSessions() },
   })
@@ -842,6 +880,14 @@ export function registerIpc(deps: IpcDependencies): () => void {
     const root = typeof workspaceRoot === 'string' && workspaceRoot.trim() ? workspaceRoot.trim() : deps.projectWorkspace.state().root
     deps.engineRouter.getChatGptWeb()?.clearProjectBinding(root)
   })
+  handle(IPC.chatGptWebModeGet, () => {
+    return deps.engineRouter.getChatGptWeb()?.getModeSettings() ?? DEFAULT_WEB_BROWSER_MODE_SETTINGS
+  })
+  handle(IPC.chatGptWebModeSet, (_event, input) => {
+    const engine = deps.engineRouter.getChatGptWeb()
+    if (!engine) throw new Error('ChatGPT Web is unavailable')
+    return engine.setModeSettings(input as Partial<WebBrowserModeSettings>)
+  })
   handle(IPC.geminiWebGemGet, (_event, workspaceRoot) => {
     const root = typeof workspaceRoot === 'string' && workspaceRoot.trim() ? workspaceRoot.trim() : deps.projectWorkspace.state().root
     return deps.engineRouter.getGeminiWeb()?.getGemBinding(root) ?? null
@@ -855,6 +901,14 @@ export function registerIpc(deps: IpcDependencies): () => void {
   handle(IPC.geminiWebGemClear, (_event, workspaceRoot) => {
     const root = typeof workspaceRoot === 'string' && workspaceRoot.trim() ? workspaceRoot.trim() : deps.projectWorkspace.state().root
     deps.engineRouter.getGeminiWeb()?.clearGemBinding(root)
+  })
+  handle(IPC.geminiWebModeGet, () => {
+    return deps.engineRouter.getGeminiWeb()?.getModeSettings() ?? DEFAULT_WEB_BROWSER_MODE_SETTINGS
+  })
+  handle(IPC.geminiWebModeSet, (_event, input) => {
+    const engine = deps.engineRouter.getGeminiWeb()
+    if (!engine) throw new Error('Gemini Web is unavailable')
+    return engine.setModeSettings(input as Partial<WebBrowserModeSettings>)
   })
   handle(IPC.harnessPermissionGet, () => deps.theme.permissionMode())
   handle(IPC.harnessPermissionSet, async (_event, value) => {
@@ -928,6 +982,10 @@ export function registerIpc(deps: IpcDependencies): () => void {
 
   return () => {
     deps.nativeToolBroker?.setExtensionInvoker(undefined)
+    setEngineVaultEnvironmentProvider(undefined)
+    deps.harness.setVaultEnvironmentProvider(undefined)
+    deps.engineRouter.setVaultAccessProvider(undefined)
+    void vaultAccess?.dispose()
     extensionStore.setOnChanged(undefined)
     disposeExtensionIpc()
     disposeNdExtensionIpc()
@@ -1172,6 +1230,8 @@ function asRunOptions(value: unknown): HarnessRunOptions {
     throw new Error('workspaceCwd must be a short non-empty path')
   }
   const images = asRunImages(record.images)
+  const files = asRunFiles(record.files)
+  assertRunAttachmentBudget(images, files)
   return {
     ...(typeof skillScope === 'string' ? { skillScope } : {}),
     ...(typeof skillSelectionId === 'string' ? { skillSelectionId } : {}),
@@ -1182,6 +1242,7 @@ function asRunOptions(value: unknown): HarnessRunOptions {
     ...(permissionMode !== undefined ? { permissionMode } : {}),
     ...(typeof workspaceCwd === 'string' ? { workspaceCwd: workspaceCwd.trim() } : {}),
     ...(images !== undefined ? { images } : {}),
+    ...(files !== undefined ? { files } : {}),
   }
 }
 

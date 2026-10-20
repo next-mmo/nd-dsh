@@ -178,6 +178,7 @@ export class HarnessService {
   private readonly sessionCwdById = new Map<string, string>()
   private extraVisibleSessionIds: (() => ReadonlySet<string>) | undefined
   private sessionCwdGuard: ((cwd: string) => boolean) | undefined
+  private vaultEnvironmentProvider: (() => NodeJS.ProcessEnv) | undefined
 
   constructor(
     private readonly workspace: WorkspaceService,
@@ -191,6 +192,10 @@ export class HarnessService {
   ) {
     this.eventHub = new SessionEventHub((frame) => this.handleEvent(frame), sessionJournal)
     this.statusValue = this.computeStatus('stopped')
+  }
+
+  setVaultEnvironmentProvider(provider: (() => NodeJS.ProcessEnv) | undefined): void {
+    this.vaultEnvironmentProvider = provider
   }
 
   setListeners(listeners: {
@@ -712,6 +717,7 @@ export class HarnessService {
       ...(providerRuntime.defaultModel ? { ND_DSH_DEFAULT_MODEL: providerRuntime.defaultModel } : {}),
       ND_DSH_TOKEN_SAVER_ENABLED: tokenSaverEnabled ? '1' : '0',
       ...this.browser.agentBrowserEnvironment(),
+      ...(this.vaultEnvironmentProvider?.() ?? {}),
       ND_DSH_EXTERNAL_INSPECT_ENTRY: join(bundledResourceRoot(), 'scripts', 'external-inspect-mcp.mjs'),
       DSH_HOME: dshHome,
       DSH_CWD: workspaceRoot,

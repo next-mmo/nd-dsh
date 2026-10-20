@@ -61,7 +61,8 @@
           "apistudio.write",
           "apistudio.execute",
           "chat.start",
-          "workflow.read"
+          "workflow.read",
+          "computer.read"
         ]
       }
     },
@@ -324,7 +325,9 @@
         "process.forceQuit",
         "chat.ask",
         "workflow.list",
-        "workflow.refresh"
+        "workflow.refresh",
+        "computer.apps.list",
+        "computer.app.state"
       ]
     }
   }

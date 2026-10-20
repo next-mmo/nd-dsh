@@ -294,7 +294,7 @@ describe('CodexAppServerWire', () => {
     harness.wire.close()
   })
 
-  it('starts turns with text-only input items and forwards product notifications', async () => {
+  it('starts turns with text input items and forwards product notifications', async () => {
     const harness = setup()
     await handshake(harness)
     const pending = harness.wire.startTurn('thr-42', ['do the thing'])
@@ -310,6 +310,23 @@ describe('CodexAppServerWire', () => {
     harness.receive({ method: 'item/completed', params: { threadId: 'thr-42', turnId: 'turn-1', item: { type: 'agentMessage', phase: 'final_answer', text: 'done' } } })
     await flush(harness)
     expect(harness.notifications.at(-1)?.method).toBe('item/completed')
+    harness.wire.close()
+  })
+
+  it('adds localImage input items for attached images', async () => {
+    const harness = setup()
+    await handshake(harness)
+    const pending = harness.wire.startTurn('thr-42', ['look at this'], undefined, ['C:/tmp/shot.png'])
+    await flush(harness)
+    const request = harness.sent.at(-1)
+    expect(request?.method).toBe('turn/start')
+    const params = (request?.params ?? {}) as Record<string, unknown>
+    expect(params.input).toEqual([
+      { type: 'text', text: 'look at this', text_elements: [] },
+      { type: 'localImage', path: 'C:/tmp/shot.png' },
+    ])
+    harness.receive({ id: request?.id, result: { turn: { id: 'turn-images' } } })
+    await expect(pending).resolves.toBe('turn-images')
     harness.wire.close()
   })
 

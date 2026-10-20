@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { CheckIcon, CopyIcon, DownloadIcon, ExternalIcon } from './Icons'
+import { useEffect, useState } from 'react'
+import { ArrowLeftIcon, ArrowRightIcon, CheckIcon, CopyIcon, DownloadIcon, ExternalIcon } from './Icons'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog'
 import { type InlineToken, parseMarkdownBlocks, tokenizeInline } from '../../../shared/markdown-lite'
 import { cn } from '../lib/utils'
@@ -155,6 +155,181 @@ export function ImagePreviewDialog({
                 <ExternalIcon />
                 {linkUrl ? 'Open link' : 'Open in Browser'}
               </button>
+            ) : null}
+          </div>
+          <DialogClose asChild>
+            <button
+              type="button"
+              className="cursor-pointer rounded-md border border-border px-3 py-1 text-[11px] font-medium text-foreground transition-colors hover:bg-accent"
+            >
+              Close
+            </button>
+          </DialogClose>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+export interface GalleryImage {
+  url: string
+  alt?: string | undefined
+}
+
+/** Multi-image preview with previous/next, thumbnails, and keyboard arrows. */
+export function ImageGalleryDialog({
+  open,
+  onOpenChange,
+  images,
+  startIndex = 0,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  images: GalleryImage[]
+  startIndex?: number
+}) {
+  const [index, setIndex] = useState(startIndex)
+  const [zoomed, setZoomed] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const count = images.length
+  const current = images[Math.min(index, Math.max(count - 1, 0))]
+
+  useEffect(() => {
+    if (!open) return
+    setIndex(Math.min(Math.max(startIndex, 0), Math.max(count - 1, 0)))
+    setZoomed(false)
+    setCopied(false)
+  }, [open, startIndex, count])
+
+  useEffect(() => {
+    if (!open || count < 2) return
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'ArrowLeft') {
+        event.preventDefault()
+        setIndex((value) => Math.max(0, value - 1))
+      }
+      if (event.key === 'ArrowRight') {
+        event.preventDefault()
+        setIndex((value) => Math.min(count - 1, value + 1))
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [open, count])
+
+  if (!current) return null
+  const title = current.alt?.trim() || `Attachment ${index + 1}`
+  const externalTarget = current.url.startsWith('data:') ? undefined : current.url
+
+  const handleCopy = async (): Promise<void> => {
+    const ok = await copyImageToClipboard(current.url)
+    if (ok) {
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1_600)
+    }
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) setZoomed(false)
+        onOpenChange(next)
+      }}
+    >
+      <DialogContent className="flex max-h-[90vh] flex-col gap-3 p-4 sm:max-w-4xl">
+        <DialogHeader className="pr-6">
+          <DialogTitle className="truncate text-[13px] font-semibold">
+            {count > 1 ? `${title} — ${index + 1} of ${count}` : title}
+          </DialogTitle>
+          <DialogDescription className="sr-only">
+            Preview attached images. Use the arrow keys or the previous and next buttons to move between files.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="relative flex min-h-[200px] max-h-[68vh] items-center justify-center overflow-auto rounded-lg border border-border-soft bg-surface-1/80 p-2">
+          {count > 1 ? (
+            <button
+              type="button"
+              aria-label="Previous attachment"
+              title="Previous attachment"
+              disabled={index === 0}
+              onClick={() => setIndex((value) => Math.max(0, value - 1))}
+              className="absolute left-2 top-1/2 z-10 grid size-8 -translate-y-1/2 place-items-center rounded-full border border-border bg-background/90 text-foreground shadow-sm transition-colors hover:bg-accent disabled:cursor-default disabled:opacity-35 [&_svg]:size-4"
+            >
+              <ArrowLeftIcon />
+            </button>
+          ) : null}
+          <img
+            src={current.url}
+            alt={title}
+            referrerPolicy="no-referrer"
+            onClick={() => setZoomed((prev) => !prev)}
+            title={zoomed ? 'Click to fit to dialog' : 'Click to zoom'}
+            className={cn(
+              'rounded object-contain transition-transform',
+              zoomed ? 'max-h-none max-w-none cursor-zoom-out' : 'max-h-[68vh] max-w-full cursor-zoom-in',
+            )}
+          />
+          {count > 1 ? (
+            <button
+              type="button"
+              aria-label="Next attachment"
+              title="Next attachment"
+              disabled={index === count - 1}
+              onClick={() => setIndex((value) => Math.min(count - 1, value + 1))}
+              className="absolute right-2 top-1/2 z-10 grid size-8 -translate-y-1/2 place-items-center rounded-full border border-border bg-background/90 text-foreground shadow-sm transition-colors hover:bg-accent disabled:cursor-default disabled:opacity-35 [&_svg]:size-4"
+            >
+              <ArrowRightIcon />
+            </button>
+          ) : null}
+        </div>
+        {count > 1 ? (
+          <div className="flex justify-center gap-1.5 overflow-x-auto">
+            {images.map((image, itemIndex) => (
+              <button
+                key={`${itemIndex}-${image.url.slice(-24)}`}
+                type="button"
+                title={image.alt || `Attachment ${itemIndex + 1}`}
+                onClick={() => setIndex(itemIndex)}
+                className={cn(
+                  'h-12 w-12 shrink-0 overflow-hidden rounded border transition-opacity',
+                  itemIndex === index ? 'border-primary ring-1 ring-primary' : 'border-border-soft opacity-70 hover:opacity-100',
+                )}
+              >
+                <img src={image.url} alt={image.alt || ''} referrerPolicy="no-referrer" className="h-full w-full object-cover" />
+              </button>
+            ))}
+          </div>
+        ) : null}
+        <DialogFooter className="flex flex-row items-center justify-between gap-2 sm:justify-between">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-[11px] font-medium text-soft transition-colors hover:bg-accent hover:text-foreground [&_svg]:size-3.5"
+              onClick={() => void handleCopy()}
+            >
+              {copied ? <CheckIcon /> : <CopyIcon />}
+              {copied ? 'Copied' : 'Copy image'}
+            </button>
+            <a
+              href={current.url}
+              download={imageDownloadFilename(current.alt, current.url)}
+              className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-[11px] font-medium text-soft transition-colors hover:bg-accent hover:text-foreground [&_svg]:size-3.5"
+            >
+              <DownloadIcon />
+              Download
+            </a>
+            {externalTarget ? (
+              <a
+                href={externalTarget}
+                target="_blank"
+                rel="noreferrer"
+                title={`Open ${externalTarget}`}
+                className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-[11px] font-medium text-soft transition-colors hover:bg-accent hover:text-foreground [&_svg]:size-3.5"
+              >
+                <ExternalIcon />
+                Open
+              </a>
             ) : null}
           </div>
           <DialogClose asChild>

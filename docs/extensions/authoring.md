@@ -167,6 +167,8 @@ and in the product.
 | `os.wallpaper.links.import` / `os.wallpaper.links.export` | `os.wallpaper.write` | Merge a wallpaper-links JSON bundle into the user's list, or export the user's links in the same bundle format; Personal only |
 | `process.list` | `process.read` | List running processes in Personal with CPU and memory |
 | `process.quit` / `process.forceQuit` | `process.quit` | Quit a selected process from a fresh ND-issued list handle; ND confirms each action and protects its own processes; Personal only |
+| `computer.apps.list` | `computer.read` | List running apps and their targetable windows; window titles are stripped for agent callers; Personal only |
+| `computer.app.state` | `computer.read` | Read one window's bounded screenshot, indexed accessibility tree, and optional diff through the nd-core sidecar; Personal only, sensitive. Read-only: there is no input, launch, or activation host |
 | `disk.volumes.list` | `disk.read` | List mounted volumes with capacity and free space (metadata only); Personal only |
 | `disk.scan.start` / `disk.scan.status` / `disk.scan.cancel` | `disk.read` | Run one cancellable disk-usage scan of a folder through the nd-core sidecar (parallel walk, size aggregation, a pruned result tree), watch live progress, or stop it; Personal only, sensitive |
 | `disk.trash.move` | `disk.write` | Move one scanned item to the system trash after ND's own confirm dialog; filesystem roots and the home folder are refused; Personal only, sensitive |
@@ -215,9 +217,9 @@ match `^[A-Za-z][A-Za-z0-9._-]{0,63}$` and must be unique in the package.
   and running it, clicking a capture button, selecting an app in a picker).
 - An **agent** invocation arrives through an opaque run credential bound to one
   context, engine, and permitted capability set. Sensitive reads
-  (`capture.screen`, `capture.area`, `clipboard.read`) and sensitive OS effects
-  such as `os.wallpaper.chooseAndSet` always require an explicit grant — remembered
-  for routine use or granted once per action.
+  (`capture.screen`, `capture.area`, `clipboard.read`, `computer.app.state`) and
+  sensitive OS effects such as `os.wallpaper.chooseAndSet` always require an
+  explicit grant — remembered for routine use or granted once per action.
 - Deny wins everywhere: an organization policy of `deny` blocks the action even
   for the user, and revoked grants, disabled activations, stale credentials, and
   cross-context calls fail closed.

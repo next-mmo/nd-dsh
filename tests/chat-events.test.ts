@@ -173,5 +173,41 @@ describe('chat event folding', () => {
       { kind: 'assistant', id: expect.any(String), text: '![App finder mockup](data:image/webp;base64,UklGRiIAAABXRUJQ)' },
     ])
   })
+
+  it('keeps attached images on user turns, including image-only turns', () => {
+    const entries = foldHistory([
+      { type: 'user/message', seq: 1, data: { message: { content: [
+        { type: 'text', text: 'describe these' },
+        { type: 'image', mediaType: 'image/png', name: 'blue.png', data: 'AAAA' },
+      ] } } },
+      { type: 'user/message', seq: 2, data: { message: { content: [
+        { type: 'image', mediaType: 'image/jpeg', name: 'red.jpg', data: 'BBBB' },
+      ] } } },
+    ])
+    expect(entries).toHaveLength(2)
+    expect(entries[0]).toMatchObject({
+      kind: 'user',
+      text: 'describe these',
+      images: [{ name: 'blue.png', mediaType: 'image/png', data: 'AAAA' }],
+    })
+    expect(entries[1]).toMatchObject({
+      kind: 'user',
+      text: '',
+      images: [{ name: 'red.jpg', mediaType: 'image/jpeg', data: 'BBBB' }],
+    })
+  })
+
+  it('does not collapse identical prompts that carry different images', () => {
+    const userWithImage = (seq: number, data: string): HistoryEventEnvelope => ({
+      type: 'user/message',
+      seq,
+      data: { message: { content: [
+        { type: 'text', text: 'same prompt' },
+        { type: 'image', mediaType: 'image/png', name: `${data}.png`, data },
+      ] } },
+    })
+    const entries = foldHistory([userWithImage(1, 'AAAA'), userWithImage(2, 'BBBB')])
+    expect(entries).toHaveLength(2)
+  })
 })
 

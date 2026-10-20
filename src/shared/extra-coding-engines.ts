@@ -35,7 +35,7 @@ function unavailable(ready: boolean, message: string): string | undefined {
 export function buildExtraCodingEngineCatalog(availability: ExtraCodingEngineAvailability): CodingEngineDescriptor[] {
   const opencodeReason = unavailable(
     availability.opencodeCliReady,
-    'The OpenCode CLI is not installed. Install OpenCode. (Developers can override the path with ND_DSH_OPENCODE_BINARY.)',
+    'The OpenCode CLI is not installed. Install the OpenCode CLI or the OpenCode Desktop app. (Developers can override the path with ND_DSH_OPENCODE_BINARY.)',
   )
   const gooseReason = unavailable(
     availability.gooseCliReady,

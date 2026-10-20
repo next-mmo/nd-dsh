@@ -1403,6 +1403,7 @@ fn every_declared_capability_is_reachable_and_unknown_methods_are_refused() {
         "cancellation",
         "disk-scan",
         "metrics",
+        "computer-use",
     ] {
         assert!(
             capabilities.contains(&capability),
@@ -1413,6 +1414,46 @@ fn every_declared_capability_is_reachable_and_unknown_methods_are_refused() {
         .call::<Value>("process.kill", json!({ "processId": "none" }))
         .expect_err("an unknown method must be refused");
     assert_eq!(error.code, "method_failed");
+}
+
+#[test]
+fn computer_use_read_contract_refuses_unknown_apps_and_resets_sessions() {
+    let mut core = Core::launch();
+    let error = core
+        .call::<Value>(
+            "computer.app.state",
+            json!({
+                "app": "win32:nd-contract-test-missing",
+                "sessionId": "contract-test",
+                "includeText": true,
+            }),
+        )
+        .expect_err("an unknown app must be refused");
+    assert_eq!(error.code, "method_failed");
+
+    let reset = core
+        .call::<Value>(
+            "computer.session.reset",
+            json!({ "sessionId": "contract-test" }),
+        )
+        .expect("reset a session");
+    assert_eq!(reset["reset"], false);
+
+    let invalid = core
+        .call::<Value>("computer.session.reset", json!({ "sessionId": "" }))
+        .expect_err("an empty session must be refused");
+    assert_eq!(invalid.code, "method_failed");
+}
+
+#[cfg(windows)]
+#[test]
+fn computer_apps_list_returns_the_declared_shape() {
+    let mut core = Core::launch();
+    let value = core
+        .call::<Value>("computer.apps.list", json!({}))
+        .expect("list apps");
+    assert!(value["apps"].is_array());
+    assert!(value["truncated"].is_boolean());
 }
 
 #[test]

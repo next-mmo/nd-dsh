@@ -3,7 +3,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import { describe, expect, it, vi } from 'vitest'
+import { PageGuardError } from '../src/main/browser/page-driver.js'
 import { GeminiWebEngine } from '../src/main/engines/gemini-web/gemini-web-engine.js'
+import { discardWebImages } from '../src/main/engines/web-attachments.js'
+import { WebTurnProgress } from '../src/main/engines/web-turn.js'
 
 function harnessSessionStore(directory: string): string {
   return join(directory, 'gemini-web-sessions.json')
@@ -226,6 +229,38 @@ describe('Gemini Web session behavior', () => {
     } finally { await engine.close(); rmSync(directory, { recursive: true, force: true }) }
   })
 
+  it('does not duplicate an image turn when Gemini echoes only the uploaded preview', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nd-gemini-image-echo-'))
+    const engine = new GeminiWebEngine({ browser: {} as never, workspace: {} as never, storePath: harnessSessionStore(directory) })
+    const internals = engine as unknown as {
+      sessions: Map<string, unknown>
+      recordUserMessage: (session: unknown, text: string, images?: readonly { data: string; mediaType: string; name: string }[]) => void
+      rememberSentPrompt: (session: unknown, prompt: string) => void
+      importUnseenTurns: (session: unknown, snapshot: unknown) => void
+    }
+    try {
+      const { sessionId } = await engine.createSession({ cwd: '/workspace' })
+      const session = internals.sessions.get(sessionId)
+      const prompt = 'What color is this image?'
+      internals.recordUserMessage(session, prompt, [{ data: 'AAAA', mediaType: 'image/png', name: 'blue.png' }])
+      internals.rememberSentPrompt(session, prompt)
+      internals.importUnseenTurns(session, {
+        url: 'https://gemini.google.com/app/conv',
+        busy: false,
+        turns: [
+          { role: 'user', text: '![Uploaded image preview](https://lh3.googleusercontent.com/preview)' },
+          { role: 'assistant', text: 'Blue' },
+        ],
+      })
+      const events = engine.transcript(sessionId).events
+      expect(events.filter((event) => event.type === 'user/message')).toHaveLength(1)
+      expect(events.filter((event) => event.type === 'assistant/message')).toHaveLength(1)
+    } finally {
+      await engine.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
   it('never requires a Gem and auto-binds a Gem when the browser is inside one', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'nd-gemini-unbound-'))
     const storePath = harnessSessionStore(directory)
@@ -292,6 +327,152 @@ describe('Gemini Web session behavior', () => {
     }
     await engine.close()
     rmSync(directory, { recursive: true, force: true })
+  })
+
+  it('stops before composing when the page is already answering', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nd-gemini-busy-'))
+    const engine = new GeminiWebEngine({
+      browser: { state: () => ({ url: 'https://gemini.google.com/app' }), activeTabId: () => 'tab-1' } as never,
+      workspace: { state: () => ({ root: '/workspace' }) } as never,
+      storePath: harnessSessionStore(directory),
+    })
+    const driver = { evaluate: vi.fn(async () => true), setFilesOnInput: vi.fn(async () => true), close: vi.fn() }
+    const internals = engine as unknown as {
+      openBoundConversation: () => Promise<typeof driver>
+      captureSnapshot: () => Promise<unknown>
+      submitPrompt: ReturnType<typeof vi.fn>
+    }
+    internals.openBoundConversation = async () => driver
+    internals.captureSnapshot = async () => ({
+      url: 'https://gemini.google.com/app',
+      title: 'Gemini',
+      composer: true,
+      busy: true,
+      complete: false,
+      pendingSend: false,
+      challenge: false,
+      loginRequired: false,
+      rateLimited: false,
+      turns: [],
+    })
+    internals.submitPrompt = vi.fn()
+    try {
+      await expect(engine.run('hello')).rejects.toMatchObject({ code: 'page-busy', submission: 'none' })
+      expect(internals.submitPrompt).not.toHaveBeenCalled()
+      expect(driver.close).toHaveBeenCalledOnce()
+    } finally {
+      await engine.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('maps off-site guard failures to stop conditions without transport fallback', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nd-gemini-guard-'))
+    const engine = new GeminiWebEngine({
+      browser: {
+        state: () => ({ url: 'https://gemini.google.com/app', cdpPort: 9222 }),
+        activeTabId: () => 'tab-1',
+      } as never,
+      workspace: { state: () => ({ root: '/workspace' }) } as never,
+      storePath: harnessSessionStore(directory),
+    })
+    const internals = engine as unknown as { openBoundConversation: () => Promise<never> }
+    try {
+      for (const [origin, code] of [
+        ['https://accounts.google.com', 'login-required'],
+        ['https://consent.google.com', 'challenge'],
+        ['https://example.com', 'wrong-page'],
+      ] as const) {
+        const openBoundConversation = vi.fn(async () => { throw new PageGuardError('wrong-page', origin, 'left the page') })
+        internals.openBoundConversation = openBoundConversation
+        const { sessionId } = await engine.createSession({ cwd: '/workspace' })
+        await expect(engine.run('hello', { sessionId })).rejects.toMatchObject({ code, submission: 'none' })
+        expect(openBoundConversation).toHaveBeenCalledTimes(1)
+      }
+    } finally {
+      await engine.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps a post-click confirmation timeout as uncertain instead of not submitted', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nd-gemini-uncertain-'))
+    const engine = new GeminiWebEngine({ browser: {} as never, workspace: {} as never, storePath: harnessSessionStore(directory) })
+    const prompt = 'Explain quicksort'
+    let now = 1_000_000
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    const driver = {
+      evaluate: vi.fn(async (script: string) => {
+        if (script.includes('composerCleared')) {
+          now += 10_000
+          return { composerCleared: false, busy: false }
+        }
+        if (script.includes('button.click()')) return true
+        if (script.includes('return composer instanceof HTMLTextAreaElement')) return prompt
+        if (script.includes("execCommand('insertText'")) return { ok: true, text: prompt }
+        return false
+      }),
+      setFilesOnInput: vi.fn(async () => true),
+      close: vi.fn(),
+    }
+    const internals = engine as unknown as {
+      submitPrompt: (driver: unknown, prompt: string, signal: AbortSignal, progress: WebTurnProgress) => Promise<void>
+    }
+    const progress = new WebTurnProgress('extension')
+    try {
+      await expect(internals.submitPrompt(driver, prompt, new AbortController().signal, progress))
+        .rejects.toMatchObject({ name: 'WebTurnError', code: 'submission-uncertain', phase: 'confirm', submission: 'uncertain' })
+      expect(progress.submission).toBe('uncertain')
+    } finally {
+      nowSpy.mockRestore()
+      await engine.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('clicks the page Stop control only after ND submitted', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nd-gemini-stop-click-'))
+    const evaluateInTab = vi.fn(async () => true)
+    const browser = {
+      state: () => ({ url: 'https://gemini.google.com/app', cdpPort: 9222 }),
+      activeTabId: () => 'tab-1',
+      tabUrl: () => 'https://gemini.google.com/app',
+      evaluateInTab,
+      ensureAgentReady: async () => {},
+    }
+    const engine = new GeminiWebEngine({
+      browser: browser as never,
+      workspace: { state: () => ({ root: '/workspace' }) } as never,
+      storePath: harnessSessionStore(directory),
+    })
+    engine.setModeSettings({ mode: 'extension' })
+    const driver = { evaluate: vi.fn(async () => true), setFilesOnInput: vi.fn(async () => true), close: vi.fn() }
+    const internals = engine as unknown as {
+      openBoundConversation: () => Promise<typeof driver>
+      activeTurns: Map<string, { progress?: { submission: string } }>
+    }
+    try {
+      for (const submitted of [false, true]) {
+        let release!: () => void
+        const gate = new Promise<void>((resolve) => { release = resolve })
+        let entered!: () => void
+        const reached = new Promise<void>((resolve) => { entered = resolve })
+        internals.openBoundConversation = async () => { entered(); await gate; return driver }
+        const { sessionId } = await engine.createSession({ cwd: '/workspace' })
+        const run = engine.run('hello', { sessionId })
+        const rejected = expect(run).rejects.toThrow('stopped')
+        await reached
+        if (submitted) internals.activeTurns.get(sessionId)!.progress!.submission = 'confirmed'
+        await engine.stop(sessionId)
+        release()
+        await rejected
+        expect(evaluateInTab).toHaveBeenCalledTimes(submitted ? 1 : 0)
+        evaluateInTab.mockClear()
+      }
+    } finally {
+      await engine.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 })
 
@@ -383,5 +564,301 @@ describe('Gemini Web Gem binding management and persistence', () => {
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }
+  })
+
+  it('attaches pasted images through the Gemini uploader before sending', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nd-gemini-attach-'))
+    const engine = new GeminiWebEngine({ browser: {} as never, workspace: {} as never, storePath: harnessSessionStore(directory) })
+    let uploaded = false
+    let stagedFiles: string[] = []
+    const cdp = {
+      evaluate: vi.fn(async (script: string) => {
+        if (script.includes('(?:&|and)')) return true
+        if (script.includes('!== null')) return true
+        if (script.includes('close attachment')) return false
+        if (script.includes('gem-attachment-tile')) {
+          return uploaded ? { count: 1, errors: 0, uploading: false } : { count: 0, errors: 0, uploading: false }
+        }
+        return undefined
+      }),
+      setFilesOnInput: vi.fn(async (_expression: string, files: string[]) => {
+        stagedFiles = files
+        uploaded = true
+        return true
+      }),
+      close: vi.fn(),
+    }
+    const internals = engine as unknown as {
+      attachImages: (connection: typeof cdp, images: unknown[], signal: AbortSignal) => Promise<{ directory: string; files: string[] } | undefined>
+    }
+    let staged: { directory: string; files: string[] } | undefined
+    try {
+      staged = await internals.attachImages(cdp, [{
+        data: Buffer.from('gemini-image').toString('base64'),
+        mediaType: 'image/png',
+        name: 'capture.png',
+      }], new AbortController().signal)
+      expect(staged?.files).toHaveLength(1)
+      expect(stagedFiles).toEqual(staged?.files)
+      expect(readFileSync(stagedFiles[0]!, 'utf8')).toBe('gemini-image')
+      expect(cdp.setFilesOnInput).toHaveBeenCalledTimes(1)
+      expect(cdp.setFilesOnInput.mock.calls[0]?.[0]).toContain('document.querySelector')
+    } finally {
+      discardWebImages(staged)
+      await engine.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('stops before sending when Gemini exposes no image upload control', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nd-gemini-attach-missing-'))
+    const engine = new GeminiWebEngine({ browser: {} as never, workspace: {} as never, storePath: harnessSessionStore(directory) })
+    const cdp = {
+      evaluate: vi.fn(async () => false),
+      setFilesOnInput: vi.fn(async () => true),
+      close: vi.fn(),
+    }
+    const internals = engine as unknown as {
+      attachImages: (connection: typeof cdp, images: unknown[], signal: AbortSignal) => Promise<unknown>
+    }
+    try {
+      await expect(internals.attachImages(cdp, [{
+        data: Buffer.from('x').toString('base64'),
+        mediaType: 'image/png',
+        name: 'capture.png',
+      }], new AbortController().signal)).rejects.toThrow(/no image upload control/)
+      expect(cdp.setFilesOnInput).not.toHaveBeenCalled()
+    } finally {
+      await engine.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('reports a stalled image upload as a sign-in requirement', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nd-gemini-attach-stall-'))
+    const engine = new GeminiWebEngine({ browser: {} as never, workspace: {} as never, storePath: harnessSessionStore(directory) })
+    const cdp = {
+      evaluate: vi.fn(async (script: string) => {
+        if (script.includes('(?:&|and)')) return true
+        if (script.includes('!== null')) return true
+        if (script.includes('gem-attachment-tile')) {
+          return { count: 0, errors: 0, uploading: true }
+        }
+        return undefined
+      }),
+      setFilesOnInput: vi.fn(async () => true),
+      close: vi.fn(),
+    }
+    const internals = engine as unknown as {
+      attachImages: (connection: typeof cdp, images: unknown[], signal: AbortSignal) => Promise<unknown>
+    }
+    const originalNow = Date.now
+    let virtualTime = originalNow()
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => {
+      const current = virtualTime
+      virtualTime += 15_000
+      return current
+    })
+    try {
+      await expect(internals.attachImages(cdp, [{
+        data: Buffer.from('x').toString('base64'),
+        mediaType: 'image/png',
+        name: 'capture.png',
+      }], new AbortController().signal)).rejects.toThrow(/still uploading the attached image/)
+    } finally {
+      nowSpy.mockRestore()
+      await engine.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('fails fast when an attached image stays in Gemini\'s pending-send state', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nd-gemini-attach-pend-'))
+    const engine = new GeminiWebEngine({ browser: {} as never, workspace: {} as never, storePath: harnessSessionStore(directory) })
+    const internals = engine as unknown as {
+      waitForAssistant: (connection: unknown, session: unknown, count: number, signal: AbortSignal, pendingAttachment?: boolean) => Promise<unknown>
+      captureSnapshot: () => Promise<unknown>
+      captureConversationUrl: (session: unknown, url: string) => void
+    }
+    internals.captureSnapshot = async () => ({
+      url: 'https://gemini.google.com/app/c1',
+      title: 'Gemini',
+      composer: true,
+      busy: false,
+      complete: false,
+      pendingSend: true,
+      challenge: false,
+      loginRequired: false,
+      rateLimited: false,
+      turns: [],
+    })
+    internals.captureConversationUrl = () => {}
+    const startedAt = 1_000_000
+    const now = vi.spyOn(Date, 'now')
+      .mockReturnValueOnce(startedAt)
+      .mockReturnValueOnce(startedAt)
+      .mockReturnValue(startedAt + 61_000)
+    try {
+      await expect(internals.waitForAssistant({} as never, {} as never, 0, new AbortController().signal, true))
+        .rejects.toThrow(/still uploading the attached image/)
+    } finally {
+      now.mockRestore()
+      await engine.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('records attached images on the user turn for thread previews', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nd-gemini-user-images-'))
+    const engine = new GeminiWebEngine({ browser: {} as never, workspace: {} as never, storePath: harnessSessionStore(directory) })
+    const internals = engine as unknown as {
+      sessions: Map<string, unknown>
+      recordUserMessage: (session: unknown, text: string, images?: unknown[]) => void
+    }
+    try {
+      const { sessionId } = await engine.createSession({ cwd: '/workspace' })
+      internals.recordUserMessage(internals.sessions.get(sessionId), 'describe these', [
+        { data: 'QUJD', mediaType: 'image/png', name: 'blue.png' },
+      ])
+      expect(engine.transcript(sessionId).events.at(-1)?.data).toMatchObject({
+        message: {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'describe these' },
+            { type: 'image', mediaType: 'image/png', name: 'blue.png', data: 'QUJD' },
+          ],
+        },
+      })
+    } finally {
+      await engine.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('manages browser mode settings and persists them across engine reloads', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nd-gemini-mode-'))
+    const storePath = harnessSessionStore(directory)
+    try {
+      const engine1 = new GeminiWebEngine({ browser: {} as never, workspace: {} as never, storePath })
+      expect(engine1.getModeSettings()).toEqual({ mode: 'auto', agentFallback: false, visualRecovery: true })
+
+      const updated = engine1.setModeSettings({ mode: 'browser-agent', visualRecovery: false })
+      expect(updated).toEqual({ mode: 'browser-agent', agentFallback: false, visualRecovery: false })
+      await engine1.close()
+
+      const engine2 = new GeminiWebEngine({ browser: {} as never, workspace: {} as never, storePath })
+      expect(engine2.getModeSettings()).toEqual({ mode: 'browser-agent', agentFallback: false, visualRecovery: false })
+      await engine2.close()
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('adopts previously submitted prompt when uncertain retry already appears in DOM', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nd-gemini-adopt-'))
+    const engine = new GeminiWebEngine({
+      browser: {
+        state: () => ({ url: 'https://gemini.google.com/app', cdpPort: 9222 }),
+        activeTabId: () => 'tab-1',
+        ensureAgentReady: async () => {},
+      } as never,
+      workspace: { state: () => ({ root: '/workspace' }) } as never,
+      storePath: harnessSessionStore(directory),
+    })
+
+    const { sessionId } = await engine.createSession({ cwd: '/workspace' })
+    const prompt = 'Tell me a joke'
+
+    const driver = {
+      evaluate: vi.fn(async (script: string) => {
+        if (script.includes('readGeminiDomTurns')) {
+          return {
+            url: 'https://gemini.google.com/app/c1',
+            title: 'Gemini',
+            composer: true,
+            busy: false,
+            complete: true,
+            pendingSend: false,
+            challenge: false,
+            loginRequired: false,
+            rateLimited: false,
+            turns: [
+              { role: 'user', text: prompt },
+              { role: 'assistant', text: 'Why did the chicken cross the road?' },
+            ],
+          }
+        }
+        return true
+      }),
+      setFilesOnInput: vi.fn(async () => true),
+      close: vi.fn(),
+    }
+
+    const internals = engine as unknown as {
+      openBoundConversation: () => Promise<typeof driver>
+      submitPrompt: () => Promise<void>
+      sessions: Map<string, { uncertainPromptHashes?: string[] }>
+    }
+
+    internals.openBoundConversation = async () => driver
+    internals.submitPrompt = vi.fn(async () => {})
+
+    const sessionObj = internals.sessions.get(sessionId)!
+    sessionObj.uncertainPromptHashes = [
+      (await import('node:crypto')).createHash('sha256').update(prompt.trim()).digest('hex'),
+    ]
+
+    await engine.run(prompt, { sessionId })
+
+    expect(internals.submitPrompt).not.toHaveBeenCalled()
+    expect(engine.transcript(sessionId).events.filter((e) => e.type === 'assistant/message')).toHaveLength(1)
+
+    await engine.close()
+    rmSync(directory, { recursive: true, force: true })
+  })
+
+  it('stops and does not fallback when encountering login-required or challenge', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nd-gemini-stop-condition-'))
+    const engine = new GeminiWebEngine({
+      browser: {
+        state: () => ({ url: 'https://gemini.google.com/app', cdpPort: 9222 }),
+        activeTabId: () => 'tab-1',
+        ensureAgentReady: async () => {},
+      } as never,
+      workspace: { state: () => ({ root: '/workspace' }) } as never,
+      storePath: harnessSessionStore(directory),
+    })
+
+    const driver = {
+      evaluate: vi.fn(async (script: string) => {
+        if (script.includes('readGeminiDomTurns')) {
+          return {
+            url: 'https://accounts.google.com/auth',
+            title: 'Sign in - Google Accounts',
+            composer: false,
+            busy: false,
+            complete: false,
+            pendingSend: false,
+            challenge: false,
+            loginRequired: true,
+            rateLimited: false,
+            turns: [],
+          }
+        }
+        return false
+      }),
+      setFilesOnInput: vi.fn(async () => true),
+      close: vi.fn(),
+    }
+
+    const internals = engine as unknown as {
+      openBoundConversation: () => Promise<typeof driver>
+    }
+    internals.openBoundConversation = async () => driver
+
+    await expect(engine.run('hello')).rejects.toThrow(/needs you signed in to gemini\.google\.com/)
+
+    await engine.close()
+    rmSync(directory, { recursive: true, force: true })
   })
 })

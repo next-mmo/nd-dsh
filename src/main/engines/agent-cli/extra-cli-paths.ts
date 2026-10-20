@@ -24,6 +24,26 @@ function npmBinCandidates(name: string): string[] {
       ]
 }
 
+function opencodeDesktopBinPaths(): string[] {
+  if (process.platform === 'win32') {
+    const localAppData = process.env.LOCALAPPDATA ?? ''
+    const programFiles = process.env.ProgramFiles ?? process.env.PROGRAMFILES ?? ''
+    const roots = [
+      ...(localAppData
+        ? [join(localAppData, 'Programs', '@opencodedesktop'), join(localAppData, 'Programs', 'opencode-desktop')]
+        : []),
+      ...(programFiles
+        ? [join(programFiles, '@opencodedesktop'), join(programFiles, 'opencode-desktop')]
+        : []),
+    ]
+    return roots.map((root) => join(root, 'resources', 'opencode-cli.exe'))
+  }
+  if (process.platform === 'darwin') {
+    return [join('/Applications', 'OpenCode.app', 'Contents', 'Resources', 'opencode-cli')]
+  }
+  return []
+}
+
 export function opencodeBinPath(): string | undefined {
   const home = process.env.USERPROFILE ?? process.env.HOME ?? ''
   const programData = process.env.ProgramData ?? process.env.PROGRAMDATA ?? ''
@@ -37,6 +57,7 @@ export function opencodeBinPath(): string | undefined {
           ...(programData ? [join(programData, 'chocolatey', 'bin', 'opencode.exe')] : []),
         ]
       : [join(home, '.opencode', 'bin', 'opencode')]),
+    ...opencodeDesktopBinPaths(),
     ...npmBinCandidates('opencode'),
   ])
 }

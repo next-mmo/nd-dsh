@@ -1,6 +1,6 @@
 /// <reference lib="dom" />
 
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { expect, test, type Page } from '@playwright/test'
 import type { NdExtensionsStateView, NdInvocationRequest } from '../src/shared/nd-invocations.js'
@@ -91,6 +91,11 @@ test('installs on demand and activates for Personal', async () => {
 
   const activated = await launched.page.evaluate(async () => await (globalThis as NdPlatformWindow).ndDsh.ndExtensions.setActivation('nd.password-vault', { kind: 'personal' }, true))
   expect(activated.packages.find((item) => item.id === 'nd.password-vault')).toBeDefined()
+
+  // The secure CLI broker starts with the app and publishes its shims for every
+  // shell-capable engine; this is the live proof that the loopback service is up.
+  await expect.poll(() => existsSync(join(launched.userDataDir, 'nd-vault-bin', 'nd-vault.cmd')), { timeout: 10_000 }).toBe(true)
+  await expect.poll(() => existsSync(join(launched.userDataDir, 'nd-vault-bin', 'nd-vault')), { timeout: 10_000 }).toBe(true)
 })
 
 test('Add Vault Entry opens the ND-owned prompt and stores the secret encrypted at rest', async () => {
@@ -112,6 +117,7 @@ test('Add Vault Entry opens the ND-owned prompt and stores the secret encrypted 
 
   // The vault file exists, parses as an envelope, and never contains the secret.
   const vaultPath = join(launched.userDataDir, 'nd-vault', 'vault.ndvault')
+  await expect.poll(() => existsSync(vaultPath), { timeout: 15_000 }).toBe(true)
   const vaultFile = readFileSync(vaultPath, 'utf8')
   const envelope = JSON.parse(vaultFile) as { version: number; nonce: string; ciphertext: string }
   expect(envelope.version).toBe(1)

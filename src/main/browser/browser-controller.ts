@@ -575,6 +575,25 @@ export class BrowserController {
     return contents.executeJavaScript(translatePageReadScript(provider), true) as Promise<import('../../shared/nd-translate.js').NdTranslatePage>
   }
 
+  /** Current URL of a tab, or `undefined` once the tab has been closed. */
+  tabUrl(tabId = this.activeTabIdValue): string | undefined {
+    const tab = this.tabs.get(tabId)
+    if (!tab || tab.view.webContents.isDestroyed()) return undefined
+    return tab.view.webContents.getURL() || tab.state.url
+  }
+
+  /**
+   * Run a main-owned script in an isolated world of `tabId` (content-script
+   * style: shares the DOM, isolates `window` globals from page scripts). Never
+   * expose this channel directly to renderer IPC.
+   */
+  async evaluateInTab(tabId: string, expression: string): Promise<unknown> {
+    const contents = this.requireTab(tabId).view.webContents
+    // Fail closed: falling back to the main world would expose main-owned
+    // scripts to page globals and break the isolation this channel promises.
+    return contents.executeJavaScriptInIsolatedWorld(917, [{ code: expression }], true)
+  }
+
   /**
    * Attach a tab offscreen so provider pages keep rendering while the app UI
    * covers the browser surface. Hidden views report a zero viewport and a
@@ -1276,7 +1295,9 @@ const SEMANTIC_DRIVER_SCRIPT = `(() => {
           name: accessibleName(element),
           text: textOf(element),
           type,
-          disabled: 'disabled' in element ? Boolean(element.disabled) : undefined,
+          disabled: 'disabled' in element || element.hasAttribute('aria-disabled')
+            ? Boolean(('disabled' in element && element.disabled) || element.getAttribute('aria-disabled') === 'true')
+            : undefined,
           href: element instanceof HTMLAnchorElement ? element.href : undefined,
           sensitive: type === 'password' ? true : undefined,
           editable: element instanceof HTMLElement && element.isContentEditable ? true : undefined
@@ -1308,7 +1329,19 @@ const SEMANTIC_DRIVER_SCRIPT = `(() => {
       }
       if (element instanceof HTMLElement && element.isContentEditable) {
         element.focus();
-        element.textContent = value;
+        const selection = window.getSelection?.();
+        if (selection && typeof document.createRange === 'function') {
+          const range = document.createRange();
+          range.selectNodeContents(element);
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }
+        if (typeof document.execCommand === 'function') {
+          document.execCommand('delete');
+          if (!document.execCommand('insertText', false, value)) element.textContent = value;
+        } else {
+          element.textContent = value;
+        }
         element.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));
         revision += 1;
         return { ok: true, revision };

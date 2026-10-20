@@ -8,6 +8,7 @@ use nd_runtime::clipboard::{
     ClipboardManager, ClipboardReadParams, ClipboardUnwatchParams, ClipboardWatchParams,
     ClipboardWriteTextParams,
 };
+use nd_runtime::computer_use::{AppStateParams, ComputerUse, SessionResetParams};
 use nd_runtime::deadline::{Deadline, Interrupt, InterruptGuard, InterruptRegistry};
 use nd_runtime::decision::{self, DecisionEvaluateParams};
 use nd_runtime::disk_scan;
@@ -55,6 +56,7 @@ struct AppState {
     processes: Arc<ProcessManager>,
     terminals: Arc<TerminalManager>,
     clipboard: Arc<ClipboardManager>,
+    computer: ComputerUse,
     vault: VaultRegistry,
     session_journal: Arc<SessionJournalStore>,
     effect_journal: Arc<EffectJournalStore>,
@@ -90,6 +92,7 @@ impl AppState {
             processes,
             terminals,
             clipboard,
+            computer: ComputerUse::new(),
             vault: VaultRegistry::new_platform(),
             session_journal,
             effect_journal,
@@ -122,6 +125,7 @@ fn main() -> Result<()> {
         PROTOCOL_VERSION
     );
 
+    nd_runtime::computer_use::init_process_dpi();
     let dispatcher = Dispatcher::new();
     let state = AppState::new(dispatcher.stats());
     let stdin = std::io::stdin();
@@ -231,7 +235,8 @@ fn dispatch(
                     "cancellation",
                     "disk-scan",
                     "api-http",
-                    "metrics"
+                    "metrics",
+                    "computer-use"
                 ],
                 "processCount": state.processes.process_count(),
                 "terminalCount": state.terminals.terminal_count(),
@@ -623,6 +628,16 @@ fn dispatch(
                 );
             };
             to_value(disk_scan::scan(params, interrupt, Some(&progress))?)
+        }
+        "computer.apps.list" => to_value(state.computer.list_apps()?),
+        "computer.app.state" => {
+            let params = from_params::<AppStateParams>(params)?;
+            to_value(state.computer.app_state(params, interrupt)?)
+        }
+        "computer.session.reset" => {
+            let params = from_params::<SessionResetParams>(params)?;
+            params.validate()?;
+            to_value(state.computer.reset_session(&params.session_id))
         }
         "media.volume-state" => to_value(nd_runtime::system_volume::state()),
         "media.volume-set" => to_value(nd_runtime::system_volume::set(from_params(params)?)?),
