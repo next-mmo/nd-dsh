@@ -19,6 +19,7 @@ import {
 import { manifestPermissionIssues, validateNdExtensionManifest, type NdExtensionManifest } from '../src/shared/extension-package.js'
 import { personalContext } from '../src/shared/nd-context.js'
 import {
+  isCurlCommand,
   normalizeSpec,
   normalizeWorkspace,
   operationRequest,
@@ -489,6 +490,46 @@ describe('API Studio request preparation', () => {
     expect(request.body.text).toContain('Alice')
     expect(request.auth).toMatchObject({ type: 'basic', username: 'alice', password: 'secret' })
     expect(() => parseCurl('wget https://example.com')).toThrow(/curl/)
+  })
+
+  it('detects pasted cURL commands and accepts shell prompts and curl.exe', () => {
+    expect(isCurlCommand('curl https://example.com')).toBe(true)
+    expect(isCurlCommand('  $ curl https://example.com')).toBe(true)
+    expect(isCurlCommand('curl.exe https://example.com')).toBe(true)
+    expect(isCurlCommand('wget https://example.com')).toBe(false)
+    expect(isCurlCommand('https://example.com')).toBe(false)
+    expect(isCurlCommand('')).toBe(false)
+  })
+
+  it('imports cURL commands copied from Chrome for Windows and bash', () => {
+    const windows = parseCurl([
+      'curl --url ^"https://api.example.com/users?limit=1^&page=2^" ^',
+      '  -X POST ^',
+      '  -H ^"Content-Type: application/json^" ^',
+      '  --data-raw ^"{\\"name\\":\\"Alice\\"}^"',
+    ].join('\r\n'))
+    expect(windows.method).toBe('POST')
+    expect(windows.url).toBe('https://api.example.com/users?limit=1&page=2')
+    expect(windows.body.mode).toBe('json')
+    expect(JSON.parse(windows.body.text)).toEqual({ name: 'Alice' })
+
+    const bash = parseCurl([
+      "curl --url 'https://api.example.com/users' \\",
+      "  -X POST \\",
+      "  --data-raw $'{\"name\":\"Alice\\u0021\"}'",
+    ].join('\n'))
+    expect(bash.method).toBe('POST')
+    expect(bash.body.text).toBe('{"name":"Alice!"}')
+  })
+
+  it('keeps browser session cookies and identity headers from cURL', () => {
+    const request = parseCurl("curl 'https://api.example.com/me' -b 'session=abc; theme=dark' -A 'Mozilla/5.0' -e 'https://app.example.com/' -H 'X-Trace;' --oauth2-bearer token123")
+    const header = (name: string) => request.headers.find((row) => row.key.toLowerCase() === name)?.value
+    expect(header('cookie')).toBe('session=abc; theme=dark')
+    expect(header('user-agent')).toBe('Mozilla/5.0')
+    expect(header('referer')).toBe('https://app.example.com/')
+    expect(header('x-trace')).toBe('')
+    expect(header('authorization')).toBe('Bearer token123')
   })
 
   it('imports Postman Collection v2.1 requests and variables', () => {

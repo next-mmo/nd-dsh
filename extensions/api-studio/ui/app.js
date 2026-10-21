@@ -8,6 +8,7 @@ import {
   groupOperations,
   historyEntry,
   importPostman,
+  isCurlCommand,
   newEnvironment,
   newRequest,
   normalizeCollection,
@@ -45,6 +46,7 @@ const state = {
   response: null,
   sending: false,
   collapsedResponse: false,
+  requestShare: 40,
   docSpecId: null,
   docOperationId: null,
   saveState: 'idle',
@@ -298,6 +300,39 @@ function markDirty(tab) {
   if (node) node.textContent = '•'
 }
 
+function isBlankRequest(request) {
+  return !request.url.trim()
+    && request.method === 'GET'
+    && request.params.length === 0
+    && request.pathVars.length === 0
+    && request.headers.length === 0
+    && request.body.mode === 'none'
+    && request.auth.type === 'none'
+}
+
+function applyCurlPaste(tab, text) {
+  let request
+  try {
+    request = parseCurl(text)
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : String(error), 'error')
+    return
+  }
+  if (!tab || !isBlankRequest(tab.request)) {
+    newRequestTab(request)
+    showToast('Pasted cURL opened as a new request')
+    return
+  }
+  request.id = tab.key
+  if (tab.request.name !== 'Untitled request') request.name = tab.request.name
+  tab.request = request
+  markDirty(tab)
+  state.response = null
+  state.editorTab = 'params'
+  renderAll()
+  showToast('Pasted cURL request')
+}
+
 function openSavedRequest(collection, request) {
   const tab = state.tabs.find((item) => item.key === request.id)
   if (tab) {
@@ -325,6 +360,7 @@ function newRequestTab(seed = null) {
   state.responseTab = 'body'
   setView('collections', false)
   renderAll()
+  mainEl.querySelector('.url-input')?.focus()
 }
 
 async function closeTab(tab) {
@@ -386,6 +422,16 @@ document.addEventListener('keydown', (event) => {
       void saveRequest(tab)
     }
   }
+})
+
+document.addEventListener('paste', (event) => {
+  if (!state.ready || !modalEl.hidden || state.view !== 'collections') return
+  // Field-level paste is handled by the field so text is not hijacked.
+  if (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable="true"]')) return
+  const text = event.clipboardData?.getData('text/plain') ?? ''
+  if (!isCurlCommand(text)) return
+  event.preventDefault()
+  applyCurlPaste(activeTab(), text)
 })
 
 bridge.whenConnected(() => { void boot() })
@@ -581,7 +627,7 @@ function renderCollectionsMain() {
   if (!tab) {
     mainEl.append(el('div', { class: 'empty' },
       el('strong', {}, 'No request open'),
-      el('div', {}, 'Start a request, import an OpenAPI spec, or open a saved request.'),
+      el('div', {}, 'Paste a cURL command here, start a request, import an OpenAPI spec, or open a saved request.'),
       el('div', { class: 'row' },
         button('New request', { class: 'btn primary' }, () => newRequestTab()),
         button('Import', {}, openImportModal))))
@@ -624,8 +670,63 @@ function renderTabstrip() {
 
 function renderEditorShell(tab) {
   const shell = el('div', { class: `editor-shell${state.collapsedResponse ? ' response-collapsed' : ''}` })
-  shell.append(renderRequestPane(tab), renderResponsePane(tab))
+  shell.style.setProperty('--request-share', `${state.requestShare}%`)
+  shell.append(renderRequestPane(tab), renderPaneSplitter(shell), renderResponsePane(tab))
   return shell
+}
+
+const MIN_REQUEST_SHARE = 15
+const MAX_REQUEST_SHARE = 85
+
+function renderPaneSplitter(shell) {
+  const handle = el('div', {
+    class: 'pane-splitter',
+    role: 'separator',
+    'aria-orientation': 'horizontal',
+    'aria-label': 'Resize request and response panels',
+    'aria-valuemin': String(MIN_REQUEST_SHARE),
+    'aria-valuemax': String(MAX_REQUEST_SHARE),
+    'aria-valuenow': String(Math.round(state.requestShare)),
+    tabindex: '0',
+    title: 'Drag to resize; double-click for 60% response',
+  })
+
+  const apply = (share) => {
+    state.requestShare = Math.min(MAX_REQUEST_SHARE, Math.max(MIN_REQUEST_SHARE, share))
+    shell.style.setProperty('--request-share', `${state.requestShare}%`)
+    handle.setAttribute('aria-valuenow', String(Math.round(state.requestShare)))
+  }
+
+  handle.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0 || state.collapsedResponse) return
+    event.preventDefault()
+    handle.setPointerCapture(event.pointerId)
+    handle.classList.add('dragging')
+    document.body.classList.add('resizing-rows')
+    const rect = shell.getBoundingClientRect()
+    const move = (moveEvent) => {
+      if (rect.height > 0) apply(((moveEvent.clientY - rect.top) / rect.height) * 100)
+    }
+    const finish = () => {
+      handle.classList.remove('dragging')
+      document.body.classList.remove('resizing-rows')
+      handle.removeEventListener('pointermove', move)
+      handle.removeEventListener('pointerup', finish)
+      handle.removeEventListener('pointercancel', finish)
+      if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId)
+    }
+    handle.addEventListener('pointermove', move)
+    handle.addEventListener('pointerup', finish)
+    handle.addEventListener('pointercancel', finish)
+  })
+
+  handle.addEventListener('keydown', (event) => {
+    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+    event.preventDefault()
+    apply(state.requestShare + (event.key === 'ArrowDown' ? 4 : -4))
+  })
+  handle.addEventListener('dblclick', () => apply(40))
+  return handle
 }
 
 function renderRequestPane(tab) {
@@ -647,9 +748,18 @@ function renderRequestPane(tab) {
   const urlInput = el('input', {
     class: 'url-input',
     placeholder: '{{baseUrl}}/api/users',
+    title: 'Paste a cURL command to fill the request',
     value: request.url,
     spellcheck: 'false',
-    on: { input: (event) => { request.url = event.target.value; markDirty(tab) } },
+    on: {
+      input: (event) => { request.url = event.target.value; markDirty(tab) },
+      paste: (event) => {
+        const text = event.clipboardData?.getData('text/plain') ?? ''
+        if (!isCurlCommand(text)) return
+        event.preventDefault()
+        applyCurlPaste(tab, text)
+      },
+    },
   })
 
   const send = el('button', {

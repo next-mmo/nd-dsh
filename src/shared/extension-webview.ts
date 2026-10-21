@@ -25,6 +25,8 @@ export const ND_WEBVIEW_SCHEME_PRIVILEGES = {
   privileges: { standard: true, secure: true, supportFetchAPI: false, corsEnabled: false },
 } as const
 
+export type NdWebViewTheme = 'light' | 'dark'
+
 /** Host → frame, exactly once after the frame announces readiness. */
 export interface NdWebViewHelloMessage {
   kind: 'nd-webview:hello'
@@ -32,6 +34,14 @@ export interface NdWebViewHelloMessage {
   extensionId: string
   viewId: string
   context: NdContext
+  theme: NdWebViewTheme
+}
+
+/** Host → frame, whenever ND's effective theme changes while the view lives. */
+export interface NdWebViewThemeMessage {
+  kind: 'nd-webview:theme'
+  protocol: typeof ND_WEBVIEW_BRIDGE_PROTOCOL
+  theme: NdWebViewTheme
 }
 
 /**
@@ -62,6 +72,7 @@ export interface NdWebViewInvokeResultMessage {
 
 export type NdWebViewBridgeMessage =
   | NdWebViewHelloMessage
+  | NdWebViewThemeMessage
   | NdWebViewReadyMessage
   | NdWebViewInvokeRequestMessage
   | NdWebViewInvokeResultMessage
@@ -74,6 +85,11 @@ export function isNdWebViewBridgeMessage(value: unknown): value is NdWebViewBrid
     return record.protocol === ND_WEBVIEW_BRIDGE_PROTOCOL
       && typeof (value as { extensionId?: unknown }).extensionId === 'string'
       && typeof (value as { viewId?: unknown }).viewId === 'string'
+      && isNdWebViewTheme((value as { theme?: unknown }).theme)
+  }
+  if (record.kind === 'nd-webview:theme') {
+    return record.protocol === ND_WEBVIEW_BRIDGE_PROTOCOL
+      && isNdWebViewTheme((value as { theme?: unknown }).theme)
   }
   if (record.kind === 'nd-webview:invoke') {
     const input = (value as { input?: unknown }).input
@@ -84,6 +100,10 @@ export function isNdWebViewBridgeMessage(value: unknown): value is NdWebViewBrid
     return typeof record.requestId === 'string' && record.requestId.length <= 128 && typeof record.ok === 'boolean'
   }
   return false
+}
+
+function isNdWebViewTheme(value: unknown): value is NdWebViewTheme {
+  return value === 'light' || value === 'dark'
 }
 
 /** Build the token-scoped asset URL for one package file. */

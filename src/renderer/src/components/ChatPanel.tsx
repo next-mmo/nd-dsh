@@ -66,6 +66,7 @@ import {
   SearchIcon,
   SettingsIcon,
   ShieldIcon,
+  SidebarToggleIcon,
   SparkIcon,
   SpinnerIcon,
   StopIcon,
@@ -104,6 +105,11 @@ interface ChatPanelProps {
   /** Opens the folder picker from the unselected empty state. */
   onOpenWorkspace?(): void
   sessionsCollapsed: boolean
+  /** Collapses only the thread pane; the sessions sidebar stays visible. */
+  threadCollapsed: boolean
+  onToggleThreadCollapsed(): void
+  /** Reports the sessions sidebar width so the pane can reserve room for it. */
+  onSessionsWidthChange?(width: number): void
   /** Run attribution for scoping the sidebar to the active project's sessions. */
   sessionProjectScope?: { activeProjectId?: string | undefined; sessionProjects: Readonly<Record<string, string>> }
   /** Projects of the active company, listed in the sidebar; click to switch workspace. */
@@ -234,7 +240,7 @@ function fileMentionTag(relativePath: string): string {
   return extension ? extension.toUpperCase().slice(0, 5) : 'FILE'
 }
 
-export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelected, workspaceProjectId, onOpenWorkspace, sessionsCollapsed, sessionProjectScope, projects, onSelectProject, onError, onOpenSettings, onOpenFile, onOpenLink, externalPrompt, onExternalPromptConsumed, incomingImage, onIncomingImageConsumed, sessionOpenRequest, onSessionOpenConsumed, elementAttachmentVersion, onGitEditableChange, onActivateBrowserTab }: ChatPanelProps) {
+export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelected, workspaceProjectId, onOpenWorkspace, sessionsCollapsed, threadCollapsed, onToggleThreadCollapsed, onSessionsWidthChange, sessionProjectScope, projects, onSelectProject, onError, onOpenSettings, onOpenFile, onOpenLink, externalPrompt, onExternalPromptConsumed, incomingImage, onIncomingImageConsumed, sessionOpenRequest, onSessionOpenConsumed, elementAttachmentVersion, onGitEditableChange, onActivateBrowserTab }: ChatPanelProps) {
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [collapsedSessionParents, setCollapsedSessionParents] = useState<Set<string>>(new Set())
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
@@ -351,6 +357,20 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   useEffect(() => {
     autosizeComposer()
   }, [prompt])
+  // A pane resize can rewrap the placeholder or typed text; keep the measured
+  // height in sync instead of leaving a stale scrollbar.
+  useEffect(() => {
+    const el = textareaRef.current
+    if (!el) return
+    let width = el.clientWidth
+    const observer = new ResizeObserver(() => {
+      if (el.clientWidth === width) return
+      width = el.clientWidth
+      autosizeComposer()
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
   const menuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -395,8 +415,11 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
       ? draftEngineId
       : ND_HARNESS_ENGINE_ID
   const onHarnessThread = activeEngineId === ND_HARNESS_ENGINE_ID
-  const supportsEngineModels = activeEngineId === ANTIGRAVITY_ENGINE_ID || activeEngineId === CODEX_CLI_ENGINE_ID || activeEngineId === ZCODE_CLI_ENGINE_ID || activeEngineId === ND_NATIVE_ENGINE_ID || activeEngineId === PI_CODING_ENGINE_ID || activeEngineId === OPENCODE_CLI_ENGINE_ID
+  const supportsEngineModels = activeEngineId === ANTIGRAVITY_ENGINE_ID || activeEngineId === CODEX_CLI_ENGINE_ID || activeEngineId === ZCODE_CLI_ENGINE_ID || activeEngineId === ND_NATIVE_ENGINE_ID || activeEngineId === PI_CODING_ENGINE_ID || activeEngineId === OPENCODE_CLI_ENGINE_ID || activeEngineId === GEMINI_WEB_ENGINE_ID
   const engineModel = engineModelSelections[activeEngineId] ?? null
+  const engineModelDefaultLabel = activeEngineId === GEMINI_WEB_ENGINE_ID ? 'Gemini default' : 'Native default'
+  const engineModelDefaultHint = activeEngineId === GEMINI_WEB_ENGINE_ID ? 'whatever the Gemini chat is set to' : 'whatever the CLI is configured with'
+  const engineModelIdleLabel = activeEngineId === GEMINI_WEB_ENGINE_ID ? 'Gemini default' : 'Native model'
   const setEngineModel = (model: string | null): void => {
     setEngineModelSelections((current) => ({ ...current, [activeEngineId]: model }))
   }
@@ -1805,6 +1828,9 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   }
 
   const [sessionsWidth, setSessionsWidth] = useState(readStoredSessionsWidth)
+  useEffect(() => {
+    onSessionsWidthChange?.(sessionsWidth)
+  }, [sessionsWidth, onSessionsWidthChange])
   const sessionsRowRef = useRef<HTMLDivElement | null>(null)
   const sessionsAsideRef = useRef<HTMLElement | null>(null)
   // Width lives on the ref so the drag loop can mutate the pane's inline style
@@ -2073,14 +2099,18 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
           aria-valuemin={SESSIONS_SIDEBAR_MIN_PX}
           aria-valuemax={SESSIONS_SIDEBAR_MAX_PX}
           aria-valuenow={sessionsWidth}
-          tabIndex={0}
-          className="relative w-[5px] shrink-0 cursor-col-resize touch-none select-none outline-none before:absolute before:inset-y-0 before:-right-2 before:left-0 before:content-[''] [&_div]:transition-[width,background-color] [&_div]:duration-150 hover:[&_div]:w-0.5 hover:[&_div]:bg-primary focus-visible:[&_div]:w-0.5 focus-visible:[&_div]:bg-primary active:[&_div]:w-0.5 active:[&_div]:bg-primary"
-          onPointerDown={beginSessionsResize}
-          onPointerMove={moveSessionsResize}
-          onPointerUp={endSessionsResize}
-          onPointerCancel={endSessionsResize}
-          onDoubleClick={() => applySessionsWidth(SESSIONS_SIDEBAR_DEFAULT_PX)}
-          onKeyDown={onSessionsResizeKeyDown}
+          aria-disabled={threadCollapsed || undefined}
+          tabIndex={threadCollapsed ? -1 : 0}
+          className={cn(
+            "relative w-[5px] shrink-0 cursor-col-resize touch-none select-none outline-none before:absolute before:inset-y-0 before:-right-2 before:left-0 before:content-[''] [&_div]:transition-[width,background-color] [&_div]:duration-150 hover:[&_div]:w-0.5 hover:[&_div]:bg-primary focus-visible:[&_div]:w-0.5 focus-visible:[&_div]:bg-primary active:[&_div]:w-0.5 active:[&_div]:bg-primary",
+            threadCollapsed && 'pointer-events-none',
+          )}
+          onPointerDown={threadCollapsed ? undefined : beginSessionsResize}
+          onPointerMove={threadCollapsed ? undefined : moveSessionsResize}
+          onPointerUp={threadCollapsed ? undefined : endSessionsResize}
+          onPointerCancel={threadCollapsed ? undefined : endSessionsResize}
+          onDoubleClick={threadCollapsed ? undefined : () => applySessionsWidth(SESSIONS_SIDEBAR_DEFAULT_PX)}
+          onKeyDown={threadCollapsed ? undefined : onSessionsResizeKeyDown}
         >
           <div className="mx-auto h-full w-px bg-border-strong" />
         </div>
@@ -2105,7 +2135,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
         </DialogContent>
       </Dialog>
 
-      <aside className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-surface-0">
+      <aside className={cn('flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-surface-0', threadCollapsed && 'hidden')}>
         <header className="flex h-[38px] shrink-0 items-center justify-between border-b border-border-soft bg-sidebar px-2.5">
           <div className="flex min-w-0 flex-1 flex-row items-center gap-2">
             <div className="flex min-w-0 flex-1 flex-col justify-center gap-px">
@@ -2125,43 +2155,6 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
-            <Select value={activeEngineId} onValueChange={selectHeaderEngine}>
-              <SelectTrigger
-                aria-label="Coding engine"
-                className="h-6 w-[122px] gap-1 rounded-md border-border-soft bg-transparent px-2 font-mono text-[9px] text-faint shadow-none hover:bg-accent hover:text-foreground"
-                title="Coding engine — selecting another engine starts a new chat"
-              >
-                <SelectValue placeholder="Default" />
-              </SelectTrigger>
-              <SelectContent align="end">
-                <SelectItem value={ND_HARNESS_ENGINE_ID}>Default · ND Harness</SelectItem>
-                {headerEngines.map((engine) => (
-                  <SelectItem
-                    key={engine.id}
-                    value={engine.id}
-                    disabled={!engine.available}
-                    title={engine.available ? engine.description : engine.unavailableReason ?? `${engine.name} is unavailable`}
-                  >
-                    {engine.name}{engine.available ? '' : ' · Unavailable'}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <button
-              type="button"
-              aria-pressed={terminalOpen}
-              disabled={!activeSessionId}
-              className={cn(
-                'flex h-6 items-center gap-1 rounded-md border px-1.5 font-mono text-[9px] transition-colors disabled:cursor-not-allowed disabled:opacity-40',
-                terminalOpen
-                  ? 'border-primary/25 bg-primary/[0.08] text-primary'
-                  : 'border-border-soft text-faint hover:bg-accent hover:text-foreground',
-              )}
-              title="Toggle this chat's isolated terminal (Ctrl/Cmd + Backtick)"
-              onClick={() => setTerminalOpen((open) => !open)}
-            >
-              <span>&gt;_</span><span>Terminal</span>
-            </button>
             <span
               className={cn(
                 'inline-block size-2 rounded-full',
@@ -2172,6 +2165,15 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
               )}
               title={status?.error}
             />
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label="Collapse engine thread"
+              title="Collapse engine thread"
+              onClick={onToggleThreadCollapsed}
+            >
+              <SidebarToggleIcon className="size-3.5" />
+            </Button>
           </div>
         </header>
 
@@ -2659,8 +2661,8 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
             />
           </div>
 
-          <div className="mt-[5px] flex flex-nowrap items-center justify-between gap-1 border-t border-border pt-[5px]">
-            <div className="flex min-w-0 items-center gap-1">
+          <div className="mt-[5px] flex items-center justify-between gap-1 border-t border-border pt-[5px]">
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1 gap-y-1">
               <button type="button" className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-[3px] text-[10px] text-soft hover:bg-accent [&_svg]:size-3"
                 title="Attach files to this message (images and text/code/binary files up to 20 items)."
                 aria-label="Attach files"
@@ -2727,7 +2729,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
               />
             </div>
 
-            <div className="flex min-w-0 items-center gap-1">
+            <div className="flex shrink-0 items-center gap-1">
               {busy ? <SpinnerIcon className="size-[15px] animate-spin text-primary" /> : null}
 
               {/* Model/reasoning routing is an ND Harness capability; engine
@@ -2878,7 +2880,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
                     closeMention()
                   }}
                 >
-                  <span className="truncate font-medium">{engineModel ? compactModelLabel(engineModel) : 'Native model'}</span>
+                  <span className="truncate font-medium">{engineModel ? compactModelLabel(engineModel) : engineModelIdleLabel}</span>
                   <ChevronDownIcon />
                 </button>
 
@@ -2901,8 +2903,8 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
                         onClick={() => { setEngineModel(null); setEngineModelMenuOpen(false) }}
                       >
                         <span className="min-w-0">
-                          <span className="block truncate text-[11px] font-medium">Native default</span>
-                          <span className="block truncate font-mono text-[8px] text-fainter">whatever the CLI is configured with</span>
+                          <span className="block truncate text-[11px] font-medium">{engineModelDefaultLabel}</span>
+                          <span className="block truncate font-mono text-[8px] text-fainter">{engineModelDefaultHint}</span>
                         </span>
                         {engineModel === null ? <CheckIcon className="size-3.5 shrink-0 text-primary" /> : null}
                       </button>
@@ -2923,7 +2925,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
                           >
                             <span className="min-w-0">
                               <span className="block truncate text-[11px] font-medium">{model.name ?? model.id}</span>
-                              {model.name ? <span className="block truncate font-mono text-[8px] text-fainter">{model.id}</span> : null}
+                              {model.name && model.name !== model.id ? <span className="block truncate font-mono text-[8px] text-fainter">{model.id}</span> : null}
                             </span>
                             {selected ? <CheckIcon className="size-3.5 shrink-0 text-primary" /> : null}
                           </button>
@@ -2973,8 +2975,65 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
           </div>
         </div>
 
-        <div className="px-3 pb-2.5 pt-1.5 text-center text-[8px] text-fainter">Browser actions run in the pane you can see.</div>
+        <div className="flex items-center justify-between gap-2 px-3 pb-2.5 pt-1.5">
+          <div className="flex shrink-0 items-center gap-1.5">
+            <Select value={activeEngineId} onValueChange={selectHeaderEngine}>
+              <SelectTrigger
+                aria-label="Coding engine"
+                className="h-6! w-[122px] gap-1 rounded-md border-border-soft bg-transparent px-2 font-mono text-[9px] text-faint shadow-none hover:bg-accent hover:text-foreground"
+                title="Coding engine — selecting another engine starts a new chat"
+              >
+                <SelectValue placeholder="Default" />
+              </SelectTrigger>
+              <SelectContent align="end">
+                <SelectItem value={ND_HARNESS_ENGINE_ID}>Default · ND Harness</SelectItem>
+                {headerEngines.map((engine) => (
+                  <SelectItem
+                    key={engine.id}
+                    value={engine.id}
+                    disabled={!engine.available}
+                    title={engine.available ? engine.description : engine.unavailableReason ?? `${engine.name} is unavailable`}
+                  >
+                    {engine.name}{engine.available ? '' : ' · Unavailable'}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <button
+              type="button"
+              aria-pressed={terminalOpen}
+              disabled={!activeSessionId}
+              className={cn(
+                'flex h-6 items-center gap-1 rounded-md border px-1.5 font-mono text-[9px] transition-colors disabled:cursor-not-allowed disabled:opacity-40',
+                terminalOpen
+                  ? 'border-primary/25 bg-primary/[0.08] text-primary'
+                  : 'border-border-soft text-faint hover:bg-accent hover:text-foreground',
+              )}
+              title="Toggle this chat's isolated terminal (Ctrl/Cmd + Backtick)"
+              onClick={() => setTerminalOpen((open) => !open)}
+            >
+              <span>&gt;_</span><span>Terminal</span>
+            </button>
+          </div>
+          <span className="min-w-0 truncate text-right text-[8px] text-fainter" title="Browser actions run in the pane you can see.">Browser actions run in the pane you can see.</span>
+        </div>
       </aside>
+      {threadCollapsed ? (
+        <aside
+          aria-label="Collapsed engine thread"
+          className="flex h-full min-h-0 w-8 shrink-0 flex-col items-center overflow-hidden bg-sidebar pt-1.5"
+        >
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Expand engine thread"
+            title="Expand engine thread"
+            onClick={onToggleThreadCollapsed}
+          >
+            <SidebarToggleIcon collapsed className="size-3.5" />
+          </Button>
+        </aside>
+      ) : null}
       <ZcodeModelConfigDialog open={zcodeConfigOpen} onClose={() => setZcodeConfigOpen(false)} />
       <ChatGptProjectDialog
         open={chatGptProjectModalOpen}

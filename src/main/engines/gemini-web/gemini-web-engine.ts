@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { dirname } from 'node:path'
 import type {
   DshEventFrame,
+  EngineModelOption,
   EngineSessionSummary,
   EngineSessionTranscript,
   GeminiGemBinding,
@@ -44,6 +45,12 @@ import {
   parseGeminiSkillLinkInput,
   sameGeminiUrl,
 } from './gemini-project-binding.js'
+import {
+  GEMINI_MODE_FALLBACK,
+  geminiModeOptions,
+  geminiModeSelectScript,
+  readGeminiModeSwitchResult,
+} from './gemini-web-models.js'
 
 const GEMINI_HOME_URL = 'https://gemini.google.com/app'
 const GEMINI_ORIGIN = 'https://gemini.google.com'
@@ -99,6 +106,8 @@ interface PersistedGeminiWebStore {
   sessions: StoredGeminiWebSession[]
   gemBindings?: Record<string, GeminiGemBinding>
   modeSettings?: WebBrowserModeSettings
+  /** Last model menu read from the signed-in Gemini page. */
+  modelOptions?: EngineModelOption[]
 }
 
 interface ActiveGeminiTurn {
@@ -147,6 +156,7 @@ export class GeminiWebEngine {
   private readonly gemBindings = new Map<string, GeminiGemBinding>()
   private readonly activeTurns = new Map<string, ActiveGeminiTurn>()
   private modeSettings: WebBrowserModeSettings = { ...DEFAULT_WEB_BROWSER_MODE_SETTINGS }
+  private modelOptions: EngineModelOption[] = []
   private onEvent: ((frame: DshEventFrame) => void) | undefined
   private watcherBusy = false
   private readonly watchTimer: ReturnType<typeof setInterval>
@@ -304,7 +314,15 @@ export class GeminiWebEngine {
     return { sessionId }
   }
 
-  async run(prompt: string, input: { sessionId?: string; cwd?: string; images?: HarnessRunImage[] } = {}): Promise<{ sessionId: string }> {
+  /**
+   * Gemini's model list is account-dependent, so ND uses the live menu read
+   * from the page once a switch has happened and a small seed list before that.
+   */
+  async listModels(): Promise<EngineModelOption[]> {
+    return this.modelOptions.length > 0 ? this.modelOptions : GEMINI_MODE_FALLBACK
+  }
+
+  async run(prompt: string, input: { sessionId?: string; cwd?: string; images?: HarnessRunImage[]; model?: string } = {}): Promise<{ sessionId: string }> {
     const cleaned = stripWorkspaceContext(prompt).trim()
     if (!cleaned) throw new Error('Prompt cannot be empty')
     if (cleaned.length > MAX_PROMPT_CHARS) throw new Error(`Prompt exceeds the ${MAX_PROMPT_CHARS.toLocaleString()} character limit`)
@@ -354,9 +372,9 @@ export class GeminiWebEngine {
         activeTurn.progress = progress
         try {
           if (transport === 'browser-agent') {
-            return await this.runWithBrowserAgent(session, cleaned, input.images, abort.signal, progress)
+            return await this.runWithBrowserAgent(session, cleaned, input.images, input.model, abort.signal, progress)
           }
-          return await this.runWithPageDriver(transport, session, cleaned, input.images, abort.signal, progress)
+          return await this.runWithPageDriver(transport, session, cleaned, input.images, input.model, abort.signal, progress)
         } catch (error) {
           lastError = error
           const turnError = this.classifyTurnError(progress, error)
@@ -493,6 +511,7 @@ export class GeminiWebEngine {
     session: StoredGeminiWebSession,
     cleanedPrompt: string,
     images: readonly HarnessRunImage[] | undefined,
+    model: string | undefined,
     signal: AbortSignal,
     progress: WebTurnProgress,
   ): Promise<{ sessionId: string }> {
@@ -557,6 +576,8 @@ export class GeminiWebEngine {
         if (before.busy || before.pendingSend) throw this.pageBusyError()
         this.importUnseenTurns(session, before)
         assertTurnActive(signal)
+        await this.applyModel(driver, model, signal)
+        assertTurnActive(signal)
         await this.clearStaleAttachments(driver)
 
         if ((images?.length ?? 0) > 0) {
@@ -595,6 +616,7 @@ export class GeminiWebEngine {
     session: StoredGeminiWebSession,
     cleanedPrompt: string,
     images: readonly HarnessRunImage[] | undefined,
+    model: string | undefined,
     signal: AbortSignal,
     progress: WebTurnProgress,
   ): Promise<{ sessionId: string }> {
@@ -657,6 +679,8 @@ export class GeminiWebEngine {
       } else {
         if (before.busy || before.pendingSend) throw this.pageBusyError()
         this.importUnseenTurns(session, before)
+        await this.applyModel(driver, model, signal)
+        assertTurnActive(signal)
         const tabId = this.options.browser.activeTabId()
         const agent = new BrowserAgentRunner({
           port: this.options.browser,
@@ -806,6 +830,46 @@ export class GeminiWebEngine {
       message: "Gemini is still answering or uploading in ND's Browser pane. Let it finish (or stop it), then resend this message.",
       phase: 'observe',
     })
+  }
+
+  /**
+   * Switch Gemini's own model picker before composing. Without an explicit ND
+   * selection the conversation keeps whatever model the user set in Gemini.
+   */
+  private async applyModel(
+    driver: PageDriver,
+    requested: string | undefined,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const model = requested?.trim()
+    if (!model) return
+    assertTurnActive(signal)
+    const result = readGeminiModeSwitchResult(await driver.evaluate<unknown>(geminiModeSelectScript(model)))
+    if (!result) throw new Error('Gemini Web returned an unexpected answer from its model picker. Reload Gemini and retry.')
+    if (result.options && result.options.length > 0) this.rememberModelOptions(result.options)
+    if (!result.ok) {
+      const available = (result.options ?? []).join(', ')
+      if (result.reason === 'unknown-model') {
+        throw new Error(`Gemini Web does not offer the "${model}" model for this account. Pick another model in ND's model menu${available ? ` (available: ${available})` : ''}.`)
+      }
+      if (result.reason === 'picker-missing') {
+        throw new Error("Gemini Web has no model picker on this page. Open gemini.google.com in ND's Browser pane, sign in, then resend this message.")
+      }
+      if (result.reason === 'not-applied') {
+        throw new Error(`Gemini Web did not apply the "${model}" model. Reload Gemini and retry.`)
+      }
+      throw new Error('Gemini Web did not open its model menu. Reload Gemini and retry.')
+    }
+    if (result.changed) this.options.log?.(`[gemini-web] model set to ${result.current.trim() || model}`)
+  }
+
+  private rememberModelOptions(labels: readonly string[]): void {
+    const options = geminiModeOptions(labels)
+    if (options.length === 0) return
+    const signature = options.map((option) => option.id).join('\n')
+    if (signature === this.modelOptions.map((option) => option.id).join('\n')) return
+    this.modelOptions = options
+    this.persistStore()
   }
 
   private async clearStaleAttachments(driver: PageDriver): Promise<void> {
@@ -1296,6 +1360,11 @@ export class GeminiWebEngine {
       if (parsed.modeSettings && typeof parsed.modeSettings === 'object') {
         this.modeSettings = normalizeWebBrowserModeSettings(parsed.modeSettings)
       }
+      if (Array.isArray(parsed.modelOptions)) {
+        this.modelOptions = geminiModeOptions(parsed.modelOptions
+          .map((option) => option && typeof option === 'object' && typeof option.id === 'string' ? option.id : '')
+          .filter((option) => option !== ''))
+      }
     } catch (error) {
       this.options.log?.(`[gemini-web] ignoring unreadable session store: ${error instanceof Error ? error.message : String(error)}`)
     }
@@ -1314,6 +1383,7 @@ export class GeminiWebEngine {
       sessions: [...this.sessions.values()],
       gemBindings: bindingsObj,
       modeSettings: this.modeSettings,
+      ...(this.modelOptions.length > 0 ? { modelOptions: this.modelOptions } : {}),
     }
     try {
       writeFileSync(tmp, `${JSON.stringify(payload, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })

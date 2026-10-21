@@ -10,12 +10,21 @@ export function createBridge() {
   const connectQueue = []
   let retry = null
 
+  const applyTheme = (theme) => {
+    if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme
+  }
+
   window.addEventListener('message', (event) => {
     const data = event.data
     if (!data || typeof data !== 'object') return
     if (data.kind === 'nd-webview:hello' && data.protocol === 'nd.webview/1') {
+      applyTheme(data.theme)
       hello = data
       while (connectQueue.length > 0) connectQueue.shift()()
+      return
+    }
+    if (data.kind === 'nd-webview:theme' && data.protocol === 'nd.webview/1') {
+      applyTheme(data.theme)
       return
     }
     if (data.kind === 'nd-webview:result' && typeof data.requestId === 'string') {

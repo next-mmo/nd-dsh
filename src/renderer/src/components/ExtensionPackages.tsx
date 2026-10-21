@@ -1,6 +1,6 @@
 import { normalizeExtensionRuntimePolicy } from '../../../shared/extension-runtime-policy'
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { BookOpen, Braces, Check, ChevronLeft, ChevronRight, Download, ExternalLink, Eye, FolderOpen, FolderPlus, Gamepad2, HardDrive, Image, Languages, Layers, Link2, ListChecks, MonitorPlay, Package, PanelsTopLeft, Pencil, Plus, Power, Puzzle, RefreshCw, Repeat, Search, Settings2, ShieldCheck, Shuffle, SkipBack, SkipForward, Sparkles, SquareTerminal, Trash2, Undo2, Upload, Users, Workflow, Globe } from 'lucide-react'
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { BookOpen, Braces, Check, ChevronLeft, ChevronRight, Download, ExternalLink, Eye, FolderOpen, FolderPlus, Gamepad2, HardDrive, Image, Languages, Layers, Link2, ListChecks, Maximize2, Minimize2, MonitorPlay, Package, PanelsTopLeft, Pencil, Plus, Power, Puzzle, RefreshCw, Repeat, Search, Settings2, ShieldCheck, Shuffle, SkipBack, SkipForward, Sparkles, SquareTerminal, Trash2, Undo2, Upload, Users, Workflow, Globe } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { cn } from '../lib/utils'
 import type { NdContext } from '../../../shared/nd-context'
@@ -1839,6 +1839,8 @@ function ExtensionViewDialog({
   const [previewDetail, setPreviewDetail] = useState<WallpaperPreviewDetail | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [expanded, setExpanded] = useState(false)
+  const [headerInset, setHeaderInset] = useState(0)
   const [query, setQuery] = useState('')
   const [sortBy, setSortBy] = useState('name')
   // Wallpaper Studio surfaces. `studioTab` splits Library / Now playing; the
@@ -1899,6 +1901,22 @@ function ExtensionViewDialog({
   }
 
   useEffect(() => () => { targetGeneration.current.revision += 1 }, [])
+  // The keep-alive titlebar stays live above dialogs, so a full-screen view
+  // must start below it instead of sliding underneath its click targets.
+  useLayoutEffect(() => {
+    if (!expanded) return
+    const header = document.querySelector('header.app-drag')
+    if (!(header instanceof HTMLElement)) {
+      setHeaderInset(0)
+      return
+    }
+    const update = (): void => setHeaderInset(Math.max(0, Math.round(header.getBoundingClientRect().bottom)))
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(header)
+    return () => observer.disconnect()
+  }, [expanded])
+
   const targetKey = target ? `${target.extensionId}:${target.viewId}:${contextKey(target.context)}` : null
   const currentData = target && data && loadedTarget === targetKey
     && data.extensionId === target.extensionId && data.viewId === target.viewId
@@ -1910,6 +1928,7 @@ function ExtensionViewDialog({
   }, [target])
 
   useEffect(() => {
+    setExpanded(false)
     setData(null)
     setLoadedTarget(null)
     setLoadError(null)
@@ -2674,8 +2693,38 @@ function ExtensionViewDialog({
   return (
     <>
     <Dialog open={target !== null} onOpenChange={(open) => { if (!open) closeDialog() }}>
-      <DialogContent className={cn("max-h-[90vh] overflow-y-auto border-border-strong bg-surface-1 transition-all", isDetail || isTranslate || isWebView ? "max-w-3xl sm:max-w-4xl" : "max-w-xl")}>
-        <DialogHeader>
+      <DialogContent
+        className={cn(
+          "border-border-strong bg-surface-1",
+          !expanded && "max-h-[90vh]",
+          expanded && isWebView ? "grid-rows-[auto_minmax(0,1fr)] overflow-hidden" : "overflow-y-auto",
+          !expanded && (isDetail || isTranslate || isWebView ? "max-w-3xl sm:max-w-4xl" : "max-w-xl"),
+        )}
+        style={expanded ? {
+          top: headerInset + 12,
+          left: 12,
+          right: 12,
+          bottom: 12,
+          width: 'auto',
+          height: 'auto',
+          maxWidth: 'none',
+          maxHeight: 'none',
+          transform: 'none',
+          translate: 'none',
+        } : undefined}
+      >
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          className="absolute top-3 right-12 text-muted-foreground"
+          aria-label={expanded ? 'Exit full screen' : 'Full screen'}
+          title={expanded ? 'Exit full screen' : 'Full screen'}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {expanded ? <Minimize2 /> : <Maximize2 />}
+        </Button>
+        <DialogHeader className="pr-20">
           <DialogTitle className="flex items-center gap-2">
             {isDetail && !isTranslate ? <Image className="size-4 text-primary" /> : null}
             {previewItem ? `Preview: ${previewItem.title}` : currentData?.title ?? 'Extension view'}
@@ -2700,7 +2749,12 @@ function ExtensionViewDialog({
           <div
             ref={dockWebViewSlot}
             title={currentData.title}
-            className="h-[480px] w-full rounded-md border border-border-soft bg-black sm:h-[540px]"
+            className={cn(
+              'w-full rounded-md border border-border-soft bg-black',
+              expanded
+                ? 'h-full min-h-0 [&>div]:h-full [&>div>div]:h-full [&_iframe]:h-full!'
+                : 'h-[480px] sm:h-[540px]',
+            )}
           />
         ) : !currentData ? (
           <p className="text-xs text-faint" role={loadError ? 'alert' : 'status'}>{loadError ?? 'Loading extension view…'}</p>

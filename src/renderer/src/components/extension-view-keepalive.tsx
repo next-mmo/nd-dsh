@@ -1,4 +1,5 @@
 import { normalizeExtensionRuntimePolicy, type ExtensionRuntimePolicy } from '../../../shared/extension-runtime-policy'
+import type { NdWebViewTheme } from '../../../shared/extension-webview'
 import type { NdExtensionsStateView } from '../../../shared/nd-invocations'
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
@@ -402,9 +403,10 @@ function getKeepAliveSnapshot(): ExtensionKeepAliveState {
 }
 
 /** Keep one portal target for the lifetime of the frame, including while hidden. */
-function KeepAliveFrame({ view, docked, onError }: {
+function KeepAliveFrame({ view, docked, theme, onError }: {
   view: ExtensionKeepAliveView
   docked: boolean
+  theme: NdWebViewTheme
   onError: (message: string) => void
 }): ReactNode {
   const parkingRef = useRef<HTMLDivElement>(null)
@@ -431,7 +433,7 @@ function KeepAliveFrame({ view, docked, onError }: {
       }} hidden />
       {createPortal(
         <SurfaceErrorBoundary label={view.data.title} resetKey={view.key} onError={onError}>
-          <ExtensionWebView data={view.data} onError={onError} />
+          <ExtensionWebView data={view.data} theme={theme} onError={onError} />
         </SurfaceErrorBoundary>,
         container,
       )}
@@ -440,7 +442,10 @@ function KeepAliveFrame({ view, docked, onError }: {
 }
 
 /** Keeps each iframe mounted, docking its stable container inside the open dialog. */
-export function ExtensionKeepAliveHost({ onError }: { onError: (message: string) => void }): ReactNode {
+export function ExtensionKeepAliveHost({ theme, onError }: {
+  theme: NdWebViewTheme
+  onError: (message: string) => void
+}): ReactNode {
   const { views, dockedKey } = useExtensionKeepAlive()
   useEffect(() => {
     if (!views.some((view) => backgroundedAt.has(view.key))) return
@@ -448,7 +453,7 @@ export function ExtensionKeepAliveHost({ onError }: { onError: (message: string)
     return () => window.clearInterval(timer)
   }, [views, dockedKey])
   return <>{views.map((view) => (
-    <KeepAliveFrame key={view.key} view={view} docked={view.key === dockedKey} onError={onError} />
+    <KeepAliveFrame key={view.key} view={view} docked={view.key === dockedKey} theme={theme} onError={onError} />
   ))}</>
 }
 

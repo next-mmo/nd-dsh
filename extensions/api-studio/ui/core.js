@@ -615,31 +615,78 @@ export function toCurl(prepared) {
   return parts.join(' \\\n  ')
 }
 
+const CURL_COMMAND = /^(?:\$\s+)?curl(?:\.exe)?(?:\s|$)/i
+
+export function isCurlCommand(input) {
+  return CURL_COMMAND.test(String(input ?? '').replace(/^\uFEFF/, '').trimStart())
+}
+
+function normalizeCurlInput(input) {
+  const text = String(input ?? '')
+    .replace(/^\uFEFF/, '')
+    .trimStart()
+    .replace(/^\$\s+/, '')
+  // Chrome's "Copy as cURL (cmd)" wraps every argument in ^"…"^ and escapes
+  // special characters with a caret. Decode the carets; the quote tokenizer
+  // then sees ordinary double quotes.
+  if (/\^"/.test(text)) {
+    return text
+      .replace(/\^(\r?\n)(\r?\n)?/g, (_match, _first, second) => (second ? '\n' : ' '))
+      .replace(/\^([\s\S])/g, '$1')
+  }
+  // POSIX shells join lines with a backslash; PowerShell uses a backtick.
+  return text
+    .replace(/\\(\r?\n)/g, ' ')
+    .replace(/`(\r?\n)/g, ' ')
+}
+
+const ANSI_ESCAPES = {
+  n: '\n', r: '\r', t: '\t', b: '\b', f: '\f', v: '\v', a: '\x07', '0': '\0', '\\': '\\', "'": "'", '"': '"',
+}
+
 function tokenizeCurl(input) {
   const tokens = []
   let current = ''
   let quote = null
+  let ansi = false
   let started = false
   for (let index = 0; index < input.length; index += 1) {
     const character = input[index]
     if (quote) {
       if (character === quote) {
         quote = null
-      } else if (character === '\\' && quote === '"' && index + 1 < input.length) {
-        index += 1
-        current += input[index]
+        ansi = false
+      } else if (character === '\\' && index + 1 < input.length && (ansi || quote === '"')) {
+        const escaped = input[index + 1]
+        if (ansi) {
+          if (escaped === 'u' && /^[0-9a-fA-F]{4}$/.test(input.slice(index + 2, index + 6))) {
+            current += String.fromCharCode(Number.parseInt(input.slice(index + 2, index + 6), 16))
+            index += 5
+          } else {
+            current += ANSI_ESCAPES[escaped] ?? `\\${escaped}`
+            index += 1
+          }
+        } else if ('"\\$`'.includes(escaped) || escaped === '\n') {
+          current += escaped
+          index += 1
+        } else {
+          current += character
+        }
       } else {
         current += character
       }
       continue
     }
-    if (character === "'" || character === '"') {
-      quote = character
+    if (character === '$' && (input[index + 1] === "'" || input[index + 1] === '"')) {
+      index += 1
+      quote = input[index]
+      ansi = true
       started = true
       continue
     }
-    if (character === '\\' && input[index + 1] === '\n') {
-      index += 1
+    if (character === "'" || character === '"') {
+      quote = character
+      started = true
       continue
     }
     if (/\s/.test(character)) {
@@ -658,8 +705,8 @@ function tokenizeCurl(input) {
 }
 
 export function parseCurl(input) {
-  const tokens = tokenizeCurl(String(input ?? '').replace(/\\\r?\n/g, ' '))
-  if (tokens[0] !== 'curl') throw new Error('Paste a command that starts with curl')
+  const tokens = tokenizeCurl(normalizeCurlInput(input))
+  if (!/^curl(?:\.exe)?$/i.test(tokens[0] ?? '')) throw new Error('Paste a command that starts with curl')
   let method = ''
   let url = ''
   let body = ''
@@ -678,7 +725,26 @@ export function parseCurl(input) {
         const name = header.slice(0, separator).trim()
         const value = header.slice(separator + 1).trim()
         if (name) headers.push({ id: uid('hdr'), key: name, value, enabled: true })
+      } else if (header.endsWith(';') && header.slice(0, -1).trim()) {
+        // cURL sends "Name;" as a header with an empty value.
+        headers.push({ id: uid('hdr'), key: header.slice(0, -1).trim(), value: '', enabled: true })
       }
+    } else if (token === '-b' || token === '--cookie') {
+      // Chrome copies browser session cookies (the usual auth for web APIs)
+      // as -b; a value without "=" is a cookie file, which a sandboxed view
+      // cannot read.
+      const value = next()
+      if (value.includes('=')) {
+        const existing = headers.find((header) => header.key.toLowerCase() === 'cookie')
+        if (existing) existing.value = `${existing.value}; ${value}`
+        else headers.push({ id: uid('hdr'), key: 'Cookie', value, enabled: true })
+      }
+    } else if (token === '-A' || token === '--user-agent') {
+      headers.push({ id: uid('hdr'), key: 'User-Agent', value: next(), enabled: true })
+    } else if (token === '-e' || token === '--referer') {
+      headers.push({ id: uid('hdr'), key: 'Referer', value: next(), enabled: true })
+    } else if (token === '--oauth2-bearer') {
+      headers.push({ id: uid('hdr'), key: 'Authorization', value: `Bearer ${next()}`, enabled: true })
     } else if (['-d', '--data', '--data-raw', '--data-binary', '--data-urlencode'].includes(token)) {
       const value = next()
       body = body ? `${body}&${value}` : value

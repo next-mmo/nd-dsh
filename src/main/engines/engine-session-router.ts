@@ -423,6 +423,7 @@ export class EngineSessionRouter {
       const returnUrl = browser?.state().url
       const result = await engine.run(appendWebTextFiles(optimizedPrompt, options?.files ?? [], 'Gemini Web'), {
         ...(options?.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
+        ...(options?.model !== undefined ? { model: options.model } : {}),
         cwd: workspaceRoot,
         ...(options?.images?.length ? { images: options.images } : {}),
       })
@@ -644,6 +645,7 @@ export class EngineSessionRouter {
    * configuration has no ND-visible picker return an empty list.
    */
   async models(engineId: string): Promise<EngineModelOption[]> {
+    if (engineId === GEMINI_WEB_ENGINE_ID) return await this.geminiWeb?.listModels() ?? []
     const direct = this.directEngines.get(engineId)
     if (direct) return direct.listModels()
     return []

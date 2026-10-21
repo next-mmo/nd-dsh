@@ -35,12 +35,19 @@ bundle, and `electron-builder.yml` is untouched.
   parameters, request/response examples, schema examples, and security schemes.
 - HTTP client: GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; query, path, and
   header parameters; JSON/text/form/multipart bodies; Bearer, Basic, and API-key
-  auth; response status, headers, timing, size, and a collapsible JSON viewer.
+  auth; response status, headers, timing, size, a collapsible JSON viewer, and
+  a resizable request/response split (60% response by default).
+- Follows ND's light/dark theme; the view receives theme changes through the
+  webview bridge and updates without reloading.
 - Collections with request rename, reorder, and delete.
 - Environments with `{{variable}}` substitution across URL, params, headers,
   body, and auth.
 - Request history with credentials redacted before anything is written.
 - Import: OpenAPI JSON/YAML (paste or URL), Postman Collection v2.1, cURL.
+  Paste a cURL command straight into the URL field, or anywhere in Collections
+  when no text field is focused, to turn it into a request; `Import` → `cURL`
+  does the same. Chrome's `Copy as cURL (cmd)`/`(bash)` output is accepted,
+  including line continuations and ANSI-C quoting.
 - Export: copy a request as cURL, copy the response body.
 
 ## Storage and trust boundary

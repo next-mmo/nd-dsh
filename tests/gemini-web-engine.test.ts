@@ -5,6 +5,11 @@ import { runInNewContext } from 'node:vm'
 import { describe, expect, it, vi } from 'vitest'
 import { PageGuardError } from '../src/main/browser/page-driver.js'
 import { GeminiWebEngine } from '../src/main/engines/gemini-web/gemini-web-engine.js'
+import {
+  GEMINI_MODE_FALLBACK,
+  geminiModeSelectScript,
+  readGeminiModeSwitchResult,
+} from '../src/main/engines/gemini-web/gemini-web-models.js'
 import { discardWebImages } from '../src/main/engines/web-attachments.js'
 import { WebTurnProgress } from '../src/main/engines/web-turn.js'
 
@@ -860,5 +865,201 @@ describe('Gemini Web Gem binding management and persistence', () => {
 
     await engine.close()
     rmSync(directory, { recursive: true, force: true })
+  })
+})
+
+describe('Gemini Web model selection', () => {
+  function geminiModeDom(currentLabel: string, labels: readonly string[]) {
+    let menuOpen = false
+    const isCurrent = (label: string): boolean =>
+      label === currentLabel || label.endsWith(` ${currentLabel}`) || currentLabel.endsWith(` ${label}`)
+    const button = {
+      label: currentLabel,
+      expanded: false,
+      clicks: 0,
+      querySelector(selector: string) {
+        return selector === '.picker-primary-text' ? { textContent: button.label } : null
+      },
+      getAttribute(name: string) {
+        if (name === 'aria-expanded') return button.expanded ? 'true' : 'false'
+        if (name === 'aria-label') return `Open mode picker, currently ${button.label}`
+        return null
+      },
+      click() {
+        button.clicks += 1
+        button.expanded = !button.expanded
+        menuOpen = button.expanded
+      },
+    }
+    const items = labels.map((label) => ({
+      label,
+      className: isCurrent(label) ? 'ng-star-inserted selected' : 'ng-star-inserted',
+      querySelector(selector: string) {
+        return selector === '.label' ? { textContent: label } : null
+      },
+      getAttribute() { return null },
+      click() {
+        button.label = label
+        button.expanded = false
+        menuOpen = false
+        for (const item of items) {
+          item.className = item.label === label ? 'ng-star-inserted selected' : 'ng-star-inserted'
+        }
+      },
+    }))
+    const document = {
+      querySelector(selector: string) {
+        return selector.includes('bard-mode-menu-button') ? button : null
+      },
+      querySelectorAll(selector: string) {
+        return selector.includes('gem-menu-item') && menuOpen ? items : []
+      },
+      dispatchEvent() {
+        menuOpen = false
+        button.expanded = false
+        return true
+      },
+      body: {
+        click() {
+          menuOpen = false
+          button.expanded = false
+        },
+      },
+    }
+    return { document, button, items }
+  }
+
+  async function runSelectScript(currentLabel: string, labels: readonly string[], desired: string) {
+    const dom = geminiModeDom(currentLabel, labels)
+    const value = await runInNewContext(geminiModeSelectScript(desired), {
+      document: dom.document,
+      KeyboardEvent: class {},
+      setTimeout,
+    })
+    return { ...dom, result: readGeminiModeSwitchResult(value) }
+  }
+
+  const labels = ['3.5 Flash-Lite', '3.8 Flash', '3.1 Pro', '4 Argon']
+
+  it('accepts the composer pill short name as already selected without opening the menu', async () => {
+    const { result, button } = await runSelectScript('Flash-Lite', labels, '3.5 Flash-Lite')
+    expect(result).toMatchObject({ ok: true, changed: false, current: 'Flash-Lite' })
+    expect(button.clicks).toBe(0)
+  })
+
+  it('opens the real menu and switches to the requested model', async () => {
+    const { result, button } = await runSelectScript('Argon', labels, '3.5 Flash-Lite')
+    expect(result).toMatchObject({ ok: true, changed: true, current: '3.5 Flash-Lite' })
+    expect(result?.ok && result.options).toEqual(labels)
+    expect(button.label).toBe('3.5 Flash-Lite')
+    expect(button.expanded).toBe(false)
+  })
+
+  it('reports the available models instead of silently keeping the old one', async () => {
+    const { result, button } = await runSelectScript('Argon', labels, '9 Nova')
+    expect(result).toMatchObject({ ok: false, reason: 'unknown-model', options: labels })
+    expect(button.label).toBe('Argon')
+    expect(button.expanded).toBe(false)
+  })
+
+  it('reports a missing picker as its own failure', async () => {
+    const value = await runInNewContext(geminiModeSelectScript('3.8 Flash'), {
+      document: { querySelector: () => null },
+      KeyboardEvent: class {},
+      setTimeout,
+    })
+    expect(readGeminiModeSwitchResult(value)).toEqual({ ok: false, reason: 'picker-missing' })
+  })
+
+  it('caches the live menu across engine reloads', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nd-gemini-model-store-'))
+    const storePath = harnessSessionStore(directory)
+    const engine = new GeminiWebEngine({ browser: {} as never, workspace: { state: () => ({ root: '/workspace' }) } as never, storePath })
+    const driver = {
+      evaluate: vi.fn(async () => ({ ok: true, changed: true, current: 'Flash-Lite', options: labels })),
+      setFilesOnInput: vi.fn(async () => true),
+      close: vi.fn(),
+    }
+    const internals = engine as unknown as {
+      applyModel: (driver: unknown, model: string | undefined, signal: AbortSignal) => Promise<void>
+    }
+    try {
+      expect(await engine.listModels()).toEqual(GEMINI_MODE_FALLBACK)
+      await internals.applyModel(driver, '3.5 Flash-Lite', new AbortController().signal)
+      expect(await engine.listModels()).toEqual(labels.map((label) => ({ id: label, name: label })))
+      await engine.close()
+
+      const reloaded = new GeminiWebEngine({ browser: {} as never, workspace: { state: () => ({ root: '/workspace' }) } as never, storePath })
+      expect(await reloaded.listModels()).toEqual(labels.map((label) => ({ id: label, name: label })))
+      await reloaded.close()
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('fails with the account-specific model list when the requested model is gone', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nd-gemini-model-gone-'))
+    const engine = new GeminiWebEngine({ browser: {} as never, workspace: {} as never, storePath: harnessSessionStore(directory) })
+    const driver = {
+      evaluate: vi.fn(async () => ({ ok: false, reason: 'unknown-model', options: ['3.8 Flash'] })),
+      setFilesOnInput: vi.fn(async () => true),
+      close: vi.fn(),
+    }
+    const internals = engine as unknown as {
+      applyModel: (driver: unknown, model: string | undefined, signal: AbortSignal) => Promise<void>
+    }
+    try {
+      await expect(internals.applyModel(driver, '4 Argon', new AbortController().signal))
+        .rejects.toThrow(/does not offer the "4 Argon" model.*available: 3\.8 Flash/)
+    } finally {
+      await engine.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('forwards the selected model into the page before composing', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nd-gemini-model-run-'))
+    const engine = new GeminiWebEngine({
+      browser: { state: () => ({ url: 'https://gemini.google.com/app', cdpPort: 0 }), activeTabId: () => 'tab-1' } as never,
+      workspace: { state: () => ({ root: '/workspace' }) } as never,
+      storePath: harnessSessionStore(directory),
+    })
+    const driver = { evaluate: vi.fn(async () => true), setFilesOnInput: vi.fn(async () => true), close: vi.fn() }
+    const snapshot = {
+      url: 'https://gemini.google.com/app',
+      title: 'Gemini',
+      composer: true,
+      busy: false,
+      complete: false,
+      pendingSend: false,
+      challenge: false,
+      loginRequired: false,
+      rateLimited: false,
+      turns: [],
+    }
+    const completed = { ...snapshot, complete: true, turns: [{ role: 'assistant', text: 'ok' }] }
+    const internals = engine as unknown as {
+      openBoundConversation: () => Promise<typeof driver>
+      captureSnapshot: () => Promise<typeof snapshot>
+      waitForAssistant: () => Promise<typeof completed>
+      captureConversationUrl: () => void
+      applyModel: ReturnType<typeof vi.fn>
+      submitPrompt: ReturnType<typeof vi.fn>
+    }
+    internals.openBoundConversation = async () => driver
+    internals.captureSnapshot = async () => snapshot
+    internals.waitForAssistant = async () => completed
+    internals.captureConversationUrl = () => {}
+    internals.applyModel = vi.fn(async () => {})
+    internals.submitPrompt = vi.fn(async () => {})
+    try {
+      const { sessionId } = await engine.createSession({ cwd: '/workspace' })
+      await engine.run('hello', { sessionId, model: '3.5 Flash-Lite' })
+      expect(internals.applyModel).toHaveBeenCalledWith(driver, '3.5 Flash-Lite', expect.any(AbortSignal))
+      expect(internals.submitPrompt).toHaveBeenCalledOnce()
+    } finally {
+      await engine.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 })

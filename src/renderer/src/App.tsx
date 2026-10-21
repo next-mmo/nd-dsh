@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { Group, Panel, Separator } from 'react-resizable-panels'
+import { Group, Panel, Separator, usePanelRef } from 'react-resizable-panels'
 import { toast } from 'sonner'
 import type { AppInspectArea, AppInspectMode, AppInspectResult, BrowserState, ComposerImageAttachment, DshSurface, DshViewState, ExternalElementPickView, HarnessStatus, InspectScope, SurfaceState, ThemeMode, ThemeState, WorkspaceFile, WorkspaceState } from '../../shared/contracts'
 import type { OrganizationSnapshot } from '../../shared/organization'
@@ -88,9 +88,19 @@ const VIEWS: ProductView[] = ['home', 'company', 'agent', 'design', 'qa', 'exten
 
 const CHAT_MIN_PX = 580
 const CHAT_DEFAULT_PX = 640
+/** Rail kept in place of the engine thread while that pane is collapsed. */
+const THREAD_RAIL_PX = 32
+/**
+ * Mirrors ChatPanel's sessions width so collapsing the thread can shrink the
+ * chat column to just the sessions sidebar plus the thread rail.
+ */
+const SESSIONS_DEFAULT_PX = 220
 const CHAT_MIN_PX_SIDEBAR_COLLAPSED = 420
 const WORKSPACE_MIN_PX = 480
 const CHAT_SEPARATOR_PX = 5
+const FILES_EDITOR_MIN_PX = 260
+const FILES_EXPLORER_MIN_PX = 160
+const FILES_EXPLORER_DEFAULT_PX = 200
 /**
  * Width the workbench needs to render its three-pane surfaces (Design) at the
  * minimums they declare: 208 + 228 for the side panes plus the center's 40%.
@@ -205,6 +215,39 @@ export default function App() {
   const [agentPane, setAgentPane] = useState<AgentPane>('files')
   const [initialChat] = useState(initialChatLayout)
   const [sessionsCollapsed, setSessionsCollapsed] = useState(initialChat.sessionsCollapsed)
+  const chatPanelRef = usePanelRef()
+  const [threadCollapsed, setThreadCollapsed] = useState(false)
+  const [sessionsWidthPx, setSessionsWidthPx] = useState(SESSIONS_DEFAULT_PX)
+  const threadExpandedWidthRef = useRef(initialChat.width)
+  const handleSessionsWidthChange = useCallback((width: number) => setSessionsWidthPx(width), [])
+  const toggleThreadCollapsed = useCallback(() => {
+    const panel = chatPanelRef.current
+    if (!panel) return
+    if (threadCollapsed) {
+      setThreadCollapsed(false)
+      return
+    }
+    threadExpandedWidthRef.current = panel.getSize().inPixels
+    setThreadCollapsed(true)
+  }, [chatPanelRef, threadCollapsed])
+  // Deferred one tick: the Panel registers its new minSize in a passive effect,
+  // and resizing before that would clamp to the expanded minimum.
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const panel = chatPanelRef.current
+      if (!panel) return
+      if (threadCollapsed) panel.resize((sessionsCollapsed ? 0 : sessionsWidthPx) + THREAD_RAIL_PX)
+      else if (threadExpandedWidthRef.current > 0) panel.resize(threadExpandedWidthRef.current)
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [threadCollapsed])
+  useEffect(() => {
+    if (!threadCollapsed) return
+    const timer = window.setTimeout(() => {
+      chatPanelRef.current?.resize((sessionsCollapsed ? 0 : sessionsWidthPx) + THREAD_RAIL_PX)
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [sessionsCollapsed, sessionsWidthPx, threadCollapsed])
   const [gitEditable, setGitEditable] = useState(false)
   const [workspaceCollapsed, setWorkspaceCollapsed] = useState(false)
   const [externalPrompt, setExternalPrompt] = useState<{ id: string; text: string } | null>(null)
@@ -1985,7 +2028,20 @@ export default function App() {
           <>
             <div className={cn('h-full w-full', view === 'settings' || view === 'extensions' ? 'hidden' : 'block')}>
               <Group orientation="horizontal" className="h-full w-full">
-            <Panel className="flex min-w-0 flex-col overflow-hidden" defaultSize={initialChat.width} minSize={sessionsCollapsed ? CHAT_MIN_PX_SIDEBAR_COLLAPSED : CHAT_MIN_PX}>
+            <Panel
+              panelRef={chatPanelRef}
+              className="flex min-w-0 flex-col overflow-hidden"
+              defaultSize={
+                threadCollapsed
+                  ? (sessionsCollapsed ? THREAD_RAIL_PX : sessionsWidthPx + THREAD_RAIL_PX)
+                  : initialChat.width
+              }
+              minSize={
+                threadCollapsed
+                  ? (sessionsCollapsed ? THREAD_RAIL_PX : sessionsWidthPx + THREAD_RAIL_PX)
+                  : (sessionsCollapsed ? CHAT_MIN_PX_SIDEBAR_COLLAPSED : CHAT_MIN_PX)
+              }
+            >
               <SurfaceErrorBoundary label="Chat" resetKey={workspace?.root ?? 'workspace-loading'} onError={notify}>
                 <ChatPanel
                   key={workspace?.root ?? 'workspace-loading'}
@@ -2000,6 +2056,9 @@ export default function App() {
                   projects={sidebarProjects}
                   onSelectProject={switchProject}
                   sessionsCollapsed={sessionsCollapsed}
+                  threadCollapsed={threadCollapsed}
+                  onToggleThreadCollapsed={toggleThreadCollapsed}
+                  onSessionsWidthChange={handleSessionsWidthChange}
                   onError={notify}
                   onOpenSettings={openSettings}
                   onOpenFile={(path) => void openFile(path)}
@@ -2017,6 +2076,7 @@ export default function App() {
             </Panel>
             <Separator
               aria-label="Resize chat pane"
+              disabled={threadCollapsed}
               className="w-[5px] shrink-0 cursor-col-resize touch-none [&_div]:transition-[width,background-color] [&_div]:duration-150 hover:[&_div]:w-0.5 hover:[&_div]:bg-primary active:[&_div]:w-0.5 active:[&_div]:bg-primary"
             >
               <div className="h-full w-px bg-border-strong" />
@@ -2090,70 +2150,78 @@ export default function App() {
                   </div>
                   <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
                     {agentPane === 'files' ? (
-                      <div className="grid h-full w-full min-h-0 grid-cols-[minmax(0,1fr)_200px]">
-                        <div className="min-h-0 min-w-0 overflow-hidden">
-                          {activeDiff ? (
-                            <SurfaceErrorBoundary label="Diff" resetKey={`${activeDiff.relativePath}:${String(activeDiff.staged)}`} onError={notify}>
-                              <DiffView
-                                relativePath={activeDiff.relativePath}
-                                staged={activeDiff.staged}
-                                onClose={() => setActiveDiff(null)}
+                      <div className="h-full w-full min-h-0">
+                        <Group orientation="horizontal" className="h-full w-full">
+                          <Panel className="min-h-0 min-w-0 overflow-hidden" minSize={FILES_EDITOR_MIN_PX}>
+                            {activeDiff ? (
+                              <SurfaceErrorBoundary label="Diff" resetKey={`${activeDiff.relativePath}:${String(activeDiff.staged)}`} onError={notify}>
+                                <DiffView
+                                  relativePath={activeDiff.relativePath}
+                                  staged={activeDiff.staged}
+                                  onClose={() => setActiveDiff(null)}
+                                  onError={notify}
+                                />
+                              </SurfaceErrorBoundary>
+                            ) : (
+                              <>
+                                {openFileTabs.length ? (
+                                  <div className="flex items-stretch overflow-x-auto border-b border-border-soft bg-secondary" role="tablist" aria-label="Open files">
+                                    {openFileTabs.map((tab) => {
+                                      const active = selectedFile?.relativePath === tab.relativePath
+                                      return (
+                                        <div
+                                          key={tab.relativePath}
+                                          className={cn(
+                                            'group flex max-w-[220px] shrink-0 cursor-pointer items-center gap-1.5 border-r border-border-soft px-[11px] py-[7px] text-[10px]',
+                                            active ? 'bg-surface-0 text-strong' : 'text-soft hover:bg-accent/60'
+                                          )}
+                                          title={tab.relativePath}
+                                          onClick={() => setSelectedFile(tab)}
+                                        >
+                                          <FileIcon style={{ color: fileAccent(tab.relativePath) }} className="size-[13px] shrink-0" />
+                                          <span className="truncate">{tab.relativePath.split(/[\\/]/).at(-1)}</span>
+                                          <button
+                                            type="button"
+                                            aria-label={`Close ${tab.relativePath}`}
+                                            className={cn(
+                                              'ml-0.5 shrink-0 rounded px-1 text-[11px] leading-none text-faint hover:bg-border-soft hover:text-foreground',
+                                              active ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                                            )}
+                                            onClick={(e) => { e.stopPropagation(); closeFileTab(tab.relativePath) }}
+                                          >
+                                            ×
+                                          </button>
+                                        </div>
+                                      )
+                                    })}
+                                  </div>
+                                ) : null}
+                                <SurfaceErrorBoundary label="Editor" resetKey={selectedFile?.relativePath ?? ''} onError={notify}>
+                                  <EditorPane file={selectedFile} onAgentPrompt={askAgent} onOpenLink={(url) => void openLink(url)} onError={notify} />
+                                </SurfaceErrorBoundary>
+                              </>
+                            )}
+                          </Panel>
+                          <Separator
+                            aria-label="Resize file explorer"
+                            className="w-[5px] shrink-0 cursor-col-resize touch-none [&_div]:transition-[width,background-color] [&_div]:duration-150 hover:[&_div]:w-0.5 hover:[&_div]:bg-primary active:[&_div]:w-0.5 active:[&_div]:bg-primary"
+                          >
+                            <div className="h-full w-px bg-border-soft" />
+                          </Separator>
+                          <Panel defaultSize={FILES_EXPLORER_DEFAULT_PX} minSize={FILES_EXPLORER_MIN_PX} className="min-h-0 min-w-0 overflow-hidden">
+                            <SurfaceErrorBoundary label="Files" resetKey={workspace?.root ?? ''} onError={notify}>
+                              <Explorer
+                                workspace={workspace}
+                                workspaceSelected={workspaceSelected}
+                                selectedPath={selectedFile?.relativePath}
+                                onWorkspaceChanged={changeWorkspace}
+                                onOpenFile={(path) => void openFile(path)}
+                                onOpenDiff={openDiff}
                                 onError={notify}
                               />
                             </SurfaceErrorBoundary>
-                          ) : (
-                            <>
-                              {openFileTabs.length ? (
-                                <div className="flex items-stretch overflow-x-auto border-b border-border-soft bg-secondary" role="tablist" aria-label="Open files">
-                                  {openFileTabs.map((tab) => {
-                                    const active = selectedFile?.relativePath === tab.relativePath
-                                    return (
-                                      <div
-                                        key={tab.relativePath}
-                                        className={cn(
-                                          'group flex max-w-[220px] shrink-0 cursor-pointer items-center gap-1.5 border-r border-border-soft px-[11px] py-[7px] text-[10px]',
-                                          active ? 'bg-surface-0 text-strong' : 'text-soft hover:bg-accent/60'
-                                        )}
-                                        title={tab.relativePath}
-                                        onClick={() => setSelectedFile(tab)}
-                                      >
-                                        <FileIcon style={{ color: fileAccent(tab.relativePath) }} className="size-[13px] shrink-0" />
-                                        <span className="truncate">{tab.relativePath.split(/[\\/]/).at(-1)}</span>
-                                        <button
-                                          type="button"
-                                          aria-label={`Close ${tab.relativePath}`}
-                                          className={cn(
-                                            'ml-0.5 shrink-0 rounded px-1 text-[11px] leading-none text-faint hover:bg-border-soft hover:text-foreground',
-                                            active ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-                                          )}
-                                          onClick={(e) => { e.stopPropagation(); closeFileTab(tab.relativePath) }}
-                                        >
-                                          ×
-                                        </button>
-                                      </div>
-                                    )
-                                  })}
-                                </div>
-                              ) : null}
-                              <SurfaceErrorBoundary label="Editor" resetKey={selectedFile?.relativePath ?? ''} onError={notify}>
-                                <EditorPane file={selectedFile} onAgentPrompt={askAgent} onOpenLink={(url) => void openLink(url)} onError={notify} />
-                              </SurfaceErrorBoundary>
-                            </>
-                          )}
-                        </div>
-                        <div className="min-h-0 border-l border-border-soft">
-                          <SurfaceErrorBoundary label="Files" resetKey={workspace?.root ?? ''} onError={notify}>
-                            <Explorer
-                              workspace={workspace}
-                              workspaceSelected={workspaceSelected}
-                              selectedPath={selectedFile?.relativePath}
-                              onWorkspaceChanged={changeWorkspace}
-                              onOpenFile={(path) => void openFile(path)}
-                              onOpenDiff={openDiff}
-                              onError={notify}
-                            />
-                          </SurfaceErrorBoundary>
-                        </div>
+                          </Panel>
+                        </Group>
                       </div>
                     ) : (
                       <SurfaceErrorBoundary label="Browser" resetKey={`${view}:${browserState?.url ?? ''}`} onError={notify}>
@@ -2301,7 +2369,7 @@ export default function App() {
         />
       ) : null}
       <RuntimePrompts onError={notify} organization={orgState} />
-      <ExtensionKeepAliveHost onError={notify} />
+      <ExtensionKeepAliveHost theme={theme?.effective ?? 'dark'} onError={notify} />
       <ModalInspectDock
         hidden={captureOverlay !== null}
         pickDisabled={elementInspectActive}

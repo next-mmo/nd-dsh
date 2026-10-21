@@ -158,6 +158,7 @@ export declare function formatBytes(bytes: number): string
 export declare function formatTime(timestamp: number): string
 export declare function prettyJson(text: unknown): unknown
 export declare function toCurl(prepared: PreparedRequest): string
+export declare function isCurlCommand(input: string): boolean
 export declare function parseCurl(input: string): StudioRequest
 export declare function importPostman(collection: unknown): { collections: StudioCollection[]; environments: StudioEnvironment[] }
 export declare function findRequest(workspace: StudioWorkspace, requestId: string): { collection: StudioCollection; request: StudioRequest } | null

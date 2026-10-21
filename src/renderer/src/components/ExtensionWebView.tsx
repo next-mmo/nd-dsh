@@ -4,6 +4,8 @@ import {
   ND_WEBVIEW_BRIDGE_PROTOCOL,
   ND_WEBVIEW_MAX_MESSAGE_CHARS,
   type NdWebViewHelloMessage,
+  type NdWebViewTheme,
+  type NdWebViewThemeMessage,
 } from '../../../shared/extension-webview'
 import type { NdViewData } from '../../../shared/nd-invocations'
 import { cn } from '../lib/utils'
@@ -23,7 +25,11 @@ import { cn } from '../lib/utils'
  * policy enforcement intact; popups are denied by Electron and the frame has
  * no Node and no network.
  */
-export function ExtensionWebView({ data, onError }: { data: NdViewData; onError?: (message: string) => void }): React.ReactNode {
+export function ExtensionWebView({ data, theme, onError }: {
+  data: NdViewData
+  theme: NdWebViewTheme
+  onError?: (message: string) => void
+}): React.ReactNode {
   const frameRef = useRef<HTMLIFrameElement | null>(null)
   const [ready, setReady] = useState(false)
   const webView = data.webView
@@ -32,6 +38,17 @@ export function ExtensionWebView({ data, onError }: { data: NdViewData; onError?
   // every render.
   const onErrorRef = useRef(onError)
   onErrorRef.current = onError
+
+  useEffect(() => {
+    const frame = frameRef.current
+    if (!frame || !webView?.url) return
+    const message: NdWebViewThemeMessage = {
+      kind: 'nd-webview:theme',
+      protocol: ND_WEBVIEW_BRIDGE_PROTOCOL,
+      theme,
+    }
+    frame.contentWindow?.postMessage(message, new URL(webView.url).origin)
+  }, [theme, webView?.url])
 
   useEffect(() => {
     if (!webView?.url) return
@@ -47,6 +64,7 @@ export function ExtensionWebView({ data, onError }: { data: NdViewData; onError?
       extensionId: data.extensionId,
       viewId: data.viewId,
       context: data.context,
+      theme,
     }
     let pendingCalls = 0
     const onMessage = (event: MessageEvent): void => {
@@ -92,7 +110,7 @@ export function ExtensionWebView({ data, onError }: { data: NdViewData; onError?
     return () => {
       window.removeEventListener('message', onMessage)
     }
-  }, [webView?.url, webView?.token, data.extensionId, data.viewId, data.context])
+  }, [webView?.url, webView?.token, data.extensionId, data.viewId, data.context, theme])
 
   if (!webView?.url) return null
   return (
