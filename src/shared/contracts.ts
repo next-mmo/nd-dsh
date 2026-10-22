@@ -238,6 +238,14 @@ export interface HarnessStatus {
   runtimeVersion?: string
 }
 
+export interface HarnessUpstreamStatus {
+  /** Version of the running runtime when the upstream check ran. */
+  currentVersion?: string
+  /** Newest DeepSeek Harness release published upstream. */
+  latestVersion?: string
+  updateAvailable: boolean
+}
+
 export interface HarnessRunResult {
   sessionId: string
   messageId?: string
@@ -774,6 +782,8 @@ export interface DesktopApi {
   }
   harness: {
     status(): Promise<HarnessStatus>
+    /** Compares the running runtime with the latest upstream Harness release. */
+    upstream(): Promise<HarnessUpstreamStatus>
     run(prompt: string, options?: HarnessRunOptions): Promise<HarnessRunResult>
     stop(): Promise<HarnessStatus>
     /** Cancel one response without stopping other sessions or project servers. */
@@ -943,6 +953,7 @@ export const IPC = {
   workspaceRemoveSaved: 'workspace:remove-saved',
   workspaceOpenSaved: 'workspace:open-saved',
   harnessStatus: 'harness:status',
+  harnessUpstream: 'harness:upstream',
   harnessRun: 'harness:run',
   harnessStop: 'harness:stop',
   harnessStopSession: 'harness:stop-session',

@@ -56,6 +56,7 @@ import type { CoreDiskScan } from './core/core-disk.js'
 import type { CoreComputer } from './core/core-computer.js'
 import type { CoreApiHttp } from './core/core-api-http.js'
 import type { HarnessService } from './harness/harness-service.js'
+import { checkHarnessUpstream } from './harness/harness-upstream.js'
 import type { ProviderStore } from './providers.js'
 import type { QaService } from './qa/qa-service.js'
 import type { SessionArchiveStore } from './sessions/session-archive-store.js'
@@ -867,6 +868,7 @@ export function registerIpc(deps: IpcDependencies): () => void {
   handle(IPC.workspaceSuggest, (_event, value) => deps.projectWorkspace.suggest(typeof value === 'string' ? value.slice(0, 256) : ''))
 
   handle(IPC.harnessStatus, () => deps.harness.status())
+  handle(IPC.harnessUpstream, () => checkHarnessUpstream(deps.harness.status().runtimeVersion))
   handle(IPC.harnessRun, (_event, value, options) => deps.engineRouter.run(asString(value, 'Prompt', 100_000), asRunOptions(options)))
   handle(IPC.harnessStop, () => deps.engineRouter.stop())
   handle(IPC.harnessStopSession, (_event, value) => deps.engineRouter.stopSession(asString(value, 'Session id', 128)))

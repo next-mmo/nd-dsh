@@ -847,6 +847,7 @@ const desktopApi: DesktopApi = {
   },
   harness: {
     status: async () => harness,
+    upstream: async () => ({ updateAvailable: false }),
     run: async (_prompt, options) => {
       const sessionId = options?.sessionId ?? 'preview-session'
       dshEvents.emit({ kind: 'session-event', sessionId, event: { type: 'assistant/message', seq: Date.now(), time: Date.now(), data: { message: { content: 'UI preview only — launch Electron to execute this request.' } } } })

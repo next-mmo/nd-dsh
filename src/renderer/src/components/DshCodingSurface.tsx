@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import type { DshViewState, HarnessStatus } from '../../../shared/contracts'
+import type { DshViewState, HarnessStatus, HarnessUpstreamStatus } from '../../../shared/contracts'
 import { ExternalIcon, ReloadIcon } from './Icons'
 import { BridgePill } from './bridge-pill'
+import { cn } from '../lib/utils'
 import { useNativeViewOcclusion } from '../lib/use-native-view-occlusion'
 
 interface DshCodingSurfaceProps {
@@ -34,6 +35,7 @@ export function DshCodingSurface({ active, inspectOverlayVisible = false, state,
   const surfaceRef = useRef<HTMLDivElement>(null)
   const uiPreview = window.ndDshRuntimeMode === 'ui-preview'
   const [runtimeStatus, setRuntimeStatus] = useState<HarnessStatus | null>(null)
+  const [upstreamStatus, setUpstreamStatus] = useState<HarnessUpstreamStatus | null>(null)
   const [statusReadError, setStatusReadError] = useState<string>()
   // Native WebContentsViews always composite above renderer DOM. Yield the
   // view briefly so inspect result dialogs and their controls stay reachable.
@@ -69,6 +71,24 @@ export function DshCodingSurface({ active, inspectOverlayVisible = false, state,
       off()
     }
   }, [])
+
+  useEffect(() => {
+    if (!active) return
+    // Renderer HMR can outrun a preload reload; skip until the app restarts with the bridge method.
+    const checkUpstream = window.ndDsh.harness.upstream
+    if (typeof checkUpstream !== 'function') return
+    let disposed = false
+    void checkUpstream()
+      .then((status) => {
+        if (!disposed) setUpstreamStatus(status)
+      })
+      // An offline or rejected check stays neutral; the version badge must not
+      // claim an update it could not verify.
+      .catch(() => undefined)
+    return () => {
+      disposed = true
+    }
+  }, [active])
 
   useEffect(() => {
     const host = surfaceRef.current
@@ -113,7 +133,12 @@ export function DshCodingSurface({ active, inspectOverlayVisible = false, state,
     <section className="flex h-full w-full min-h-0 min-w-0 flex-col bg-background" aria-label="DSH coding surface">
       <div className="flex h-[39px] shrink-0 items-center gap-2 border-b border-border-soft bg-secondary px-2">
         {runtimeStatus?.runtimeVersion && (
-          <span className="font-mono text-[9px] text-faint" title="DeepSeek Harness version">
+          <span
+            className={cn('font-mono text-[9px]', upstreamStatus?.updateAvailable ? 'font-semibold text-destructive' : 'text-faint')}
+            title={upstreamStatus?.updateAvailable && upstreamStatus.latestVersion
+              ? `DeepSeek Harness ${upstreamStatus.latestVersion} is available upstream; this runtime is ${runtimeStatus.runtimeVersion}.`
+              : 'DeepSeek Harness version'}
+          >
             v{runtimeStatus.runtimeVersion}
           </span>
         )}

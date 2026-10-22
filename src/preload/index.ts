@@ -380,6 +380,7 @@ const api: DesktopApi = {
   },
   harness: {
     status: () => ipcRenderer.invoke(IPC.harnessStatus),
+    upstream: () => ipcRenderer.invoke(IPC.harnessUpstream),
     run: (prompt, options) => ipcRenderer.invoke(IPC.harnessRun, prompt, options),
     stop: () => ipcRenderer.invoke(IPC.harnessStop),
     stopSession: (sessionId) => ipcRenderer.invoke(IPC.harnessStopSession, sessionId),
