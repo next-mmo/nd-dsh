@@ -69,7 +69,13 @@ const ATTACHMENT_TIMEOUT_MS = 30_000
 const ATTACHMENT_POLL_MS = 250
 const ATTACHMENT_SEND_GRACE_MS = 60_000
 const SUBMIT_CONFIRM_POLL_MS = 150
-const SUBMIT_CONFIRM_TIMEOUT_MS = 6_000
+const SUBMIT_CONFIRM_TIMEOUT_MS = 10_000
+// Gemini can echo the user turn before it exposes the Stop control. A new
+// top-level user turn is itself proof the provider accepted the prompt.
+const GEMINI_USER_TURN_COUNT_SCRIPT = `(() => {
+  const nodes = Array.from(document.querySelectorAll('user-query-content, [data-test-id="user-query"]'));
+  return nodes.filter((node) => !nodes.some((other) => other !== node && other.contains(node))).length;
+})()`
 const GEMINI_ATTACHMENT_STATE_SCRIPT = `(() => {
   const tiles = Array.from(document.querySelectorAll('.gem-attachment-tile'));
   const settled = tiles.filter((el) => el.querySelector('img')
@@ -736,6 +742,7 @@ export class GeminiWebEngine {
         // submit the same prompt twice.
         progress.enter('submit')
         assertTurnActive(signal)
+        const baselineUserTurns = await this.readUserTurnCount(driver)
         let sendAttempted = false
         let sendFailure: unknown
         try {
@@ -759,7 +766,7 @@ export class GeminiWebEngine {
         if (sendFailure) {
           this.options.log?.(`[gemini-web] browser-agent send step could not verify itself (${sendFailure instanceof Error ? sendFailure.message : String(sendFailure)}); confirming against the page`)
         }
-        await this.confirmSubmission(driver, cleanedPrompt, signal, progress)
+        await this.confirmSubmission(driver, cleanedPrompt, signal, progress, baselineUserTurns)
 
         this.recordUserMessage(session, cleanedPrompt, images)
         this.rememberSentPrompt(session, cleanedPrompt)
@@ -995,6 +1002,7 @@ export class GeminiWebEngine {
     }
 
     progress.enter('submit')
+    const baselineUserTurns = await this.readUserTurnCount(driver)
     let sent = false
     for (let index = 0; index < 50; index += 1) {
       assertTurnActive(signal)
@@ -1022,7 +1030,7 @@ export class GeminiWebEngine {
     if (!sent) {
       throw progress.fail('not-submitted', 'Gemini Web could not find an enabled Send control. Reload Gemini and retry.')
     }
-    await this.confirmSubmission(driver, prompt, signal, progress)
+    await this.confirmSubmission(driver, prompt, signal, progress, baselineUserTurns)
   }
 
   /**
@@ -1030,29 +1038,29 @@ export class GeminiWebEngine {
    * or cancellation after the Send click stays `uncertain`: resending from that
    * state can duplicate the turn.
    */
-  private async confirmSubmission(driver: PageDriver, prompt: string, signal: AbortSignal, progress: WebTurnProgress): Promise<void> {
+  private async confirmSubmission(driver: PageDriver, prompt: string, signal: AbortSignal, progress: WebTurnProgress, baselineUserTurns: number): Promise<void> {
     progress.enter('confirm')
     if (progress.submission === 'none') progress.submission = 'uncertain'
     const confirmDeadline = Date.now() + SUBMIT_CONFIRM_TIMEOUT_MS
+    const expectedComposerKey = JSON.stringify(composerKey(prompt))
     let confirmed = false
     while (Date.now() < confirmDeadline) {
       if (signal.aborted) break
-      const state = await driver.evaluate<{ composerCleared: boolean; busy: boolean; lastUserTurn?: string }>(`(() => {
+      const state = await driver.evaluate<{ composerCleared: boolean; busy: boolean; userTurns: number }>(`(() => {
         const composer = document.querySelector(${JSON.stringify(GEMINI_COMPOSER_SELECTOR)});
         const composerText = composer instanceof HTMLTextAreaElement || composer instanceof HTMLInputElement ? composer.value : (composer?.innerText || '');
         const buttons = Array.from(document.querySelectorAll('button'));
         const stopButton = buttons.find(el => /^stop(?:\\b|$)/i.test(el.getAttribute('aria-label') || '') || el.getAttribute('data-test-id') === 'stop-button');
         const pendingSend = buttons.some(el => (el.getAttribute('aria-label') || '') === 'Cancel send');
-        const userTurns = Array.from(document.querySelectorAll('user-query-content, [data-test-id="user-query"]'));
-        const lastUser = userTurns.at(-1)?.innerText?.trim();
+        const userTurns = ${GEMINI_USER_TURN_COUNT_SCRIPT};
         return {
-          composerCleared: composerText.trim() === '' || composerText.trim() !== ${JSON.stringify(prompt)}.trim(),
+          composerCleared: composerText.replace(/\\s+/g, '') !== ${expectedComposerKey},
           busy: stopButton !== undefined || pendingSend || document.querySelector('[data-is-streaming="true"], [data-is-generating="true"]') !== null,
-          lastUserTurn: lastUser,
+          userTurns,
         };
       })()`).catch(() => undefined)
 
-      if (state && (state.lastUserTurn === prompt || (state.composerCleared && state.busy))) {
+      if (state && (state.userTurns > baselineUserTurns || (state.composerCleared && state.busy))) {
         confirmed = true
         break
       }
@@ -1077,6 +1085,10 @@ export class GeminiWebEngine {
       if (!(composer instanceof HTMLElement)) return '';
       return composer instanceof HTMLTextAreaElement || composer instanceof HTMLInputElement ? composer.value : composer.innerText;
     })()`)
+  }
+
+  private async readUserTurnCount(driver: PageDriver): Promise<number> {
+    return await driver.evaluate<number>(GEMINI_USER_TURN_COUNT_SCRIPT)
   }
 
   private async waitForAssistant(

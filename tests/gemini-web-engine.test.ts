@@ -410,7 +410,7 @@ describe('Gemini Web session behavior', () => {
       evaluate: vi.fn(async (script: string) => {
         if (script.includes('composerCleared')) {
           now += 10_000
-          return { composerCleared: false, busy: false }
+          return { composerCleared: false, busy: false, userTurns: 0 }
         }
         if (script.includes('button.click()')) return true
         if (script.includes('return composer instanceof HTMLTextAreaElement')) return prompt
@@ -430,6 +430,35 @@ describe('Gemini Web session behavior', () => {
       expect(progress.submission).toBe('uncertain')
     } finally {
       nowSpy.mockRestore()
+      await engine.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('confirms when Gemini echoes the user turn before the Stop control appears', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nd-gemini-echo-'))
+    const engine = new GeminiWebEngine({ browser: {} as never, workspace: {} as never, storePath: harnessSessionStore(directory) })
+    const prompt = 'Explain quicksort'
+    const driver = {
+      evaluate: vi.fn(async (script: string) => {
+        if (script.includes('composerCleared')) return { composerCleared: true, busy: false, userTurns: 1 }
+        if (script.includes('user-query-content')) return 0
+        if (script.includes('button.click()')) return true
+        if (script.includes('return composer instanceof HTMLTextAreaElement')) return prompt
+        if (script.includes("execCommand('insertText'")) return { ok: true, text: prompt }
+        return false
+      }),
+      setFilesOnInput: vi.fn(async () => true),
+      close: vi.fn(),
+    }
+    const internals = engine as unknown as {
+      submitPrompt: (driver: unknown, prompt: string, signal: AbortSignal, progress: WebTurnProgress) => Promise<void>
+    }
+    const progress = new WebTurnProgress('extension')
+    try {
+      await internals.submitPrompt(driver, prompt, new AbortController().signal, progress)
+      expect(progress.submission).toBe('confirmed')
+    } finally {
       await engine.close()
       rmSync(directory, { recursive: true, force: true })
     }
