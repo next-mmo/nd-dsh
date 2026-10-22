@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { dirname } from 'node:path'
 import type {
   DshEventFrame,
+  EngineModelOption,
   EngineSessionSummary,
   EngineSessionTranscript,
   GeminiGemBinding,
@@ -44,6 +45,7 @@ import {
   parseGeminiSkillLinkInput,
   sameGeminiUrl,
 } from './gemini-project-binding.js'
+import { geminiModelMenuScript, geminiModelTriggerScript, type WebModelMenuResult } from '../web-model-picker.js'
 
 const GEMINI_HOME_URL = 'https://gemini.google.com/app'
 const GEMINI_ORIGIN = 'https://gemini.google.com'
@@ -63,6 +65,7 @@ const ATTACHMENT_POLL_MS = 250
 const ATTACHMENT_SEND_GRACE_MS = 60_000
 const SUBMIT_CONFIRM_POLL_MS = 150
 const SUBMIT_CONFIRM_TIMEOUT_MS = 6_000
+const MODEL_CATALOG_TTL_MS = 5 * 60_000
 const GEMINI_ATTACHMENT_STATE_SCRIPT = `(() => {
   const tiles = Array.from(document.querySelectorAll('.gem-attachment-tile'));
   const settled = tiles.filter((el) => el.querySelector('img')
@@ -92,6 +95,8 @@ interface StoredGeminiWebSession {
   sentPromptHashes: string[]
   uncertainPromptHashes?: string[]
   gemRef?: string
+  /** Model ND pinned for this chat; applied to Gemini before each turn. */
+  model?: string
 }
 
 interface PersistedGeminiWebStore {
@@ -149,6 +154,7 @@ export class GeminiWebEngine {
   private modeSettings: WebBrowserModeSettings = { ...DEFAULT_WEB_BROWSER_MODE_SETTINGS }
   private onEvent: ((frame: DshEventFrame) => void) | undefined
   private watcherBusy = false
+  private modelCatalogCache: { at: number; models: EngineModelOption[] } | undefined
   private readonly watchTimer: ReturnType<typeof setInterval>
 
   constructor(private readonly options: GeminiWebEngineOptions) {
@@ -275,7 +281,53 @@ export class GeminiWebEngine {
         updatedAt: session.updatedAt,
         running: session.running,
         ...(session.browserTabId ? { browserTabId: session.browserTabId } : {}),
+        ...(session.model ? { model: session.model } : {}),
       }))
+  }
+
+  /**
+   * The model list lives in Gemini's own mode picker. Reading it opens and
+   * closes that menu in the chat's tab; the result is cached briefly so chat
+   * switching does not flash the menu on every activation.
+   */
+  async listModels(sessionId?: string): Promise<EngineModelOption[]> {
+    const cached = this.modelCatalogCache
+    if (cached && Date.now() - cached.at < MODEL_CATALOG_TTL_MS) return cached.models
+    const driver = this.modelMenuDriver(sessionId)
+    if (!driver) return cached?.models ?? []
+    try {
+      const result = await driver.evaluate<WebModelMenuResult>(geminiModelMenuScript())
+      if (!result?.ok || !Array.isArray(result.models)) return cached?.models ?? []
+      const models = result.models
+        .filter((model) => model.id)
+        .map((model) => ({
+          id: model.id,
+          name: model.name || model.id,
+          ...(model.description ? { description: model.description } : {}),
+          ...(model.selected ? { selected: true } : {}),
+          ...(model.disabled ? { disabled: true } : {}),
+        }))
+      this.modelCatalogCache = { at: Date.now(), models }
+      return models
+    } catch {
+      return cached?.models ?? []
+    } finally {
+      driver.close()
+    }
+  }
+
+  /** The tab whose Gemini model menu can be read without creating a new tab. */
+  private modelMenuDriver(sessionId?: string): ElectronPageDriver | undefined {
+    const browser = this.options.browser
+    const session = sessionId === undefined ? undefined : this.sessions.get(sessionId)
+    const ownedTabId = session?.browserTabId
+    const tabId = ownedTabId && browser.tabUrl(ownedTabId) !== undefined
+      ? ownedTabId
+      : GEMINI_ORIGINS.some((origin) => browser.state().url.startsWith(origin))
+        ? browser.activeTabId()
+        : undefined
+    if (!tabId) return undefined
+    return new ElectronPageDriver(browser, tabId, GEMINI_ORIGINS)
   }
 
   transcript(sessionId: string): EngineSessionTranscript {
@@ -304,7 +356,7 @@ export class GeminiWebEngine {
     return { sessionId }
   }
 
-  async run(prompt: string, input: { sessionId?: string; cwd?: string; images?: HarnessRunImage[] } = {}): Promise<{ sessionId: string }> {
+  async run(prompt: string, input: { sessionId?: string; cwd?: string; model?: string; images?: HarnessRunImage[] } = {}): Promise<{ sessionId: string }> {
     const cleaned = stripWorkspaceContext(prompt).trim()
     if (!cleaned) throw new Error('Prompt cannot be empty')
     if (cleaned.length > MAX_PROMPT_CHARS) throw new Error(`Prompt exceeds the ${MAX_PROMPT_CHARS.toLocaleString()} character limit`)
@@ -354,9 +406,9 @@ export class GeminiWebEngine {
         activeTurn.progress = progress
         try {
           if (transport === 'browser-agent') {
-            return await this.runWithBrowserAgent(session, cleaned, input.images, abort.signal, progress)
+            return await this.runWithBrowserAgent(session, cleaned, input.images, input.model, abort.signal, progress)
           }
-          return await this.runWithPageDriver(transport, session, cleaned, input.images, abort.signal, progress)
+          return await this.runWithPageDriver(transport, session, cleaned, input.images, input.model, abort.signal, progress)
         } catch (error) {
           lastError = error
           const turnError = this.classifyTurnError(progress, error)
@@ -493,6 +545,7 @@ export class GeminiWebEngine {
     session: StoredGeminiWebSession,
     cleanedPrompt: string,
     images: readonly HarnessRunImage[] | undefined,
+    model: string | undefined,
     signal: AbortSignal,
     progress: WebTurnProgress,
   ): Promise<{ sessionId: string }> {
@@ -557,6 +610,7 @@ export class GeminiWebEngine {
         if (before.busy || before.pendingSend) throw this.pageBusyError()
         this.importUnseenTurns(session, before)
         assertTurnActive(signal)
+        await this.applyModel(driver, session, model, signal)
         await this.clearStaleAttachments(driver)
 
         if ((images?.length ?? 0) > 0) {
@@ -595,6 +649,7 @@ export class GeminiWebEngine {
     session: StoredGeminiWebSession,
     cleanedPrompt: string,
     images: readonly HarnessRunImage[] | undefined,
+    model: string | undefined,
     signal: AbortSignal,
     progress: WebTurnProgress,
   ): Promise<{ sessionId: string }> {
@@ -657,6 +712,8 @@ export class GeminiWebEngine {
       } else {
         if (before.busy || before.pendingSend) throw this.pageBusyError()
         this.importUnseenTurns(session, before)
+        assertTurnActive(signal)
+        await this.applyModel(driver, session, model, signal)
         const tabId = this.options.browser.activeTabId()
         const agent = new BrowserAgentRunner({
           port: this.options.browser,
@@ -806,6 +863,55 @@ export class GeminiWebEngine {
       message: "Gemini is still answering or uploading in ND's Browser pane. Let it finish (or stop it), then resend this message.",
       phase: 'observe',
     })
+  }
+
+  /**
+   * ND pins a model per chat. Gemini keeps selection in its own menu; switch it
+   * before composing so the turn actually runs on the model the composer shows.
+   */
+  private async applyModel(
+    driver: PageDriver,
+    session: StoredGeminiWebSession,
+    model: string | undefined,
+    signal: AbortSignal,
+  ): Promise<void> {
+    assertTurnActive(signal)
+    if (!model) {
+      if (session.model !== undefined) {
+        delete session.model
+        this.persistStore()
+      }
+      return
+    }
+    if (session.model === model) {
+      const trigger = await driver.evaluate<{ current?: string }>(geminiModelTriggerScript()).catch(() => undefined)
+      const current = trigger?.current?.toLowerCase().trim()
+      if (current && model.toLowerCase().trim().endsWith(current)) return
+    }
+    assertTurnActive(signal)
+    const result = await driver.evaluate<WebModelMenuResult>(geminiModelMenuScript(model))
+    assertTurnActive(signal)
+    if (!result?.ok) throw new Error(this.modelSelectionError(result, model))
+    if (session.model !== model) {
+      session.model = model
+      this.persistStore()
+    }
+  }
+
+  private modelSelectionError(result: WebModelMenuResult | undefined, model: string): string {
+    const available = result?.available?.length ? ` Gemini offers: ${result.available.join(', ')}.` : ''
+    switch (result?.reason) {
+      case 'model-button-missing':
+        return "Gemini's model picker is not available in ND's Browser pane. Open gemini.google.com, sign in, and resend this message."
+      case 'model-menu-did-not-open':
+        return 'Gemini did not open its model menu. Reload the Gemini tab and resend this message.'
+      case 'model-not-found':
+        return `Gemini no longer offers "${model}" for this account.${available}`
+      case 'model-unavailable':
+        return `"${model}" is not available on this Gemini account right now.${available}`
+      default:
+        return `Gemini did not switch to "${model}".${available}`
+    }
   }
 
   private async clearStaleAttachments(driver: PageDriver): Promise<void> {

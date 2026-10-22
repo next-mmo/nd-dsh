@@ -674,7 +674,10 @@ export function registerIpc(deps: IpcDependencies): () => void {
     const sessionId = asString(value, 'Session id', 128)
     return deps.engineRouter.restoreMessages(sessionId, await deps.engineRouter.transcript(sessionId))
   })
-  handle(IPC.enginesModels, (_event, value) => deps.engineRouter.models(asString(value, 'Engine id', 64)))
+  handle(IPC.enginesModels, (_event, value, sessionId) => deps.engineRouter.models(
+    asString(value, 'Engine id', 64),
+    sessionId === undefined ? undefined : asString(sessionId, 'Session id', 128),
+  ))
   // ZCode CLI model-provider config (its own ~/.zcode/cli/config.json). A
   // successful write restarts the ZCode app-server child when idle so the
   // next turn runs against the saved provider without an app restart.

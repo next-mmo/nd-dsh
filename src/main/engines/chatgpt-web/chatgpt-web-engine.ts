@@ -4,6 +4,7 @@ import { dirname } from 'node:path'
 import type {
   ChatGptProjectBinding,
   DshEventFrame,
+  EngineModelOption,
   EngineSessionSummary,
   EngineSessionTranscript,
   HarnessRunImage,
@@ -43,6 +44,7 @@ import {
   parseChatGptConversationUrl,
   parseChatGptProjectInput,
 } from './chatgpt-project-binding.js'
+import { chatGptModelMenuScript, type WebModelMenuResult } from '../web-model-picker.js'
 
 const CHATGPT_HOME_URL = 'https://chatgpt.com/'
 const CHATGPT_ORIGINS = ['https://chatgpt.com'] as const
@@ -93,6 +95,7 @@ const TURN_POLL_MS = 350
 // the prompt text, so a text-hash match alone would import it twice.
 const IMAGE_ECHO_PATTERN = /^(?:\s*!\[[^\]]*\]\([^)]*\)\s*)+$/
 const BACKGROUND_WATCH_MS = 5_000
+const MODEL_CATALOG_TTL_MS = 5 * 60_000
 
 interface StoredChatGptWebSession {
   sessionId: string
@@ -111,6 +114,8 @@ interface StoredChatGptWebSession {
   uncertainPromptHashes?: string[]
   chatGptProjectRef?: string
   chatGptChatId?: string
+  /** Model ND pinned for this chat; applied to ChatGPT before each turn. */
+  model?: string
 }
 
 interface PersistedChatGptWebStore {
@@ -162,6 +167,7 @@ export class ChatGptWebEngine {
   private modeSettings: WebBrowserModeSettings = { ...DEFAULT_WEB_BROWSER_MODE_SETTINGS }
   private onEvent: ((frame: DshEventFrame) => void) | undefined
   private watcherBusy = false
+  private modelCatalogCache: { at: number; models: EngineModelOption[] } | undefined
   private readonly watchTimer: ReturnType<typeof setInterval>
 
   constructor(private readonly options: ChatGptWebEngineOptions) {
@@ -334,7 +340,52 @@ export class ChatGptWebEngine {
         updatedAt: session.updatedAt,
         running: session.running,
         ...(session.browserTabId ? { browserTabId: session.browserTabId } : {}),
+        ...(session.model ? { model: session.model } : {}),
       }))
+  }
+
+  /**
+   * ChatGPT's switcher also carries a Power slider; only model radios are
+   * returned. The page's own menu is the catalog, so no model list is invented.
+   */
+  async listModels(sessionId?: string): Promise<EngineModelOption[]> {
+    const cached = this.modelCatalogCache
+    if (cached && Date.now() - cached.at < MODEL_CATALOG_TTL_MS) return cached.models
+    const driver = this.modelMenuDriver(sessionId)
+    if (!driver) return cached?.models ?? []
+    try {
+      const result = await driver.evaluate<WebModelMenuResult>(chatGptModelMenuScript())
+      if (!result?.ok || !Array.isArray(result.models)) return cached?.models ?? []
+      const models = result.models
+        .filter((model) => model.id)
+        .map((model) => ({
+          id: model.id,
+          name: model.name || model.id,
+          ...(model.description ? { description: model.description } : {}),
+          ...(model.selected ? { selected: true } : {}),
+          ...(model.disabled ? { disabled: true } : {}),
+        }))
+      this.modelCatalogCache = { at: Date.now(), models }
+      return models
+    } catch {
+      return cached?.models ?? []
+    } finally {
+      driver.close()
+    }
+  }
+
+  /** The tab whose ChatGPT model menu can be read without creating a new tab. */
+  private modelMenuDriver(sessionId?: string): ElectronPageDriver | undefined {
+    const browser = this.options.browser
+    const session = sessionId === undefined ? undefined : this.sessions.get(sessionId)
+    const ownedTabId = session?.browserTabId
+    const tabId = ownedTabId && browser.tabUrl(ownedTabId) !== undefined
+      ? ownedTabId
+      : CHATGPT_ORIGINS.some((origin) => browser.state().url.startsWith(origin))
+        ? browser.activeTabId()
+        : undefined
+    if (!tabId) return undefined
+    return new ElectronPageDriver(browser, tabId, CHATGPT_ORIGINS)
   }
 
   transcript(sessionId: string): EngineSessionTranscript {
@@ -363,7 +414,7 @@ export class ChatGptWebEngine {
     return { sessionId }
   }
 
-  async run(prompt: string, input: { sessionId?: string; cwd?: string; images?: HarnessRunImage[] } = {}): Promise<{ sessionId: string }> {
+  async run(prompt: string, input: { sessionId?: string; cwd?: string; model?: string; images?: HarnessRunImage[] } = {}): Promise<{ sessionId: string }> {
     const cleaned = stripWorkspaceContext(prompt).trim()
     if (!cleaned) throw new Error('Prompt cannot be empty')
     if (cleaned.length > MAX_PROMPT_CHARS) throw new Error(`Prompt exceeds the ${MAX_PROMPT_CHARS.toLocaleString()} character limit`)
@@ -409,9 +460,9 @@ export class ChatGptWebEngine {
         activeTurn.progress = progress
         try {
           if (transport === 'browser-agent') {
-            return await this.runWithBrowserAgent(session, cleaned, input.images, abort.signal, progress)
+            return await this.runWithBrowserAgent(session, cleaned, input.images, input.model, abort.signal, progress)
           }
-          return await this.runWithPageDriver(transport, session, cleaned, input.images, abort.signal, progress)
+          return await this.runWithPageDriver(transport, session, cleaned, input.images, input.model, abort.signal, progress)
         } catch (error) {
           lastError = error
           const turnError = this.classifyTurnError(progress, error)
@@ -445,6 +496,7 @@ export class ChatGptWebEngine {
     session: StoredChatGptWebSession,
     cleanedPrompt: string,
     images: readonly HarnessRunImage[] | undefined,
+    model: string | undefined,
     signal: AbortSignal,
     progress: WebTurnProgress,
   ): Promise<{ sessionId: string }> {
@@ -478,6 +530,7 @@ export class ChatGptWebEngine {
         if (before.busy || before.pendingSend) throw this.pageBusyError()
         this.importUnseenTurns(session, before)
         assertTurnActive(signal)
+        await this.applyModel(driver, session, model, signal)
         await this.clearStaleAttachments(driver)
         if ((images?.length ?? 0) > 0) {
           progress.enter('attach')
@@ -514,6 +567,7 @@ export class ChatGptWebEngine {
     session: StoredChatGptWebSession,
     cleanedPrompt: string,
     images: readonly HarnessRunImage[] | undefined,
+    model: string | undefined,
     signal: AbortSignal,
     progress: WebTurnProgress,
   ): Promise<{ sessionId: string }> {
@@ -547,6 +601,7 @@ export class ChatGptWebEngine {
         if (before.busy || before.pendingSend) throw this.pageBusyError()
         this.importUnseenTurns(session, before)
         assertTurnActive(signal)
+        await this.applyModel(driver, session, model, signal)
         await this.clearStaleAttachments(driver)
         if ((images?.length ?? 0) > 0) {
           progress.enter('attach')
@@ -792,6 +847,50 @@ export class ChatGptWebEngine {
     } catch (error) {
       discardWebImages(staged)
       throw error
+    }
+  }
+
+  /**
+   * ND pins a model per chat. ChatGPT keeps the choice in its own switcher, so
+   * switch it before composing; turns never submit under an unexpected model.
+   */
+  private async applyModel(
+    driver: PageDriver,
+    session: StoredChatGptWebSession,
+    model: string | undefined,
+    signal: AbortSignal,
+  ): Promise<void> {
+    assertTurnActive(signal)
+    if (!model) {
+      if (session.model !== undefined) {
+        delete session.model
+        this.persistStore()
+      }
+      return
+    }
+    assertTurnActive(signal)
+    const result = await driver.evaluate<WebModelMenuResult>(chatGptModelMenuScript(model))
+    assertTurnActive(signal)
+    if (!result?.ok) throw new Error(this.modelSelectionError(result, model))
+    if (session.model !== model) {
+      session.model = model
+      this.persistStore()
+    }
+  }
+
+  private modelSelectionError(result: WebModelMenuResult | undefined, model: string): string {
+    const available = result?.available?.length ? ` ChatGPT offers: ${result.available.join(', ')}.` : ''
+    switch (result?.reason) {
+      case 'model-button-missing':
+        return "ChatGPT's model picker is not available in ND's Browser pane. Open chatgpt.com, sign in, and resend this message."
+      case 'model-menu-did-not-open':
+        return 'ChatGPT did not open its model menu. Reload the ChatGPT tab and resend this message.'
+      case 'model-not-found':
+        return `ChatGPT no longer offers "${model}" for this account.${available}`
+      case 'model-unavailable':
+        return `"${model}" is not available on this ChatGPT account right now.${available}`
+      default:
+        return `ChatGPT did not switch to "${model}".${available}`
     }
   }
 

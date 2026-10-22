@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net'
 import { join } from 'node:path'
 import { expect, test } from '@playwright/test'
 import { ChatGptWebEngine } from '../src/main/engines/chatgpt-web/chatgpt-web-engine.js'
-import { closeApp, launchApp, type LaunchedApp } from './fixtures.js'
+import { closeApp, launchApp, serveFakeOrigin, type LaunchedApp } from './fixtures.js'
 
 test.describe.configure({ mode: 'serial' })
 
@@ -101,3 +101,76 @@ for (const [name, markup] of [
     }
   })
 }
+
+test('ND chat switches the ChatGPT Web model through the site picker', async () => {
+  const { page, app } = launched
+  const fakeChatGptHtml = `<!doctype html><main><form><div class="ProseMirror" contenteditable="true" role="textbox"></div><button type="submit" disabled>Send</button></form>
+      <button type="button" aria-label="Select ChatGPT model">Medium</button></main>
+      <script>
+        const form = document.querySelector('form');
+        const editor = form.querySelector('[contenteditable]');
+        const main = document.querySelector('main');
+        const modelButton = document.querySelector('[aria-label="Select ChatGPT model"]');
+        const models = ['GPT-6', 'GPT-5.6 Sol'];
+        let selectedModel = models[0];
+        const closeModelMenu = () => document.querySelector('[role="menu"]')?.remove();
+        modelButton.addEventListener('click', () => {
+          if (document.querySelector('[role="menu"]')) return;
+          const menu = document.createElement('div');
+          menu.setAttribute('role', 'menu');
+          for (const model of models) {
+            const item = document.createElement('div');
+            item.setAttribute('role', 'menuitemradio');
+            item.setAttribute('aria-checked', model === selectedModel ? 'true' : 'false');
+            item.textContent = model;
+            item.addEventListener('click', () => {
+              selectedModel = model;
+              document.body.dataset.model = model;
+              closeModelMenu();
+            });
+            menu.appendChild(item);
+          }
+          document.body.appendChild(menu);
+        });
+        document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeModelMenu(); });
+        editor.addEventListener('input', () => { form.querySelector('button').disabled = !editor.textContent; });
+        form.addEventListener('submit', event => {
+          event.preventDefault();
+          const prompt = editor.textContent;
+          const conversation = document.createElement('div');
+          conversation.innerHTML = '<div><h5 hidden>You said:</h5><div>' + prompt + '</div></div>'
+            + '<div><h6 hidden>ChatGPT said:</h6><div class="MarkdownRoot-current"><p>ND_CHATGPT_E2E_REPLY: ' + prompt + '</p></div><button aria-label="Copy"></button></div>';
+          main.prepend(conversation);
+        });
+      </script>`
+  await serveFakeOrigin(app, 'chatgpt.com', fakeChatGptHtml)
+
+  const enginePicker = page.getByRole('combobox', { name: 'Coding engine' })
+  if (await enginePicker.isVisible().catch(() => false)) {
+    await enginePicker.click()
+    const chatGptOption = page.getByRole('option', { name: 'ChatGPT Web', exact: true })
+    if (await chatGptOption.isVisible().catch(() => false)) await chatGptOption.click()
+  }
+  const textarea = page.locator('aside', { hasText: 'ChatGPT Project:' }).locator('textarea').last()
+  await expect(textarea).toBeVisible()
+  await textarea.fill('Say hello with the default model')
+  await textarea.press('Enter')
+  await expect(page.getByText('ND_CHATGPT_E2E_REPLY: Say hello with the default model').first()).toBeVisible({ timeout: 60_000 })
+
+  const modelButton = page.getByRole('button', { name: 'ChatGPT Web model' })
+  await expect(modelButton).toBeVisible()
+  await modelButton.click()
+  await page.getByRole('menuitemradio', { name: 'GPT-5.6 Sol' }).click()
+  await expect(modelButton).toContainText('GPT-5.6 Sol')
+  await textarea.fill('Say hello with Sol')
+  await textarea.press('Enter')
+  await expect(page.getByText('ND_CHATGPT_E2E_REPLY: Say hello with Sol').first()).toBeVisible({ timeout: 60_000 })
+  await expect.poll(async () => app.evaluate(async ({ webContents }) => {
+    for (const contents of webContents.getAllWebContents()) {
+      if (!contents.getURL().startsWith('https://chatgpt.com')) continue
+      const model = await contents.executeJavaScript('document.body.dataset.model || ""', true).catch(() => '')
+      if (model) return model
+    }
+    return ''
+  })).toBe('GPT-5.6 Sol')
+})

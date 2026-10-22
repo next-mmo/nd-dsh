@@ -256,7 +256,7 @@ const api: DesktopApi = {
     sessions: () => ipcRenderer.invoke(IPC.enginesSessions),
     browserTab: (sessionId) => ipcRenderer.invoke(IPC.enginesBrowserTab, sessionId),
     transcript: (sessionId) => ipcRenderer.invoke(IPC.enginesTranscript, sessionId),
-    models: (engineId) => ipcRenderer.invoke(IPC.enginesModels, engineId),
+    models: (engineId, sessionId) => ipcRenderer.invoke(IPC.enginesModels, engineId, sessionId),
   },
   zcodeConfig: {
     read: () => ipcRenderer.invoke(IPC.zcodeConfigRead),

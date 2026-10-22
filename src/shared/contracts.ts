@@ -291,6 +291,8 @@ export interface EngineSessionSummary {
   running: boolean
   /** Browser tab owned by this chat; selecting it activates that tab. */
   browserTabId?: string
+  /** Model ND pinned for this chat; web engines apply it to the site. */
+  model?: string
   /** ND-side archival flag, resolved from the desktop archive store. */
   archived?: boolean
 }
@@ -367,6 +369,10 @@ export interface GeminiGemBinding {
 export interface EngineModelOption {
   id: string
   name?: string
+  description?: string
+  /** For web engines: the model the site has selected right now. */
+  selected?: boolean
+  disabled?: boolean
 }
 
 export type DshSurface = 'dsh' | 'workbench'
@@ -692,8 +698,12 @@ export interface DesktopApi {
     /** Activate (or recreate) the browser tab owned by a web-engine chat. */
     browserTab(sessionId: string): Promise<string | null>
     transcript(sessionId: string): Promise<EngineSessionTranscript>
-    /** Native model catalog for engines that expose one; empty for the rest. */
-    models(engineId: string): Promise<EngineModelOption[]>
+    /**
+     * Native model catalog for engines that expose one; empty for the rest.
+     * Web engines read the live list from the chat's page when a session id
+     * (or an already-open page for that site) is available.
+     */
+    models(engineId: string, sessionId?: string): Promise<EngineModelOption[]>
   }
   /**
    * ND's GUI for the ZCode CLI's own model-provider config

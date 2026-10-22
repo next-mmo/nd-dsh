@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net'
 import { join } from 'node:path'
 import { expect, test } from '@playwright/test'
 import { GeminiWebEngine } from '../src/main/engines/gemini-web/gemini-web-engine.js'
-import { closeApp, launchApp, type LaunchedApp } from './fixtures.js'
+import { closeApp, launchApp, serveFakeOrigin, type LaunchedApp } from './fixtures.js'
 
 test.describe.configure({ mode: 'serial' })
 
@@ -70,15 +70,43 @@ test('links, persists, and clears a Gemini skill from the chat panel', async () 
 
 test('ND chat round-trips a prompt through Gemini Web and renders the reply', async () => {
   const { page, app } = launched
-  const requestedPaths: string[] = []
-  const server = createServer((request, response) => {
-    if (request.url) requestedPaths.push(request.url)
-    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-    response.end(`<!doctype html><main><form><rich-textarea><div class="ql-editor" contenteditable="true"></div></rich-textarea><button type="submit" disabled aria-label="Send message">Send</button></form></main>
+  const fakeGeminiHtml = `<!doctype html><main><form><rich-textarea><div class="ql-editor" contenteditable="true"></div></rich-textarea><button type="submit" disabled aria-label="Send message">Send</button></form>
+      <button type="button" data-test-id="bard-mode-menu-button" aria-label="Open mode picker, currently Flash">Flash</button></main>
       <script>
         const form = document.querySelector('form');
         const editor = form.querySelector('[contenteditable]');
         const main = document.querySelector('main');
+        const modelButton = document.querySelector('[data-test-id="bard-mode-menu-button"]');
+        const models = [
+          { id: '3.8 Flash', description: 'All-around help' },
+          { id: '3.1 Pro', description: 'Advanced reasoning' },
+        ];
+        let selectedModel = '3.8 Flash';
+        const closeModelMenu = () => document.querySelector('gem-menu')?.remove();
+        modelButton.addEventListener('click', () => {
+          if (document.querySelector('gem-menu')) return;
+          const menu = document.createElement('gem-menu');
+          menu.setAttribute('role', 'menu');
+          menu.setAttribute('data-test-id', 'gem-mode-menu');
+          for (const model of models) {
+            const item = document.createElement('gem-menu-item');
+            item.setAttribute('role', 'menuitem');
+            item.setAttribute('data-mode-id', model.id.replace(/\\W+/g, '-'));
+            item.setAttribute('data-test-id', 'bard-mode-option-' + model.id.replace(/\\W+/g, '-'));
+            if (model.id === selectedModel) item.classList.add('selected');
+            item.innerHTML = '<div class="label-container"><span class="label">' + model.id + '</span><div class="sublabel">' + model.description + '</div></div>';
+            item.addEventListener('click', () => {
+              selectedModel = model.id;
+              document.body.dataset.model = model.id;
+              modelButton.textContent = model.id.endsWith('Pro') ? 'Pro' : 'Flash';
+              modelButton.setAttribute('aria-label', 'Open mode picker, currently ' + modelButton.textContent);
+              closeModelMenu();
+            });
+            menu.appendChild(item);
+          }
+          document.body.appendChild(menu);
+        });
+        document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeModelMenu(); });
         editor.addEventListener('input', () => { form.querySelector('button').disabled = !editor.textContent; });
         form.addEventListener('submit', event => {
           event.preventDefault();
@@ -86,29 +114,37 @@ test('ND chat round-trips a prompt through Gemini Web and renders the reply', as
           main.insertAdjacentHTML('afterbegin', '<user-query-content><div class="query-text-content"><div class="markdown"><p>' + prompt + '</p></div></div></user-query-content>');
           setTimeout(() => main.insertAdjacentHTML('beforeend', '<model-response-content><message-content><div class="markdown"><p>ND_GEMINI_E2E_REPLY: ' + prompt + '</p></div></message-content><button aria-label="Copy"></button></model-response-content>'), 400);
         });
-      </script>`)
-  })
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
-  const fakeGemini = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`
-  try {
-    // Serve the real Gemini origin from the local fixture: no Google login in CI.
-    await app.evaluate(({ webContents, session }, target) => {
-      const redirect = (details: { url: string }, callback: (r: { redirectURL?: string }) => void) => callback({ redirectURL: target.replace(/\/$/, '') + new URL(details.url).pathname })
-      const sessions = new Set([session.defaultSession, ...webContents.getAllWebContents().map((contents) => contents.session)])
-      for (const item of sessions) item.webRequest.onBeforeRequest({ urls: ['https://gemini.google.com/*'] }, redirect)
-    }, fakeGemini)
+      </script>`
+  // Serve the real Gemini origin from the fixed page: no Google login in CI.
+  await serveFakeOrigin(app, 'gemini.google.com', fakeGeminiHtml)
 
-    await page.evaluate(() => (window as unknown as { ndDsh: { geminiWeb: { setGemBinding(root: string, input: string): Promise<unknown> } } }).ndDsh.geminiWeb.setGemBinding('', 'https://gemini.google.com/app/e2eChatLink9'))
-    const textarea = page.locator('aside', { hasText: 'Gemini Skill:' }).locator('textarea').last()
-    await expect(textarea).toBeVisible()
-    await textarea.fill('Say hello from the e2e')
-    await textarea.press('Enter')
-    await expect(page.getByText('ND_GEMINI_E2E_REPLY: Say hello from the e2e').first()).toBeVisible({ timeout: 60_000 })
-    // ND opened the bound skill chat, not the default Gemini home.
-    expect(requestedPaths).toContain('/app/e2eChatLink9')
-  } finally {
-    await new Promise<void>((resolve) => server.close(() => resolve()))
-  }
+  await page.evaluate(() => (window as unknown as { ndDsh: { geminiWeb: { setGemBinding(root: string, input: string): Promise<unknown> } } }).ndDsh.geminiWeb.setGemBinding('', 'https://gemini.google.com/app/e2eChatLink9'))
+  const textarea = page.locator('aside', { hasText: 'Gemini Skill:' }).locator('textarea').last()
+  await expect(textarea).toBeVisible()
+  await textarea.fill('Say hello from the e2e')
+  await textarea.press('Enter')
+  await expect(page.getByText('ND_GEMINI_E2E_REPLY: Say hello from the e2e').first()).toBeVisible({ timeout: 60_000 })
+  // ND opened the bound skill chat, not the default Gemini home.
+  await expect.poll(async () => app.evaluate(({ webContents }) =>
+    webContents.getAllWebContents().some((contents) => contents.getURL().includes('/app/e2eChatLink9')))).toBe(true)
+
+  // Model support reads Gemini's own menu and pins the choice for the chat.
+  const modelButton = page.getByRole('button', { name: 'Gemini Web model' })
+  await expect(modelButton).toBeVisible()
+  await modelButton.click()
+  await page.getByRole('menuitemradio', { name: '3.1 Pro' }).click()
+  await expect(modelButton).toContainText('3.1 Pro')
+  await textarea.fill('Use the pro model')
+  await textarea.press('Enter')
+  await expect(page.getByText('ND_GEMINI_E2E_REPLY: Use the pro model').first()).toBeVisible({ timeout: 60_000 })
+  await expect.poll(async () => app.evaluate(async ({ webContents }) => {
+    for (const contents of webContents.getAllWebContents()) {
+      if (!contents.getURL().startsWith('https://gemini.google.com')) continue
+      const model = await contents.executeJavaScript('document.body.dataset.model || ""', true).catch(() => '')
+      if (model) return model
+    }
+    return ''
+  })).toBe('3.1 Pro')
 })
 
 test('detects and sends through the Gemini composer in ND\'s built-in browser', async () => {

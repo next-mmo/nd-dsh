@@ -387,6 +387,7 @@ export class EngineSessionRouter {
       const result = await engine.run(appendWebTextFiles(optimizedPrompt, options?.files ?? [], 'ChatGPT Web'), {
         ...(options?.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
         cwd: workspaceRoot,
+        ...(options?.model !== undefined ? { model: options.model } : {}),
         ...(options?.images?.length ? { images: options.images } : {}),
       })
       // ChatGPT temporarily owns the canonical visible browser while the turn
@@ -424,6 +425,7 @@ export class EngineSessionRouter {
       const result = await engine.run(appendWebTextFiles(optimizedPrompt, options?.files ?? [], 'Gemini Web'), {
         ...(options?.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
         cwd: workspaceRoot,
+        ...(options?.model !== undefined ? { model: options.model } : {}),
         ...(options?.images?.length ? { images: options.images } : {}),
       })
       // Like ChatGPT Web, Gemini owns the canonical visible browser while the
@@ -643,9 +645,11 @@ export class EngineSessionRouter {
    * Native model catalog for engines that expose one; engines whose model
    * configuration has no ND-visible picker return an empty list.
    */
-  async models(engineId: string): Promise<EngineModelOption[]> {
+  async models(engineId: string, sessionId?: string): Promise<EngineModelOption[]> {
     const direct = this.directEngines.get(engineId)
     if (direct) return direct.listModels()
+    if (engineId === GEMINI_WEB_ENGINE_ID) return await this.geminiWeb?.listModels(sessionId) ?? []
+    if (engineId === CHATGPT_WEB_ENGINE_ID) return await this.chatGptWeb?.listModels(sessionId) ?? []
     return []
   }
 

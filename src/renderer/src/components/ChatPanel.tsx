@@ -312,6 +312,8 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   // Native model selection for engines that expose a catalog.
   // `null` asks the adapter to use its native configured default.
   const [engineModels, setEngineModels] = useState<EngineModelOption[]>([])
+  const [engineModelsLoading, setEngineModelsLoading] = useState(false)
+  const [engineModelsRefresh, setEngineModelsRefresh] = useState(0)
   const [engineModelSelections, setEngineModelSelections] = useState<Record<string, string | null>>({})
   const [engineModelMenuOpen, setEngineModelMenuOpen] = useState(false)
   // GUI for the ZCode CLI's own model-provider config (~/.zcode/cli/config.json);
@@ -395,12 +397,29 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
       ? draftEngineId
       : ND_HARNESS_ENGINE_ID
   const onHarnessThread = activeEngineId === ND_HARNESS_ENGINE_ID
-  const supportsEngineModels = activeEngineId === ANTIGRAVITY_ENGINE_ID || activeEngineId === CODEX_CLI_ENGINE_ID || activeEngineId === ZCODE_CLI_ENGINE_ID || activeEngineId === ND_NATIVE_ENGINE_ID || activeEngineId === PI_CODING_ENGINE_ID || activeEngineId === OPENCODE_CLI_ENGINE_ID
+  // Web chats pin a model on the provider's own site; direct CLI engines expose
+  // a native model catalog. Both render the same composer picker.
+  const isWebChatEngine = activeEngineId === GEMINI_WEB_ENGINE_ID || activeEngineId === CHATGPT_WEB_ENGINE_ID
+  const supportsEngineModels = isWebChatEngine || activeEngineId === ANTIGRAVITY_ENGINE_ID || activeEngineId === CODEX_CLI_ENGINE_ID || activeEngineId === ZCODE_CLI_ENGINE_ID || activeEngineId === ND_NATIVE_ENGINE_ID || activeEngineId === PI_CODING_ENGINE_ID || activeEngineId === OPENCODE_CLI_ENGINE_ID
   const engineModel = engineModelSelections[activeEngineId] ?? null
+  const activeEngineName = engines.find((engine) => engine.id === activeEngineId)?.name ?? 'Codex CLI'
+  const siteEngineModel = isWebChatEngine ? engineModels.find((model) => model.selected) : undefined
+  const siteEngineModelLabel = siteEngineModel ? compactModelLabel(siteEngineModel.name ?? siteEngineModel.id) : null
+  const engineModelTriggerLabel = engineModel
+    ? compactModelLabel(engineModel)
+    : isWebChatEngine
+      ? siteEngineModelLabel ?? 'Site model'
+      : 'Native model'
+  const engineModelTriggerTitle = engineModel
+    ? engineModel
+    : isWebChatEngine
+      ? siteEngineModelLabel
+        ? `${activeEngineName} is using ${siteEngineModelLabel} on the site. Choose a model to pin it for ND turns.`
+        : `${activeEngineName} follows the model selected on its site. Choose a model to pin it for ND turns.`
+      : `${activeEngineName} keeps its own configured model`
   const setEngineModel = (model: string | null): void => {
     setEngineModelSelections((current) => ({ ...current, [activeEngineId]: model }))
   }
-  const activeEngineName = engines.find((engine) => engine.id === activeEngineId)?.name ?? 'Codex CLI'
   const activeWorkspaceRoot = workspaceRoot ?? terminalCwd ?? ''
   const currentProjectName = workspaceName ?? ''
   // A root bound to a listed project is already shown in PROJECTS with its ACTIVE
@@ -891,26 +910,44 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
     }
   }, [activeSessionId, engineSessionIds])
 
-  // Engines with a native model catalog load it once per active
-  // engine; each engine keeps its own selection when switching between them.
+  // Engines with a native model catalog load it once per active engine; web
+  // chats read the provider's live menu from the chat's tab. Each engine keeps
+  // its own selection when switching between them.
   useEffect(() => {
-    setEngineModelMenuOpen(false)
-    setEngineModels([])
     if (!supportsEngineModels) {
+      setEngineModels([])
+      setEngineModelsLoading(false)
       return
     }
     let cancelled = false
-    void window.ndDsh.engines.models(activeEngineId)
+    setEngineModelsLoading(true)
+    void window.ndDsh.engines.models(activeEngineId, activeSessionId ?? undefined)
       .then((options) => {
-        if (!cancelled) setEngineModels(options)
+        if (cancelled) return
+        setEngineModels(options)
+        setEngineModelsLoading(false)
       })
       .catch(() => {
-        if (!cancelled) setEngineModels([])
+        if (cancelled) return
+        setEngineModels([])
+        setEngineModelsLoading(false)
       })
     return () => {
       cancelled = true
     }
-  }, [activeEngineId, supportsEngineModels])
+  }, [activeEngineId, activeSessionId, supportsEngineModels, engineModelsRefresh])
+
+  // A web chat stores its pinned model on the engine session. Switching chats
+  // restores that chat's model instead of reusing the previous chat's choice.
+  const activeEngineSessionId = activeEngineSession?.sessionId ?? null
+  const activeEngineSessionModel = activeEngineSession?.model ?? null
+  useEffect(() => {
+    setEngineModelMenuOpen(false)
+    if (!isWebChatEngine || activeEngineSessionId === null) return
+    setEngineModelSelections((current) => current[activeEngineId] === activeEngineSessionModel
+      ? current
+      : { ...current, [activeEngineId]: activeEngineSessionModel })
+  }, [activeEngineId, activeEngineSessionId, activeEngineSessionModel, isWebChatEngine])
 
   // Provider routes edited in settings (model removed/renamed, provider
   // disabled) must reach open chat threads: refetch the session's catalog so
@@ -2869,16 +2906,18 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
               <div className="relative">
                 <button
                   className="flex min-w-0 max-w-[135px] shrink items-center gap-1 rounded-md border border-border-soft bg-secondary px-1.5 py-[3px] text-[10px] text-soft transition-colors hover:border-border-strong hover:bg-accent hover:text-foreground [&_svg]:size-3 [&_svg]:shrink-0"
-                  title={engineModel ?? `${activeEngineName} keeps its own configured model`}
+                  title={engineModelTriggerTitle}
+                  aria-label={`${activeEngineName} model`}
                   onClick={() => {
                     const nextOpen = !engineModelMenuOpen
                     setEngineModelMenuOpen(nextOpen)
+                    if (nextOpen) setEngineModelsRefresh((value) => value + 1)
                     setModelMenuOpen(false)
                     setPermissionMenuOpen(false)
                     closeMention()
                   }}
                 >
-                  <span className="truncate font-medium">{engineModel ? compactModelLabel(engineModel) : 'Native model'}</span>
+                  <span className="truncate font-medium">{engineModelTriggerLabel}</span>
                   <ChevronDownIcon />
                 </button>
 
@@ -2901,8 +2940,12 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
                         onClick={() => { setEngineModel(null); setEngineModelMenuOpen(false) }}
                       >
                         <span className="min-w-0">
-                          <span className="block truncate text-[11px] font-medium">Native default</span>
-                          <span className="block truncate font-mono text-[8px] text-fainter">whatever the CLI is configured with</span>
+                          <span className="block truncate text-[11px] font-medium">{isWebChatEngine ? 'Site model' : 'Native default'}</span>
+                          <span className="block truncate font-mono text-[8px] text-fainter">
+                            {isWebChatEngine
+                              ? siteEngineModelLabel ? `currently ${siteEngineModelLabel} on the site` : 'whatever the site currently has selected'
+                              : 'whatever the CLI is configured with'}
+                          </span>
                         </span>
                         {engineModel === null ? <CheckIcon className="size-3.5 shrink-0 text-primary" /> : null}
                       </button>
@@ -2913,24 +2956,39 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
                             type="button"
                             role="menuitemradio"
                             aria-checked={selected}
+                            disabled={model.disabled === true}
                             className={cn(
                               'flex w-full items-center justify-between gap-3 rounded-lg px-2.5 py-2 text-left transition-colors',
                               selected ? 'bg-accent text-foreground' : 'text-soft hover:bg-accent hover:text-foreground',
+                              model.disabled === true && 'cursor-not-allowed opacity-45 hover:bg-transparent',
                             )}
                             key={model.id}
-                            title={model.id}
+                            title={model.disabled === true ? `${model.id} is unavailable on this account` : model.description ?? model.id}
                             onClick={() => { setEngineModel(model.id); setEngineModelMenuOpen(false) }}
                           >
                             <span className="min-w-0">
                               <span className="block truncate text-[11px] font-medium">{model.name ?? model.id}</span>
-                              {model.name ? <span className="block truncate font-mono text-[8px] text-fainter">{model.id}</span> : null}
+                              {model.description ? (
+                                <span className="mt-0.5 block truncate text-[9px] text-faint">{model.description}</span>
+                              ) : model.name ? (
+                                <span className="block truncate font-mono text-[8px] text-fainter">{model.id}</span>
+                              ) : null}
                             </span>
-                            {selected ? <CheckIcon className="size-3.5 shrink-0 text-primary" /> : null}
+                            <span className="flex shrink-0 items-center gap-1.5">
+                              {model.selected && !selected ? <span className="text-[8px] font-medium uppercase tracking-[0.08em] text-fainter">On site</span> : null}
+                              {selected ? <CheckIcon className="size-3.5 shrink-0 text-primary" /> : null}
+                            </span>
                           </button>
                         )
                       })}
-                      {engineModels.length === 0 ? (
-                        <div className="px-2.5 py-2 text-[10px]/[1.4] text-faint">Model catalog is unavailable; {activeEngineName} keeps its native configuration.</div>
+                      {engineModelsLoading ? (
+                        <div className="flex items-center gap-2 px-2.5 py-2 text-[10px] text-faint"><SpinnerIcon className="size-3 animate-spin" />Reading {activeEngineName}&rsquo;s models…</div>
+                      ) : engineModels.length === 0 ? (
+                        <div className="px-2.5 py-2 text-[10px]/[1.4] text-faint">
+                          {isWebChatEngine
+                            ? `Open this chat's ${activeEngineName} page to load its model list.`
+                            : `Model catalog is unavailable; ${activeEngineName} keeps its native configuration.`}
+                        </div>
                       ) : null}
                     </div>
                     {activeEngineId === ZCODE_CLI_ENGINE_ID ? (

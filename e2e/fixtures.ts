@@ -141,6 +141,27 @@ export interface LaunchAppOptions {
   useConfiguredModels?: boolean
 }
 
+/**
+ * Serve a fixed page for one real origin without leaving it. A webRequest
+ * redirectURL works by navigating to localhost, which changes `location.origin`
+ * and trips the engines' origin guard; protocol.handle keeps the requested URL
+ * and origin intact, so the page behaves like the provider site under test.
+ */
+export async function serveFakeOrigin(app: ElectronApplication, host: string, html: string): Promise<void> {
+  await app.evaluate(async ({ session, webContents, net }, input) => {
+    const sessions = new Set([session.defaultSession, ...webContents.getAllWebContents().map((contents) => contents.session)])
+    for (const target of sessions) {
+      await target.protocol.unhandle('https').catch(() => undefined)
+      target.protocol.handle('https', (request) => {
+        if (new URL(request.url).hostname === input.host) {
+          return new Response(input.html, { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } })
+        }
+        return net.fetch(request, { bypassCustomProtocolHandlers: true })
+      })
+    }
+  }, { host, html })
+}
+
 export async function launchApp(options: LaunchAppOptions = {}): Promise<LaunchedApp> {
   const userDataDir = options.userDataDir ?? await mkdtemp(join(tmpdir(), 'nd-dsh-e2e-'))
   await seedProviders(userDataDir, options.useConfiguredModels ?? false)
