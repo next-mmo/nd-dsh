@@ -35,6 +35,19 @@ const corepack = process.platform === 'win32' ? 'corepack.cmd' : 'corepack'
 const cargo = process.platform === 'win32' ? 'cargo.exe' : 'cargo'
 const harnessEnv = { ...process.env, CI: 'true' }
 
+/**
+ * Packages ND proves unreachable from the shipped `web` profile and therefore
+ * refuses to redistribute.
+ *
+ * Both lists are empty for the current Harness sync: `apps/web` now depends on
+ * the voice input bundle, which depends on the SenseVoice plugin and its
+ * `sherpa-onnx-node` native binding, so neither is unreachable any more.
+ * Re-add a name only with the reachability evidence that proved it
+ * unreachable, and keep the assertion below satisfied.
+ */
+const PRUNED_UNREACHABLE_PACKAGES = []
+const PRUNED_UNREACHABLE_PREFIXES = []
+
 assertInsideRoot(stageRoot)
 // Redistribute the same plain Node that validates the deployed Harness closure.
 // Electron's run-as-node ABI is not accepted by upstream's native loaders.
@@ -277,28 +290,6 @@ async function pruneHarnessDevelopmentArtifacts(closureRoot) {
   await walk(closureRoot)
   return { files, bytes }
 }
-
-/**
- * Packages ND proves unreachable from the shipped `web` profile and therefore
- * refuses to redistribute.
- *
- * Evidence gathered against the deployed closure: nothing in the web-app
- * bundle, the shipped profiles, or any agent preset references the SenseVoice
- * speech plugin, and its only consumer of `sherpa-onnx-node` is that plugin's
- * own worker. No remaining package declares any of these names, so removing
- * them cannot break Node resolution for anything that ships.
- *
- * The assertion below keeps that true: if a future Harness sync wires one of
- * these into the profile or makes another package declare it, staging fails
- * here with the offending edge named, instead of shipping a runtime that
- * crashes the first time a user reaches the feature - or silently shipping
- * tens of megabytes nobody can reach.
- */
-const PRUNED_UNREACHABLE_PACKAGES = [
-  '@deepseek-ai/dsh-experimental-speech-to-text-sensevoice',
-]
-/** Platform binaries are named `sherpa-onnx-<platform>`; prune the family. */
-const PRUNED_UNREACHABLE_PREFIXES = ['sherpa-onnx-']
 
 async function pruneUnreachablePackages(closureRoot) {
   const isPruned = (name) =>
