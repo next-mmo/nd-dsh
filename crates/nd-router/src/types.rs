@@ -53,6 +53,10 @@ pub struct AccountRecord {
     pub secret_ref: Option<String>,
     #[serde(default)]
     pub env_dir: Option<String>,
+    /// CLI lane account selector (for example the agy `AGY_ACCOUNT` name).
+    /// Not a secret: it names an account the external CLI already signed in.
+    #[serde(default)]
+    pub selector: Option<String>,
     pub is_active: bool,
     pub priority: i32,
     #[serde(default)]
@@ -170,6 +174,8 @@ pub struct AccountView {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub env_dir: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub selector: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub cooldown_until_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_status: Option<String>,
@@ -199,6 +205,7 @@ impl AccountView {
             priority: record.priority,
             has_secret: record.secret_ref.is_some(),
             env_dir: record.env_dir.clone(),
+            selector: record.selector.clone(),
             cooldown_until_ms: record.cooldown_until_ms,
             last_status: record.last_status.clone(),
         }
@@ -245,6 +252,7 @@ pub struct SaveAccountInput {
     pub kind: Option<String>,
     pub api_key: Option<String>,
     pub env_dir: Option<String>,
+    pub selector: Option<String>,
     pub is_active: Option<bool>,
     pub priority: Option<i32>,
     #[serde(default)]

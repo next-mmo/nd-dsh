@@ -1,4 +1,5 @@
 pub mod catalog;
+pub mod cli;
 pub mod http;
 pub mod server;
 pub mod state;

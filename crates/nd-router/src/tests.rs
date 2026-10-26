@@ -1,5 +1,5 @@
 use crate::state::RouterState;
-use crate::types::{ComboEntry, SaveComboInput, SaveProviderInput};
+use crate::types::{ComboEntry, SaveAccountInput, SaveComboInput, SaveProviderInput};
 use axum::http::StatusCode;
 use axum::routing::post;
 use axum::{Json, Router};
@@ -173,4 +173,147 @@ async fn does_not_fall_back_on_auth_failures() {
         .expect_err("auth failure must stop the chain");
     assert_eq!(error.status, StatusCode::UNAUTHORIZED);
     assert_eq!(calls.lock().unwrap().as_slice(), ["auth"]);
+}
+
+/// The ND_AGY_BIN override is process-global, so agy-lane tests serialize on
+/// this lock while it is set.
+static AGY_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+fn antigravity_input(id: &str, models: &[&str]) -> SaveProviderInput {
+    SaveProviderInput {
+        id: Some(id.to_owned()),
+        kind: Some("antigravity".to_owned()),
+        name: Some("Antigravity".to_owned()),
+        base_url: None,
+        models: Some(models.iter().map(|model| (*model).to_owned()).collect()),
+        is_active: Some(true),
+        priority: Some(0),
+        api_key: None,
+        clear_secret: false,
+    }
+}
+
+fn cli_account(provider_id: &str, selector: &str) -> SaveAccountInput {
+    SaveAccountInput {
+        provider_id: provider_id.to_owned(),
+        id: None,
+        label: selector.to_owned(),
+        kind: Some("cli".to_owned()),
+        api_key: None,
+        env_dir: None,
+        selector: Some(selector.to_owned()),
+        is_active: Some(true),
+        priority: Some(0),
+        clear_secret: false,
+    }
+}
+
+fn write_agy_stub(dir: &std::path::Path) -> std::path::PathBuf {
+    let stub = dir.join("agy-stub.cmd");
+    std::fs::write(
+        &stub,
+        "@echo off\r\necho {\"conversation_id\":\"stub\",\"status\":\"SUCCESS\",\"response\":\"acct:%AGY_ACCOUNT%\",\"duration_seconds\":1.5,\"num_turns\":1,\"usage\":{\"input_tokens\":11,\"output_tokens\":3,\"total_tokens\":14}}\r\n",
+    )
+    .expect("write stub");
+    stub
+}
+
+#[tokio::test]
+async fn antigravity_lane_runs_the_cli_with_the_account_selector() {
+    let _env = AGY_ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let temp = tempfile::tempdir().expect("tempdir");
+    let stub = write_agy_stub(temp.path());
+    // Test-only override, serialized by AGY_ENV_LOCK.
+    unsafe { std::env::set_var("ND_AGY_BIN", &stub) };
+
+    let state = RouterState::new(temp.path().to_path_buf()).expect("state");
+    state.save_provider(antigravity_input("agy", &["stub-model"])).expect("provider");
+    state.save_account(cli_account("agy", "account-1")).expect("account");
+    state
+        .save_combo(combo_input("free-agy", "priority", vec![combo_entry("agy", "stub-model")]))
+        .expect("combo");
+
+    let response = state
+        .chat(
+            json!({"model": "free-agy", "messages": [{"role": "user", "content": "hi"}]}),
+            None,
+            "/v1/chat/completions",
+        )
+        .await
+        .expect("chat");
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.expect("body");
+    let value: Value = serde_json::from_slice(&bytes).expect("json");
+    assert_eq!(value["model"], "stub-model");
+    assert_eq!(value["choices"][0]["message"]["content"], "acct:account-1");
+    assert_eq!(value["usage"]["prompt_tokens"], 11);
+    assert_eq!(value["usage"]["total_tokens"], 14);
+
+    let usage = state.usage_summary();
+    assert_eq!(usage["ok"], 1);
+
+    unsafe { std::env::remove_var("ND_AGY_BIN") };
+}
+
+#[tokio::test]
+async fn antigravity_lane_streams_sse() {
+    let _env = AGY_ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let temp = tempfile::tempdir().expect("tempdir");
+    let stub = write_agy_stub(temp.path());
+    unsafe { std::env::set_var("ND_AGY_BIN", &stub) };
+
+    let state = RouterState::new(temp.path().to_path_buf()).expect("state");
+    state.save_provider(antigravity_input("agy", &["stub-model"])).expect("provider");
+    state
+        .save_combo(combo_input("stream-agy", "priority", vec![combo_entry("agy", "stub-model")]))
+        .expect("combo");
+
+    let response = state
+        .chat(
+            json!({"model": "stream-agy", "messages": [{"role": "user", "content": "hi"}], "stream": true}),
+            None,
+            "/v1/chat/completions",
+        )
+        .await
+        .expect("chat");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get("content-type").and_then(|value| value.to_str().ok()),
+        Some("text/event-stream")
+    );
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.expect("body");
+    let text = String::from_utf8(bytes.to_vec()).expect("utf8");
+    assert!(text.contains("acct:"));
+    assert!(text.contains("data: [DONE]"));
+
+    unsafe { std::env::remove_var("ND_AGY_BIN") };
+}
+
+#[tokio::test]
+async fn antigravity_test_provider_runs_the_cli() {
+    let _env = AGY_ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let temp = tempfile::tempdir().expect("tempdir");
+    let stub = write_agy_stub(temp.path());
+    unsafe { std::env::set_var("ND_AGY_BIN", &stub) };
+
+    let state = RouterState::new(temp.path().to_path_buf()).expect("state");
+    state.save_provider(antigravity_input("agy", &["stub-model"])).expect("provider");
+    let result = state.test_provider("agy").await.expect("test");
+    assert_eq!(result["ok"], true);
+    assert_eq!(result["statusCode"], 200);
+
+    unsafe { std::env::remove_var("ND_AGY_BIN") };
+}
+
+#[test]
+fn antigravity_prompt_flattens_messages_with_roles() {
+    let prompt = crate::cli::prompt_from_messages(&[
+        json!({"role": "system", "content": "Be terse."}),
+        json!({"role": "user", "content": "hello"}),
+        json!({"role": "assistant", "content": "hi"}),
+        json!({"role": "user", "content": [{"type": "text", "text": "bye"}]}),
+    ]);
+    assert_eq!(prompt, "System: Be terse.\n\nUser: hello\n\nAssistant: hi\n\nUser: bye");
+    let single = crate::cli::prompt_from_messages(&[json!({"role": "user", "content": "just this"})]);
+    assert_eq!(single, "just this");
 }

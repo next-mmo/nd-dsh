@@ -36,6 +36,7 @@ export function RouterSettings({ onError }: RouterSettingsProps) {
   const [busy, setBusy] = useState<string | null>(null)
   const [tests, setTests] = useState<Record<string, RouterTestResult>>({})
 
+  const [providerKind, setProviderKind] = useState<'openai-compatible' | 'antigravity'>('openai-compatible')
   const [providerName, setProviderName] = useState('')
   const [providerBaseUrl, setProviderBaseUrl] = useState('')
   const [providerModels, setProviderModels] = useState('')
@@ -82,8 +83,22 @@ export function RouterSettings({ onError }: RouterSettingsProps) {
 
   const addProvider = (): void => {
     const models = providerModels.split(/[\n,]/).map((model) => model.trim()).filter(Boolean)
-    if (!providerName.trim() || !providerBaseUrl.trim()) {
-      onError('Give the provider a name and a base URL.')
+    if (!providerName.trim()) {
+      onError('Give the provider a name.')
+      return
+    }
+    if (providerKind === 'antigravity') {
+      apply('provider', () => window.ndDshRouter.saveProvider({
+        kind: 'antigravity',
+        name: providerName.trim(),
+        models,
+      }))
+      setProviderName('')
+      setProviderModels('')
+      return
+    }
+    if (!providerBaseUrl.trim()) {
+      onError('Give the provider a base URL.')
       return
     }
     apply('provider', () => window.ndDshRouter.saveProvider({
@@ -144,7 +159,8 @@ export function RouterSettings({ onError }: RouterSettingsProps) {
           </SettingsRow>
           <SettingsNote>
             Free lanes first: point an OpenAI-compatible provider at a local plugin gateway (for example dsh-our-free-model),
-            then order providers inside a combo. Prompt Shield still runs before anything leaves ND.
+            or add Antigravity to route the installed agy CLI's free models across accounts. Prompt Shield still runs before
+            anything leaves ND.
           </SettingsNote>
         </div>
       </SettingsSection>
@@ -161,22 +177,56 @@ export function RouterSettings({ onError }: RouterSettingsProps) {
               onToggle={(enabled) => apply(`toggle:${provider.id}`, () => window.ndDshRouter.saveProvider({ id: provider.id, isActive: enabled }))}
               onTest={() => runTest(provider.id)}
               onRemove={() => apply(`remove:${provider.id}`, () => window.ndDshRouter.deleteProvider(provider.id))}
-              onAddAccount={(label, apiKey) => apply(`account:${provider.id}`, () => window.ndDshRouter.saveAccount({ providerId: provider.id, label, apiKey }))}
+              onAddAccount={(input) => apply(`account:${provider.id}`, () => window.ndDshRouter.saveAccount({
+                providerId: provider.id,
+                label: input.label,
+                ...(provider.kind === 'antigravity'
+                  ? { kind: 'cli' as const, selector: input.selector }
+                  : { apiKey: input.apiKey }),
+              }))}
               onRemoveAccount={(accountId) => apply(`account-remove:${provider.id}`, () => window.ndDshRouter.deleteAccount(provider.id, accountId))}
             />
           ))}
-          {providers.length === 0 ? <SettingsNote>No providers yet. Add an OpenAI-compatible endpoint below.</SettingsNote> : null}
+          {providers.length === 0 ? <SettingsNote>No providers yet. Add an OpenAI-compatible endpoint or Antigravity below.</SettingsNote> : null}
 
           <SettingsRow className="items-start">
             <div className="flex min-w-0 flex-1 flex-col gap-2">
+              <div className="flex items-center gap-2">
+                <div className="flex gap-1">
+                  <SettingsButton active={providerKind === 'openai-compatible'} disabled={disabled} onClick={() => setProviderKind('openai-compatible')}>
+                    OpenAI-compatible
+                  </SettingsButton>
+                  <SettingsButton active={providerKind === 'antigravity'} disabled={disabled} onClick={() => setProviderKind('antigravity')}>
+                    Antigravity (agy CLI)
+                  </SettingsButton>
+                </div>
+              </div>
               <div className="flex min-w-0 gap-2">
                 <Input aria-label="Provider name" placeholder="Name, e.g. Free plugin" value={providerName} disabled={disabled} onChange={(event) => setProviderName(event.target.value)} className="max-w-[180px]" />
-                <Input aria-label="Provider base URL" placeholder="http://127.0.0.1:8326" value={providerBaseUrl} disabled={disabled} onChange={(event) => setProviderBaseUrl(event.target.value)} className="min-w-0 flex-1 font-mono text-[11px]" />
+                {providerKind === 'openai-compatible' ? (
+                  <Input aria-label="Provider base URL" placeholder="http://127.0.0.1:8326" value={providerBaseUrl} disabled={disabled} onChange={(event) => setProviderBaseUrl(event.target.value)} className="min-w-0 flex-1 font-mono text-[11px]" />
+                ) : null}
               </div>
               <div className="flex min-w-0 gap-2">
-                <Input aria-label="Provider models" placeholder="Models (comma separated, optional)" value={providerModels} disabled={disabled} onChange={(event) => setProviderModels(event.target.value)} className="min-w-0 flex-1 font-mono text-[11px]" />
-                <Input aria-label="Provider API key" type="password" autoComplete="off" placeholder="API key (optional)" value={providerKey} disabled={disabled} onChange={(event) => setProviderKey(event.target.value)} className="max-w-[220px]" />
+                <Input
+                  aria-label="Provider models"
+                  placeholder={providerKind === 'antigravity' ? 'Models, e.g. gemini-3.8-flash-medium, claude-sonnet-5-5-medium (from `agy models`)' : 'Models (comma separated, optional)'}
+                  value={providerModels}
+                  disabled={disabled}
+                  onChange={(event) => setProviderModels(event.target.value)}
+                  className="min-w-0 flex-1 font-mono text-[11px]"
+                />
+                {providerKind === 'openai-compatible' ? (
+                  <Input aria-label="Provider API key" type="password" autoComplete="off" placeholder="API key (optional)" value={providerKey} disabled={disabled} onChange={(event) => setProviderKey(event.target.value)} className="max-w-[220px]" />
+                ) : null}
               </div>
+              {providerKind === 'antigravity' ? (
+                <span className={rowDesc}>
+                  Runs your installed agy CLI — it owns the Google sign-in, ND never sees tokens. agy 1.3.1 runs model
+                  calls on its default signed-in account; account entries below carry the AGY_ACCOUNT name (and can carry
+                  an ADC credentials path) so per-account routing activates as soon as the CLI honors them.
+                </span>
+              ) : null}
               <div className="flex items-center gap-1">
                 <SettingsButton disabled={disabled} onClick={addProvider}>Add provider</SettingsButton>
               </div>
@@ -305,11 +355,13 @@ function ProviderRow({
   onToggle(enabled: boolean): void
   onTest(): void
   onRemove(): void
-  onAddAccount(label: string, apiKey: string): void
+  onAddAccount(input: { label: string; apiKey: string; selector: string }): void
   onRemoveAccount(accountId: string): void
 }) {
+  const isAgy = provider.kind === 'antigravity'
   const [label, setLabel] = useState('')
   const [key, setKey] = useState('')
+  const [selector, setSelector] = useState('')
   return (
     <div className="rounded-lg border border-border-soft bg-surface-1 px-[13px] py-[11px]">
       <div className="flex min-w-0 items-center justify-between gap-4">
@@ -319,11 +371,13 @@ function ProviderRow({
             <StatusChip neutral>{provider.kind}</StatusChip>
             {provider.hasSecret ? <StatusChip good>Key saved</StatusChip> : null}
           </span>
-          <span className={rowPathText}>{provider.baseUrl || '—'}</span>
+          <span className={rowPathText}>{isAgy ? 'agy CLI (signed-in accounts from the Antigravity app)' : provider.baseUrl || '—'}</span>
           {provider.models.length > 0 ? <span className={rowDesc}>{provider.models.join(', ')}</span> : null}
           {test ? (
             <span className={rowDesc}>
-              {test.ok ? `OK · ${test.latencyMs} ms · ${test.model}` : `Failed · ${test.statusCode} · ${test.error ?? 'unknown error'}`}
+              {test.ok
+                ? `OK · ${test.latencyMs} ms · ${test.model}${test.preview ? ` · ${test.preview}` : ''}`
+                : `Failed · ${test.statusCode} · ${test.error ?? 'unknown error'}`}
             </span>
           ) : null}
         </div>
@@ -343,6 +397,7 @@ function ProviderRow({
               <span className="flex min-w-0 items-center gap-2">
                 <span className="text-[10px] font-semibold text-soft">{account.label}</span>
                 <StatusChip neutral>{account.kind}</StatusChip>
+                {account.selector ? <span className={rowPathText}>{account.selector}</span> : null}
                 {account.lastStatus ? <span className={rowPathText}>{account.lastStatus}</span> : null}
               </span>
               <SettingsButton disabled={disabled} onClick={() => onRemoveAccount(account.id)}>Remove</SettingsButton>
@@ -353,13 +408,18 @@ function ProviderRow({
 
       <div className="mt-2 flex items-center gap-2 border-t border-border-soft pt-2">
         <Input aria-label={`${provider.name} account label`} placeholder="Account label" value={label} disabled={disabled} onChange={(event) => setLabel(event.target.value)} className="max-w-[180px]" />
-        <Input aria-label={`${provider.name} account API key`} type="password" autoComplete="off" placeholder="Account API key" value={key} disabled={disabled} onChange={(event) => setKey(event.target.value)} className="max-w-[220px]" />
+        {isAgy ? (
+          <Input aria-label={`${provider.name} agy account name`} placeholder="agy account name, e.g. account-2" value={selector} disabled={disabled} onChange={(event) => setSelector(event.target.value)} className="max-w-[220px] font-mono text-[11px]" />
+        ) : (
+          <Input aria-label={`${provider.name} account API key`} type="password" autoComplete="off" placeholder="Account API key" value={key} disabled={disabled} onChange={(event) => setKey(event.target.value)} className="max-w-[220px]" />
+        )}
         <SettingsButton
-          disabled={disabled || !label.trim() || !key.trim()}
+          disabled={disabled || !label.trim() || (isAgy ? !selector.trim() : !key.trim())}
           onClick={() => {
-            onAddAccount(label.trim(), key.trim())
+            onAddAccount({ label: label.trim(), apiKey: key.trim(), selector: selector.trim() })
             setLabel('')
             setKey('')
+            setSelector('')
           }}
         >
           Add account

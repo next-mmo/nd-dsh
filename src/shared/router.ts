@@ -9,6 +9,8 @@ export interface RouterAccountView {
   priority: number
   hasSecret: boolean
   envDir?: string
+  /** CLI lane account name inside the external CLI (agy `AGY_ACCOUNT`). */
+  selector?: string
   cooldownUntilMs?: number
   lastStatus?: string
 }
@@ -82,6 +84,7 @@ export interface RouterAccountInput {
   kind?: 'api-key' | 'cli'
   apiKey?: string
   envDir?: string
+  selector?: string
   isActive?: boolean
   priority?: number
   clearSecret?: boolean
@@ -101,6 +104,7 @@ export interface RouterTestResult {
   latencyMs: number
   model: string
   error?: string | null
+  preview?: string
 }
 
 export const ROUTER_IPC = {

@@ -168,6 +168,13 @@ impl RouterState {
             kind,
             secret_ref: existing.as_ref().and_then(|account| account.secret_ref.clone()),
             env_dir: input.env_dir.clone().or_else(|| existing.as_ref().and_then(|account| account.env_dir.clone())),
+            selector: input
+                .selector
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+                .or_else(|| existing.as_ref().and_then(|account| account.selector.clone())),
             is_active: input.is_active.or_else(|| existing.as_ref().map(|account| account.is_active)).unwrap_or(true),
             priority: input.priority.or_else(|| existing.as_ref().map(|account| account.priority)).unwrap_or(0),
             cooldown_until_ms: existing.as_ref().and_then(|account| account.cooldown_until_ms),
@@ -359,6 +366,64 @@ impl RouterState {
         let mut last: Option<(u16, String)> = None;
 
         for entry in entries {
+            if entry.provider.kind == catalog::KIND_ANTIGRAVITY {
+                let messages = body.get("messages").and_then(Value::as_array);
+                let prompt = crate::cli::prompt_from_messages(messages.map(Vec::as_slice).unwrap_or(&[]));
+                if prompt.trim().is_empty() {
+                    last = Some((400, "the antigravity lane needs messages".to_owned()));
+                    continue;
+                }
+                let started = Instant::now();
+                match crate::cli::run_antigravity(&entry.model, &prompt, entry.account.as_ref()).await {
+                    Ok(completion) => {
+                        self.record_usage(
+                            &entry,
+                            &combo_name,
+                            path,
+                            200,
+                            true,
+                            started.elapsed(),
+                            None,
+                            &json!({"messages": [{"role": "user", "content": prompt}]}),
+                            completion.text.chars().count() as u64,
+                        );
+                        return if streaming {
+                            Ok(cli_response(
+                                StatusCode::OK,
+                                crate::cli::sse_body(&entry.model, &completion),
+                                "text/event-stream",
+                            ))
+                        } else {
+                            Ok(cli_response(
+                                StatusCode::OK,
+                                crate::cli::completion_body(&entry.model, &completion).to_string(),
+                                "application/json",
+                            ))
+                        };
+                    }
+                    Err(error) => {
+                        let status = error.status.as_u16();
+                        let message = error.message.clone();
+                        self.record_usage(
+                            &entry,
+                            &combo_name,
+                            path,
+                            status,
+                            false,
+                            started.elapsed(),
+                            Some(message.clone()),
+                            &json!({"messages": [{"role": "user", "content": prompt}]}),
+                            0,
+                        );
+                        self.mark_account_failure(&entry, status);
+                        last = Some((status, message));
+                        if !catalog::is_retryable_status(status) {
+                            break;
+                        }
+                    }
+                }
+                continue;
+            }
             if entry.provider.kind != catalog::KIND_OPENAI {
                 last = Some((501, format!("{} lane is not implemented yet", entry.provider.kind)));
                 continue;
@@ -424,6 +489,28 @@ impl RouterState {
             let model = provider.models.first().cloned().unwrap_or_else(|| "default".to_owned());
             (provider, model)
         };
+        if provider.kind == catalog::KIND_ANTIGRAVITY {
+            let started = Instant::now();
+            return match crate::cli::run_antigravity(&model, "Reply with exactly: OK", None).await {
+                Ok(completion) => Ok(json!({
+                    "id": provider_id,
+                    "ok": true,
+                    "statusCode": 200,
+                    "latencyMs": started.elapsed().as_millis() as u64,
+                    "model": model,
+                    "error": Value::Null,
+                    "preview": catalog::truncate(completion.text.trim(), 80),
+                })),
+                Err(error) => Ok(json!({
+                    "id": provider_id,
+                    "ok": false,
+                    "statusCode": error.status.as_u16(),
+                    "latencyMs": started.elapsed().as_millis() as u64,
+                    "model": model,
+                    "error": error.message,
+                })),
+            };
+        }
         if provider.kind != catalog::KIND_OPENAI {
             return Ok(json!({
                 "id": provider_id,
@@ -631,6 +718,15 @@ fn find_combo<'a>(combos: &'a [ComboRecord], hint: &str) -> Option<&'a ComboReco
     let trimmed = hint.trim();
     let normalized = trimmed.strip_prefix("combo:").unwrap_or(trimmed);
     combos.iter().find(|combo| combo.id == normalized || combo.name == normalized)
+}
+
+fn cli_response(status: StatusCode, body: String, content_type: &str) -> Response {
+    let mut response = Response::new(Body::from(body));
+    *response.status_mut() = status;
+    if let Ok(value) = HeaderValue::from_str(content_type) {
+        response.headers_mut().insert(CONTENT_TYPE, value);
+    }
+    response
 }
 
 async fn forward(upstream: reqwest::Response, wants_stream: bool) -> Result<Response, RouterError> {
