@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { ND_GATEWAY_IPC, type NdGatewayDesktopApi, type NdGatewayState } from '../shared/gateway.js'
+import { PROMPT_SHIELD_IPC, type PromptShieldDesktopApi, type PromptShieldState } from '../shared/prompt-shield.js'
+import { ROUTER_IPC, type RouterDesktopApi } from '../shared/router.js'
 import { TERMINAL_IPC, type TerminalDesktopApi, type TerminalExitEvent, type TerminalOutputEvent, type TerminalStateEvent } from '../shared/terminal.js'
 import { TOKEN_SAVER_IPC, type TokenSaverDesktopApi, type TokenSaverState } from '../shared/token-saver.js'
 
@@ -45,6 +47,31 @@ const tokenSaverApi: TokenSaverDesktopApi = {
   },
 }
 
+const promptShieldApi: PromptShieldDesktopApi = {
+  state: () => ipcRenderer.invoke(PROMPT_SHIELD_IPC.state),
+  updateSettings: (settings) => ipcRenderer.invoke(PROMPT_SHIELD_IPC.updateSettings, settings),
+  testText: (text) => ipcRenderer.invoke(PROMPT_SHIELD_IPC.testText, text),
+  resetCounters: () => ipcRenderer.invoke(PROMPT_SHIELD_IPC.resetCounters),
+  onChanged: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, value: PromptShieldState) => listener(value)
+    ipcRenderer.on(PROMPT_SHIELD_IPC.changedEvent, handler)
+    return () => ipcRenderer.removeListener(PROMPT_SHIELD_IPC.changedEvent, handler)
+  },
+}
+
+const routerApi: RouterDesktopApi = {
+  state: () => ipcRenderer.invoke(ROUTER_IPC.state),
+  saveProvider: (input) => ipcRenderer.invoke(ROUTER_IPC.saveProvider, input),
+  deleteProvider: (providerId) => ipcRenderer.invoke(ROUTER_IPC.deleteProvider, providerId),
+  saveAccount: (input) => ipcRenderer.invoke(ROUTER_IPC.saveAccount, input),
+  deleteAccount: (providerId, accountId) => ipcRenderer.invoke(ROUTER_IPC.deleteAccount, providerId, accountId),
+  saveCombo: (input) => ipcRenderer.invoke(ROUTER_IPC.saveCombo, input),
+  deleteCombo: (comboId) => ipcRenderer.invoke(ROUTER_IPC.deleteCombo, comboId),
+  testProvider: (providerId) => ipcRenderer.invoke(ROUTER_IPC.testProvider, providerId),
+  usage: () => ipcRenderer.invoke(ROUTER_IPC.usage),
+  resetUsage: () => ipcRenderer.invoke(ROUTER_IPC.resetUsage),
+}
+
 const gatewayApi: NdGatewayDesktopApi = {
   state: () => ipcRenderer.invoke(ND_GATEWAY_IPC.state),
   connect: (input) => ipcRenderer.invoke(ND_GATEWAY_IPC.connect, input),
@@ -66,5 +93,7 @@ const toolRoutingApi: ToolRoutingDesktopApi = {
 
 contextBridge.exposeInMainWorld('ndDshTerminal', api)
 contextBridge.exposeInMainWorld('ndDshTokenSaver', tokenSaverApi)
+contextBridge.exposeInMainWorld('ndDshPromptShield', promptShieldApi)
+contextBridge.exposeInMainWorld('ndDshRouter', routerApi)
 contextBridge.exposeInMainWorld('ndDshToolRouting', toolRoutingApi)
 contextBridge.exposeInMainWorld('ndDshGateway', gatewayApi)

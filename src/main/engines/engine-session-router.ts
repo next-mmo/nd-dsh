@@ -39,6 +39,8 @@ import type { HarnessService } from '../harness/harness-service.js'
 import type { SessionJournalStore } from '../harness/session-journal-store.js'
 import { taskMetricsRecorder } from '../metrics/task-metrics.js'
 import { tokenSaverRuntime } from '../token-saver/token-saver-runtime.js'
+import { promptShieldRuntime } from '../prompt-shield/prompt-shield-runtime.js'
+import { promptShieldBlockedError } from '../prompt-shield/prompt-shield-service.js'
 import { sessionInWorkspace } from '../workspace/path-utils.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
 import type { ClaudeCodeCliEngine } from './claude/claude-code-cli-engine.js'
@@ -280,6 +282,9 @@ export class EngineSessionRouter {
     let routedPrompt = this.extensions
       ? await this.extensions.decoratePrompt(skill?.prompt ?? prompt, requested, providerId)
       : skill?.prompt ?? prompt
+    // Prompt Shield runs on the user/skill/extension text before ND appends its
+    // own scoped tokens, which must reach the engine untouched.
+    routedPrompt = this.shieldPrompt(routedPrompt, options?.promptShieldOverride)
     if (options?.sessionId && this.browserAccess && requested !== ND_NATIVE_ENGINE_ID && requested !== CHATGPT_WEB_ENGINE_ID && requested !== GEMINI_WEB_ENGINE_ID) {
       const token = this.browserAccess.issueSessionAccess(options.sessionId)
       routedPrompt += `\n\n<nd-browser-access>\nOpaque browser access token for this ND session: ${token}\nPass it unchanged as accessToken on every nd_browser_call. Do not expose it in user-facing output.\n</nd-browser-access>`
@@ -384,7 +389,7 @@ export class EngineSessionRouter {
       }
       const browser = this.chatGptWebBrowser
       const returnUrl = browser?.state().url
-      const result = await engine.run(appendWebTextFiles(optimizedPrompt, options?.files ?? [], 'ChatGPT Web'), {
+      const result = await engine.run(this.shieldPrompt(appendWebTextFiles(optimizedPrompt, options?.files ?? [], 'ChatGPT Web'), options?.promptShieldOverride), {
         ...(options?.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
         cwd: workspaceRoot,
         ...(options?.images?.length ? { images: options.images } : {}),
@@ -421,7 +426,7 @@ export class EngineSessionRouter {
       }
       const browser = this.geminiWebBrowser
       const returnUrl = browser?.state().url
-      const result = await engine.run(appendWebTextFiles(optimizedPrompt, options?.files ?? [], 'Gemini Web'), {
+      const result = await engine.run(this.shieldPrompt(appendWebTextFiles(optimizedPrompt, options?.files ?? [], 'Gemini Web'), options?.promptShieldOverride), {
         ...(options?.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
         ...(options?.model !== undefined ? { model: options.model } : {}),
         cwd: workspaceRoot,
@@ -724,6 +729,14 @@ export class EngineSessionRouter {
       throw new Error('Gemini Web is unavailable because ND did not initialize its visible-browser runtime.')
     }
     return this.geminiWeb
+  }
+
+  private shieldPrompt(text: string, override?: 'mask' | 'allow'): string {
+    const shield = promptShieldRuntime()
+    if (!shield) return text
+    const result = shield.apply(text, override)
+    if (result.blocked) throw promptShieldBlockedError(shield.blockedPayload(result))
+    return result.text
   }
 }
 

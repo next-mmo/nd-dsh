@@ -280,6 +280,12 @@ export interface HarnessRunOptions {
   files?: HarnessRunFile[]
   permissionMode?: string
   /**
+   * One-turn Prompt Shield decision from the blocked-prompt review dialog.
+   * `mask` upgrades blocked categories to masking; `allow` bypasses the shield
+   * for this send only. Settings are never changed by an override.
+   */
+  promptShieldOverride?: 'mask' | 'allow'
+  /**
    * Exact working directory for this session/turn. It is used when a session
    * is created and keeps the trusted prompt metadata aligned with an existing
    * task worktree or ND Home chat directory. Defaults to the active workspace.

@@ -24,6 +24,8 @@ export const SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   { id: 'general-browser-data', title: 'Browser data, downloads & history', section: 'General · Browser', tab: 'general', subTab: 'browser', keywords: ['downloads', 'history', 'clear data', 'cookies', 'site permissions'] },
   { id: 'general-credentials', title: 'Saved browser credentials', section: 'General · Browser', tab: 'general', subTab: 'browser', keywords: ['password', 'credentials', 'autofill', 'login'] },
   { id: 'general-companions', title: 'Browser companions (@Chrome)', section: 'General · Browser', tab: 'general', subTab: 'browser', keywords: ['companion', 'chrome', 'profile', 'leases'] },
+  { id: 'general-privacy', title: 'Prompt Shield', section: 'General · Privacy', tab: 'general', subTab: 'privacy', keywords: ['privacy', 'prompt', 'sanitize', 'redact', 'mask', 'secret', 'api key', 'credit card', 'normalize', 'shield'] },
+  { id: 'general-privacy-custom', title: 'Custom sensitive data types', section: 'General · Privacy', tab: 'general', subTab: 'privacy', keywords: ['custom', 'pattern', 'regex', 'detection', 'sensitive', 'data type'] },
   { id: 'general-shortcuts', title: 'Global shortcuts & key bindings', section: 'General · Shortcuts', tab: 'general', subTab: 'shortcuts', keywords: ['shortcut', 'hotkey', 'key binding', 'keyboard', 'accelerator', 'record', 'capture key', 'launcher', 'quick', 'reserved', 'conflict', 'system key'] },
   { id: 'general-shortcuts-behavior', title: 'Quick launcher key behavior', section: 'General · Shortcuts', tab: 'general', subTab: 'shortcuts', keywords: ['quick launcher', 'popup', 'window', 'behavior', 'toggle', 'raycast'] },
   { id: 'about', title: 'About & diagnostics', section: 'General · About', tab: 'general', subTab: 'about', keywords: ['version', 'diagnostics', 'about', 'bug report'] },
@@ -38,6 +40,7 @@ export const SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   { id: 'engines', title: 'Coding engines', section: 'Coding engines · Engines', tab: 'engines', enginesSubTab: 'engines', keywords: ['engine', 'codex', 'agy', 'antigravity', 'harness', 'default chat'] },
   { id: 'engines-gateway', title: 'ND Gateway', section: 'Coding engines · Gateway', tab: 'engines', enginesSubTab: 'gateway', keywords: ['gateway', 'codex', 'chatgpt', 'external apps'] },
   { id: 'engines-tokens', title: 'Token efficiency (saver & tool optimization)', section: 'Coding engines · Token efficiency', tab: 'engines', enginesSubTab: 'tokens', keywords: ['token', 'saver', 'optimization', 'tool call', 'context budget'] },
+  { id: 'router', title: 'ND Router', section: 'ND Router', tab: 'router', keywords: ['router', 'combo', 'fallback', 'routing', 'free model', 'provider accounts', 'gateway', 'round robin'] },
   { id: 'presets', title: 'Agent presets', section: 'Agent presets', tab: 'presets', keywords: ['preset', 'agent', 'notes', 'links'] },
 ]
 

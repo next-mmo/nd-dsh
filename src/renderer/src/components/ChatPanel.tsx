@@ -7,6 +7,7 @@ import type {
   EngineSessionSummary,
   ExternalElementAttachmentView,
   HarnessRunFile,
+  HarnessRunOptions,
   HarnessStatus,
   ChatGptProjectBinding,
   GeminiGemBinding,
@@ -79,6 +80,8 @@ import { ChangedFilesCard } from './ChangedFilesCard'
 import { ChatContextPopover } from './ChatContextPopover'
 import { ZcodeModelConfigDialog } from './ZcodeModelConfigDialog'
 import { ChatGptProjectDialog } from './ChatGptProjectDialog'
+import { PromptShieldReviewDialog } from './PromptShieldReviewDialog'
+import { parsePromptShieldBlockedError, type PromptShieldBlockedPayload } from '../../../shared/prompt-shield'
 import { GeminiGemDialog } from './GeminiGemDialog'
 import { ImageGalleryDialog, ImagePreviewDialog, MarkdownLite } from './MarkdownLite'
 import { Button } from './ui/button'
@@ -338,6 +341,14 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   // Gemini Gem binding is optional: unbound chats use the default Gemini conversation.
   const [geminiGemBinding, setGeminiGemBinding] = useState<GeminiGemBinding | null>(null)
   const [geminiGemModalOpen, setGeminiGemModalOpen] = useState(false)
+  // A Shield-blocked send is held here so the review dialog can re-deliver it
+  // with a one-turn override that never changes saved settings.
+  const [shieldReview, setShieldReview] = useState<{
+    payload: PromptShieldBlockedPayload
+    prompt: string
+    options: HarnessRunOptions
+    draftEngine: string | null
+  } | null>(null)
   const [geminiModeSettings, setGeminiModeSettings] = useState<WebBrowserModeSettings>({ mode: 'auto', agentFallback: false, visualRecovery: true })
   const [chatGptModeSettings, setChatGptModeSettings] = useState<WebBrowserModeSettings>({ mode: 'auto', agentFallback: false, visualRecovery: true })
 
@@ -1471,9 +1482,11 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
       : draftEngine !== null
         ? { engineId: draftEngine, permissionMode, ...engineModelOption }
         : { permissionMode }
+    let runOptions: HarnessRunOptions = { ...options, ...imageOption, ...fileOption }
     try {
       const catalog = /^\s*\//.test(input) ? await window.ndDsh.skills.catalog(activeProjectId ?? null) : undefined
-      const result = await window.ndDsh.harness.run(outbound, { ...options, ...imageOption, ...fileOption, ...(catalog ? { skillScope: selectedScope ?? catalog.scope, ...(selection?.selectionId ? { skillSelectionId: selection.selectionId } : {}) } : {}) })
+      if (catalog) runOptions = { ...runOptions, skillScope: selectedScope ?? catalog.scope, ...(selection?.selectionId ? { skillSelectionId: selection.selectionId } : {}) }
+      const result = await window.ndDsh.harness.run(outbound, runOptions)
       selectedSkillScope.current = null
       storeSessionProject(result.sessionId, activeProjectId ?? PERSONAL_PROJECT_ID)
       setActiveSessionId(result.sessionId)
@@ -1490,7 +1503,46 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
       // user can fix the route and retry.
       if (images.length > 0) setPendingImages(images)
       if (files.length > 0) setPendingFiles(files)
-      onError(ipcFailureMessage(cause instanceof Error ? cause.message : String(cause)))
+      const failure = cause instanceof Error ? cause.message : String(cause)
+      const blocked = parsePromptShieldBlockedError(failure)
+      if (blocked) {
+        // Keep the user's text editable behind the review dialog; the masked or
+        // allowed resend uses the captured run options, not the composer.
+        setPrompt(input)
+        setShieldReview({ payload: blocked, prompt: outbound, options: runOptions, draftEngine })
+        return
+      }
+      onError(ipcFailureMessage(failure))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const resolveShieldReview = async (override: 'mask' | 'allow'): Promise<void> => {
+    const pending = shieldReview
+    if (!pending) return
+    setShieldReview(null)
+    setSubmitting(true)
+    try {
+      const result = await window.ndDsh.harness.run(pending.prompt, { ...pending.options, promptShieldOverride: override })
+      selectedSkillScope.current = null
+      setPrompt('')
+      setPendingImages([])
+      setPendingFiles([])
+      storeSessionProject(result.sessionId, activeProjectId ?? PERSONAL_PROJECT_ID)
+      setActiveSessionId(result.sessionId)
+      if (pending.draftEngine !== null) setDraftEngineId(null)
+      void refreshEngineSessions()
+      void refreshElementChips()
+      if (!sessions.some((s) => s.sessionId === result.sessionId)) void refreshSessions()
+    } catch (cause) {
+      const failure = cause instanceof Error ? cause.message : String(cause)
+      const blocked = parsePromptShieldBlockedError(failure)
+      if (blocked) {
+        setShieldReview({ ...pending, payload: blocked })
+        return
+      }
+      onError(ipcFailureMessage(failure))
     } finally {
       setSubmitting(false)
     }
@@ -1546,7 +1598,14 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
       // User messages arrive through session events, including on retry.
       if (!sessions.some((s) => s.sessionId === result.sessionId)) void refreshSessions()
     } catch (cause) {
-      onError(ipcFailureMessage(cause instanceof Error ? cause.message : String(cause)))
+      const failure = cause instanceof Error ? cause.message : String(cause)
+      const blocked = parsePromptShieldBlockedError(failure)
+      if (blocked) {
+        setPrompt(retryPrompt)
+        setShieldReview({ payload: blocked, prompt: retryPrompt, options: options ?? {}, draftEngine: null })
+        return
+      }
+      onError(ipcFailureMessage(failure))
     }
   }
 
@@ -3034,6 +3093,14 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
           </Button>
         </aside>
       ) : null}
+      <PromptShieldReviewDialog
+        open={shieldReview !== null}
+        payload={shieldReview?.payload ?? null}
+        busy={submitting}
+        onClose={() => setShieldReview(null)}
+        onSendMasked={() => void resolveShieldReview('mask')}
+        onSendOnce={() => void resolveShieldReview('allow')}
+      />
       <ZcodeModelConfigDialog open={zcodeConfigOpen} onClose={() => setZcodeConfigOpen(false)} />
       <ChatGptProjectDialog
         open={chatGptProjectModalOpen}

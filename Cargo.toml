@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/nd-protocol", "crates/nd-runtime", "crates/nd-core", "crates/nd-browser-host", "crates/nd-agent"]
+members = ["crates/nd-protocol", "crates/nd-runtime", "crates/nd-core", "crates/nd-browser-host", "crates/nd-agent", "crates/nd-router"]
 resolver = "2"
 
 [profile.release]

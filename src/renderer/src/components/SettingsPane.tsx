@@ -4,6 +4,7 @@ import {
   BlocksIcon,
   BoxIcon,
   BrainIcon,
+  GridIcon,
   PlugIcon,
   PuzzleIcon,
   SettingsIcon,
@@ -18,6 +19,8 @@ import { EngineSettings } from './EngineSettings'
 import { ExtensionSettings } from './ExtensionSettings'
 import { ModelSettings } from './ModelSettings'
 import { PresetSettings } from './PresetSettings'
+import { PromptShieldSettings } from './PromptShieldSettings'
+import { RouterSettings } from './RouterSettings'
 import { RuntimeSettings } from './RuntimeSettings'
 import { ShortcutSettings } from './ShortcutSettings'
 import { WorkspaceSettings } from './WorkspaceSettings'
@@ -63,6 +66,7 @@ const TABS: { id: SettingsTab; label: string; Icon: typeof SettingsIcon }[] = [
   { id: 'extensions', label: 'Extensions', Icon: PuzzleIcon },
   { id: 'plugins', label: 'Plugins', Icon: BlocksIcon },
   { id: 'engines', label: 'Coding engines', Icon: PlugIcon },
+  { id: 'router', label: 'ND Router', Icon: GridIcon },
   { id: 'presets', label: 'Agent presets', Icon: SparkIcon },
 ]
 
@@ -70,6 +74,7 @@ const GENERAL_SUB_TABS: { id: GeneralSubTab; label: string }[] = [
   { id: 'runtime', label: 'Runtime' },
   { id: 'workspace', label: 'Workspace' },
   { id: 'browser', label: 'Browser' },
+  { id: 'privacy', label: 'Privacy' },
   { id: 'shortcuts', label: 'Shortcuts' },
   { id: 'about', label: 'About' },
 ]
@@ -203,6 +208,10 @@ export function SettingsPane({
             {...(propEnginesSubTab !== undefined ? { subTab: propEnginesSubTab } : {})}
             {...(onSelectEnginesSubTab !== undefined ? { onSelectSubTab: onSelectEnginesSubTab } : {})}
           />
+        ) : tab === 'router' ? (
+          <div className="min-h-0 overflow-auto px-[26px] pb-[42px] pt-4">
+            <RouterSettings onError={onError} />
+          </div>
         ) : tab === 'presets' ? (
           <PresetSettings onError={onError} {...(onOpenSession ? { onOpenSession } : {})} />
         ) : tab === 'appearance' ? (
@@ -243,6 +252,7 @@ export function SettingsPane({
               {activeSubTab === 'browser' && (
                 <BrowserSettings browser={browser} onError={onError} onOpenBrowser={onOpenBrowser} />
               )}
+              {activeSubTab === 'privacy' && <PromptShieldSettings onError={onError} />}
               {activeSubTab === 'shortcuts' && <ShortcutSettings onError={onError} />}
               {activeSubTab === 'about' && (
                 <AboutSettings workspace={workspace} harness={harness} browser={browser} onError={onError} />

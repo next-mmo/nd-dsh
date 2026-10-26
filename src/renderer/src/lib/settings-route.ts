@@ -1,5 +1,5 @@
-export type SettingsTab = 'general' | 'appearance' | 'models' | 'capabilities' | 'extensions' | 'plugins' | 'engines' | 'presets'
-export type GeneralSubTab = 'runtime' | 'workspace' | 'browser' | 'shortcuts' | 'about'
+export type SettingsTab = 'general' | 'appearance' | 'models' | 'capabilities' | 'extensions' | 'plugins' | 'engines' | 'router' | 'presets'
+export type GeneralSubTab = 'runtime' | 'workspace' | 'browser' | 'privacy' | 'shortcuts' | 'about'
 export type CapabilitySubTab = 'engine' | 'memory' | 'context' | 'lifecycle'
 export type EnginesSubTab = 'engines' | 'gateway' | 'tokens'
 
@@ -16,6 +16,7 @@ const TAB_QUERY: Record<SettingsTab, string> = {
   extensions: 'extensions',
   plugins: 'plugins',
   engines: 'engines',
+  router: 'router',
   presets: 'presets',
 }
 
@@ -32,11 +33,14 @@ const QUERY_TAB = new Map<string, SettingsTab>([
   ['extensions', 'extensions'],
   ['engine', 'engines'],
   ['engines', 'engines'],
+  ['router', 'router'],
+  ['nd-router', 'router'],
   ['preset', 'presets'],
   ['presets', 'presets'],
   ['workspace', 'general'],
   ['runtime', 'general'],
   ['browser', 'general'],
+  ['privacy', 'general'],
   ['shortcuts', 'general'],
   ['about', 'general'],
 ])
@@ -45,6 +49,7 @@ const QUERY_SUBTAB = new Map<string, GeneralSubTab>([
   ['workspace', 'workspace'],
   ['runtime', 'runtime'],
   ['browser', 'browser'],
+  ['privacy', 'privacy'],
   ['shortcuts', 'shortcuts'],
   ['about', 'about'],
 ])

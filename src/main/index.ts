@@ -89,6 +89,7 @@ import { registerLocalRuntimeIpc } from './local-runtime/ipc.js'
 import { UsageLedger } from './usage/usage-ledger.js'
 import { ThemeService } from './theme.js'
 import { registerTerminalIpc } from './terminal/ipc.js'
+import { RouterService } from './router/router-service.js'
 import { TerminalManager } from './terminal/terminal-manager.js'
 import { ProjectWorkspaceCoordinator } from './workspace/project-workspace-coordinator.js'
 import { ProjectRuntimeService } from './workspace/project-runtime.js'
@@ -247,6 +248,11 @@ async function createWindow(cdpPort: number): Promise<void> {
   await core.request('effectJournal.configure', {
     path: join(userData, 'effect-journal.jsonl'),
   }, 5_000)
+  // ND Router lives in the Rust sidecar. Initialization is best-effort: a stale
+  // sidecar build must not block startup, and the managed provider only appears
+  // once the router answers with combos.
+  const routerService = new RouterService(core, providers, join(userData, 'nd-router'))
+  await routerService.initialize()
   markStartup('core-ready')
   activeCore = core
   workspace.attachFileSystem(createCoreWorkspaceFileSystem(core))
@@ -523,7 +529,7 @@ async function createWindow(cdpPort: number): Promise<void> {
     if (!window.isDestroyed()) window.webContents.send('browser-companion:changed-event', state)
     void browserPlatform.notifyCompanionChanged()
   })
-  const disposeTerminalIpc = registerTerminalIpc(window, terminalManager)
+  const disposeTerminalIpc = registerTerminalIpc(window, terminalManager, routerService)
   const disposeDesignIpc = registerDesignIpc(window, design, ndPencil)
   const disposeOrganizationIpc = registerOrganizationIpc(window, organizationStore, organization, projectWorkspace, projectRuntime, executionCoordinator, () => launcherPopup.window(), localRuntime)
   const disposeLocalRuntimeIpc = registerLocalRuntimeIpc(window, localRuntime)

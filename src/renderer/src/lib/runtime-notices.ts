@@ -9,6 +9,7 @@
  */
 
 import { isCodexChatGptModelMismatch, normalizeCodexFailure } from '../../../shared/codex-errors.js'
+import { parsePromptShieldBlockedError } from '../../../shared/prompt-shield.js'
 
 export interface AgentErrorRoute {
   provider: string
@@ -36,7 +37,13 @@ export function describeAgentError(message: string, route?: AgentErrorRoute | nu
  * notifications strip it before showing the engine's own message.
  */
 export function ipcFailureMessage(message: string): string {
-  return message.replace(/^Error invoking remote method '[^']*':\s*(?:Error:\s*)?/, '')
+  const unwrapped = message.replace(/^Error invoking remote method '[^']*':\s*(?:Error:\s*)?/, '')
+  const blocked = parsePromptShieldBlockedError(unwrapped)
+  if (blocked) {
+    const detail = blocked.findings.map((finding) => `${finding.label} ×${finding.count}`).join(', ')
+    return `ND Prompt Shield blocked this message (${detail}). Nothing was sent. Change the category action in Settings → General → Privacy, or resend from the review dialog.`
+  }
+  return unwrapped
 }
 
 function hintFor(message: string): string | undefined {

@@ -41,6 +41,7 @@ use nd_runtime::vault::{
     VaultDeleteResult, VaultIdParams, VaultListParams, VaultListResult, VaultRegistry,
     VaultUpdateParams, VaultWriteParams,
 };
+use nd_router::types::{AccountIdInput, ComboIdInput, ProviderIdInput, SaveAccountInput, SaveComboInput, SaveProviderInput};
 use nd_runtime::workspace::{
     self, IndexParams, ListParams, ReadParams, WriteParams as WorkspaceWriteParams,
 };
@@ -64,6 +65,8 @@ struct AppState {
     cache: Arc<ResponseCache>,
     interrupts: Arc<InterruptRegistry>,
     dispatch_stats: DispatchStats,
+    router: std::sync::Mutex<Option<nd_router::RouterServer>>,
+    router_state: std::sync::Mutex<Option<Arc<nd_router::RouterState>>>,
 }
 
 impl AppState {
@@ -103,6 +106,8 @@ impl AppState {
             )),
             interrupts: Arc::new(InterruptRegistry::new()),
             dispatch_stats,
+            router: std::sync::Mutex::new(None),
+            router_state: std::sync::Mutex::new(None),
         })
     }
 
@@ -110,6 +115,9 @@ impl AppState {
         // Stopping in-flight work first is what lets shutdown finish: without it a
         // dispatcher worker sitting in a Git deadline would hold the join.
         self.interrupts.cancel_all();
+        if let Some(mut router) = self.router.lock().unwrap_or_else(|error| error.into_inner()).take() {
+            router.stop();
+        }
         self.terminals.shutdown();
         self.processes.shutdown();
         // Watcher teardown is joined, not fire-and-forget: no leaked thread or
@@ -686,11 +694,85 @@ fn dispatch(
                 state.vault.delete(from_params::<VaultIdParams>(params)?)?;
             to_value(result)
         }
+        // ND Router: providers, accounts and combos live in the Rust sidecar.
+        // The desktop owns the data directory and receives the per-launch
+        // loopback key only once, from initialize.
+        "router.initialize" => {
+            let params = from_params::<RouterInitParams>(params)?;
+            let router_state = nd_router::RouterState::new(std::path::PathBuf::from(params.data_dir))
+                .map_err(|error| errors::coded(CODE_METHOD_FAILED, format!("{error:#}")))?;
+            let server = nd_router::RouterServer::start(Arc::clone(&router_state))
+                .map_err(|error| errors::coded(CODE_METHOD_FAILED, format!("{error:#}")))?;
+            let result = json!({
+                "endpoint": server.endpoint,
+                "key": server.key,
+                "port": server.port,
+                "state": router_state.snapshot(),
+            });
+            *state.router.lock().unwrap_or_else(|error| error.into_inner()) = Some(server);
+            *state.router_state.lock().unwrap_or_else(|error| error.into_inner()) = Some(router_state);
+            Ok(result)
+        }
+        "router.stop" => {
+            if let Some(mut server) = state.router.lock().unwrap_or_else(|error| error.into_inner()).take() {
+                server.stop();
+            }
+            *state.router_state.lock().unwrap_or_else(|error| error.into_inner()) = None;
+            Ok(json!({"stopped": true}))
+        }
+        "router.state" => Ok(router_state(&state)?.snapshot()),
+        "router.saveProvider" => {
+            Ok(router_state(&state)?.save_provider(from_params::<SaveProviderInput>(params)?)?)
+        }
+        "router.deleteProvider" => {
+            let input = from_params::<ProviderIdInput>(params)?;
+            Ok(router_state(&state)?.delete_provider(&input.provider_id)?)
+        }
+        "router.saveAccount" => {
+            Ok(router_state(&state)?.save_account(from_params::<SaveAccountInput>(params)?)?)
+        }
+        "router.deleteAccount" => {
+            let input = from_params::<AccountIdInput>(params)?;
+            Ok(router_state(&state)?.delete_account(&input.provider_id, &input.account_id)?)
+        }
+        "router.saveCombo" => {
+            Ok(router_state(&state)?.save_combo(from_params::<SaveComboInput>(params)?)?)
+        }
+        "router.deleteCombo" => {
+            let input = from_params::<ComboIdInput>(params)?;
+            Ok(router_state(&state)?.delete_combo(&input.combo_id)?)
+        }
+        "router.testProvider" => {
+            let input = from_params::<ProviderIdInput>(params)?;
+            let state_ref = router_state(&state)?;
+            let guard = state.router.lock().unwrap_or_else(|error| error.into_inner());
+            let server = guard
+                .as_ref()
+                .ok_or_else(|| errors::coded(CODE_METHOD_FAILED, "ND Router is not initialized"))?;
+            Ok(server.block_on(state_ref.test_provider(&input.provider_id))?)
+        }
+        "router.usage" => Ok(router_state(&state)?.usage_summary()),
+        "router.resetUsage" => Ok(router_state(&state)?.reset_usage()?),
         other => Err(errors::coded(
             CODE_METHOD_FAILED,
             format!("unknown nd-core method: {other}"),
         )),
     }
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RouterInitParams {
+    data_dir: String,
+}
+
+fn router_state(state: &AppState) -> Result<Arc<nd_router::RouterState>> {
+    state
+        .router_state
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .clone()
+        .ok_or_else(|| errors::coded(CODE_METHOD_FAILED, "ND Router is not initialized"))
 }
 
 #[derive(Debug, serde::Deserialize)]

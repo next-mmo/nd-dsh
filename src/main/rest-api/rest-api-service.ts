@@ -3,6 +3,7 @@ import { promises as fsPromises, existsSync, writeFileSync, unlinkSync } from 'n
 import { join } from 'node:path'
 import { CHATGPT_WEB_ENGINE_ID, GEMINI_WEB_ENGINE_ID } from '../../shared/coding-engines.js'
 import { messageText } from '../../shared/chat-events.js'
+import { parsePromptShieldBlockedError } from '../../shared/prompt-shield.js'
 import type { SessionEventEnvelope } from '../../shared/contracts.js'
 import type {
   RestApiRunRequest,
@@ -402,9 +403,22 @@ export class NdRestApiService {
       }
       sendJson(res, 200, responsePayload)
     } catch (err) {
+      const failure = err instanceof Error ? err.message : String(err)
+      const blocked = parsePromptShieldBlockedError(failure)
+      if (blocked) {
+        sendJson(res, 422, {
+          ok: false,
+          error: 'ND Prompt Shield blocked this prompt',
+          code: 'prompt_shield_blocked',
+          findings: blocked.findings,
+          engineId,
+          sessionId: requestData.sessionId || '',
+        })
+        return
+      }
       sendJson(res, 500, {
         ok: false,
-        error: `Engine run failed: ${err instanceof Error ? err.message : String(err)}`,
+        error: `Engine run failed: ${failure}`,
         engineId,
         sessionId: requestData.sessionId || '',
       })

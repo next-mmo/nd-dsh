@@ -5,6 +5,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { NdGatewayAppId, NdGatewayConnectInput, NdGatewayMode, NdGatewayState } from '../../shared/gateway.js'
 import type { ProviderStore } from '../providers.js'
+import { promptShieldRuntime } from '../prompt-shield/prompt-shield-runtime.js'
 import type { TokenSaverService } from '../token-saver/token-saver-service.js'
 import type { CodexGatewayConfigManager } from './codex-config-manager.js'
 
@@ -174,7 +175,12 @@ export class NdGatewayService {
 
       const raw = await readBody(request)
       const body = JSON.parse(raw) as unknown
-      const optimized = binding.mode === 'llm-only' ? body : optimizePayload(body, this.tokenSaver)
+      const shielded = promptShieldRuntime()?.applyToPayload(body)
+      if (shielded?.blocked) {
+        return json(response, 422, promptShieldRejection(shielded.findings))
+      }
+      const shieldedBody = shielded?.payload ?? body
+      const optimized = binding.mode === 'llm-only' ? shieldedBody : optimizePayload(shieldedBody, this.tokenSaver)
       const upstream = resolveUpstream(this.providers(), binding.providerId, request.url)
       const result = await this.fetchUpstream(upstream.url, {
         method: 'POST',
@@ -228,7 +234,12 @@ export class NdGatewayService {
       return json(response, 400, { error: { message: 'Selected ND model is no longer configured in ND' } })
     }
     const payload = replaceModel(body, upstreamModel)
-    const optimized = binding.mode === 'llm-only' ? payload : optimizePayload(payload, this.tokenSaver)
+    const shielded = promptShieldRuntime()?.applyToPayload(payload)
+    if (shielded?.blocked) {
+      return json(response, 422, promptShieldRejection(shielded.findings))
+    }
+    const shieldedPayload = shielded?.payload ?? payload
+    const optimized = binding.mode === 'llm-only' ? shieldedPayload : optimizePayload(shieldedPayload, this.tokenSaver)
     const upstream = resolveUpstream(this.providers(), binding.providerId, request.url)
     const result = await this.fetchUpstream(upstream.url, {
       method: 'POST',
@@ -390,6 +401,16 @@ function optimizeMessage(value: unknown, tokenSaver: TokenSaverService): unknown
 
 function optimizeText(text: string, tokenSaver: TokenSaverService): string {
   return tokenSaver.optimize(text, { kind: 'prompt' }).text
+}
+
+function promptShieldRejection(findings: unknown): Record<string, unknown> {
+  return {
+    error: {
+      message: 'ND Prompt Shield blocked this request. Adjust the category action in ND Settings → Privacy or send a masked prompt.',
+      code: 'prompt_shield_blocked',
+      findings,
+    },
+  }
 }
 
 function authorized(request: IncomingMessage, expected: string): boolean {
