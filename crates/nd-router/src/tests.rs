@@ -317,3 +317,180 @@ fn antigravity_prompt_flattens_messages_with_roles() {
     let single = crate::cli::prompt_from_messages(&[json!({"role": "user", "content": "just this"})]);
     assert_eq!(single, "just this");
 }
+
+/// ND_QODER_BIN is process-global like ND_AGY_BIN; qoder-lane tests serialize
+/// on this lock while it is set.
+static QODER_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+fn qoder_input(id: &str, models: &[&str]) -> SaveProviderInput {
+    SaveProviderInput {
+        id: Some(id.to_owned()),
+        kind: Some("qoder".to_owned()),
+        name: Some("Qoder CLI".to_owned()),
+        base_url: None,
+        models: Some(models.iter().map(|model| (*model).to_owned()).collect()),
+        is_active: Some(true),
+        priority: Some(0),
+        api_key: None,
+        clear_secret: false,
+    }
+}
+
+fn qoder_account(provider_id: &str, pat: &str) -> SaveAccountInput {
+    SaveAccountInput {
+        provider_id: provider_id.to_owned(),
+        id: None,
+        label: "qoder-account".to_owned(),
+        kind: Some("api-key".to_owned()),
+        api_key: Some(pat.to_owned()),
+        env_dir: None,
+        selector: None,
+        is_active: Some(true),
+        priority: Some(0),
+        clear_secret: false,
+    }
+}
+
+fn qoder_cli_account(provider_id: &str, env_dir: &str) -> SaveAccountInput {
+    SaveAccountInput {
+        provider_id: provider_id.to_owned(),
+        id: None,
+        label: "qoder-profile".to_owned(),
+        kind: Some("cli".to_owned()),
+        api_key: None,
+        env_dir: Some(env_dir.to_owned()),
+        selector: None,
+        is_active: Some(true),
+        priority: Some(0),
+        clear_secret: false,
+    }
+}
+
+fn write_qoder_stub(dir: &std::path::Path, payload: &str) -> std::path::PathBuf {
+    let stub = dir.join("qoder-stub.cmd");
+    std::fs::write(&stub, format!("@echo off\r\necho {payload}\r\n")).expect("write stub");
+    stub
+}
+
+#[tokio::test]
+async fn qoder_lane_runs_the_cli_with_the_account_pat() {
+    let _env = QODER_ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let temp = tempfile::tempdir().expect("tempdir");
+    let stub = write_qoder_stub(
+        temp.path(),
+        r#"{"type":"result","subtype":"success","is_error":false,"result":"pat:%QODER_PERSONAL_ACCESS_TOKEN%","usage":{"input_tokens":9,"output_tokens":5}}"#,
+    );
+    unsafe { std::env::set_var("ND_QODER_BIN", &stub) };
+
+    let state = RouterState::new(temp.path().to_path_buf()).expect("state");
+    state.save_provider(qoder_input("qoder", &["auto"])).expect("provider");
+    state.save_account(qoder_account("qoder", "qoder-test-pat")).expect("account");
+    state
+        .save_combo(combo_input("free-qoder", "priority", vec![combo_entry("qoder", "auto")]))
+        .expect("combo");
+
+    let response = state
+        .chat(
+            json!({"model": "free-qoder", "messages": [{"role": "user", "content": "hi"}]}),
+            None,
+            "/v1/chat/completions",
+        )
+        .await
+        .expect("chat");
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.expect("body");
+    let value: Value = serde_json::from_slice(&bytes).expect("json");
+    assert_eq!(value["model"], "auto");
+    assert_eq!(value["choices"][0]["message"]["content"], "pat:qoder-test-pat");
+    assert_eq!(value["usage"]["prompt_tokens"], 9);
+    assert_eq!(value["usage"]["total_tokens"], 14);
+
+    unsafe { std::env::remove_var("ND_QODER_BIN") };
+}
+
+#[tokio::test]
+async fn qoder_lane_runs_the_cli_with_the_account_config_dir() {
+    let _env = QODER_ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let temp = tempfile::tempdir().expect("tempdir");
+    let stub = write_qoder_stub(
+        temp.path(),
+        r#"{"type":"result","subtype":"success","result":"dir:%QODER_CONFIG_DIR%"}"#,
+    );
+    unsafe { std::env::set_var("ND_QODER_BIN", &stub) };
+
+    let state = RouterState::new(temp.path().to_path_buf()).expect("state");
+    state.save_provider(qoder_input("qoder", &["auto"])).expect("provider");
+    state.save_account(qoder_cli_account("qoder", "qoder-profile-test")).expect("account");
+    state
+        .save_combo(combo_input("profile-qoder", "priority", vec![combo_entry("qoder", "auto")]))
+        .expect("combo");
+
+    let response = state
+        .chat(
+            json!({"model": "profile-qoder", "messages": [{"role": "user", "content": "hi"}]}),
+            None,
+            "/v1/chat/completions",
+        )
+        .await
+        .expect("chat");
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.expect("body");
+    let value: Value = serde_json::from_slice(&bytes).expect("json");
+    assert_eq!(value["choices"][0]["message"]["content"], "dir:qoder-profile-test");
+
+    unsafe { std::env::remove_var("ND_QODER_BIN") };
+}
+
+#[tokio::test]
+async fn qoder_lane_streams_nested_result_payloads() {
+    let _env = QODER_ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let temp = tempfile::tempdir().expect("tempdir");
+    let stub = write_qoder_stub(
+        temp.path(),
+        r#"{"type":"result","subtype":"success","result":{"status":"success","content":"nested:ok"}}"#,
+    );
+    unsafe { std::env::set_var("ND_QODER_BIN", &stub) };
+
+    let state = RouterState::new(temp.path().to_path_buf()).expect("state");
+    state.save_provider(qoder_input("qoder", &["auto"])).expect("provider");
+    state
+        .save_combo(combo_input("stream-qoder", "priority", vec![combo_entry("qoder", "auto")]))
+        .expect("combo");
+
+    let response = state
+        .chat(
+            json!({"model": "stream-qoder", "messages": [{"role": "user", "content": "hi"}], "stream": true}),
+            None,
+            "/v1/chat/completions",
+        )
+        .await
+        .expect("chat");
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.expect("body");
+    let text = String::from_utf8(bytes.to_vec()).expect("utf8");
+    assert!(text.contains("nested:ok"));
+    assert!(text.contains("data: [DONE]"));
+
+    unsafe { std::env::remove_var("ND_QODER_BIN") };
+}
+
+#[tokio::test]
+async fn qoder_test_provider_runs_the_cli_with_the_pat_account() {
+    let _env = QODER_ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let temp = tempfile::tempdir().expect("tempdir");
+    let stub = write_qoder_stub(
+        temp.path(),
+        r#"{"type":"result","subtype":"success","is_error":false,"result":"pat:%QODER_PERSONAL_ACCESS_TOKEN%","usage":{"input_tokens":9,"output_tokens":5}}"#,
+    );
+    unsafe { std::env::set_var("ND_QODER_BIN", &stub) };
+
+    let state = RouterState::new(temp.path().to_path_buf()).expect("state");
+    state.save_provider(qoder_input("qoder", &["auto"])).expect("provider");
+    state.save_account(qoder_account("qoder", "qoder-test-pat")).expect("account");
+    let result = state.test_provider("qoder").await.expect("test");
+    assert_eq!(result["ok"], true);
+    assert_eq!(result["statusCode"], 200);
+    assert_eq!(result["preview"], "pat:qoder-test-pat");
+
+    unsafe { std::env::remove_var("ND_QODER_BIN") };
+}

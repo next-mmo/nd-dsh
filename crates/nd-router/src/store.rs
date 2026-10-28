@@ -175,6 +175,7 @@ fn default_name(kind: &str) -> String {
     match kind {
         catalog::KIND_ANTIGRAVITY => "Antigravity".to_owned(),
         catalog::KIND_GEMINI_CLI => "Gemini CLI".to_owned(),
+        catalog::KIND_QODER => "Qoder CLI".to_owned(),
         _ => "OpenAI-compatible".to_owned(),
     }
 }

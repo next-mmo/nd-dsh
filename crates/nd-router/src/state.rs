@@ -366,15 +366,22 @@ impl RouterState {
         let mut last: Option<(u16, String)> = None;
 
         for entry in entries {
-            if entry.provider.kind == catalog::KIND_ANTIGRAVITY {
+            let lane = entry.provider.kind.as_str();
+            if lane == catalog::KIND_ANTIGRAVITY || lane == catalog::KIND_QODER {
                 let messages = body.get("messages").and_then(Value::as_array);
                 let prompt = crate::cli::prompt_from_messages(messages.map(Vec::as_slice).unwrap_or(&[]));
                 if prompt.trim().is_empty() {
-                    last = Some((400, "the antigravity lane needs messages".to_owned()));
+                    last = Some((400, format!("the {lane} lane needs messages")));
                     continue;
                 }
                 let started = Instant::now();
-                match crate::cli::run_antigravity(&entry.model, &prompt, entry.account.as_ref()).await {
+                let outcome = if lane == catalog::KIND_QODER {
+                    let secret = self.entry_secret(&entry);
+                    crate::cli::run_qoder(&entry.model, &prompt, entry.account.as_ref(), secret.as_deref()).await
+                } else {
+                    crate::cli::run_antigravity(&entry.model, &prompt, entry.account.as_ref()).await
+                };
+                match outcome {
                     Ok(completion) => {
                         self.record_usage(
                             &entry,
@@ -390,13 +397,13 @@ impl RouterState {
                         return if streaming {
                             Ok(cli_response(
                                 StatusCode::OK,
-                                crate::cli::sse_body(&entry.model, &completion),
+                                crate::cli::sse_body(lane, &entry.model, &completion),
                                 "text/event-stream",
                             ))
                         } else {
                             Ok(cli_response(
                                 StatusCode::OK,
-                                crate::cli::completion_body(&entry.model, &completion).to_string(),
+                                crate::cli::completion_body(lane, &entry.model, &completion).to_string(),
                                 "application/json",
                             ))
                         };
@@ -489,9 +496,19 @@ impl RouterState {
             let model = provider.models.first().cloned().unwrap_or_else(|| "default".to_owned());
             (provider, model)
         };
-        if provider.kind == catalog::KIND_ANTIGRAVITY {
+        if provider.kind == catalog::KIND_ANTIGRAVITY || provider.kind == catalog::KIND_QODER {
             let started = Instant::now();
-            return match crate::cli::run_antigravity(&model, "Reply with exactly: OK", None).await {
+            let outcome = if provider.kind == catalog::KIND_QODER {
+                let account = provider.accounts.iter().find(|account| account.is_active);
+                let secret = account
+                    .and_then(|account| account.secret_ref.clone())
+                    .or_else(|| provider.secret_ref.clone())
+                    .and_then(|entry_id| self.read_secret(&entry_id));
+                crate::cli::run_qoder(&model, "Reply with exactly: OK", account, secret.as_deref()).await
+            } else {
+                crate::cli::run_antigravity(&model, "Reply with exactly: OK", None).await
+            };
+            return match outcome {
                 Ok(completion) => Ok(json!({
                     "id": provider_id,
                     "ok": true,

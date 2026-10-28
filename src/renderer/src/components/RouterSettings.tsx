@@ -36,7 +36,7 @@ export function RouterSettings({ onError }: RouterSettingsProps) {
   const [busy, setBusy] = useState<string | null>(null)
   const [tests, setTests] = useState<Record<string, RouterTestResult>>({})
 
-  const [providerKind, setProviderKind] = useState<'openai-compatible' | 'antigravity'>('openai-compatible')
+  const [providerKind, setProviderKind] = useState<'openai-compatible' | 'antigravity' | 'qoder'>('openai-compatible')
   const [providerName, setProviderName] = useState('')
   const [providerBaseUrl, setProviderBaseUrl] = useState('')
   const [providerModels, setProviderModels] = useState('')
@@ -87,9 +87,9 @@ export function RouterSettings({ onError }: RouterSettingsProps) {
       onError('Give the provider a name.')
       return
     }
-    if (providerKind === 'antigravity') {
+    if (providerKind === 'antigravity' || providerKind === 'qoder') {
       apply('provider', () => window.ndDshRouter.saveProvider({
-        kind: 'antigravity',
+        kind: providerKind,
         name: providerName.trim(),
         models,
       }))
@@ -159,8 +159,8 @@ export function RouterSettings({ onError }: RouterSettingsProps) {
           </SettingsRow>
           <SettingsNote>
             Free lanes first: point an OpenAI-compatible provider at a local plugin gateway (for example dsh-our-free-model),
-            or add Antigravity to route the installed agy CLI's free models across accounts. Prompt Shield still runs before
-            anything leaves ND.
+            or add Antigravity or Qoder CLI to route the installed CLIs' free models across accounts. Prompt Shield still
+            runs before anything leaves ND.
           </SettingsNote>
         </div>
       </SettingsSection>
@@ -182,12 +182,18 @@ export function RouterSettings({ onError }: RouterSettingsProps) {
                 label: input.label,
                 ...(provider.kind === 'antigravity'
                   ? { kind: 'cli' as const, selector: input.selector }
-                  : { apiKey: input.apiKey }),
+                  : provider.kind === 'qoder'
+                    ? {
+                        kind: 'cli' as const,
+                        ...(input.apiKey ? { apiKey: input.apiKey } : {}),
+                        ...(input.configDir ? { envDir: input.configDir } : {}),
+                      }
+                    : { apiKey: input.apiKey }),
               }))}
               onRemoveAccount={(accountId) => apply(`account-remove:${provider.id}`, () => window.ndDshRouter.deleteAccount(provider.id, accountId))}
             />
           ))}
-          {providers.length === 0 ? <SettingsNote>No providers yet. Add an OpenAI-compatible endpoint or Antigravity below.</SettingsNote> : null}
+          {providers.length === 0 ? <SettingsNote>No providers yet. Add an OpenAI-compatible endpoint, Antigravity, or Qoder CLI below.</SettingsNote> : null}
 
           <SettingsRow className="items-start">
             <div className="flex min-w-0 flex-1 flex-col gap-2">
@@ -198,6 +204,9 @@ export function RouterSettings({ onError }: RouterSettingsProps) {
                   </SettingsButton>
                   <SettingsButton active={providerKind === 'antigravity'} disabled={disabled} onClick={() => setProviderKind('antigravity')}>
                     Antigravity (agy CLI)
+                  </SettingsButton>
+                  <SettingsButton active={providerKind === 'qoder'} disabled={disabled} onClick={() => setProviderKind('qoder')}>
+                    Qoder CLI
                   </SettingsButton>
                 </div>
               </div>
@@ -210,7 +219,7 @@ export function RouterSettings({ onError }: RouterSettingsProps) {
               <div className="flex min-w-0 gap-2">
                 <Input
                   aria-label="Provider models"
-                  placeholder={providerKind === 'antigravity' ? 'Models, e.g. gemini-3.8-flash-medium, claude-sonnet-5-5-medium (from `agy models`)' : 'Models (comma separated, optional)'}
+                  placeholder={providerKind === 'antigravity' ? 'Models, e.g. gemini-3.8-flash-medium, claude-sonnet-5-5-medium (from `agy models`)' : providerKind === 'qoder' ? 'Models, e.g. auto, lite, performance (from `qoder --list-models`)' : 'Models (comma separated, optional)'}
                   value={providerModels}
                   disabled={disabled}
                   onChange={(event) => setProviderModels(event.target.value)}
@@ -225,6 +234,12 @@ export function RouterSettings({ onError }: RouterSettingsProps) {
                   Runs your installed agy CLI — it owns the Google sign-in, ND never sees tokens. agy 1.3.1 runs model
                   calls on its default signed-in account; account entries below carry the AGY_ACCOUNT name (and can carry
                   an ADC credentials path) so per-account routing activates as soon as the CLI honors them.
+                </span>
+              ) : providerKind === 'qoder' ? (
+                <span className={rowDesc}>
+                  Runs your installed qoder CLI — each account selects its own CLI profile folder (QODER_CONFIG_DIR)
+                  and/or supplies a personal access token (QODER_PERSONAL_ACCESS_TOKEN). ND never reads the CLI's stored
+                  tokens. Requests run one turn with tools disabled, so the CLI answers instead of touching your workspace.
                 </span>
               ) : null}
               <div className="flex items-center gap-1">
@@ -355,13 +370,15 @@ function ProviderRow({
   onToggle(enabled: boolean): void
   onTest(): void
   onRemove(): void
-  onAddAccount(input: { label: string; apiKey: string; selector: string }): void
+  onAddAccount(input: { label: string; apiKey: string; selector: string; configDir: string }): void
   onRemoveAccount(accountId: string): void
 }) {
   const isAgy = provider.kind === 'antigravity'
+  const isQoder = provider.kind === 'qoder'
   const [label, setLabel] = useState('')
   const [key, setKey] = useState('')
   const [selector, setSelector] = useState('')
+  const [configDir, setConfigDir] = useState('')
   return (
     <div className="rounded-lg border border-border-soft bg-surface-1 px-[13px] py-[11px]">
       <div className="flex min-w-0 items-center justify-between gap-4">
@@ -371,7 +388,13 @@ function ProviderRow({
             <StatusChip neutral>{provider.kind}</StatusChip>
             {provider.hasSecret ? <StatusChip good>Key saved</StatusChip> : null}
           </span>
-          <span className={rowPathText}>{isAgy ? 'agy CLI (signed-in accounts from the Antigravity app)' : provider.baseUrl || '—'}</span>
+          <span className={rowPathText}>
+            {isAgy
+              ? 'agy CLI (signed-in accounts from the Antigravity app)'
+              : isQoder
+                ? 'qoder CLI (per-account profiles or personal access tokens)'
+                : provider.baseUrl || '—'}
+          </span>
           {provider.models.length > 0 ? <span className={rowDesc}>{provider.models.join(', ')}</span> : null}
           {test ? (
             <span className={rowDesc}>
@@ -398,6 +421,7 @@ function ProviderRow({
                 <span className="text-[10px] font-semibold text-soft">{account.label}</span>
                 <StatusChip neutral>{account.kind}</StatusChip>
                 {account.selector ? <span className={rowPathText}>{account.selector}</span> : null}
+                {account.envDir ? <span className={rowPathText}>{account.envDir}</span> : null}
                 {account.lastStatus ? <span className={rowPathText}>{account.lastStatus}</span> : null}
               </span>
               <SettingsButton disabled={disabled} onClick={() => onRemoveAccount(account.id)}>Remove</SettingsButton>
@@ -411,15 +435,19 @@ function ProviderRow({
         {isAgy ? (
           <Input aria-label={`${provider.name} agy account name`} placeholder="agy account name, e.g. account-2" value={selector} disabled={disabled} onChange={(event) => setSelector(event.target.value)} className="max-w-[220px] font-mono text-[11px]" />
         ) : (
-          <Input aria-label={`${provider.name} account API key`} type="password" autoComplete="off" placeholder="Account API key" value={key} disabled={disabled} onChange={(event) => setKey(event.target.value)} className="max-w-[220px]" />
+          <Input aria-label={`${provider.name} account API key`} type="password" autoComplete="off" placeholder={isQoder ? 'Personal access token (optional)' : 'Account API key'} value={key} disabled={disabled} onChange={(event) => setKey(event.target.value)} className="max-w-[220px]" />
         )}
+        {isQoder ? (
+          <Input aria-label={`${provider.name} CLI config dir`} placeholder="CLI profile dir (QODER_CONFIG_DIR)" value={configDir} disabled={disabled} onChange={(event) => setConfigDir(event.target.value)} className="max-w-[240px] font-mono text-[11px]" />
+        ) : null}
         <SettingsButton
-          disabled={disabled || !label.trim() || (isAgy ? !selector.trim() : !key.trim())}
+          disabled={disabled || !label.trim() || (isAgy ? !selector.trim() : isQoder ? !key.trim() && !configDir.trim() : !key.trim())}
           onClick={() => {
-            onAddAccount({ label: label.trim(), apiKey: key.trim(), selector: selector.trim() })
+            onAddAccount({ label: label.trim(), apiKey: key.trim(), selector: selector.trim(), configDir: configDir.trim() })
             setLabel('')
             setKey('')
             setSelector('')
+            setConfigDir('')
           }}
         >
           Add account

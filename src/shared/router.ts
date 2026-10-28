@@ -1,4 +1,4 @@
-export type RouterProviderKind = 'openai-compatible' | 'antigravity' | 'gemini-cli'
+export type RouterProviderKind = 'openai-compatible' | 'antigravity' | 'gemini-cli' | 'qoder'
 export type RouterComboStrategy = 'priority' | 'round-robin'
 
 export interface RouterAccountView {
@@ -8,9 +8,10 @@ export interface RouterAccountView {
   isActive: boolean
   priority: number
   hasSecret: boolean
-  envDir?: string
   /** CLI lane account name inside the external CLI (agy `AGY_ACCOUNT`). */
   selector?: string
+  /** CLI lane config directory (qoder `QODER_CONFIG_DIR`). */
+  envDir?: string
   cooldownUntilMs?: number
   lastStatus?: string
 }

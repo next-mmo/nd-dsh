@@ -1,6 +1,7 @@
 pub const KIND_OPENAI: &str = "openai-compatible";
 pub const KIND_ANTIGRAVITY: &str = "antigravity";
 pub const KIND_GEMINI_CLI: &str = "gemini-cli";
+pub const KIND_QODER: &str = "qoder";
 
 pub const STRATEGY_PRIORITY: &str = "priority";
 pub const STRATEGY_ROUND_ROBIN: &str = "round-robin";
@@ -11,6 +12,7 @@ pub fn normalize_kind(value: &str) -> Result<String, String> {
         "" | "custom" | "openai" | "openai-compatible" => Ok(KIND_OPENAI.to_owned()),
         "antigravity" | "agy" => Ok(KIND_ANTIGRAVITY.to_owned()),
         "gemini-cli" | "gemini" => Ok(KIND_GEMINI_CLI.to_owned()),
+        "qoder" | "qoder-cli" => Ok(KIND_QODER.to_owned()),
         other => Err(format!("provider kind is not supported: {other}")),
     }
 }

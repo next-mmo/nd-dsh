@@ -1,9 +1,14 @@
-//! Antigravity (agy CLI) execution lane.
+//! CLI execution lanes.
 //!
-//! The user's installed agy CLI owns the Google sign-in and its tokens (OS
-//! keychain); ND never handles them. A request becomes one
+//! Antigravity: the user's installed agy CLI owns the Google sign-in and its
+//! tokens (OS keychain); ND never handles them. A request becomes one
 //! `agy --print --output-format json` invocation, with `AGY_ACCOUNT`
 //! selecting the signed-in account when the routed entry carries one.
+//!
+//! Qoder: the installed qoder CLI owns its sign-in (or receives a personal
+//! access token from the ND vault). A request becomes one `qoder --print`
+//! invocation with tools disabled, so the CLI answers instead of acting on
+//! the ND workspace.
 
 use crate::catalog;
 use crate::types::{AccountRecord, RouterError};
@@ -13,6 +18,11 @@ use tokio::process::Command;
 
 pub const AGY_PRINT_TIMEOUT_SECS: u64 = 120;
 const MAX_PROMPT_CHARS: usize = 400_000;
+
+pub const QODER_PRINT_TIMEOUT_SECS: u64 = 120;
+// The prompt travels as a command-line argument and Windows caps a process
+// command line at ~32k characters, so the qoder budget stays well below it.
+const QODER_MAX_PROMPT_CHARS: usize = 24_000;
 
 pub struct CliCompletion {
     pub text: String,
@@ -24,6 +34,11 @@ pub struct CliCompletion {
 pub fn agy_binary() -> String {
     // Test override; production uses whatever `agy` resolves to on PATH.
     std::env::var("ND_AGY_BIN").unwrap_or_else(|_| "agy".to_owned())
+}
+
+pub fn qoder_binary() -> String {
+    // Test override; production uses whatever `qoder` resolves to on PATH.
+    std::env::var("ND_QODER_BIN").unwrap_or_else(|_| "qoder".to_owned())
 }
 
 /// Flatten OpenAI chat messages into one print-mode prompt. A single message
@@ -158,9 +173,155 @@ fn parse_output(stdout: &str) -> Option<Value> {
     None
 }
 
-pub fn completion_body(model: &str, completion: &CliCompletion) -> Value {
+pub async fn run_qoder(
+    model: &str,
+    prompt: &str,
+    account: Option<&AccountRecord>,
+    secret: Option<&str>,
+) -> Result<CliCompletion, RouterError> {
+    let prompt = prompt.trim();
+    if prompt.is_empty() {
+        return Err(RouterError::bad_request("the qoder lane needs a non-empty prompt"));
+    }
+    if prompt.chars().count() > QODER_MAX_PROMPT_CHARS {
+        return Err(RouterError::bad_request("prompt exceeds the qoder lane budget"));
+    }
+    let mut command = Command::new(qoder_binary());
+    command.arg("--print").arg(prompt);
+    let model = model.trim();
+    if !model.is_empty() && model != "default" {
+        command.arg(format!("--model={model}"));
+    }
+    command.arg("--output-format=json");
+    // One turn with every tool disabled keeps this a completion route: the
+    // CLI answers from the prompt and never acts on the ND workspace.
+    command.arg("--max-turns=1");
+    command.arg("--tools").arg("");
+    command.arg("--no-session-persistence");
+    if let Some(secret) = secret.map(str::trim).filter(|value| !value.is_empty()) {
+        command.env("QODER_PERSONAL_ACCESS_TOKEN", secret);
+    }
+    if let Some(config_dir) = account
+        .and_then(|account| account.env_dir.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        command.env("QODER_CONFIG_DIR", config_dir);
+    }
+    command.stdin(std::process::Stdio::null());
+    command.stdout(std::process::Stdio::piped());
+    command.stderr(std::process::Stdio::piped());
+    command.kill_on_drop(true);
+
+    let output = tokio::time::timeout(
+        Duration::from_secs(QODER_PRINT_TIMEOUT_SECS + 15),
+        command.output(),
+    )
+    .await
+    .map_err(|_| RouterError::bad_gateway("qoder CLI did not finish in time"))?
+    .map_err(|error| RouterError::bad_gateway(format!("qoder CLI could not be started: {error}")))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.status.success() {
+        let detail = if stdout.trim().is_empty() { stderr.trim() } else { stdout.trim() };
+        return Err(RouterError::bad_gateway(format!(
+            "qoder CLI failed: {}",
+            catalog::truncate(detail, 300)
+        )));
+    }
+    let parsed = parse_qoder_output(&stdout)
+        .ok_or_else(|| RouterError::bad_gateway("qoder CLI returned no parseable result"))?;
+    let text = qoder_text(&parsed);
+    let subtype = parsed.get("subtype").and_then(Value::as_str).unwrap_or("");
+    let status = parsed.get("status").and_then(Value::as_str).unwrap_or("");
+    let is_error = parsed.get("is_error").and_then(Value::as_bool).unwrap_or(false);
+    if is_error
+        || subtype.to_ascii_lowercase().contains("error")
+        || status.to_ascii_lowercase().contains("error")
+        || status.eq_ignore_ascii_case("failed")
+    {
+        let detail = if text.trim().is_empty() { subtype } else { text.trim() };
+        return Err(RouterError::bad_gateway(format!(
+            "qoder CLI reported an error: {}",
+            catalog::truncate(detail, 300)
+        )));
+    }
+    if text.trim().is_empty() {
+        return Err(RouterError::bad_gateway("qoder CLI returned an empty response"));
+    }
+    let usage = parsed
+        .get("usage")
+        .or_else(|| parsed.get("result").and_then(|result| result.get("usage")))
+        .cloned()
+        .unwrap_or(Value::Null);
+    let prompt_tokens = usage_number(&usage, &["input_tokens", "prompt_tokens", "tokens_input"]);
+    let completion_tokens = usage_number(&usage, &["output_tokens", "completion_tokens", "tokens_output"]);
+    let total_tokens = usage_number(&usage, &["total_tokens", "tokens_total"]);
+    Ok(CliCompletion {
+        text,
+        prompt_tokens,
+        completion_tokens,
+        total_tokens: if total_tokens == 0 { prompt_tokens + completion_tokens } else { total_tokens },
+    })
+}
+
+fn usage_number(usage: &Value, keys: &[&str]) -> u64 {
+    keys.iter().find_map(|key| usage.get(*key).and_then(Value::as_u64)).unwrap_or(0)
+}
+
+/// Accept both the Claude-style `result` string and the nested
+/// `result.content` shape Qoder documents, plus assistant message blocks.
+fn qoder_text(parsed: &Value) -> String {
+    if let Some(result) = parsed.get("result") {
+        match result {
+            Value::String(text) => return text.clone(),
+            Value::Object(object) => {
+                if let Some(text) = object.get("content").and_then(Value::as_str) {
+                    return text.to_owned();
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(text) = parsed.get("content").and_then(Value::as_str) {
+        return text.to_owned();
+    }
+    parsed
+        .get("message")
+        .and_then(|message| message.get("content"))
+        .map(stringify_content)
+        .unwrap_or_default()
+}
+
+/// qoder may print progress text around the payload; prefer a `result`
+/// object, otherwise fall back to the last JSON object on stdout.
+fn parse_qoder_output(stdout: &str) -> Option<Value> {
+    let trimmed = stdout.trim();
+    if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+        if value.is_object() {
+            return Some(value);
+        }
+    }
+    let mut fallback = None;
+    for line in trimmed.lines().rev() {
+        let trimmed_line = line.trim();
+        if !trimmed_line.starts_with('{') {
+            continue;
+        }
+        if let Ok(value) = serde_json::from_str::<Value>(trimmed_line) {
+            if value.get("type").and_then(Value::as_str) == Some("result") {
+                return Some(value);
+            }
+            fallback.get_or_insert(value);
+        }
+    }
+    fallback
+}
+
+pub fn completion_body(lane: &str, model: &str, completion: &CliCompletion) -> Value {
     json!({
-        "id": format!("chatcmpl-agy-{}", uuid::Uuid::new_v4().simple()),
+        "id": format!("chatcmpl-{lane}-{}", uuid::Uuid::new_v4().simple()),
         "object": "chat.completion",
         "created": std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -180,8 +341,8 @@ pub fn completion_body(model: &str, completion: &CliCompletion) -> Value {
     })
 }
 
-pub fn sse_body(model: &str, completion: &CliCompletion) -> String {
-    let id = format!("chatcmpl-agy-{}", uuid::Uuid::new_v4().simple());
+pub fn sse_body(lane: &str, model: &str, completion: &CliCompletion) -> String {
+    let id = format!("chatcmpl-{lane}-{}", uuid::Uuid::new_v4().simple());
     let first = json!({
         "id": id,
         "object": "chat.completion.chunk",
