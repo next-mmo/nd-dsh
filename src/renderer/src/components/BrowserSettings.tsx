@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react'
 import type { BrowserState } from '../../../shared/contracts'
 import type { BrowserCompanionState } from '../../../shared/browser-companion'
-import type { BrowserHistoryEntry, BrowserPlatformState } from '../../../shared/browser-platform'
+import type { BrowserHistoryEntry, BrowserPlatformState, BrowserProfileSummary } from '../../../shared/browser-platform'
 import { BridgePill } from './bridge-pill'
 import { BrowserExtensionsManager } from './BrowserExtensionsManager'
+import { BrowserProfileAvatar } from './BrowserProfileAvatar'
+import { BrowserProfileDialog } from './BrowserProfileDialog'
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog'
 import {
   SettingsButton,
   SettingsRow,
@@ -35,6 +38,10 @@ export function BrowserSettings({ browser, onError, onOpenBrowser }: BrowserSett
   const [permissionOrigin, setPermissionOrigin] = useState('')
   const [permissionName, setPermissionName] = useState('notifications')
   const [extensionsOpen, setExtensionsOpen] = useState(false)
+  const [profileDialog, setProfileDialog] = useState<
+    { mode: 'create' } | { mode: 'edit'; profile: BrowserProfileSummary } | null
+  >(null)
+  const [profileToDelete, setProfileToDelete] = useState<BrowserProfileSummary | null>(null)
 
   useEffect(() => {
     let mounted = true
@@ -67,8 +74,103 @@ export function BrowserSettings({ browser, onError, onOpenBrowser }: BrowserSett
     }
   }, [])
 
+  const profiles = browserPlatform?.profiles ?? []
+  const activeProfileId = profiles.find((profile) => profile.active)?.id
+  const visibleDownloads = (browserPlatform?.downloads ?? [])
+    .filter((download) => !download.profileId || !activeProfileId || download.profileId === activeProfileId)
+
+  const runProfileAction = async (action: () => Promise<unknown>): Promise<void> => {
+    try {
+      await action()
+    } catch (cause) {
+      onError(errorMessage(cause))
+      throw cause
+    }
+  }
+
+  const submitProfileDialog = async (input: { name: string; color: string }): Promise<void> => {
+    if (profileDialog?.mode === 'edit') {
+      await runProfileAction(() =>
+        window.ndDsh.browserPlatform.updateProfile(profileDialog.profile.id, { name: input.name, color: input.color }))
+      return
+    }
+    await runProfileAction(() => window.ndDsh.browserPlatform.createProfile(input.name, input.color))
+  }
+
+  const deleteProfile = async (profile: BrowserProfileSummary): Promise<void> => {
+    try {
+      await window.ndDsh.browserPlatform.deleteProfile(profile.id)
+      setProfileToDelete(null)
+    } catch (cause) {
+      onError(errorMessage(cause))
+    }
+  }
+
   return (
     <>
+      <SettingsSection title="Browser profiles" className="mt-3.5">
+        <div className="space-y-1.5">
+          <SettingsRow>
+            <div className={rowStack}>
+              <strong className={rowTitle}>Chrome-style profiles</strong>
+              <span className={rowDesc}>Switch identities with separate cookies, site data, history, permissions and saved sign-ins. Tabs of other profiles stay open in the background.</span>
+            </div>
+            <SettingsButton onClick={() => setProfileDialog({ mode: 'create' })}>New profile</SettingsButton>
+          </SettingsRow>
+          {profiles.map((profile) => (
+            <SettingsRow key={profile.id} label={`Browser profile ${profile.name}`}>
+              <div className="flex min-w-0 items-center gap-2.5">
+                <BrowserProfileAvatar name={profile.name} color={profile.color} size={26} />
+                <div className={rowStack}>
+                  <strong className={rowTitle}>
+                    {profile.name}
+                    {profile.isDefault ? <span className="ml-2 text-[9px] font-bold tracking-[0.08em] text-muted-foreground">DEFAULT</span> : null}
+                    {profile.active ? <span className="ml-2 text-[9px] font-bold tracking-[0.08em] text-primary">ACTIVE</span> : null}
+                  </strong>
+                  <span className={rowDesc}>
+                    {profile.tabCount} tab{profile.tabCount === 1 ? '' : 's'}
+                  </span>
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <SettingsButton
+                  disabled={profile.active}
+                  onClick={() => {
+                    void window.ndDsh.browserPlatform.selectProfile(profile.id)
+                      .catch((cause) => onError(errorMessage(cause)))
+                  }}
+                >
+                  Switch
+                </SettingsButton>
+                {profile.isDefault ? null : (
+                  <SettingsButton onClick={() => {
+                    void window.ndDsh.browserPlatform.setDefaultProfile(profile.id)
+                      .catch((cause) => onError(errorMessage(cause)))
+                  }}>
+                    Set default
+                  </SettingsButton>
+                )}
+                <SettingsButton onClick={() => setProfileDialog({ mode: 'edit', profile })}>Edit</SettingsButton>
+                {profile.isDefault || profile.id === 'default' ? null : (
+                  <SettingsButton
+                    className="hover:border-destructive/45 hover:text-destructive"
+                    onClick={() => setProfileToDelete(profile)}
+                  >
+                    Delete
+                  </SettingsButton>
+                )}
+              </div>
+            </SettingsRow>
+          ))}
+          <SettingsRow>
+            <div className={rowStack}>
+              <strong className={rowTitle}>Global default</strong>
+              <span className={rowDesc}>ND reopens the last active profile. The global default is the fallback on a fresh install or after deleting the active profile; the built-in Default profile keeps your existing cookies and sign-ins and cannot be deleted.</span>
+            </div>
+          </SettingsRow>
+        </div>
+      </SettingsSection>
+
       <SettingsSection title="Browser" className="mt-3.5">
         <div className="space-y-1.5">
           <SettingsRow>
@@ -116,14 +218,14 @@ export function BrowserSettings({ browser, onError, onOpenBrowser }: BrowserSett
           <SettingsRow>
             <div className={rowStack}>
               <strong className={rowTitle}>Real tabs</strong>
-              <span className={rowDesc}>Each tab is its own sandboxed WebContentsView in the persistent ND browser profile.</span>
+              <span className={rowDesc}>Each tab is its own sandboxed WebContentsView in the active browser profile.</span>
             </div>
             <span className={rowValueText}>{browser?.tabs?.length ?? 0}</span>
           </SettingsRow>
           <SettingsRow>
             <div className={rowStack}>
               <strong className={rowTitle}>Extensions</strong>
-              <span className={rowDesc}>Install, enable, and remove extensions for ND's built-in Chromium profile. Nothing here launches or imports from external Google Chrome.</span>
+              <span className={rowDesc}>Install, enable, and remove extensions for ND's built-in Chromium browser. ND's approved extensions load into every browser profile with isolated extension state. Nothing here launches or imports from external Google Chrome.</span>
             </div>
             <SettingsButton onClick={() => setExtensionsOpen((open) => !open)}>
               {extensionsOpen ? 'Close' : 'Manage'}
@@ -139,11 +241,11 @@ export function BrowserSettings({ browser, onError, onOpenBrowser }: BrowserSett
           <SettingsRow>
             <div className={rowStack}>
               <strong className={rowTitle}>Downloads</strong>
-              <span className={rowDesc}>Built-in downloads are tracked explicitly and saved through the ND browser session.</span>
+              <span className={rowDesc}>Downloads started by the active browser profile are tracked explicitly and saved through its ND browser session.</span>
             </div>
-            <span className={rowValueText}>{browserPlatform?.downloads.length ?? 0}</span>
+            <span className={rowValueText}>{visibleDownloads.length}</span>
           </SettingsRow>
-          {(browserPlatform?.downloads ?? []).slice(0, 5).map((download) => (
+          {visibleDownloads.slice(0, 5).map((download) => (
             <SettingsRow key={download.id}>
               <div className={rowStack}>
                 <strong className={rowTitle}>{download.filename}</strong>
@@ -176,7 +278,7 @@ export function BrowserSettings({ browser, onError, onOpenBrowser }: BrowserSett
           <SettingsRow>
             <div className={rowStack}>
               <strong className={rowTitle}>History</strong>
-              <span className={rowDesc}>Persistent ND browser navigation metadata; page contents and credentials are not copied into history.</span>
+              <span className={rowDesc}>Persistent navigation metadata for the active browser profile; page contents and credentials are not copied into history.</span>
             </div>
             <span className={rowValueText}>{browserHistory.length}</span>
           </SettingsRow>
@@ -229,7 +331,7 @@ export function BrowserSettings({ browser, onError, onOpenBrowser }: BrowserSett
           <SettingsRow>
             <div className={rowStack}>
               <strong className={rowTitle}>Browser data</strong>
-              <span className={rowDesc}>Clear built-in cookies/site data, cache, and ND navigation history. Chrome Companion profile data is never cleared from here.</span>
+              <span className={rowDesc}>Clear the active profile's cookies/site data, cache, and ND navigation history. Other browser profiles and Chrome Companion data are never cleared from here.</span>
             </div>
             <SettingsButton onClick={() => {
               void window.ndDsh.browserPlatform.clearBrowserData({ targetId: 'builtin', history: true })
@@ -357,6 +459,45 @@ export function BrowserSettings({ browser, onError, onOpenBrowser }: BrowserSett
           </SettingsRow>
         </div>
       </SettingsSection>
+
+      <BrowserProfileDialog
+        open={profileDialog !== null}
+        mode={profileDialog?.mode === 'edit' ? 'edit' : 'create'}
+        initialName={profileDialog?.mode === 'edit' ? profileDialog.profile.name : undefined}
+        initialColor={profileDialog?.mode === 'edit' ? profileDialog.profile.color : undefined}
+        onSubmit={submitProfileDialog}
+        onClose={() => setProfileDialog(null)}
+      />
+
+      <Dialog open={profileToDelete !== null} onOpenChange={(open) => { if (!open) setProfileToDelete(null) }}>
+        <DialogContent className="sm:max-w-[470px]">
+          <DialogHeader>
+            <DialogTitle>Delete browser profile?</DialogTitle>
+            <DialogDescription>
+              {profileToDelete
+                ? `“${profileToDelete.name}” will be removed together with its cookies, site data, history, permissions and saved sign-ins. Tabs open in it are closed.`
+                : ''}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <DialogClose asChild>
+              <button
+                type="button"
+                className="shrink-0 rounded-md border border-border bg-secondary px-2.5 py-1.5 text-[10px] text-soft transition-colors hover:bg-accent hover:text-foreground"
+              >
+                Cancel
+              </button>
+            </DialogClose>
+            <button
+              type="button"
+              className="shrink-0 rounded-md border border-destructive/45 bg-secondary px-2.5 py-1.5 text-[10px] text-destructive transition-colors hover:bg-destructive/10"
+              onClick={() => { if (profileToDelete) void deleteProfile(profileToDelete) }}
+            >
+              Delete profile
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   )
 }

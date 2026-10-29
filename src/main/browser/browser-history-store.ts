@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import { dirname } from 'node:path'
 import type { BrowserHistoryEntry } from '../../shared/browser-platform.js'
+import { DEFAULT_BROWSER_PROFILE_ID } from '../../shared/browser-platform.js'
 
 interface Snapshot {
   version: 1
@@ -17,16 +18,17 @@ export class BrowserHistoryStore {
 
   constructor(private readonly filePath: string) {}
 
-  async list(targetId?: string): Promise<BrowserHistoryEntry[]> {
+  async list(targetId?: string, profileId?: string): Promise<BrowserHistoryEntry[]> {
     await this.load()
     return structuredClone(
       this.value.entries
         .filter((entry) => !targetId || entry.targetId === targetId)
+        .filter((entry) => !profileId || entry.profileId === profileId)
         .sort((a, b) => b.visitedAt - a.visitedAt),
     )
   }
 
-  async record(input: Omit<BrowserHistoryEntry, 'id' | 'visitedAt'> & { visitedAt?: number }): Promise<BrowserHistoryEntry> {
+  async record(input: Omit<BrowserHistoryEntry, 'id' | 'visitedAt' | 'profileId'> & { visitedAt?: number; profileId?: string | undefined }): Promise<BrowserHistoryEntry> {
     await this.load()
     const url = input.url.trim()
     if (!url || url === 'about:blank') throw new Error('Browser history URL is invalid')
@@ -37,6 +39,7 @@ export class BrowserHistoryStore {
       url,
       title: input.title.trim().slice(0, 512) || url,
       visitedAt: input.visitedAt ?? Date.now(),
+      profileId: input.profileId ?? DEFAULT_BROWSER_PROFILE_ID,
     }
     this.value.entries.unshift(entry)
     if (this.value.entries.length > MAX_HISTORY) this.value.entries.length = MAX_HISTORY
@@ -44,10 +47,11 @@ export class BrowserHistoryStore {
     return structuredClone(entry)
   }
 
-  async clear(input: { targetId?: string; origin?: string } = {}): Promise<number> {
+  async clear(input: { targetId?: string; origin?: string; profileId?: string } = {}): Promise<number> {
     await this.load()
     const before = this.value.entries.length
     this.value.entries = this.value.entries.filter((entry) => {
+      if (input.profileId && entry.profileId !== input.profileId) return true
       if (input.targetId && entry.targetId !== input.targetId) return true
       if (input.origin) {
         try {
@@ -70,7 +74,10 @@ export class BrowserHistoryStore {
       if (parsed?.version === 1 && Array.isArray(parsed.entries)) {
         this.value = {
           version: 1,
-          entries: parsed.entries.filter(validEntry).slice(0, MAX_HISTORY),
+          entries: parsed.entries.filter(validEntry).slice(0, MAX_HISTORY).map((entry) => ({
+            ...entry,
+            profileId: typeof entry.profileId === 'string' && entry.profileId ? entry.profileId : DEFAULT_BROWSER_PROFILE_ID,
+          })),
         }
       }
     } catch (cause) {
@@ -106,4 +113,5 @@ function validEntry(value: unknown): value is BrowserHistoryEntry {
     && typeof entry.url === 'string'
     && typeof entry.title === 'string'
     && typeof entry.visitedAt === 'number'
+    && (entry.profileId === undefined || typeof entry.profileId === 'string')
 }

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import { dirname } from 'node:path'
 import type { BrowserSitePermission } from '../../shared/browser-platform.js'
+import { DEFAULT_BROWSER_PROFILE_ID } from '../../shared/browser-platform.js'
 
 interface Snapshot {
   version: 1
@@ -21,29 +22,32 @@ export class BrowserPermissionStore {
     await this.load()
   }
 
-  list(): BrowserSitePermission[] {
-    return structuredClone(this.value.permissions)
+  list(profileId?: string): BrowserSitePermission[] {
+    return structuredClone(
+      this.value.permissions.filter((item) => !profileId || item.profileId === profileId),
+    )
   }
 
-  effect(origin: string, permission: string): 'allow' | 'deny' {
+  effect(origin: string, permission: string, profileId = DEFAULT_BROWSER_PROFILE_ID): 'allow' | 'deny' {
     const normalized = normalizeOrigin(origin)
     const record = this.value.permissions.find((item) =>
-      item.origin === normalized && item.permission === permission)
+      item.origin === normalized && item.permission === permission && item.profileId === profileId)
     return record?.effect ?? 'deny'
   }
 
-  async set(origin: string, permission: string, effect: 'allow' | 'deny'): Promise<BrowserSitePermission> {
+  async set(origin: string, permission: string, effect: 'allow' | 'deny', profileId = DEFAULT_BROWSER_PROFILE_ID): Promise<BrowserSitePermission> {
     await this.load()
     const normalized = normalizeOrigin(origin)
     const cleanPermission = permission.trim()
     if (!cleanPermission || cleanPermission.length > 128) throw new Error('Browser permission name is invalid')
     const existing = this.value.permissions.find((item) =>
-      item.origin === normalized && item.permission === cleanPermission)
+      item.origin === normalized && item.permission === cleanPermission && item.profileId === profileId)
     const record: BrowserSitePermission = {
       origin: normalized,
       permission: cleanPermission,
       effect,
       updatedAt: Date.now(),
+      profileId,
     }
     if (existing) this.value.permissions[this.value.permissions.indexOf(existing)] = record
     else this.value.permissions.unshift(record)
@@ -52,17 +56,21 @@ export class BrowserPermissionStore {
     return structuredClone(record)
   }
 
-  async clear(origin?: string): Promise<number> {
+  async clear(origin?: string, profileId?: string): Promise<number> {
     await this.load()
     if (!origin) {
-      const count = this.value.permissions.length
-      this.value.permissions = []
-      if (count) await this.persist()
-      return count
+      const before = this.value.permissions.length
+      this.value.permissions = profileId
+        ? this.value.permissions.filter((item) => item.profileId !== profileId)
+        : []
+      const removed = before - this.value.permissions.length
+      if (removed) await this.persist()
+      return removed
     }
     const normalized = normalizeOrigin(origin)
     const before = this.value.permissions.length
-    this.value.permissions = this.value.permissions.filter((item) => item.origin !== normalized)
+    this.value.permissions = this.value.permissions.filter((item) =>
+      item.origin !== normalized || (profileId !== undefined && item.profileId !== profileId))
     const removed = before - this.value.permissions.length
     if (removed) await this.persist()
     return removed
@@ -75,7 +83,10 @@ export class BrowserPermissionStore {
       if (parsed?.version === 1 && Array.isArray(parsed.permissions)) {
         this.value = {
           version: 1,
-          permissions: parsed.permissions.filter(validPermission).slice(0, MAX_PERMISSIONS),
+          permissions: parsed.permissions.filter(validPermission).slice(0, MAX_PERMISSIONS).map((item) => ({
+            ...item,
+            profileId: typeof item.profileId === 'string' && item.profileId ? item.profileId : DEFAULT_BROWSER_PROFILE_ID,
+          })),
         }
       }
     } catch (cause) {
@@ -116,4 +127,5 @@ function validPermission(value: unknown): value is BrowserSitePermission {
     && typeof record.permission === 'string'
     && (record.effect === 'allow' || record.effect === 'deny')
     && typeof record.updatedAt === 'number'
+    && (record.profileId === undefined || typeof record.profileId === 'string')
 }

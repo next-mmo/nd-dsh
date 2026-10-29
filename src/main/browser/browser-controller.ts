@@ -13,6 +13,7 @@ import {
 import { join } from 'node:path'
 import {
   BROWSER_EXTENSION_POPUP_IPC,
+  DEFAULT_BROWSER_PROFILE_ID,
   type BrowserDownloadRecord,
   type BrowserExtensionPopupContext,
   type BrowserSiteToolDescriptor,
@@ -32,7 +33,6 @@ import { UiInspector } from './ui-inspector.js'
 import { translatePageReadScript } from './translate-page-reader.js'
 
 export const BUILTIN_BROWSER_TARGET_ID = 'builtin'
-export const BUILTIN_BROWSER_PROFILE_ID = 'builtin:default'
 const BROWSER_PARTITION = 'persist:nd-dsh-browser'
 
 export interface BrowserControllerOptions {
@@ -41,6 +41,12 @@ export interface BrowserControllerOptions {
   extensionRuntimePreload?: string
   /** Now-playing changes across tabs, for the quick launcher transport row. */
   onMediaState?: (state: NdMediaSessionState | null) => void
+  /** Chrome-style profile record the browser opens with. */
+  initialProfileId?: string
+  /** Electron partition that holds one profile's cookies and storage. */
+  partitionForProfile?: (profileId: string) => string
+  /** Human label for a profile, surfaced on target descriptors. */
+  profileLabel?: (profileId: string) => string
 }
 
 const EXTENSION_RUNTIME_PRELOAD_ID = 'nd-extension-runtime'
@@ -73,6 +79,8 @@ function claimExtensionPopupContext(controller: BrowserController): void {
 
 interface BrowserTabRuntime {
   id: string
+  /** Chrome-style profile record that owns this tab's session. */
+  profileId: string
   view: WebContentsView
   inspector: UiInspector
   annotator: UiAnnotator
@@ -93,16 +101,22 @@ interface BrowserTabRuntime {
 }
 
 export class BrowserController {
-  private readonly browserSessionValue: Session
+  private readonly sessionsByProfile = new Map<string, Session>()
+  private readonly downloadsByProfile = new Map<string, BrowserDownloadManager>()
   private readonly tabs = new Map<string, BrowserTabRuntime>()
+  private readonly lastTabByProfile = new Map<string, string>()
   private readonly agentBrowser: AgentBrowserClient
   private readonly historyStore: BrowserHistoryStore
   private readonly permissionStore: BrowserPermissionStore
-  private readonly downloads: BrowserDownloadManager
   private readonly mediaTracker: BrowserMediaTracker
   private readonly reservedOrigin: (() => string | undefined) | undefined
   private readonly extensionRuntimePreload: string | undefined
+  private readonly partitionForProfile: (profileId: string) => string
+  private readonly profileLabelFor: (profileId: string) => string
+  private sessionCreatedListener: ((profileId: string, session: Session) => void) | undefined
+  private downloadAuthorizationHandler: ((request: BrowserDownloadAuthorizationRequest) => Promise<boolean>) | undefined
   private extensionPopup: BrowserExtensionPopupRuntime | undefined
+  private activeProfileValue: string
   private activeTabIdValue: string
   private bounds: Rectangle = { x: 0, y: 0, width: 0, height: 0 }
   private visible = false
@@ -113,6 +127,7 @@ export class BrowserController {
   private destroyPromise: Promise<void> | undefined
   private destroying = false
   private readonly backgroundAttached = new Set<string>()
+  private readonly routerPresented = new Set<string>()
 
   constructor(
     private readonly window: BrowserWindow,
@@ -122,53 +137,108 @@ export class BrowserController {
   ) {
     this.reservedOrigin = options.reservedOrigin
     this.extensionRuntimePreload = options.extensionRuntimePreload
+    this.partitionForProfile = options.partitionForProfile ?? (() => BROWSER_PARTITION)
+    this.profileLabelFor = options.profileLabel ?? (() => 'ND Browser')
+    this.activeProfileValue = options.initialProfileId ?? DEFAULT_BROWSER_PROFILE_ID
     this.mediaTracker = new BrowserMediaTracker(options.onMediaState ?? (() => undefined))
-    this.browserSessionValue = session.fromPartition(BROWSER_PARTITION)
     claimExtensionPopupContext(this)
-    if (this.extensionRuntimePreload
-      && !this.browserSessionValue.getPreloadScripts().some((script) => script.id === EXTENSION_RUNTIME_PRELOAD_ID)) {
-      this.browserSessionValue.registerPreloadScript({
-        id: EXTENSION_RUNTIME_PRELOAD_ID,
-        type: 'service-worker',
-        filePath: this.extensionRuntimePreload,
-      })
-    }
 
     this.agentBrowser = new AgentBrowserClient(cdpPort, projectRoot)
     const dataPath = options.dataPath ?? app.getPath('userData')
     this.historyStore = new BrowserHistoryStore(join(dataPath, 'browser-history.json'))
     this.permissionStore = new BrowserPermissionStore(join(dataPath, 'browser-site-permissions.json'))
-    this.browserSessionValue.setPermissionRequestHandler((webContents, permission, callback, details) => {
-      const pageOrigin = permissionOrigin(details.requestingUrl || webContents.getURL())
-      callback(Boolean(pageOrigin && this.permissionStore.effect(pageOrigin, permission) === 'allow'))
-    })
-    this.browserSessionValue.setPermissionCheckHandler((_webContents, permission, requestingOrigin) => {
-      const pageOrigin = permissionOrigin(requestingOrigin)
-      return Boolean(pageOrigin && this.permissionStore.effect(pageOrigin, permission) === 'allow')
-    })
-    this.downloads = new BrowserDownloadManager(
-      this.browserSessionValue,
-      BUILTIN_BROWSER_TARGET_ID,
-      (webContentsId) => this.tabIdForWebContents(webContentsId),
-      () => this.emitState(),
-    )
+    // Opening the launch profile creates its session, permission handlers and
+    // download tracker; other profiles get theirs on first use.
+    this.ensureSession(this.activeProfileValue)
 
-    const initial = this.createTabRuntime()
+    const initial = this.createTabRuntime(this.activeProfileValue)
     this.tabs.set(initial.id, initial)
     this.activeTabIdValue = initial.id
+    this.lastTabByProfile.set(initial.profileId, initial.id)
     this.syncViewVisibility()
   }
 
   browserSession(): Session {
-    return this.browserSessionValue
+    return this.ensureSession(this.activeProfileValue)
+  }
+
+  /** Notified when a profile's session is first created, so extensions attach. */
+  setSessionCreatedListener(listener: ((profileId: string, session: Session) => void) | undefined): void {
+    this.sessionCreatedListener = listener
   }
 
   async refreshAdBlockPages(): Promise<void> {
     await Promise.all([...this.tabs.values()].map(tab => refreshAdBlockPage(tab.view.webContents)))
   }
 
+  /** Fully-qualified identity of the active Chrome-style profile. */
   profileId(): string {
-    return BUILTIN_BROWSER_PROFILE_ID
+    return `builtin:${this.activeProfileValue}`
+  }
+
+  /** Record id of the active profile (`default` keeps the legacy partition). */
+  activeProfileId(): string {
+    return this.activeProfileValue
+  }
+
+  profileLabel(): string {
+    return this.profileLabelFor(this.activeProfileValue)
+  }
+
+  /** True while a router web turn owns the visible/background browser surface. */
+  externalActivity(): 'router-turn' | 'background-render' | undefined {
+    if (this.routerPresented.size > 0) return 'router-turn'
+    if (this.backgroundAttached.size > 0) return 'background-render'
+    return undefined
+  }
+
+  /**
+   * Chrome-style identity switch: the active tab defines the visible profile,
+   * so switching activates that profile's most recent tab (or opens a blank
+   * one). Tabs of other profiles stay alive for in-flight engine work.
+   */
+  async switchProfile(profileId: string): Promise<BrowserState> {
+    if (this.destroying) throw new Error('Built-in browser is shutting down')
+    const clean = profileId.trim()
+    if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(clean)) throw new Error('Browser profile id is invalid')
+    this.ensureSession(clean)
+    if (clean === this.activeProfileValue) return this.state()
+
+    const preferredId = this.lastTabByProfile.get(clean)
+    const existing = [...this.tabs.values()].filter((tab) => tab.profileId === clean)
+    const target = existing.find((tab) => tab.id === preferredId) ?? existing[existing.length - 1]
+    if (target) {
+      await this.activateTab(target.id)
+    } else {
+      const tab = this.createTabRuntime(clean)
+      this.tabs.set(tab.id, tab)
+      await this.activateTab(tab.id)
+    }
+    this.emitState()
+    return this.state()
+  }
+
+  /** Close a deleted profile's tabs and wipe its Chromium data and ND metadata. */
+  async purgeProfile(profileId: string): Promise<void> {
+    if (profileId === this.activeProfileValue) {
+      throw new Error('Switch away from a browser profile before deleting it')
+    }
+    for (const tab of [...this.tabs.values()].filter((item) => item.profileId === profileId)) {
+      await this.closeTab(tab.id)
+    }
+    const downloads = this.downloadsByProfile.get(profileId)
+    downloads?.dispose()
+    this.downloadsByProfile.delete(profileId)
+    const profileSession = this.sessionsByProfile.get(profileId)
+    if (profileSession) {
+      await profileSession.clearStorageData().catch(() => undefined)
+      await profileSession.clearCache().catch(() => undefined)
+      this.sessionsByProfile.delete(profileId)
+    }
+    await this.permissionStore.clear(undefined, profileId).catch(() => undefined)
+    await this.historyStore.clear({ profileId }).catch(() => undefined)
+    this.lastTabByProfile.delete(profileId)
+    this.emitState()
   }
 
   /** Now-playing tracking and the OS-style transport over playing tabs. */
@@ -203,7 +273,7 @@ export class BrowserController {
     const hostContents = this.activeTab().view.webContents
     const view = new WebContentsView({
       webPreferences: {
-        session: this.browserSessionValue,
+        session: this.browserSession(),
         ...(this.extensionRuntimePreload ? { preload: this.extensionRuntimePreload } : {}),
         nodeIntegration: false,
         contextIsolation: true,
@@ -334,10 +404,10 @@ export class BrowserController {
       visible: this.visible,
       cdpPort: this.cdpPort,
       ...(active.state.targetId ? { targetId: active.state.targetId } : {}),
-      profileId: BUILTIN_BROWSER_PROFILE_ID,
+      profileId: this.profileId(),
       activeTabId: active.id,
       tabs: this.listTabs(),
-      downloads: this.downloads.list(),
+      downloads: this.listDownloads(),
       agentBrowser: agentStatus.state,
       ...(agentStatus.error ? { agentBrowserError: agentStatus.error } : {}),
       inspectMode: active.state.inspectMode,
@@ -351,9 +421,9 @@ export class BrowserController {
     return [...this.tabs.values()].map((tab) => this.describeTab(tab))
   }
 
-  async createTab(url = 'about:blank', activate = true): Promise<BrowserTabDescriptor> {
+  async createTab(url = 'about:blank', activate = true, profileId = this.activeProfileValue): Promise<BrowserTabDescriptor> {
     if (this.destroying) throw new Error('Built-in browser is shutting down')
-    const tab = this.createTabRuntime()
+    const tab = this.createTabRuntime(profileId)
     this.tabs.set(tab.id, tab)
     if (activate) await this.activateTab(tab.id)
     if (url !== 'about:blank') await this.navigate(url, tab.id)
@@ -364,6 +434,13 @@ export class BrowserController {
   async activateTab(tabId: string): Promise<BrowserTabDescriptor> {
     const tab = this.requireTab(tabId)
     this.closeExtensionPopup()
+    this.lastTabByProfile.set(tab.profileId, tabId)
+    if (tab.profileId !== this.activeProfileValue) {
+      // A tab of another profile (agent, engine, router lane) became active:
+      // the visible identity follows the tab, exactly like focusing a Chrome
+      // window of a different profile.
+      this.activeProfileValue = tab.profileId
+    }
     if (this.activeTabIdValue === tabId) return this.describeTab(tab)
     const previous = this.activeTab()
     if (previous.state.inspectMode) await previous.inspector.stop().catch(() => undefined)
@@ -397,14 +474,19 @@ export class BrowserController {
     if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close()
     this.tabs.delete(tabId)
     this.backgroundAttached.delete(tabId)
+    if (this.lastTabByProfile.get(tab.profileId) === tabId) this.lastTabByProfile.delete(tab.profileId)
     this.onTabClosed?.(tabId)
 
     if (this.tabs.size === 0) {
-      const replacement = this.createTabRuntime()
+      const replacement = this.createTabRuntime(this.activeProfileValue)
       this.tabs.set(replacement.id, replacement)
       this.activeTabIdValue = replacement.id
+      this.lastTabByProfile.set(replacement.profileId, replacement.id)
     } else if (wasActive) {
-      this.activeTabIdValue = this.tabs.keys().next().value as string
+      const next = this.tabs.get(this.tabs.keys().next().value as string)!
+      this.activeTabIdValue = next.id
+      this.activeProfileValue = next.profileId
+      this.lastTabByProfile.set(next.profileId, next.id)
     }
 
     if (wasActive) {
@@ -500,16 +582,16 @@ export class BrowserController {
     return this.state()
   }
 
-  async history(targetId = BUILTIN_BROWSER_TARGET_ID) {
-    return this.historyStore.list(targetId)
+  async history(targetId = BUILTIN_BROWSER_TARGET_ID, profileId = this.activeProfileValue) {
+    return this.historyStore.list(targetId, profileId)
   }
 
   sitePermissions() {
-    return this.permissionStore.list()
+    return this.permissionStore.list(this.activeProfileValue)
   }
 
   async setSitePermission(origin: string, permission: string, effect: 'allow' | 'deny') {
-    const record = await this.permissionStore.set(origin, permission, effect)
+    const record = await this.permissionStore.set(origin, permission, effect, this.activeProfileValue)
     this.emitState()
     return record
   }
@@ -519,14 +601,14 @@ export class BrowserController {
       let parsed: URL
       try { parsed = new URL(origin) } catch { throw new Error('Browser data origin must be a valid URL') }
       if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error('Browser data clearing supports http/https origins')
-      await this.browserSessionValue.clearStorageData({ origin: parsed.origin })
-      await this.permissionStore.clear(parsed.origin)
-      if (clearHistory) await this.historyStore.clear({ targetId: BUILTIN_BROWSER_TARGET_ID, origin: parsed.origin })
+      await this.browserSession().clearStorageData({ origin: parsed.origin })
+      await this.permissionStore.clear(parsed.origin, this.activeProfileValue)
+      if (clearHistory) await this.historyStore.clear({ targetId: BUILTIN_BROWSER_TARGET_ID, origin: parsed.origin, profileId: this.activeProfileValue })
     } else {
-      await this.browserSessionValue.clearStorageData()
-      await this.browserSessionValue.clearCache()
-      await this.permissionStore.clear()
-      if (clearHistory) await this.historyStore.clear({ targetId: BUILTIN_BROWSER_TARGET_ID })
+      await this.browserSession().clearStorageData()
+      await this.browserSession().clearCache()
+      await this.permissionStore.clear(undefined, this.activeProfileValue)
+      if (clearHistory) await this.historyStore.clear({ targetId: BUILTIN_BROWSER_TARGET_ID, profileId: this.activeProfileValue })
     }
     this.emitState()
   }
@@ -534,28 +616,40 @@ export class BrowserController {
   setDownloadAuthorizationHandler(
     handler: ((request: BrowserDownloadAuthorizationRequest) => Promise<boolean>) | undefined,
   ): void {
-    this.downloads.setAuthorizationHandler(handler)
+    this.downloadAuthorizationHandler = handler
+    for (const manager of this.downloadsByProfile.values()) manager.setAuthorizationHandler(handler)
   }
 
   armAgentDownload(tabId: string, sessionId: string): void {
-    this.requireTab(tabId)
-    this.downloads.armAgentDownload(tabId, sessionId)
+    const tab = this.requireTab(tabId)
+    this.downloadManagerFor(tab.profileId).armAgentDownload(tabId, sessionId)
   }
 
   listDownloads(): BrowserDownloadRecord[] {
-    return this.downloads.list()
+    return [...this.downloadsByProfile.values()]
+      .flatMap((manager) => manager.list())
+      .sort((a, b) => b.startedAt - a.startedAt)
   }
 
   downloadPath(downloadId: string): string | undefined {
-    return this.downloads.path(downloadId)
+    for (const manager of this.downloadsByProfile.values()) {
+      const path = manager.path(downloadId)
+      if (path) return path
+    }
+    return undefined
   }
 
   cancelDownload(downloadId: string): boolean {
-    return this.downloads.cancel(downloadId)
+    for (const manager of this.downloadsByProfile.values()) {
+      if (manager.cancel(downloadId)) return true
+    }
+    return false
   }
 
   clearFinishedDownloads(): number {
-    return this.downloads.clearFinished()
+    let removed = 0
+    for (const manager of this.downloadsByProfile.values()) removed += manager.clearFinished()
+    return removed
   }
 
   async snapshot(): Promise<unknown> {
@@ -650,10 +744,12 @@ export class BrowserController {
     this.window.contentView.addChildView(tab.view)
     tab.view.setBounds(this.bounds)
     tab.view.setVisible(true)
+    this.routerPresented.add(tabId)
     let restored = false
     return () => {
       if (restored) return
       restored = true
+      this.routerPresented.delete(tabId)
       if (!wasVisible) {
         this.visible = false
         this.bounds = previousBounds
@@ -866,9 +962,17 @@ export class BrowserController {
     if (extensionPopupContextOwner === this) extensionPopupContextOwner = undefined
     this.onStateChanged = undefined
     this.onTabClosed = undefined
+    // Chromium writes cookies and site storage lazily. Quit is the only chance
+    // to commit them for every profile, or a sign-in made minutes earlier can
+    // vanish on restart.
+    await Promise.allSettled([...this.sessionsByProfile.values()].map(async (profileSession) => {
+      await profileSession.cookies.flushStore().catch(() => undefined)
+      profileSession.flushStorageData()
+    }))
     const binding = this.binding
     if (binding) await binding.catch(() => undefined)
-    this.downloads.dispose()
+    for (const manager of this.downloadsByProfile.values()) manager.dispose()
+    this.downloadsByProfile.clear()
     const cleanup: Promise<unknown>[] = [this.agentBrowser.close()]
     for (const tab of this.tabs.values()) {
       cleanup.push(tab.inspector.stop(), tab.annotator.cancel())
@@ -882,13 +986,63 @@ export class BrowserController {
       if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close()
     }
     this.tabs.clear()
+    this.sessionsByProfile.clear()
+    this.lastTabByProfile.clear()
+    this.routerPresented.clear()
   }
 
-  private createTabRuntime(): BrowserTabRuntime {
+  /**
+   * One Electron session per Chrome-style profile. Each session gets its own
+   * permission handlers, extension-runtime preload and download tracker, so
+   * cookies, storage and decisions never leak across identities.
+   */
+  private ensureSession(profileId: string): Session {
+    const existing = this.sessionsByProfile.get(profileId)
+    if (existing) return existing
+    const profileSession = session.fromPartition(this.partitionForProfile(profileId))
+    if (this.extensionRuntimePreload
+      && !profileSession.getPreloadScripts().some((script) => script.id === EXTENSION_RUNTIME_PRELOAD_ID)) {
+      profileSession.registerPreloadScript({
+        id: EXTENSION_RUNTIME_PRELOAD_ID,
+        type: 'service-worker',
+        filePath: this.extensionRuntimePreload,
+      })
+    }
+    profileSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+      const pageOrigin = permissionOrigin(details.requestingUrl || webContents.getURL())
+      callback(Boolean(pageOrigin && this.permissionStore.effect(pageOrigin, permission, profileId) === 'allow'))
+    })
+    profileSession.setPermissionCheckHandler((_webContents, permission, requestingOrigin) => {
+      const pageOrigin = permissionOrigin(requestingOrigin)
+      return Boolean(pageOrigin && this.permissionStore.effect(pageOrigin, permission, profileId) === 'allow')
+    })
+    this.sessionsByProfile.set(profileId, profileSession)
+    const downloads = new BrowserDownloadManager(
+      profileSession,
+      BUILTIN_BROWSER_TARGET_ID,
+      (webContentsId) => this.tabIdForWebContents(webContentsId),
+      () => this.emitState(),
+      profileId,
+    )
+    if (this.downloadAuthorizationHandler) downloads.setAuthorizationHandler(this.downloadAuthorizationHandler)
+    this.downloadsByProfile.set(profileId, downloads)
+    this.sessionCreatedListener?.(profileId, profileSession)
+    return profileSession
+  }
+
+  private downloadManagerFor(profileId: string): BrowserDownloadManager {
+    this.ensureSession(profileId)
+    const manager = this.downloadsByProfile.get(profileId)
+    if (!manager) throw new Error('Browser download manager is unavailable')
+    return manager
+  }
+
+  private createTabRuntime(profileId: string): BrowserTabRuntime {
     const id = randomUUID()
+    this.ensureSession(profileId)
     const view = new WebContentsView({
       webPreferences: {
-        partition: BROWSER_PARTITION,
+        partition: this.partitionForProfile(profileId),
         nodeIntegration: false,
         contextIsolation: true,
         sandbox: true,
@@ -903,6 +1057,7 @@ export class BrowserController {
 
     const tab = {} as BrowserTabRuntime
     tab.id = id
+    tab.profileId = profileId
     tab.view = view
     tab.state = {
       url: 'about:blank',
@@ -1040,6 +1195,7 @@ export class BrowserController {
       tabId: tab.id,
       url: tab.state.url,
       title: tab.state.title,
+      profileId: tab.profileId,
     }).catch(() => undefined)
   }
 
@@ -1047,7 +1203,7 @@ export class BrowserController {
     return {
       id: tab.id,
       targetId: BUILTIN_BROWSER_TARGET_ID,
-      profileId: BUILTIN_BROWSER_PROFILE_ID,
+      profileId: `builtin:${tab.profileId}`,
       title: tab.state.title,
       url: tab.state.url,
       ...(tab.state.favicon ? { favicon: tab.state.favicon } : {}),

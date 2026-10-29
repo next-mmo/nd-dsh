@@ -3,6 +3,7 @@ import { app, type DownloadItem, type Event, type Session, type WebContents } fr
 import { existsSync } from 'node:fs'
 import { extname, join, parse } from 'node:path'
 import type { BrowserDownloadRecord } from '../../shared/browser-platform.js'
+import { DEFAULT_BROWSER_PROFILE_ID } from '../../shared/browser-platform.js'
 
 interface ArmedDownloadContext {
   sessionId: string
@@ -31,6 +32,7 @@ export class BrowserDownloadManager {
     private readonly targetId: string,
     private readonly tabIdForWebContents: (webContentsId: number) => string | undefined,
     private readonly onChanged: () => void,
+    private readonly profileId: string = DEFAULT_BROWSER_PROFILE_ID,
   ) {
     this.handler = (_event, item, webContents) => this.track(item, webContents)
     this.browserSession.on('will-download', this.handler)
@@ -101,6 +103,7 @@ export class BrowserDownloadManager {
     const record: BrowserDownloadRecord = {
       id,
       targetId: this.targetId,
+      profileId: this.profileId,
       ...(tabId ? { tabId } : {}),
       url,
       ...(pageOrigin ? { origin: pageOrigin } : {}),

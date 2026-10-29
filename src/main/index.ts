@@ -17,6 +17,7 @@ import type { GlobalShortcutId } from '../shared/shortcuts.js'
 import { bundledResourceRoot, codexBinPath, presetSourceDir, projectRoot } from './app-paths.js'
 
 import { BrowserController } from './browser/browser-controller.js'
+import { browserProfilePartition, BrowserProfileStore } from './browser-profiles/browser-profile-store.js'
 import { BrowserCompanionService } from './browser-companion/browser-companion-service.js'
 import { registerBrowserCompanionIpc } from './browser-companion/ipc.js'
 import { BrowserPlatformService } from './browser-platform/browser-platform-service.js'
@@ -319,10 +320,15 @@ async function createWindow(cdpPort: number): Promise<void> {
     } catch { return undefined }
   }
 
+  const browserProfiles = new BrowserProfileStore(join(userData, 'browser-profiles.json'))
+  await browserProfiles.initialize()
   const browser = new BrowserController(window, cdpPort, projectRoot(), {
     reservedOrigin,
     dataPath: userData,
     extensionRuntimePreload: join(currentDirectory, '../preload/extension-runtime.cjs'),
+    initialProfileId: browserProfiles.activeProfileId(),
+    partitionForProfile: browserProfilePartition,
+    profileLabel: (profileId) => browserProfiles.profileName(profileId),
     onMediaState: (state) => {
       if (!window.isDestroyed()) window.webContents.send(IPC.mediaStateEvent, state)
       const popup = launcherPopup.window()
@@ -342,7 +348,7 @@ async function createWindow(cdpPort: number): Promise<void> {
   const externalElements = new ExternalElementStage()
   const recentPicks = new RecentPickStore()
   const organizationStore = new OrganizationStore(join(userData, 'organization.json'))
-  const browserPlatform = new BrowserPlatformService(browser, browserCompanion, organizationStore, userData)
+  const browserPlatform = new BrowserPlatformService(browser, browserCompanion, organizationStore, userData, browserProfiles)
   await browserPlatform.initialize()
   activeBrowserPlatform = browserPlatform
   const executionCoordinator = new ExecutionCoordinator(core)

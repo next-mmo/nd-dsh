@@ -1,6 +1,33 @@
 export type BrowserTargetKind = 'builtin' | 'companion'
 export type BrowserSelectionMode = 'auto' | 'target' | 'tab'
 
+/** Record id of the seeded Chrome-style profile that owns ND's historical partition. */
+export const DEFAULT_BROWSER_PROFILE_ID = 'default'
+
+/** Chrome-like identity colors offered by the profile manager. */
+export const BROWSER_PROFILE_COLORS = [
+  '#4f7cff',
+  '#12a594',
+  '#e5484d',
+  '#f5a623',
+  '#8e4ec6',
+  '#46a758',
+  '#e93d82',
+  '#65717b',
+] as const
+
+/** One isolated identity inside ND's built-in browser. */
+export interface BrowserProfileSummary {
+  id: string
+  name: string
+  color: string
+  createdAt: number
+  updatedAt: number
+  isDefault: boolean
+  active: boolean
+  tabCount: number
+}
+
 export interface BrowserTargetCapabilities {
   tabs: boolean
   semanticDom: boolean
@@ -28,6 +55,7 @@ export interface BrowserTargetDescriptor {
 export interface BrowserTabDescriptor {
   id: string
   targetId: string
+  /** Fully-qualified profile identity, e.g. `builtin:default`. */
   profileId: string
   nativeTabId?: number | undefined
   title: string
@@ -130,6 +158,7 @@ export interface BrowserActionReceipt {
 export interface BrowserDownloadRecord {
   id: string
   targetId: string
+  profileId?: string | undefined
   tabId?: string | undefined
   url: string
   origin?: string | undefined
@@ -149,6 +178,8 @@ export interface BrowserHistoryEntry {
   url: string
   title: string
   visitedAt: number
+  /** Profile record id; entries from before profiles existed belong to `default`. */
+  profileId?: string | undefined
 }
 
 export type BrowserExtensionSource = 'unpacked' | 'bundled'
@@ -208,6 +239,8 @@ export interface BrowserCredentialSummary {
   label?: string | undefined
   createdAt: number
   updatedAt: number
+  /** Profile record id that owns this credential. */
+  profileId?: string | undefined
 }
 
 export interface BrowserSitePermission {
@@ -215,6 +248,8 @@ export interface BrowserSitePermission {
   permission: string
   effect: 'allow' | 'deny'
   updatedAt: number
+  /** Profile record id this decision belongs to. */
+  profileId?: string | undefined
 }
 
 export interface BrowserSiteToolDescriptor {
@@ -232,6 +267,7 @@ export interface BrowserSiteToolDescriptor {
 
 export interface BrowserPlatformState {
   targets: BrowserTargetDescriptor[]
+  profiles: BrowserProfileSummary[]
   tabs: BrowserTabDescriptor[]
   selection: BrowserSelection
   leases: BrowserTabLease[]
@@ -249,6 +285,14 @@ export interface BrowserPlatformState {
 
 export interface BrowserPlatformDesktopApi {
   state(): Promise<BrowserPlatformState>
+  /** Create a Chrome-style profile and switch the browser to it. */
+  createProfile(name: string, color?: string): Promise<BrowserPlatformState>
+  /** Switch the visible browser identity; returns the new platform state. */
+  selectProfile(profileId: string): Promise<BrowserPlatformState>
+  updateProfile(profileId: string, input: { name?: string | undefined; color?: string | undefined }): Promise<BrowserPlatformState>
+  /** Choose the profile ND opens with (the global default). */
+  setDefaultProfile(profileId: string): Promise<BrowserPlatformState>
+  deleteProfile(profileId: string): Promise<BrowserPlatformState>
   select(selection: BrowserSelection): Promise<BrowserPlatformState>
   createTab(targetId?: string, url?: string): Promise<BrowserTabDescriptor>
   activateTab(targetId: string, tabId: string): Promise<BrowserTabDescriptor>
@@ -280,6 +324,11 @@ export interface BrowserPlatformDesktopApi {
 
 export const BROWSER_PLATFORM_IPC = {
   state: 'browser-platform:state',
+  createProfile: 'browser-platform:create-profile',
+  selectProfile: 'browser-platform:select-profile',
+  updateProfile: 'browser-platform:update-profile',
+  setDefaultProfile: 'browser-platform:set-default-profile',
+  deleteProfile: 'browser-platform:delete-profile',
   select: 'browser-platform:select',
   createTab: 'browser-platform:create-tab',
   activateTab: 'browser-platform:activate-tab',

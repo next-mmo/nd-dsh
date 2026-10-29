@@ -1,6 +1,5 @@
 import type { BrowserTargetDescriptor } from '../../shared/browser-platform.js'
 import {
-  BUILTIN_BROWSER_PROFILE_ID,
   BUILTIN_BROWSER_TARGET_ID,
   type BrowserController,
 } from '../browser/browser-controller.js'
@@ -15,8 +14,8 @@ export class BuiltinBrowserTarget implements BrowserTarget {
       id: BUILTIN_BROWSER_TARGET_ID,
       kind: 'builtin',
       label: 'ND Browser',
-      profileId: BUILTIN_BROWSER_PROFILE_ID,
-      profileLabel: 'ND Browser',
+      profileId: this.browser.profileId(),
+      profileLabel: this.browser.profileLabel(),
       connected: true,
       visible: state.visible,
       capabilities: {

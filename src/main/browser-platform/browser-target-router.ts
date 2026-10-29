@@ -206,7 +206,7 @@ export class BrowserTargetRouter {
         action: 'credential.use',
         targetId,
         profileId: descriptor.profileId,
-      }, () => this.credentials.list())
+      }, () => this.credentials.list(this.browser.activeProfileId()))
     }
     if (method === 'browser.history') { 
       this.requireAgentSession(context, method)
@@ -227,7 +227,7 @@ export class BrowserTargetRouter {
       const credentialId = requiredString(params.credentialId, 'credentialId')
       const currentOrigin = tab.origin ?? origin(tab.url)
       if (!currentOrigin) throw new Error('Credential autofill requires an http/https page')
-      const secret = await this.credentials.secret(credentialId, currentOrigin)
+      const secret = await this.credentials.secret(credentialId, currentOrigin, builtinProfileRecordId(tab))
       const descriptor = await target.descriptor()
       return this.runAction(context, {
         operation: 'browser.autofill',
@@ -580,6 +580,12 @@ function toolDetail(tool: BrowserSiteToolDescriptor): string {
     .filter(Boolean)
     .join(' ')
     .slice(0, 2_000)
+}
+
+/** Credentials belong to the profile that owns the tab, not the active one. */
+function builtinProfileRecordId(tab: BrowserTabDescriptor): string | undefined {
+  if (tab.targetId !== 'builtin' || !tab.profileId.startsWith('builtin:')) return undefined
+  return tab.profileId.slice('builtin:'.length)
 }
 
 function errorMessage(value: unknown): string {

@@ -20,6 +20,7 @@ export const SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   { id: 'general-runtime', title: 'Runtime status', section: 'General · Runtime', tab: 'general', subTab: 'runtime', keywords: ['runtime', 'harness', 'session', 'model route', 'status', 'provider'] },
   { id: 'general-workspace', title: 'Workspace folder', section: 'General · Workspace', tab: 'general', subTab: 'workspace', keywords: ['workspace', 'folder', 'project', 'path'] },
   { id: 'general-browser', title: 'Built-in browser', section: 'General · Browser', tab: 'general', subTab: 'browser', keywords: ['browser', 'chromium', 'agent control', 'cdp', 'tabs'] },
+  { id: 'general-browser-profiles', title: 'Browser profiles', section: 'General · Browser', tab: 'general', subTab: 'browser', keywords: ['profile', 'profiles', 'identity', 'switch profile', 'default profile', 'new profile', 'cookies', 'sign in'] },
   { id: 'general-browser-extensions', title: 'Browser extensions', section: 'General · Browser', tab: 'general', subTab: 'browser', keywords: ['extension', 'plugin', 'unpacked', 'developer mode', 'catalog', 'chrome', 'adblock'] },
   { id: 'general-browser-data', title: 'Browser data, downloads & history', section: 'General · Browser', tab: 'general', subTab: 'browser', keywords: ['downloads', 'history', 'clear data', 'cookies', 'site permissions'] },
   { id: 'general-credentials', title: 'Saved browser credentials', section: 'General · Browser', tab: 'general', subTab: 'browser', keywords: ['password', 'credentials', 'autofill', 'login'] },

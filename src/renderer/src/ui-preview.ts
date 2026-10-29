@@ -173,6 +173,18 @@ let browserPlatform: BrowserPlatformState = {
       },
     },
   ],
+  profiles: [
+    {
+      id: 'default',
+      name: 'Default',
+      color: '#65717b',
+      createdAt: now - 30 * 86_400_000,
+      updatedAt: now,
+      isDefault: true,
+      active: true,
+      tabCount: previewBuiltinTabs.length,
+    },
+  ],
   tabs: [
     ...previewBuiltinTabs,
     {
@@ -223,6 +235,26 @@ let browserPlatform: BrowserPlatformState = {
   sitePermissions: [],
   approvals: [],
   receipts: [],
+}
+
+/** UI-preview stand-in for switching the Chrome-style browser identity. */
+function previewSelectProfile(profileId: string): BrowserPlatformState {
+  const profile = browserPlatform.profiles.find((item) => item.id === profileId)
+  if (!profile) throw new Error('Preview browser profile not found')
+  const fullProfileId = `builtin:${profileId}`
+  previewBuiltinTabs = previewBuiltinTabs.map((tab) => ({ ...tab, profileId: fullProfileId }))
+  browser = { ...browser, profileId: fullProfileId, tabs: previewBuiltinTabs }
+  browserEvents.emit(browser)
+  browserPlatform = {
+    ...browserPlatform,
+    targets: browserPlatform.targets.map((target) => target.kind === 'builtin'
+      ? { ...target, profileId: fullProfileId, profileLabel: profile.name }
+      : target),
+    profiles: browserPlatform.profiles.map((item) => ({ ...item, active: item.id === profileId })),
+    tabs: browserPlatform.tabs.map((tab) => tab.targetId === 'builtin' ? { ...tab, profileId: fullProfileId } : tab),
+  }
+  browserPlatformEvents.emit(browserPlatform)
+  return browserPlatform
 }
 
 let theme: ThemeState = { mode: 'system', effective: matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark' }
@@ -698,6 +730,55 @@ const desktopApi: DesktopApi = {
   },
   browserPlatform: {
     state: async () => browserPlatform,
+    createProfile: async (name, color) => {
+      const profile = {
+        id: `preview-profile-${Date.now()}`,
+        name,
+        color: color ?? '#4f7cff',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        isDefault: false,
+        active: false,
+        tabCount: 0,
+      }
+      browserPlatform = { ...browserPlatform, profiles: [...browserPlatform.profiles, profile] }
+      return previewSelectProfile(profile.id)
+    },
+    selectProfile: async (profileId) => previewSelectProfile(profileId),
+    updateProfile: async (profileId, input) => {
+      browserPlatform = {
+        ...browserPlatform,
+        profiles: browserPlatform.profiles.map((item) => item.id === profileId
+          ? {
+              ...item,
+              ...(input.name !== undefined ? { name: input.name } : {}),
+              ...(input.color !== undefined ? { color: input.color } : {}),
+              updatedAt: Date.now(),
+            }
+          : item),
+      }
+      browserPlatformEvents.emit(browserPlatform)
+      return browserPlatform
+    },
+    setDefaultProfile: async (profileId) => {
+      if (!browserPlatform.profiles.some((item) => item.id === profileId)) throw new Error('Preview browser profile not found')
+      browserPlatform = { ...browserPlatform, profiles: browserPlatform.profiles.map((item) => ({ ...item, isDefault: item.id === profileId })) }
+      browserPlatformEvents.emit(browserPlatform)
+      return browserPlatform
+    },
+    deleteProfile: async (profileId) => {
+      if (browserPlatform.profiles.find((item) => item.id === profileId)?.isDefault) {
+        throw new Error('The default browser profile cannot be deleted')
+      }
+      const wasActive = browserPlatform.profiles.find((item) => item.id === profileId)?.active === true
+      browserPlatform = {
+        ...browserPlatform,
+        profiles: browserPlatform.profiles.filter((item) => item.id !== profileId),
+      }
+      if (wasActive) return previewSelectProfile('default')
+      browserPlatformEvents.emit(browserPlatform)
+      return browserPlatform
+    },
     select: async (selection) => {
       browserPlatform = { ...browserPlatform, selection }
       browserPlatformEvents.emit(browserPlatform)

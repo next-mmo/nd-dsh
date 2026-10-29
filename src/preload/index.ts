@@ -302,6 +302,16 @@ const api: DesktopApi = {
   },
   browserPlatform: {
     state: () => ipcRenderer.invoke(BROWSER_PLATFORM_IPC.state) as Promise<BrowserPlatformState>,
+    createProfile: (name: string, color?: string) =>
+      ipcRenderer.invoke(BROWSER_PLATFORM_IPC.createProfile, name, color) as Promise<BrowserPlatformState>,
+    selectProfile: (profileId: string) =>
+      ipcRenderer.invoke(BROWSER_PLATFORM_IPC.selectProfile, profileId) as Promise<BrowserPlatformState>,
+    updateProfile: (profileId: string, input: { name?: string; color?: string }) =>
+      ipcRenderer.invoke(BROWSER_PLATFORM_IPC.updateProfile, profileId, input) as Promise<BrowserPlatformState>,
+    setDefaultProfile: (profileId: string) =>
+      ipcRenderer.invoke(BROWSER_PLATFORM_IPC.setDefaultProfile, profileId) as Promise<BrowserPlatformState>,
+    deleteProfile: (profileId: string) =>
+      ipcRenderer.invoke(BROWSER_PLATFORM_IPC.deleteProfile, profileId) as Promise<BrowserPlatformState>,
     select: (selection: BrowserSelection) => ipcRenderer.invoke(BROWSER_PLATFORM_IPC.select, selection) as Promise<BrowserPlatformState>,
     createTab: (targetId?: string, url?: string) => ipcRenderer.invoke(BROWSER_PLATFORM_IPC.createTab, targetId, url) as Promise<BrowserTabDescriptor>,
     activateTab: (targetId: string, tabId: string) => ipcRenderer.invoke(BROWSER_PLATFORM_IPC.activateTab, targetId, tabId) as Promise<BrowserTabDescriptor>,

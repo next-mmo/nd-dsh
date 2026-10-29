@@ -5,14 +5,17 @@ import type {
   BrowserExtensionInstallPreview,
   BrowserExtensionRecord,
   BrowserPlatformState,
+  BrowserProfileSummary,
   BrowserSelection,
   BrowserTabDescriptor,
 } from '../../shared/browser-platform.js'
+import { DEFAULT_BROWSER_PROFILE_ID } from '../../shared/browser-platform.js'
 import type { BrowserCompanionService } from '../browser-companion/browser-companion-service.js'
 import type { BrowserController } from '../browser/browser-controller.js'
 import { BUILTIN_BROWSER_TARGET_ID } from '../browser/browser-controller.js'
 import { BrowserCredentialVault } from '../browser/browser-credential-vault.js'
 import { BrowserExtensionManager } from '../browser/browser-extension-manager.js'
+import type { BrowserProfileStore } from '../browser-profiles/browser-profile-store.js'
 import type { OrganizationStore } from '../organization/store.js'
 import { BrowserAccessTokenStore } from './browser-access-tokens.js'
 import { BrowserPolicyService } from './browser-policy-service.js'
@@ -34,6 +37,7 @@ export class BrowserPlatformService {
     private readonly companion: BrowserCompanionService,
     organizationStore: OrganizationStore,
     dataPath: string,
+    private readonly profiles: BrowserProfileStore,
   ) {
     this.credentials = new BrowserCredentialVault(join(dataPath, 'browser-credentials.json'))
     this.extensions = new BrowserExtensionManager(
@@ -41,6 +45,11 @@ export class BrowserPlatformService {
       join(dataPath, 'browser-extensions.json'),
       () => { void this.emit() },
     )
+    // Every Chrome-style profile gets ND's approved extension set loaded into
+    // its own session, with isolated extension runtime state.
+    browser.setSessionCreatedListener((_profileId, session) => {
+      void this.extensions.attachSession(session)
+    })
     this.policy = new BrowserPolicyService(organizationStore, join(dataPath, 'browser-action-receipts.json'))
     this.router = new BrowserTargetRouter(
       browser,
@@ -90,6 +99,7 @@ export class BrowserPlatformService {
     this.companion.setAgentDispatcher(undefined)
     this.browser.setDownloadAuthorizationHandler(undefined)
     this.browser.setTabClosedListener(undefined)
+    this.browser.setSessionCreatedListener(undefined)
     this.policy.setOnChanged(undefined)
     this.router.setOnChanged(undefined)
     this.accessTokens.clear()
@@ -101,6 +111,12 @@ export class BrowserPlatformService {
   }
 
   notifyBrowserChanged(): void {
+    // The active tab defines the visible profile (an agent or router lane can
+    // activate a tab of another profile), so persist that pointer as it moves.
+    const activeProfileId = this.browser.activeProfileId()
+    if (activeProfileId !== this.profiles.activeProfileId()) {
+      void this.profiles.setActive(activeProfileId).catch(() => undefined)
+    }
     void this.emit()
   }
 
@@ -145,11 +161,12 @@ export class BrowserPlatformService {
     const [targets, tabs, credentials, receipts] = await Promise.all([
       this.router.targets(),
       this.router.tabs().catch(() => []),
-      this.credentials.list(),
+      this.credentials.list(this.browser.activeProfileId()),
       this.policy.recentReceipts(),
     ])
     return {
       targets,
+      profiles: this.profileSummaries(),
       tabs,
       selection: this.router.selection(),
       leases: this.leases.list(),
@@ -164,6 +181,77 @@ export class BrowserPlatformService {
       approvals: this.policy.approvals(),
       receipts,
     }
+  }
+
+  profileSummaries(): BrowserProfileSummary[] {
+    const activeId = this.browser.activeProfileId()
+    const defaultId = this.profiles.defaultProfileId()
+    const tabs = this.browser.listTabs()
+    return this.profiles.listSync().map((record) => ({
+      ...record,
+      isDefault: record.id === defaultId,
+      active: record.id === activeId,
+      tabCount: tabs.filter((tab) => tab.profileId === `builtin:${record.id}`).length,
+    }))
+  }
+
+  async createProfile(name: string, color?: string): Promise<BrowserPlatformState> {
+    this.assertProfileSwitchSafe()
+    const record = await this.profiles.create(name, color)
+    await this.browser.switchProfile(record.id)
+    await this.profiles.setActive(record.id)
+    await this.emit()
+    return this.state()
+  }
+
+  async selectProfile(profileId: string): Promise<BrowserPlatformState> {
+    this.assertProfileSwitchSafe()
+    const record = await this.profiles.get(profileId)
+    if (!record) throw new Error('Browser profile not found')
+    await this.browser.switchProfile(record.id)
+    await this.profiles.setActive(this.browser.activeProfileId())
+    await this.emit()
+    return this.state()
+  }
+
+  async updateProfile(profileId: string, input: { name?: string | undefined; color?: string | undefined }): Promise<BrowserPlatformState> {
+    await this.profiles.update(profileId, input)
+    await this.emit()
+    return this.state()
+  }
+
+  async setDefaultProfile(profileId: string): Promise<BrowserPlatformState> {
+    await this.profiles.setDefault(profileId)
+    await this.emit()
+    return this.state()
+  }
+
+  async deleteProfile(profileId: string): Promise<BrowserPlatformState> {
+    // The seeded profile owns ND's historical cookies and can never be deleted.
+    // Validate every precondition before purging so a rejected delete cannot
+    // wipe data: the previous ordering purged first and threw afterwards.
+    if (profileId === DEFAULT_BROWSER_PROFILE_ID || profileId === this.profiles.defaultProfileId()) {
+      throw new Error('The default browser profile cannot be deleted')
+    }
+    const record = await this.profiles.get(profileId)
+    if (!record) throw new Error('Browser profile not found')
+    if (this.browser.activeProfileId() === profileId) {
+      this.assertProfileSwitchSafe()
+      await this.browser.switchProfile(this.profiles.defaultProfileId())
+    }
+    await this.browser.purgeProfile(profileId)
+    await this.credentials.removeProfile(profileId)
+    await this.profiles.remove(profileId)
+    await this.emit()
+    return this.state()
+  }
+
+  private assertProfileSwitchSafe(): void {
+    const activity = this.browser.externalActivity()
+    if (!activity) return
+    throw new Error(activity === 'router-turn'
+      ? 'Finish the active ChatGPT Web / Gemini Web turn before switching browser profiles'
+      : 'Finish the active background browser run before switching browser profiles')
   }
 
   async select(selection: BrowserSelection): Promise<BrowserPlatformState> {
@@ -337,7 +425,7 @@ export class BrowserPlatformService {
   }
 
   async saveCredential(input: { origin: string; username: string; password: string; label?: string | undefined }): Promise<BrowserCredentialSummary> {
-    const summary = await this.credentials.save(input)
+    const summary = await this.credentials.save(input, this.browser.activeProfileId())
     await this.emit()
     return summary
   }

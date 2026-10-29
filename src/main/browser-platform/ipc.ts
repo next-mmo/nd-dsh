@@ -21,6 +21,24 @@ export function registerBrowserPlatformIpc(
   }
 
   handle(BROWSER_PLATFORM_IPC.state, () => service.state())
+  handle(BROWSER_PLATFORM_IPC.createProfile, (name, color) =>
+    service.createProfile(
+      asString(name, 'Browser profile name', 64),
+      optionalString(color, 16),
+    ))
+  handle(BROWSER_PLATFORM_IPC.selectProfile, (profileId) =>
+    service.selectProfile(asString(profileId, 'Browser profile id', 64)))
+  handle(BROWSER_PLATFORM_IPC.updateProfile, (profileId, value) => {
+    const input = object(value, 'Browser profile update')
+    return service.updateProfile(asString(profileId, 'Browser profile id', 64), {
+      ...(input.name === undefined ? {} : { name: asString(input.name, 'Browser profile name', 64) }),
+      ...(input.color === undefined ? {} : { color: asString(input.color, 'Browser profile color', 16) }),
+    })
+  })
+  handle(BROWSER_PLATFORM_IPC.setDefaultProfile, (profileId) =>
+    service.setDefaultProfile(asString(profileId, 'Browser profile id', 64)))
+  handle(BROWSER_PLATFORM_IPC.deleteProfile, (profileId) =>
+    service.deleteProfile(asString(profileId, 'Browser profile id', 64)))
   handle(BROWSER_PLATFORM_IPC.select, (value) => service.select(asSelection(value)))
   handle(BROWSER_PLATFORM_IPC.createTab, (targetId, url) =>
     service.createTab(optionalString(targetId, 512), optionalString(url, 16_384)))

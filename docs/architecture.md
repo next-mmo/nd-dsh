@@ -205,7 +205,8 @@ ND keeps durable product state outside runtime-vendor configuration:
 
 - `settings.json` — desktop settings including the persisted General/Coding workspace profile; profile selection is presentation state, not organization execution state.
 - ND Home / extension stores — personal notes/captures/chats plus installed package, activation, grant and audit records under ND-managed user data.
-- `browser-extensions.json` — built-in browser extension enablement/source metadata for the ND-owned browser profile.
+- `browser-extensions.json` — built-in browser extension enablement/source metadata. Approved extensions load into every Chrome-style browser profile with isolated runtime state.
+- `browser-profiles.json` — Chrome-style browser identities (name, color, active profile, global default). The seeded `default` profile keeps the historical `persist:nd-dsh-browser` partition, so existing cookies and sign-ins survive; every other profile owns a separate Chromium partition plus profile-scoped ND history, site permissions and saved credentials.
 - `organization.json` — companies, projects, workforce, workflows, tasks, policies, memory, activity, run receipts, coordination events, task workspace/checkpoint provenance, integration state.
 - `organization.json.bak` — last-known-good organization recovery copy.
 - `providers.json` — provider metadata only; no API keys.

@@ -88,6 +88,7 @@ export class BrowserExtensionManager {
     defaultsApplied: [],
   }
   private records = new Map<string, BrowserExtensionRecord>()
+  private readonly sessions = new Set<Session>()
   private saveChain: Promise<void> = Promise.resolve()
   private readonly bundledRoot: string
 
@@ -98,6 +99,22 @@ export class BrowserExtensionManager {
   ) {
     // Writable root for the per-profile copies of bundled packages.
     this.bundledRoot = join(dirname(filePath), 'browser-extensions')
+    this.sessions.add(browserSession)
+  }
+
+  /**
+   * Install ND's approved extension set into one more profile session. Each
+   * Chrome-style profile has its own runtime, so ad-block and browser tools
+   * must be loaded again there (their state stays isolated per profile).
+   */
+  async attachSession(session: Session): Promise<void> {
+    if (this.sessions.has(session)) return
+    this.sessions.add(session)
+    for (const item of this.value.extensions) {
+      if (!item.enabled || !this.isApprovedBundled(item)) continue
+      await session.extensions.loadExtension(item.path, { allowFileAccess: false }).catch(() => undefined)
+    }
+    this.onChanged()
   }
 
   /**
@@ -122,6 +139,25 @@ export class BrowserExtensionManager {
       filter: (entry) => !entry.split(/[\\/]/).includes('_metadata'),
     })
     return target
+  }
+
+  /** Remove a loaded extension from every profile session that holds it. */
+  private unloadFromAll(extensionId: string): void {
+    for (const session of this.sessions) {
+      try {
+        const loaded = session.extensions.getExtension(extensionId)
+        if (loaded) session.extensions.removeExtension(extensionId)
+      } catch {
+        // A session can reject extension access while it is shutting down.
+      }
+    }
+  }
+
+  private async loadIntoOtherSessions(item: PersistedExtension): Promise<void> {
+    for (const session of this.sessions) {
+      if (session === this.browserSession) continue
+      await session.extensions.loadExtension(item.path, { allowFileAccess: false }).catch(() => undefined)
+    }
   }
 
   async initialize(): Promise<void> {
@@ -259,8 +295,7 @@ export class BrowserExtensionManager {
 
     for (const [id, record] of [...this.records]) {
       if (!matchesCatalogRecord(record, definition)) continue
-      const loaded = this.browserSession.extensions.getExtension(id)
-      if (loaded) this.browserSession.extensions.removeExtension(id)
+      this.unloadFromAll(id)
       this.records.delete(id)
     }
     this.value.extensions = this.value.extensions.filter((item) =>
@@ -302,8 +337,7 @@ export class BrowserExtensionManager {
 
   async reloadAll(): Promise<BrowserExtensionRecord[]> {
     for (const record of this.records.values()) {
-      const loaded = this.browserSession.extensions.getExtension(record.id)
-      if (loaded) this.browserSession.extensions.removeExtension(record.id)
+      this.unloadFromAll(record.id)
     }
     this.records.clear()
 
@@ -331,6 +365,7 @@ export class BrowserExtensionManager {
         continue
       }
       await this.loadOne(item, manifest).catch(() => undefined)
+      await this.loadIntoOtherSessions(item)
     }
     if (blockedChanged) await this.persist()
     this.onChanged()
@@ -355,10 +390,10 @@ export class BrowserExtensionManager {
       await this.persist()
       this.records.delete(extensionId)
       await this.loadOne(item)
+      await this.loadIntoOtherSessions(item)
     } else {
       item.enabled = false
-      const loaded = this.browserSession.extensions.getExtension(extensionId)
-      if (loaded) this.browserSession.extensions.removeExtension(extensionId)
+      this.unloadFromAll(extensionId)
       this.records.set(extensionId, { ...record, enabled: false })
       await this.persist()
     }
@@ -369,8 +404,7 @@ export class BrowserExtensionManager {
   async remove(extensionId: string): Promise<BrowserExtensionRecord[]> {
     const record = this.records.get(extensionId)
     if (!record) return this.list()
-    const loaded = this.browserSession.extensions.getExtension(extensionId)
-    if (loaded) this.browserSession.extensions.removeExtension(extensionId)
+    this.unloadFromAll(extensionId)
     this.records.delete(extensionId)
     this.value.extensions = this.value.extensions.filter((item) => item.path !== record.path)
     await this.persist()
@@ -409,13 +443,13 @@ export class BrowserExtensionManager {
 
     for (const [id, record] of [...this.records]) {
       if (record.path === extensionPath) {
-        const loaded = this.browserSession.extensions.getExtension(id)
-        if (loaded) this.browserSession.extensions.removeExtension(id)
+        this.unloadFromAll(id)
         this.records.delete(id)
       }
     }
 
     const record = await this.loadOne(item, manifest)
+    await this.loadIntoOtherSessions(item)
     this.onChanged()
     return structuredClone(record)
   }

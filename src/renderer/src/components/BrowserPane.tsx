@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react'
 import type { BrowserPlatformState, BrowserTabDescriptor } from '../../../shared/browser-platform'
 import type { BrowserState } from '../../../shared/contracts'
-import { ArrowLeftIcon, ArrowRightIcon, CameraIcon, CloseIcon, ContextIcon, ExternalIcon, GlobeIcon, PencilIcon, PlusIcon, PuzzleIcon, ReloadIcon, SpinnerIcon, StarIcon } from './Icons'
+import { ArrowLeftIcon, ArrowRightIcon, CameraIcon, CheckIcon, ChevronDownIcon, CloseIcon, ContextIcon, ExternalIcon, GlobeIcon, PencilIcon, PlusIcon, PuzzleIcon, ReloadIcon, SpinnerIcon, StarIcon } from './Icons'
 import { BridgePill } from './bridge-pill'
+import { BrowserProfileAvatar } from './BrowserProfileAvatar'
+import { BrowserProfileDialog } from './BrowserProfileDialog'
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover'
 import { SettingsSwitch } from './settings-primitives'
 import { cn } from '../lib/utils'
@@ -62,9 +64,17 @@ export function BrowserPane({ active, state, onSnapshot, onError, onOpenSettings
   const [platform, setPlatform] = useState<BrowserPlatformState | null>(null)
   const [siteToolCount, setSiteToolCount] = useState(0)
   const [extensionsMenuOpen, setExtensionsMenuOpen] = useState(false)
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false)
+  const [profileDialogOpen, setProfileDialogOpen] = useState(false)
 
-  const builtinTabs = state?.tabs ?? []
+  // Tabs of every profile stay alive, but the strip shows the visible identity.
+  const builtinTabs = useMemo(
+    () => (state?.tabs ?? []).filter((tab) => !state?.profileId || tab.profileId === state.profileId),
+    [state?.tabs, state?.profileId],
+  )
   const activeTabId = state?.activeTabId
+  const profiles = platform?.profiles ?? []
+  const activeProfile = profiles.find((profile) => profile.active)
   // The native view is hidden for a blank tab, so this is the only thing the
   // canvas can show there.
   const showsNewTabPage = Boolean(newTabPage) && !state?.loading && (state?.url ?? 'about:blank') === 'about:blank'
@@ -73,8 +83,9 @@ export function BrowserPane({ active, state, onSnapshot, onError, onOpenSettings
     ?? (platform?.selection.mode === 'auto' ? 'auto' : 'builtin')
   const targetForTabs = selectedTargetId === 'auto' ? 'builtin' : selectedTargetId
   const targetTabs = useMemo(
-    () => platform?.tabs.filter((tab) => tab.targetId === targetForTabs) ?? [],
-    [platform?.tabs, targetForTabs],
+    () => (platform?.tabs ?? []).filter((tab) =>
+      tab.targetId === targetForTabs && (targetForTabs !== 'builtin' || tab.profileId === state?.profileId)),
+    [platform?.tabs, targetForTabs, state?.profileId],
   )
 
   useEffect(() => {
@@ -140,6 +151,27 @@ export function BrowserPane({ active, state, onSnapshot, onError, onOpenSettings
       if (value === 'auto') await window.ndDsh.browserPlatform.select({ mode: 'auto' })
       else await window.ndDsh.browserPlatform.select({ mode: 'target', targetId: value })
     })
+  }
+
+  const switchProfile = (profileId: string): void => {
+    if (activeProfile?.id === profileId) {
+      setProfileMenuOpen(false)
+      return
+    }
+    void runBrowserAction(async () => {
+      await window.ndDsh.browserPlatform.selectProfile(profileId)
+      setProfileMenuOpen(false)
+    })
+  }
+
+  const createProfile = async (input: { name: string; color: string }): Promise<void> => {
+    try {
+      await window.ndDsh.browserPlatform.createProfile(input.name, input.color)
+      setProfileMenuOpen(false)
+    } catch (cause) {
+      onError(cause instanceof Error ? cause.message : String(cause))
+      throw cause
+    }
   }
 
   const selectTargetTab = (tabId: string): void => {
@@ -522,6 +554,73 @@ export function BrowserPane({ active, state, onSnapshot, onError, onOpenSettings
         >
           <ExternalIcon />
         </button>
+        <Popover open={profileMenuOpen} onOpenChange={setProfileMenuOpen}>
+          <PopoverTrigger asChild>
+            <button
+              className={cn(activeIconButtonClasses, 'max-w-[132px]')}
+              title={`Browser profile: ${activeProfile?.name ?? 'Default'}`}
+              aria-label="Browser profile"
+            >
+              <BrowserProfileAvatar
+                name={activeProfile?.name ?? 'Default'}
+                color={activeProfile?.color ?? '#65717b'}
+                size={16}
+              />
+              <span className="max-w-[76px] truncate text-[9px]">{activeProfile?.name ?? 'Default'}</span>
+              <ChevronDownIcon className="size-[11px] shrink-0" />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent align="end" sideOffset={6} className="w-[272px] p-0">
+            <div className="border-b border-border-soft px-3 py-2.5">
+              <strong className="block text-[11px] font-semibold text-strong">Browser profiles</strong>
+              <span className="text-[9px] text-faint">Each profile keeps its own cookies and sign-ins</span>
+            </div>
+            <div className="max-h-[300px] space-y-0.5 overflow-auto p-2">
+              {profiles.length === 0 ? (
+                <div className="rounded-md px-2 py-4 text-center text-[9px] text-faint">Profiles are loading…</div>
+              ) : profiles.map((profile) => (
+                <button
+                  key={profile.id}
+                  type="button"
+                  aria-pressed={profile.active}
+                  onClick={() => switchProfile(profile.id)}
+                  className={cn(
+                    'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent/70',
+                    profile.active && 'bg-accent/50',
+                  )}
+                >
+                  <BrowserProfileAvatar name={profile.name} color={profile.color} size={20} />
+                  <span className="min-w-0 flex-1">
+                    <strong className="block truncate text-[10px] font-semibold text-strong">{profile.name}</strong>
+                    <span className="block text-[8px] text-faint">
+                      {profile.tabCount} tab{profile.tabCount === 1 ? '' : 's'}
+                      {profile.isDefault ? ' · Default' : ''}
+                    </span>
+                  </span>
+                  {profile.active ? <CheckIcon className="size-3.5 shrink-0 text-primary" /> : null}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center justify-between gap-2 border-t border-border-soft px-3 py-2">
+              <button
+                type="button"
+                className="rounded border border-border bg-secondary px-2 py-1 text-[8px] font-semibold text-soft hover:bg-accent"
+                onClick={() => { setProfileMenuOpen(false); setProfileDialogOpen(true) }}
+              >
+                New profile
+              </button>
+              {onOpenSettings ? (
+                <button
+                  type="button"
+                  className="rounded border border-border bg-secondary px-2 py-1 text-[8px] font-semibold text-soft hover:bg-accent"
+                  onClick={() => { setProfileMenuOpen(false); onOpenSettings() }}
+                >
+                  Manage in Settings
+                </button>
+              ) : null}
+            </div>
+          </PopoverContent>
+        </Popover>
         {state?.annotationMode ? (
           <BridgePill state="ready" onClick={() => void toggleAnnotationMode()} title="Finish drawing and attach this annotated frame">
             Annotating
@@ -551,9 +650,15 @@ export function BrowserPane({ active, state, onSnapshot, onError, onOpenSettings
         </BridgePill>
       </div>
 
+      <BrowserProfileDialog
+        open={profileDialogOpen}
+        mode="create"
+        onSubmit={createProfile}
+        onClose={() => setProfileDialogOpen(false)}
+      />
+
       {approval ? (
-        <div className="flex shrink-0 items-center gap-2 border-b border-warning/40 bg-warning/10 px-3 py-1.5 text-[10px]">
-          <strong className="text-strong">Browser approval</strong>
+        <div className="flex shrink-0 items-center gap-2 border-b border-warning/40 bg-warning/10 px-3 py-1.5 text-[10px]">          <strong className="text-strong">Browser approval</strong>
           <span className="min-w-0 flex-1 truncate text-soft" title={`${approval.action} · ${approval.operation} · ${approval.origin ?? approval.targetId}`}>
             {approval.action} · {approval.origin ?? approval.targetId}
           </span>
