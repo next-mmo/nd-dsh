@@ -196,6 +196,20 @@ describe('ExtensionPackageStore lifecycle', () => {
     expect(await reloaded.list()).toEqual([])
   })
 
+  it('rejects forged built-in source metadata from writable package index', async () => {
+    await writePackage(sourceRoot, SAMPLE)
+    const store = new ExtensionPackageStore(root)
+    await store.installFromDirectory(sourceRoot)
+    const indexPath = join(root, 'nd-extensions.json')
+    const index = JSON.parse(await readFile(indexPath, 'utf8')) as {
+      packages: Array<{ source: { kind: string; location: string } }>
+    }
+    index.packages[0]!.source = { kind: 'builtin', location: 'nd' }
+    await writeFile(indexPath, JSON.stringify(index), 'utf8')
+    const reloaded = new ExtensionPackageStore(root)
+    expect(await reloaded.list()).toEqual([])
+  })
+
   it('reloads installed packages from disk with the same active version', async () => {
     await writePackage(sourceRoot, SAMPLE)
     const store = new ExtensionPackageStore(root)
