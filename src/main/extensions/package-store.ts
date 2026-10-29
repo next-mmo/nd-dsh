@@ -86,6 +86,9 @@ export class ExtensionPackageStore {
   /** The manifest of the active version, or undefined when the package is unknown. */
   async activeManifest(extensionId: string): Promise<NdExtensionManifest | undefined> {
     const record = await this.record(extensionId)
+    if (record?.manifest.executable && record.source.kind !== 'builtin') {
+      throw new Error('ND Security blocked executable extension: signed approval missing')
+    }
     return record ? structuredClone(record.manifest) : undefined
   }
 
@@ -314,6 +317,7 @@ export class ExtensionPackageStore {
         const validated = validateNdExtensionManifest(candidate.manifest)
         if (!validated.ok || manifestPermissionIssues(validated.manifest).length > 0) continue
         const source = candidate.source as NdPackageSourceView | undefined
+        if (validated.manifest.executable && source?.kind !== 'builtin') continue
         if (!source || typeof source.location !== 'string' || typeof source.kind !== 'string') continue
         packages.push({
           manifest: validated.manifest,

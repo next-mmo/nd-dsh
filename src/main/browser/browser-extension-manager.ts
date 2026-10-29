@@ -146,7 +146,8 @@ export class BrowserExtensionManager {
         if (item.enabled) blockedChanged = true
         item.enabled = false
         const id = persistedId(item.path)
-        this.records.set(id, recordFromManifest(id, item, false, undefined))
+        const manifest = await readManifest(item.path).catch(() => undefined)
+        this.records.set(id, recordFromManifest(id, item, false, manifest))
         continue
       }
       if (!item.enabled) {
@@ -312,7 +313,8 @@ export class BrowserExtensionManager {
         if (item.enabled) blockedChanged = true
         item.enabled = false
         const id = persistedId(item.path)
-        this.records.set(id, recordFromManifest(id, item, false, undefined))
+        const manifest = await readManifest(item.path).catch(() => undefined)
+        this.records.set(id, recordFromManifest(id, item, false, manifest))
         continue
       }
       const refreshed = await this.materializeBundledExtension(item.catalogId!)

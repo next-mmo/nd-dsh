@@ -1,6 +1,3 @@
-import { webcrypto } from 'node:crypto'
-import { promises as fs } from 'node:fs'
-import { dirname, join } from 'node:path'
 import { manifestPermissionIssues, validateNdExtensionManifest, type NdExtensionManifest } from '../../shared/extension-package.js'
 import type { NdAvailablePackageView } from '../../shared/nd-invocations.js'
 import type { ExtensionPackageStore } from './package-store.js'

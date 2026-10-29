@@ -6,7 +6,10 @@ describe('9Router connector safety', () => {
     expect(parseNineRouterBaseUrl('http://127.0.0.1:20128/v1').hostname).toBe('127.0.0.1')
   })
   it('requires TLS on non-loopback', () => {
-    expect(() => parseNineRouterBaseUrl('http://example.com/v1')).toThrow(/HTTPS/)
+    expect(() => parseNineRouterBaseUrl('http://example.com/v1')).toThrow(/loopback/)
+  })
+  it('rejects remote HTTPS until explicit remote-gateway controls exist', () => {
+    expect(() => parseNineRouterBaseUrl('https://example.com/v1')).toThrow(/loopback/)
   })
   it('rejects credential URLs and arbitrary paths', () => {
     expect(() => parseNineRouterBaseUrl('http://name:secret@localhost:20128/v1')).toThrow()

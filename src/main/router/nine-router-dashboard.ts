@@ -22,6 +22,19 @@ export class NineRouterDashboard {
     const profile = session.fromPartition('persist:nd-router-nine-admin')
     profile.setPermissionRequestHandler((_wc, _permission, respond) => respond(false))
     profile.setPermissionCheckHandler(() => false)
+    // All network activity in this dedicated admin profile must stay on the
+    // selected gateway origin. Open external OAuth through an explicit prompt
+    // rather than allowing page scripts to contact other local services.
+    const allowedNetworkOrigin = target.origin
+    profile.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, callback) => {
+      try {
+        const request = new URL(details.url)
+        if (request.origin === allowedNetworkOrigin
+          || request.protocol === 'data:' || request.protocol === 'blob:') {
+          callback({ cancel: false })
+        } else callback({ cancel: true })
+      } catch { callback({ cancel: true }) }
+    })
     const view = new WebContentsView({
       webPreferences: {
         session: profile,
@@ -96,6 +109,7 @@ export class NineRouterDashboard {
   close(): void {
     const view = this.view
     if (this.profile && this.downloadListener) this.profile.removeListener('will-download', this.downloadListener)
+    this.profile?.webRequest.onBeforeRequest(null)
     this.profile = undefined
     this.downloadListener = undefined
     this.view = undefined

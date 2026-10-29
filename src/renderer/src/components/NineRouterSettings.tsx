@@ -3,9 +3,9 @@ import type { NineRouterModel, NineRouterState } from '../../../shared/nine-rout
 import { SettingsButton, SettingsNote, SettingsRow, SettingsSection } from './settings-primitives'
 import { Input } from './ui/input'
 
-interface Props { onError(message: string): void }
+interface Props { onError(message: string): void; onConnected?(): void }
 
-export function NineRouterSettings({ onError }: Props) {
+export function NineRouterSettings({ onError, onConnected }: Props) {
   const [state, setState] = useState<NineRouterState | null>(null)
   const [baseUrl, setBaseUrl] = useState('http://127.0.0.1:20128/v1')
   const [key, setKey] = useState('')
@@ -119,6 +119,7 @@ export function NineRouterSettings({ onError }: Props) {
                 const connected = await window.ndDshRouter.nineRouterConnect({ baseUrl, apiKey: key })
                 setSuccess('Connected ' + connected.connected + ' models; each is available as an ND Router combo')
                 setKey('')
+                onConnected?.()
               })}>Connect to ND Router</SettingsButton>
               <SettingsButton disabled={busy} onClick={openDashboard}>Open dashboard inside ND</SettingsButton>
               {dashboard && <SettingsButton disabled={busy} onClick={() => {

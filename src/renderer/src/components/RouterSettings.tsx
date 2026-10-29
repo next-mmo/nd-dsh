@@ -135,7 +135,10 @@ export function RouterSettings({ onError }: RouterSettingsProps) {
 
   return (
     <>
-      <NineRouterSettings onError={onError} />
+      <NineRouterSettings onError={onError} onConnected={() => {
+        void window.ndDshRouter.state().then(setState).catch(cause => onError(message(cause)))
+        void window.ndDshRouter.usage().then(setUsage).catch(cause => onError(message(cause)))
+      }} />
       <SettingsSection title="ND Router" className="mt-3.5">
         <div className="space-y-1.5">
           <SettingsRow>

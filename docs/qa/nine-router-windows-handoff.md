@@ -7,7 +7,7 @@
 - Windows 11 on a local developer machine
 - Your own checked-out ND-DSH \`dev\` branch in VS Code; open only after reviewing differences
 - Installed Node 24, pnpm 11 and the Rust toolchain required by this repository
-- An independently installed and configured 9Router instance at \`http://127.0.0.1:20128\` for the external-connection test (not launched by ND)
+- An independently installed and configured **local** 9Router instance at \`http://127.0.0.1:20128\` for the external-connection test (not launched by ND)
 - A *gateway API key* generated in 9Router, not an OAuth token or account password
 
 ## Local validation (run on your machine only)
@@ -53,3 +53,12 @@ Capture the first failure and report the exact filename/line number. None of the
 - Managed browser denies popups and cross-origin navigation, so OAuth providers requiring their own browser may require an explicit external sign-in fallback.
 - ND Security currently blocks external executable ND packages and unsigned remote catalog installs, but **other installer families have not yet been proved guarded**. Do not describe the product as comprehensively protected.
 - No code was executed on your device by ChatGPT; a local build and E2E run are still required.
+
+## Integration fixes reviewed before local QA
+
+- Previously enabled unsigned/unpacked browser extensions are now disabled at initialization and reload; tests exercise startup, reload, re-enable, and install rejection.
+- Persisted executable ND extension records are ignored on reload; direct manifest access denies unapproved executables.
+- Router model discovery accepts loopback gateways only until a reviewed remote-gateway policy is implemented.
+- Managed runtime start waits for `GET /api/health`, and cancels the Rust-supervised process when readiness fails.
+- The Router page refreshes its provider/combo list after connecting 9Router and uses the allocated managed endpoint when appropriate.
+- Managed one-click install still requires an ND-signed release and a pinned production publisher key and **must remain unavailable** until then.

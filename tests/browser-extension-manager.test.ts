@@ -83,6 +83,32 @@ describe('BrowserExtensionManager', () => {
   })
 })
 
+describe('ND Security browser-extension persistence enforcement', () => {
+  it('disables a previously enabled unpacked extension before loading it and keeps it blocked after reload', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'nd-browser-security-'))
+    dirs.push(root)
+    host.appPath = join(root, 'app')
+    const unpacked = join(root, 'untrusted')
+    await writeExtension(unpacked, 'Untrusted')
+    const file = join(root, 'extensions.json')
+    await writeFile(file, JSON.stringify({
+      version: 1,
+      defaultsApplied: ['nd-ad-block'],
+      extensions: [{ path: unpacked, source: 'unpacked', enabled: true, installedAt: 1 }],
+    }), 'utf8')
+    const { session, loadExtension } = fakeSession({ loadable: true })
+    const manager = new BrowserExtensionManager(session, file, () => undefined)
+    await manager.initialize()
+    expect(loadExtension).not.toHaveBeenCalled()
+    expect(manager.list()[0]?.enabled).toBe(false)
+    expect((JSON.parse(await readFile(file, 'utf8')) as { extensions: Array<{ enabled: boolean }> }).extensions[0]?.enabled).toBe(false)
+    await manager.reloadAll()
+    expect(loadExtension).not.toHaveBeenCalled()
+    await expect(manager.setEnabled(manager.list()[0]!.id, true)).rejects.toThrow(/ND Security/)
+    await expect(manager.install(unpacked)).rejects.toThrow(/ND Security/)
+  })
+})
+
 describe('bundled ad block default', () => {
   it('refreshes shipped bytes on reload and re-enable without overriding disabled state', async () => {
     const root = await mkdtemp(join(tmpdir(), 'nd-adblock-refresh-'))
