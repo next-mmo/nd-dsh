@@ -2,9 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { promises as fsPromises, existsSync, writeFileSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { CHATGPT_WEB_ENGINE_ID, GEMINI_WEB_ENGINE_ID } from '../../shared/coding-engines.js'
-import { messageText } from '../../shared/chat-events.js'
 import { parsePromptShieldBlockedError } from '../../shared/prompt-shield.js'
-import type { SessionEventEnvelope } from '../../shared/contracts.js'
 import type {
   RestApiRunRequest,
   RestApiRunResponse,
@@ -13,6 +11,7 @@ import type {
   SrtTranslateResponse,
 } from '../../shared/rest-api.js'
 import type { EngineSessionRouter } from '../engines/engine-session-router.js'
+import { extractLatestAssistantText } from '../engines/web-turn-result.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
 import {
   buildDubbingPrompt,
@@ -432,24 +431,6 @@ function normalizeEngineId(engine?: string): string {
   if (lower === 'gpt-web' || lower === 'chatgpt' || lower === 'chatgpt-web') return CHATGPT_WEB_ENGINE_ID
   if (lower === 'gemini-web' || lower === 'gemini') return GEMINI_WEB_ENGINE_ID
   return engine
-}
-
-function extractLatestAssistantText(events: unknown[]): string | undefined {
-  if (!Array.isArray(events)) return undefined
-  for (let i = events.length - 1; i >= 0; i--) {
-    const envelope = events[i] as SessionEventEnvelope
-    if (envelope?.type === 'assistant/message') {
-      const data = (envelope.data ?? {}) as Record<string, unknown>
-      const text = messageText(data.message) ?? messageText(data)
-      if (typeof text === 'string' && text.trim()) {
-        return text
-          .replace(/^ChatGPT said:\s*/i, '')
-          .replace(/!\[[^\]]*\]\(https?:\/\/(?:www\.)?google\.com\/s2\/favicons\?[^)]*\)\s*/gi, '')
-          .trim()
-      }
-    }
-  }
-  return undefined
 }
 
 function sendJson(res: ServerResponse, statusCode: number, payload: unknown): void {

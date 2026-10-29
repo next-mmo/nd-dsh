@@ -3,7 +3,8 @@ use crate::store;
 use crate::types::{
     AccountRecord, AccountView, ComboRecord, ProviderView, RoutedEntry,
     RouterError, SaveAccountInput, SaveComboInput, SaveProviderInput, UsageEntry, MAX_USAGE_LINES,
-    REQUEST_TIMEOUT_SECS, STORE_SCHEMA_VERSION, USAGE_FILE,
+    REQUEST_TIMEOUT_SECS, STORE_SCHEMA_VERSION, USAGE_FILE, WEB_REQUEST_TIMEOUT_SECS,
+    WEB_TEST_TIMEOUT_SECS, WebBridgeConfig,
 };
 use axum::body::Body;
 use axum::http::{HeaderValue, StatusCode, header::CONTENT_TYPE};
@@ -19,6 +20,16 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+/// Extra configuration supplied by trusted Electron main at startup.
+#[derive(Clone, Debug, Default)]
+pub struct RouterOptions {
+    /// Stable credential for local external apps; the per-launch key stays internal.
+    pub external_key: Option<String>,
+    /// Loopback bridge that drives the visible ChatGPT Web / Gemini Web tabs.
+    pub web_bridge: Option<WebBridgeConfig>,
+    pub preferred_port: Option<u16>,
+}
+
 pub struct RouterState {
     store: Mutex<crate::types::PersistedStore>,
     store_path: PathBuf,
@@ -27,6 +38,9 @@ pub struct RouterState {
     vault_path: PathBuf,
     client: reqwest::Client,
     key: String,
+    external_key: Mutex<Option<String>>,
+    web_bridge: Option<WebBridgeConfig>,
+    preferred_port: u16,
     counters: Mutex<Counters>,
 }
 
@@ -40,9 +54,16 @@ struct Counters {
 
 impl RouterState {
     pub fn new(data_dir: PathBuf) -> anyhow::Result<Arc<Self>> {
+        Self::with_options(data_dir, RouterOptions::default())
+    }
+
+    pub fn with_options(data_dir: PathBuf, options: RouterOptions) -> anyhow::Result<Arc<Self>> {
         std::fs::create_dir_all(&data_dir)?;
         let store_path = data_dir.join(crate::types::STORE_FILE);
         let vault_path = data_dir.join("secrets.ndv");
+        if let Some(bridge) = options.web_bridge.as_ref() {
+            validate_web_bridge(bridge)?;
+        }
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
             .connect_timeout(Duration::from_secs(10))
@@ -59,12 +80,42 @@ impl RouterState {
             vault_path,
             client,
             key,
+            external_key: Mutex::new(options.external_key),
+            web_bridge: options.web_bridge,
+            preferred_port: options.preferred_port.unwrap_or(3130),
             counters: Mutex::new(Counters::default()),
         }))
     }
 
     pub fn key(&self) -> &str {
         &self.key
+    }
+
+    pub fn preferred_port(&self) -> u16 {
+        self.preferred_port
+    }
+
+    pub fn accepts_key(&self, token: &str) -> bool {
+        if token.is_empty() {
+            return false;
+        }
+        if constant_time_eq(token.as_bytes(), self.key.as_bytes()) {
+            return true;
+        }
+        let external = self.external_key.lock().unwrap_or_else(|error| error.into_inner()).clone();
+        external
+            .as_deref()
+            .map(|key| constant_time_eq(token.as_bytes(), key.as_bytes()))
+            .unwrap_or(false)
+    }
+
+    pub fn set_external_key(&self, key: &str) -> Result<(), RouterError> {
+        let trimmed = key.trim();
+        if trimmed.len() < 16 || trimmed.len() > 256 || !trimmed.starts_with("ndr_ext_") {
+            return Err(RouterError::bad_request("external key must be an ndr_ext_ credential (16-256 characters)"));
+        }
+        *self.external_key.lock().unwrap_or_else(|error| error.into_inner()) = Some(trimmed.to_owned());
+        Ok(())
     }
 
     pub fn data_dir(&self) -> &PathBuf {
@@ -228,8 +279,7 @@ impl RouterState {
             .id
             .as_ref()
             .and_then(|id| guard.combos.iter().find(|combo| combo.id == *id).cloned());
-        let provider_ids: Vec<String> = guard.providers.iter().map(|provider| provider.id.clone()).collect();
-        let record = store::sanitize_combo(&input, existing.as_ref(), &provider_ids)
+        let record = store::sanitize_combo(&input, existing.as_ref(), &guard.providers)
             .map_err(RouterError::bad_request)?;
         if let Some(index) = guard.combos.iter().position(|combo| combo.id == record.id) {
             guard.combos[index] = record.clone();
@@ -356,7 +406,17 @@ impl RouterState {
         Ok((combo_name, routed))
     }
 
-    pub async fn chat(&self, mut body: Value, combo_hint: Option<&str>, path: &str) -> Result<Response, RouterError> {
+    pub async fn chat(&self, body: Value, combo_hint: Option<&str>, path: &str) -> Result<Response, RouterError> {
+        self.chat_with_request(body, combo_hint, path, None).await
+    }
+
+    pub async fn chat_with_request(
+        &self,
+        mut body: Value,
+        combo_hint: Option<&str>,
+        path: &str,
+        request_id: Option<&str>,
+    ) -> Result<Response, RouterError> {
         let model_hint = body.get("model").and_then(Value::as_str).map(ToOwned::to_owned);
         let streaming = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
         if let Some(object) = body.as_object_mut() {
@@ -367,6 +427,63 @@ impl RouterState {
 
         for entry in entries {
             let lane = entry.provider.kind.as_str();
+            if catalog::is_web_kind(lane) {
+                let messages = body.get("messages").and_then(Value::as_array);
+                let prompt = crate::cli::prompt_from_messages(messages.map(Vec::as_slice).unwrap_or(&[]));
+                if prompt.trim().is_empty() {
+                    last = Some((400, format!("the {lane} lane needs messages")));
+                    continue;
+                }
+                let started = Instant::now();
+                match self.run_web_lane(&entry, &prompt, request_id, WEB_REQUEST_TIMEOUT_SECS).await {
+                    Ok(text) => {
+                        let completion = crate::cli::completion_from_text(&prompt, &text);
+                        self.record_usage(
+                            &entry,
+                            &combo_name,
+                            path,
+                            200,
+                            true,
+                            started.elapsed(),
+                            None,
+                            &json!({"messages": [{"role": "user", "content": prompt}]}),
+                            text.chars().count() as u64,
+                        );
+                        let response = if streaming {
+                            cli_response(
+                                StatusCode::OK,
+                                crate::cli::sse_body(lane, &entry.model, &completion),
+                                "text/event-stream",
+                            )
+                        } else {
+                            cli_response(
+                                StatusCode::OK,
+                                crate::cli::completion_body(lane, &entry.model, &completion).to_string(),
+                                "application/json",
+                            )
+                        };
+                        return Ok(with_route_headers(response, &combo_name, &entry, started));
+                    }
+                    Err((status, message)) => {
+                        self.record_usage(
+                            &entry,
+                            &combo_name,
+                            path,
+                            status,
+                            false,
+                            started.elapsed(),
+                            Some(message.clone()),
+                            &json!({"messages": [{"role": "user", "content": prompt}]}),
+                            0,
+                        );
+                        last = Some((status, message));
+                        if !catalog::is_retryable_status(status) {
+                            break;
+                        }
+                    }
+                }
+                continue;
+            }
             if lane == catalog::KIND_ANTIGRAVITY || lane == catalog::KIND_QODER {
                 let messages = body.get("messages").and_then(Value::as_array);
                 let prompt = crate::cli::prompt_from_messages(messages.map(Vec::as_slice).unwrap_or(&[]));
@@ -395,16 +512,26 @@ impl RouterState {
                             completion.text.chars().count() as u64,
                         );
                         return if streaming {
-                            Ok(cli_response(
-                                StatusCode::OK,
-                                crate::cli::sse_body(lane, &entry.model, &completion),
-                                "text/event-stream",
+                            Ok(with_route_headers(
+                                cli_response(
+                                    StatusCode::OK,
+                                    crate::cli::sse_body(lane, &entry.model, &completion),
+                                    "text/event-stream",
+                                ),
+                                &combo_name,
+                                &entry,
+                                started,
                             ))
                         } else {
-                            Ok(cli_response(
-                                StatusCode::OK,
-                                crate::cli::completion_body(lane, &entry.model, &completion).to_string(),
-                                "application/json",
+                            Ok(with_route_headers(
+                                cli_response(
+                                    StatusCode::OK,
+                                    crate::cli::completion_body(lane, &entry.model, &completion).to_string(),
+                                    "application/json",
+                                ),
+                                &combo_name,
+                                &entry,
+                                started,
                             ))
                         };
                     }
@@ -455,7 +582,8 @@ impl RouterState {
             match request.send().await {
                 Ok(upstream) if upstream.status().is_success() => {
                     self.record_usage(&entry, &combo_name, path, upstream.status().as_u16(), true, started.elapsed(), None, &payload, 0);
-                    return forward(upstream, streaming).await;
+                    let response = forward(upstream, streaming).await?;
+                    return Ok(with_route_headers(response, &combo_name, &entry, started));
                 }
                 Ok(upstream) => {
                     let status = upstream.status().as_u16();
@@ -482,6 +610,71 @@ impl RouterState {
             code: "upstream_failed",
             message: if message.is_empty() { "upstream rejected the request".to_owned() } else { message },
         })
+    }
+
+    /// Drive one web engine turn through the trusted Electron bridge. The bridge
+/// owns the visible browser tab and returns the finished assistant text.
+    async fn run_web_lane(
+        &self,
+        entry: &RoutedEntry,
+        prompt: &str,
+        request_id: Option<&str>,
+        timeout_secs: u64,
+    ) -> Result<String, (u16, String)> {
+        let Some(bridge) = self.web_bridge.as_ref() else {
+            return Err((
+                503,
+                "ND Router's web lane bridge is not connected. Restart ND and try again.".to_owned(),
+            ));
+        };
+        let url = format!("{}/v1/web/chat", bridge.url.trim_end_matches('/'));
+        let request_id = request_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| format!("web-{}", uuid::Uuid::new_v4().simple()));
+        let payload = json!({
+            "requestId": request_id,
+            "engine": entry.provider.kind,
+            "model": entry.model,
+            "prompt": prompt,
+        });
+        let response = self
+            .client
+            .post(&url)
+            .header(CONTENT_TYPE, "application/json")
+            .header("x-nd-request-id", &request_id)
+            .bearer_auth(&bridge.token)
+            .timeout(Duration::from_secs(timeout_secs))
+            .json(&payload)
+            .send()
+            .await;
+        match response {
+            Ok(upstream) if upstream.status().is_success() => {
+                let value: Value = upstream
+                    .json()
+                    .await
+                    .map_err(|error| (502, format!("web lane returned invalid JSON: {error}")))?;
+                let text = value
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_owned();
+                if text.is_empty() {
+                    return Err((502, "web lane finished without a reply".to_owned()));
+                }
+                Ok(text)
+            }
+            Ok(upstream) => {
+                let status = upstream.status().as_u16();
+                let raw = upstream.text().await.unwrap_or_default();
+                let message = bridge_error_message(&raw)
+                    .unwrap_or_else(|| catalog::truncate(raw.trim(), 300));
+                Err((status, message))
+            }
+            Err(error) => Err((504, format!("web lane bridge could not be reached: {error}"))),
+        }
     }
 
     pub async fn test_provider(&self, provider_id: &str) -> Result<Value, RouterError> {
@@ -525,6 +718,29 @@ impl RouterState {
                     "latencyMs": started.elapsed().as_millis() as u64,
                     "model": model,
                     "error": error.message,
+                })),
+            };
+        }
+        if catalog::is_web_kind(&provider.kind) {
+            let entry = RoutedEntry { provider: provider.clone(), account: None, model: model.clone() };
+            let started = Instant::now();
+            return match self.run_web_lane(&entry, "Reply with exactly: OK", None, WEB_TEST_TIMEOUT_SECS).await {
+                Ok(text) => Ok(json!({
+                    "id": provider_id,
+                    "ok": true,
+                    "statusCode": 200,
+                    "latencyMs": started.elapsed().as_millis() as u64,
+                    "model": model,
+                    "error": Value::Null,
+                    "preview": catalog::truncate(text.trim(), 80),
+                })),
+                Err((status, message)) => Ok(json!({
+                    "id": provider_id,
+                    "ok": false,
+                    "statusCode": status,
+                    "latencyMs": started.elapsed().as_millis() as u64,
+                    "model": model,
+                    "error": message,
                 })),
             };
         }
@@ -735,6 +951,52 @@ fn find_combo<'a>(combos: &'a [ComboRecord], hint: &str) -> Option<&'a ComboReco
     let trimmed = hint.trim();
     let normalized = trimmed.strip_prefix("combo:").unwrap_or(trimmed);
     combos.iter().find(|combo| combo.id == normalized || combo.name == normalized)
+}
+
+fn with_route_headers(mut response: Response, combo: &str, entry: &RoutedEntry, started: Instant) -> Response {
+    if let Ok(value) = HeaderValue::from_str(combo) {
+        response.headers_mut().insert("x-nd-router-combo", value);
+    }
+    if let Ok(value) = HeaderValue::from_str(&entry.provider.id) {
+        response.headers_mut().insert("x-nd-router-provider", value);
+    }
+    if let Ok(value) = HeaderValue::from_str(&entry.model) {
+        response.headers_mut().insert("x-nd-router-model", value);
+    }
+    if let Ok(value) = HeaderValue::from_str(&started.elapsed().as_millis().to_string()) {
+        response.headers_mut().insert("x-nd-router-latency-ms", value);
+    }
+    response
+}
+
+fn bridge_error_message(raw: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(raw).ok()?;
+    value.get("error").and_then(Value::as_str).map(ToOwned::to_owned)
+}
+
+fn validate_web_bridge(bridge: &WebBridgeConfig) -> anyhow::Result<()> {
+    let url = url::Url::parse(&bridge.url)?;
+    if url.scheme() != "http" {
+        anyhow::bail!("web bridge must use http");
+    }
+    if !matches!(url.host_str(), Some("127.0.0.1") | Some("localhost")) {
+        anyhow::bail!("web bridge must bind loopback");
+    }
+    if bridge.token.trim().is_empty() {
+        anyhow::bail!("web bridge token is required");
+    }
+    Ok(())
+}
+
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut difference = 0u8;
+    for (left_byte, right_byte) in left.iter().zip(right.iter()) {
+        difference |= left_byte ^ right_byte;
+    }
+    difference == 0
 }
 
 fn cli_response(status: StatusCode, body: String, content_type: &str) -> Response {

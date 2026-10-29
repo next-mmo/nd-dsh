@@ -699,9 +699,14 @@ fn dispatch(
         // loopback key only once, from initialize.
         "router.initialize" => {
             let params = from_params::<RouterInitParams>(params)?;
-            let router_state = nd_router::RouterState::new(std::path::PathBuf::from(params.data_dir))
+            let options = nd_router::state::RouterOptions {
+                external_key: params.external_key,
+                web_bridge: params.web_bridge,
+                preferred_port: params.preferred_port,
+            };
+            let router_state = nd_router::RouterState::with_options(std::path::PathBuf::from(params.data_dir), options)
                 .map_err(|error| errors::coded(CODE_METHOD_FAILED, format!("{error:#}")))?;
-            let server = nd_router::RouterServer::start(Arc::clone(&router_state))
+            let server = nd_router::RouterServer::start(Arc::clone(&router_state), router_state.preferred_port())
                 .map_err(|error| errors::coded(CODE_METHOD_FAILED, format!("{error:#}")))?;
             let result = json!({
                 "endpoint": server.endpoint,
@@ -712,6 +717,11 @@ fn dispatch(
             *state.router.lock().unwrap_or_else(|error| error.into_inner()) = Some(server);
             *state.router_state.lock().unwrap_or_else(|error| error.into_inner()) = Some(router_state);
             Ok(result)
+        }
+        "router.setExternalKey" => {
+            let input = from_params::<nd_router::types::SetExternalKeyInput>(params)?;
+            router_state(&state)?.set_external_key(&input.external_key)?;
+            Ok(json!({"updated": true}))
         }
         "router.stop" => {
             if let Some(mut server) = state.router.lock().unwrap_or_else(|error| error.into_inner()).take() {
@@ -764,6 +774,12 @@ fn dispatch(
 #[serde(rename_all = "camelCase")]
 struct RouterInitParams {
     data_dir: String,
+    #[serde(default)]
+    external_key: Option<String>,
+    #[serde(default)]
+    web_bridge: Option<nd_router::types::WebBridgeConfig>,
+    #[serde(default)]
+    preferred_port: Option<u16>,
 }
 
 fn router_state(state: &AppState) -> Result<Arc<nd_router::RouterState>> {

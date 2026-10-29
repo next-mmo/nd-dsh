@@ -56,6 +56,8 @@ import type { ZcodeCliEngine } from './zcode/zcode-cli-engine.js'
 import type { NdNativeEngine } from './nd-native/nd-native-engine.js'
 import { nativePrivateSelectionEnabled } from './nd-native/native-selection-gate.js'
 import { inlineTextAttachments, stageAttachments } from './attachment-delivery.js'
+import { WebTurnError } from './web-turn.js'
+import { extractLatestAssistantText } from './web-turn-result.js'
 
 /** Direct engines that accept native base64 image blocks (Claude stream-json). */
 const BASE64_IMAGE_DIRECT_ENGINES = new Set([CLAUDE_CODE_CLI_ENGINE_ID])
@@ -456,6 +458,143 @@ export class EngineSessionRouter {
   }
 
   /**
+   * Run one private router turn on a web engine. The session is hidden from
+   * chat lists and persistence, starts a fresh conversation, and is deleted
+   * after the reply so external API calls never inherit prior context.
+   */
+  async runWebLane(input: {
+    engineId: string
+    prompt: string
+    model?: string
+    signal?: AbortSignal
+  }): Promise<{ text: string; engineId: string; model: string; latencyMs: number }> {
+    const engineId = input.engineId === CHATGPT_WEB_ENGINE_ID
+      ? CHATGPT_WEB_ENGINE_ID
+      : input.engineId === GEMINI_WEB_ENGINE_ID
+        ? GEMINI_WEB_ENGINE_ID
+        : undefined
+    if (!engineId) throw new Error(`Router web lane is not supported: ${input.engineId}`)
+    if (input.signal?.aborted) throw new WebTurnError({ code: 'cancelled', message: 'Web lane request was cancelled', phase: 'open' })
+
+    const harnessState = this.harness.status().state
+    // A Harness that is only starting does not own the browser yet; blocking on
+    // it strands private lanes behind a runtime that may never become ready.
+    if (harnessState === 'running') {
+      throw new WebTurnError({
+        code: 'page-busy',
+        message: 'ND Harness is using the visible browser. Wait for its turn to finish, then retry.',
+        phase: 'open',
+      })
+    }
+    const otherEngine = engineId === CHATGPT_WEB_ENGINE_ID ? this.geminiWeb : this.chatGptWeb
+    if (otherEngine?.listSessions().some((session) => session.running)) {
+      throw new WebTurnError({
+        code: 'page-busy',
+        message: 'The other web engine is using the visible browser. Wait for its turn to finish, then retry.',
+        phase: 'open',
+      })
+    }
+    const engine = engineId === CHATGPT_WEB_ENGINE_ID ? this.requireChatGptWeb() : this.requireGeminiWeb()
+    if (engine.listSessions().some((session) => session.running)) {
+      throw new WebTurnError({
+        code: 'page-busy',
+        message: 'This web engine already has an active turn. Wait for it to finish, then retry.',
+        phase: 'open',
+      })
+    }
+
+    // Prompt Shield gates the text before any browser session is opened.
+    const prompt = this.shieldPrompt(input.prompt)
+    const workspaceRoot = this.workspace.state().root
+    const browser = engineId === CHATGPT_WEB_ENGINE_ID ? this.chatGptWebBrowser : this.geminiWebBrowser
+    const returnUrl = browser?.state().url
+    const started = Date.now()
+    const created = await engine.createSession({
+      cwd: workspaceRoot,
+      hidden: true,
+      isolated: true,
+      title: engineId === CHATGPT_WEB_ENGINE_ID ? 'ND Router · ChatGPT Web' : 'ND Router · Gemini Web',
+    })
+    const sessionId = created.sessionId
+    let keepTab = false
+    let detachBackground: (() => void) | undefined
+    let restorePresentation: (() => void) | undefined
+    const stopOnAbort = (): void => {
+      void engine.stop(sessionId).catch(() => undefined)
+    }
+    input.signal?.addEventListener('abort', stopOnAbort, { once: true })
+
+    try {
+      if (input.signal?.aborted) {
+        throw new WebTurnError({ code: 'cancelled', message: 'Web lane request was cancelled', phase: 'open' })
+      }
+      // Router turns often run from Settings while the browser surface is
+      // hidden. ChatGPT renders under a background-attached tab; Gemini only
+      // streams while its view owns an on-screen rect, so present it for the
+      // duration of the turn and restore the app UI afterwards.
+      if (browser) {
+        const tabId = await engine.ensureBrowserTab(sessionId)
+        if (tabId) {
+          if (engineId === GEMINI_WEB_ENGINE_ID) {
+            restorePresentation = browser.presentTabForRouterTurn(tabId)
+          } else if (!browser.state().visible) {
+            detachBackground = browser.attachTabForBackgroundRendering(tabId)
+          }
+        }
+      }
+      if (engineId === GEMINI_WEB_ENGINE_ID) {
+        await this.requireGeminiWeb().run(prompt, {
+          sessionId,
+          cwd: workspaceRoot,
+          isolated: true,
+          transports: ['cdp'],
+          ...(input.model?.trim() ? { model: input.model.trim() } : {}),
+        })
+      } else {
+        await this.requireChatGptWeb().run(prompt, {
+          sessionId,
+          cwd: workspaceRoot,
+          isolated: true,
+          transports: ['cdp'],
+        })
+      }
+      const transcript = await engine.transcript(sessionId)
+      const text = extractLatestAssistantText(transcript.events)
+      if (!text) {
+        throw new WebTurnError({
+          code: 'empty-reply',
+          message: `${engineId === CHATGPT_WEB_ENGINE_ID ? 'ChatGPT Web' : 'Gemini Web'} finished without an assistant reply`,
+          phase: 'wait',
+        })
+      }
+      return {
+        text,
+        engineId,
+        model: input.model?.trim() || 'default',
+        latencyMs: Date.now() - started,
+      }
+    } catch (error) {
+      if (error instanceof WebTurnError && (error.code === 'login-required' || error.code === 'challenge')) {
+        // Leave the page visible so the user can sign in or clear the challenge.
+        keepTab = true
+      }
+      throw error
+    } finally {
+      input.signal?.removeEventListener('abort', stopOnAbort)
+      detachBackground?.()
+      restorePresentation?.()
+      await engine.deleteSession(sessionId, { closeTab: !keepTab }).catch((error) => {
+        this.chatGptWebLog?.(`[router web lane] could not clean up session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`)
+      })
+      if (!keepTab && browser && returnUrl && isRestorableBrowserUrl(returnUrl)) {
+        await browser.navigate(returnUrl).catch((error) => {
+          this.chatGptWebLog?.(`[router web lane] could not restore previous browser URL: ${error instanceof Error ? error.message : String(error)}`)
+        })
+      }
+    }
+  }
+
+  /**
    * Create a session on the engine named by a catalog descriptor id. An
    * explicit cwd is the portable isolation seam used by organization task
    * worktrees; interactive chat keeps the active workspace default. A title
@@ -577,7 +716,7 @@ export class EngineSessionRouter {
     const interactiveSessions = [...this.directEngines.entries()]
       .filter(([engineId]) => !this.isWorkspaceDirectEngine(engineId))
       .flatMap(([, direct]) => direct.listSessions())
-    return [...workspaceSessions, ...interactiveSessions]
+    return [...workspaceSessions, ...interactiveSessions].filter((session) => session.hidden !== true)
   }
 
   /** Activate the chat's owned browser tab, creating it after a restart. */

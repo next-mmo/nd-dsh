@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import { describe, expect, it, vi } from 'vitest'
 import { PageGuardError } from '../src/main/browser/page-driver.js'
+import { CHATGPT_DOM_TURNS_SCRIPT } from '../src/main/browser/chatgpt-dom-turns.js'
 import { ChatGptWebEngine } from '../src/main/engines/chatgpt-web/chatgpt-web-engine.js'
 import { discardWebImages } from '../src/main/engines/web-attachments.js'
 import { WebTurnProgress } from '../src/main/engines/web-turn.js'
@@ -14,6 +15,40 @@ import {
 } from '../src/main/engines/chatgpt-web/chatgpt-project-binding.js'
 
 describe('ChatGPT Web engine', () => {
+  it('reads current legacy headings that append the role label', () => {
+    class FakeNode {
+      childNodes: FakeNode[] = []
+      children: FakeNode[] = []
+      parentElement: FakeNode | null = null
+      constructor(readonly textContent: string, readonly innerText: string = textContent) {}
+      getAttribute() { return null }
+      hasAttribute() { return false }
+      contains(node: FakeNode) { return node === this || this.children.includes(node) }
+      querySelector() { return null }
+      querySelectorAll() { return [] }
+      closest() { return null }
+    }
+    const userHeading = new FakeNode('You said:You')
+    const assistantHeading = new FakeNode('ChatGPT said:ChatGPT')
+    const userTurn = new FakeNode('You said:You', 'You said:You\nHello')
+    const assistantTurn = new FakeNode('ChatGPT said:ChatGPT', 'ChatGPT said:ChatGPT\nWorld')
+    userHeading.parentElement = userTurn
+    userTurn.children = [userHeading]
+    assistantHeading.parentElement = assistantTurn
+    assistantTurn.children = [assistantHeading]
+    const headings = [userHeading, assistantHeading]
+    const fakeDocument = {
+      querySelectorAll: (selector: string) => selector.includes('main h1') ? headings : [],
+    }
+    const turns = runInNewContext(
+      `(() => { ${CHATGPT_DOM_TURNS_SCRIPT}; return readChatGptDomTurns({ legacyFallback: true }); })()`,
+      { document: fakeDocument },
+    ) as Array<{ role: string; text: string }>
+    expect(turns.map((turn) => turn.role)).toEqual(['user', 'assistant'])
+    expect(turns[0]?.text).toContain('Hello')
+    expect(turns[1]?.text).toContain('World')
+  })
+
   it('captures declared assistant turns and shared completion without a nested author-role node', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'nd-chatgpt-dom-'))
     const engine = new ChatGptWebEngine({ browser: {} as never, workspace: {} as never, storePath: join(directory, 'sessions.json') })
@@ -81,6 +116,27 @@ describe('ChatGPT Web engine', () => {
       expect(events).toHaveLength(1)
       expect(events[0]?.data).toEqual({ message: { role: 'assistant', content: [{ type: 'text', text: 'Hello world!' }] } })
     } finally { await engine.close(); rmSync(directory, { recursive: true, force: true }) }
+  })
+
+  it('keeps router-owned sessions hidden from persistence and removes them on demand', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nd-chatgpt-hidden-'))
+    const storePath = join(directory, 'chatgpt-web-sessions.json')
+    const engine = new ChatGptWebEngine({
+      browser: {} as never,
+      workspace: { state: () => ({ root: '/workspace' }) } as never,
+      storePath,
+    })
+    try {
+      const visible = await engine.createSession({ cwd: '/workspace' })
+      const hidden = await engine.createSession({ cwd: '/workspace', hidden: true, isolated: true, title: 'ND Router · ChatGPT Web' })
+      expect(engine.listSessions().find((session) => session.sessionId === hidden.sessionId)).toMatchObject({ hidden: true })
+      expect(JSON.parse(readFileSync(storePath, 'utf8')).sessions.map((session: { sessionId: string }) => session.sessionId)).toEqual([visible.sessionId])
+      await engine.deleteSession(hidden.sessionId, { closeTab: false })
+      expect(engine.listSessions().map((session) => session.sessionId)).not.toContain(hidden.sessionId)
+    } finally {
+      await engine.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 
   it('normalizes tampered persisted conversation bindings before use', async () => {

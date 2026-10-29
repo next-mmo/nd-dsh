@@ -99,6 +99,10 @@ interface StoredGeminiWebSession {
   createdAt: number
   updatedAt: number
   running: boolean
+  /** Router-owned turns stay out of the chat sidebar and restart persistence. */
+  hidden?: boolean
+  /** Skip Gemini Gem auto-binding for private router turns. */
+  isolated?: boolean
   sequence: number
   transcript: SessionEventEnvelope[]
   seenTurnKeys: string[]
@@ -256,7 +260,7 @@ export class GeminiWebEngine {
   async ensureBrowserTab(sessionId: string): Promise<string | null> {
     const session = this.sessions.get(sessionId)
     if (!session) return null
-    const binding = this.getGemBinding(session.cwd ?? this.options.workspace.state().root)
+    const binding = session.isolated ? null : this.getGemBinding(session.cwd ?? this.options.workspace.state().root)
     const targetUrl = session.conversationUrl && isGeminiConversationUrl(session.conversationUrl)
       ? session.conversationUrl
       : binding?.gemUrl ?? GEMINI_HOME_URL
@@ -290,6 +294,7 @@ export class GeminiWebEngine {
         createdAt: session.createdAt,
         updatedAt: session.updatedAt,
         running: session.running,
+        ...(session.hidden ? { hidden: true } : {}),
         ...(session.browserTabId ? { browserTabId: session.browserTabId } : {}),
       }))
   }
@@ -299,16 +304,18 @@ export class GeminiWebEngine {
     return { sessionId, engineId: GEMINI_WEB_ENGINE_ID, events: [...session.transcript] }
   }
 
-  async createSession(input: { cwd?: string } = {}): Promise<{ sessionId: string }> {
+  async createSession(input: { cwd?: string; hidden?: boolean; isolated?: boolean; title?: string } = {}): Promise<{ sessionId: string }> {
     const sessionId = `gemini-web-${randomUUID()}`
     const now = Date.now()
     const session: StoredGeminiWebSession = {
       sessionId,
       ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
-      title: 'New Gemini Web chat',
+      title: input.title?.trim() || 'New Gemini Web chat',
       createdAt: now,
       updatedAt: now,
       running: false,
+      ...(input.hidden ? { hidden: true } : {}),
+      ...(input.isolated ? { isolated: true } : {}),
       sequence: 0,
       transcript: [],
       seenTurnKeys: [],
@@ -316,7 +323,7 @@ export class GeminiWebEngine {
     }
     this.sessions.set(sessionId, session)
     this.persistStore()
-    this.emitFrame({ kind: 'session-added', sessionId, meta: { engineId: GEMINI_WEB_ENGINE_ID } })
+    if (!session.hidden) this.emitFrame({ kind: 'session-added', sessionId, meta: { engineId: GEMINI_WEB_ENGINE_ID } })
     return { sessionId }
   }
 
@@ -328,7 +335,7 @@ export class GeminiWebEngine {
     return this.modelOptions.length > 0 ? this.modelOptions : GEMINI_MODE_FALLBACK
   }
 
-  async run(prompt: string, input: { sessionId?: string; cwd?: string; images?: HarnessRunImage[]; model?: string } = {}): Promise<{ sessionId: string }> {
+  async run(prompt: string, input: { sessionId?: string; cwd?: string; images?: HarnessRunImage[]; model?: string; isolated?: boolean; transports?: WebBrowserTransport[] } = {}): Promise<{ sessionId: string }> {
     const cleaned = stripWorkspaceContext(prompt).trim()
     if (!cleaned) throw new Error('Prompt cannot be empty')
     if (cleaned.length > MAX_PROMPT_CHARS) throw new Error(`Prompt exceeds the ${MAX_PROMPT_CHARS.toLocaleString()} character limit`)
@@ -336,10 +343,14 @@ export class GeminiWebEngine {
     let session = input.sessionId === undefined ? undefined : this.sessions.get(input.sessionId)
     if (input.sessionId !== undefined && !session) throw new Error(`Unknown ${GEMINI_WEB_ENGINE_ID} session: ${input.sessionId}`)
     if (!session) {
-      const created = await this.createSession({ cwd: input.cwd ?? this.options.workspace.state().root })
+      const created = await this.createSession({
+        cwd: input.cwd ?? this.options.workspace.state().root,
+        ...(input.isolated ? { isolated: true } : {}),
+      })
       session = this.sessions.get(created.sessionId)
     }
     if (!session) throw new Error(`${GEMINI_WEB_ENGINE_ID} session could not be created`)
+    if (input.isolated) session.isolated = true
     if (session.running) throw new Error('This Gemini Web chat already has an active turn')
     if ([...this.sessions.values()].some((candidate) => candidate.running && candidate.sessionId !== session.sessionId)) {
       throw new Error('Gemini Web uses ND\'s single visible browser pane. Finish the active Gemini Web turn before starting another one.')
@@ -356,7 +367,12 @@ export class GeminiWebEngine {
       hasImages,
       available: availableTransports,
     })
-    if (plan.transports.length === 0) {
+    // Router lanes pin deterministic background-capable transports instead of
+    // inheriting an interactive Browser Agent preference from the chat pane.
+    const transports = input.transports?.length
+      ? input.transports.filter((transport) => transport === 'extension' || (transport === 'cdp' && availableTransports.cdp))
+      : plan.transports
+    if (transports.length === 0) {
       const reason = plan.skipped.map((s) => `${s.transport}: ${s.reason}`).join(', ')
       throw new Error(`No browser transport available for mode "${this.modeSettings.mode}" (${reason || 'unavailable'})`)
     }
@@ -372,8 +388,8 @@ export class GeminiWebEngine {
 
     try {
       let lastError: unknown
-      for (let i = 0; i < plan.transports.length; i += 1) {
-        const transport = plan.transports[i]!
+      for (let i = 0; i < transports.length; i += 1) {
+        const transport = transports[i]!
         const progress = new WebTurnProgress(transport)
         activeTurn.progress = progress
         try {
@@ -388,8 +404,8 @@ export class GeminiWebEngine {
             session.uncertainPromptHashes = trimArray([...(session.uncertainPromptHashes ?? []), hashText(cleaned)], 50)
             this.persistStore()
           }
-          if (i < plan.transports.length - 1 && canSwitchTransport(turnError)) {
-            this.options.log?.(`[gemini-web] ${transport} failed (${turnError.message}); falling back to ${plan.transports[i + 1]}`)
+          if (i < transports.length - 1 && canSwitchTransport(turnError)) {
+            this.options.log?.(`[gemini-web] ${transport} failed (${turnError.message}); falling back to ${transports[i + 1]}`)
             continue
           }
           throw turnError
@@ -447,6 +463,20 @@ export class GeminiWebEngine {
     this.persistStore()
   }
 
+  /** Remove a router-owned session; keep its tab when the user must sign in. */
+  async deleteSession(sessionId: string, options: { closeTab?: boolean } = {}): Promise<void> {
+    const session = this.sessions.get(sessionId)
+    if (!session) return
+    if (session.running) await this.stop(sessionId)
+    this.activeTurns.delete(sessionId)
+    const tabId = session.browserTabId
+    this.sessions.delete(sessionId)
+    this.persistStore()
+    if ((options.closeTab ?? true) && tabId) {
+      await this.options.browser.closeTab(tabId).catch(() => false)
+    }
+  }
+
   /** Each chat owns its browser tab so switching chats switches conversations. */
   private async ensureSessionTab(session: StoredGeminiWebSession, targetUrl: string): Promise<string> {
     const browser = this.options.browser
@@ -468,7 +498,7 @@ export class GeminiWebEngine {
     transport: WebBrowserTransport = 'cdp',
   ): Promise<PageDriver> {
     assertTurnActive(signal)
-    const binding = await this.resolveGemBinding(session.cwd ?? this.options.workspace.state().root, signal)
+    const binding = session.isolated ? null : await this.resolveGemBinding(session.cwd ?? this.options.workspace.state().root, signal)
     if (binding) session.gemRef = binding.gemRef
 
     const targetUrl = (session.conversationUrl && isGeminiConversationUrl(session.conversationUrl))
@@ -582,7 +612,7 @@ export class GeminiWebEngine {
         if (before.busy || before.pendingSend) throw this.pageBusyError()
         this.importUnseenTurns(session, before)
         assertTurnActive(signal)
-        await this.applyModel(driver, model, signal)
+        await this.applyModel(driver, model, signal, session.isolated === true)
         assertTurnActive(signal)
         await this.clearStaleAttachments(driver)
 
@@ -685,7 +715,7 @@ export class GeminiWebEngine {
       } else {
         if (before.busy || before.pendingSend) throw this.pageBusyError()
         this.importUnseenTurns(session, before)
-        await this.applyModel(driver, model, signal)
+        await this.applyModel(driver, model, signal, session.isolated === true)
         assertTurnActive(signal)
         const tabId = this.options.browser.activeTabId()
         const agent = new BrowserAgentRunner({
@@ -847,6 +877,7 @@ export class GeminiWebEngine {
     driver: PageDriver,
     requested: string | undefined,
     signal: AbortSignal,
+    optional = false,
   ): Promise<void> {
     const model = requested?.trim()
     if (!model) return
@@ -856,6 +887,13 @@ export class GeminiWebEngine {
     if (result.options && result.options.length > 0) this.rememberModelOptions(result.options)
     if (!result.ok) {
       const available = (result.options ?? []).join(', ')
+      if (result.reason === 'picker-missing' && optional) {
+        // Private router lanes treat the provider model as a hint. Older or
+        // account-limited Gemini layouts have no picker at all; the signed-in
+        // page's current model is still a valid answer.
+        this.options.log?.('[gemini-web] model picker unavailable; using the page\'s current model')
+        return
+      }
       if (result.reason === 'unknown-model') {
         throw new Error(`Gemini Web does not offer the "${model}" model for this account. Pick another model in ND's model menu${available ? ` (available: ${available})` : ''}.`)
       }
@@ -1339,6 +1377,7 @@ export class GeminiWebEngine {
   }
 
   private emitFrame(frame: DshEventFrame): void {
+    if (frame.sessionId && this.sessions.get(frame.sessionId)?.hidden) return
     this.onEvent?.(frame)
   }
 
@@ -1351,6 +1390,7 @@ export class GeminiWebEngine {
         if (!candidate || typeof candidate !== 'object') continue
         const session = candidate as StoredGeminiWebSession
         if (typeof session.sessionId !== 'string' || !session.sessionId.startsWith('gemini-web-')) continue
+        if (session.hidden === true) continue
         if (typeof session.conversationUrl !== 'string' || !isGeminiConversationUrl(session.conversationUrl)) delete session.conversationUrl
         if (typeof session.browserTabId !== 'string' || session.browserTabId === '') delete session.browserTabId
         session.running = false
@@ -1392,7 +1432,7 @@ export class GeminiWebEngine {
     }
     const payload: PersistedGeminiWebStore = {
       version: 1,
-      sessions: [...this.sessions.values()],
+      sessions: [...this.sessions.values()].filter((session) => session.hidden !== true),
       gemBindings: bindingsObj,
       modeSettings: this.modeSettings,
       ...(this.modelOptions.length > 0 ? { modelOptions: this.modelOptions } : {}),

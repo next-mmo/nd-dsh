@@ -93,6 +93,7 @@ import { UsageLedger } from './usage/usage-ledger.js'
 import { ThemeService } from './theme.js'
 import { registerTerminalIpc } from './terminal/ipc.js'
 import { RouterService } from './router/router-service.js'
+import { WebLaneBridge } from './router/web-lane-bridge.js'
 import { TerminalManager } from './terminal/terminal-manager.js'
 import { ProjectWorkspaceCoordinator } from './workspace/project-workspace-coordinator.js'
 import { ProjectRuntimeService } from './workspace/project-runtime.js'
@@ -125,6 +126,7 @@ let activeCursorEngine: CursorCliEngine | undefined
 let activeClaudeEngine: ClaudeCodeCliEngine | undefined
 let activeEngineRouter: EngineSessionRouter | undefined
 let activeRestApiService: NdRestApiService | undefined
+let activeWebLaneBridge: WebLaneBridge | undefined
 let activeDesignSession: DesignSessionService | undefined
 let activeDesignBridge: DesignAgentBridge | undefined
 let activeTerminalManager: TerminalManager | undefined
@@ -253,9 +255,9 @@ async function createWindow(cdpPort: number): Promise<void> {
   }, 5_000)
   // ND Router lives in the Rust sidecar. Initialization is best-effort: a stale
   // sidecar build must not block startup, and the managed provider only appears
-  // once the router answers with combos.
+  // once the router answers with combos. It waits until the engine router and
+  // web bridge exist so ChatGPT Web / Gemini Web lanes can be registered.
   const routerService = new RouterService(core, providers, join(userData, 'nd-router'))
-  await routerService.initialize()
   markStartup('core-ready')
   activeCore = core
   workspace.attachFileSystem(createCoreWorkspaceFileSystem(core))
@@ -441,6 +443,20 @@ async function createWindow(cdpPort: number): Promise<void> {
   }, zcodeEngine, piEngine, cursorEngine, claudeEngine, engineSpawn, directEngineJournal, nativeAgent)
   activeEngineRouter = engineRouter
   engineRouter.setBrowserAccessProvider(browserPlatform)
+  // The router's web lanes need the engine router; start the private loopback
+  // bridge first, then hand its descriptor to the Rust router. API lanes still
+  // initialize when the bridge cannot start.
+  const webLaneBridge = new WebLaneBridge({ engineRouter, log: (line) => console.warn(line) })
+  try {
+    const descriptor = await webLaneBridge.start()
+    await routerService.initialize(descriptor)
+    routerService.setWebLaneBridge(webLaneBridge)
+    activeWebLaneBridge = webLaneBridge
+  } catch (error) {
+    console.warn('ND Router web lane bridge could not start:', error instanceof Error ? error.message : String(error))
+    await routerService.initialize()
+    await webLaneBridge.stop().catch(() => undefined)
+  }
   const restApiService = new NdRestApiService({
     engineRouter,
     workspace,
@@ -906,6 +922,7 @@ async function createWindow(cdpPort: number): Promise<void> {
     if (activeDesignBridge === designBridge) { activeDesignBridge = undefined; beginDesignBridgeClose(designBridge) }
     designSession.destroy()
     if (activeDesignSession === designSession) activeDesignSession = undefined
+    if (activeWebLaneBridge === webLaneBridge) { activeWebLaneBridge = undefined; beginWebLaneBridgeClose(webLaneBridge) }
     if (activeEngineRouter === engineRouter) { activeEngineRouter = undefined; beginEngineRouterClose(engineRouter) }
     if (activeRestApiService === restApiService) { activeRestApiService = undefined; beginRestApiClose(restApiService) }
     if (activeBrowserPlatform === browserPlatform) { activeBrowserPlatform = undefined; beginBrowserPlatformClose(browserPlatform) }
@@ -1017,6 +1034,11 @@ app.on('before-quit', (event) => {
     const claudeEngine = activeClaudeEngine
     activeClaudeEngine = undefined
     beginClaudeClose(claudeEngine)
+  }
+  if (activeWebLaneBridge) {
+    const webLaneBridge = activeWebLaneBridge
+    activeWebLaneBridge = undefined
+    beginWebLaneBridgeClose(webLaneBridge)
   }
   if (activeEngineRouter) {
     const engineRouter = activeEngineRouter
@@ -1182,6 +1204,10 @@ function beginClaudeClose(claudeEngine: ClaudeCodeCliEngine): void {
 
 function beginEngineRouterClose(engineRouter: EngineSessionRouter): void {
   trackClose(engineRouter.close().catch((error) => console.error('Failed to close the engine router cleanly:', error)))
+}
+
+function beginWebLaneBridgeClose(bridge: WebLaneBridge): void {
+  trackClose(bridge.stop().catch((error) => console.error('Failed to close the ND Router web bridge cleanly:', error)))
 }
 
 function beginRestApiClose(restApi: NdRestApiService): void {

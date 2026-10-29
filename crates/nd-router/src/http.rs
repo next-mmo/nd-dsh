@@ -41,7 +41,9 @@ async fn chat(
         return Err(RouterError::bad_request("request body must be a JSON object"));
     }
     let combo = combo_header(&headers);
-    state.chat(body, combo.as_deref(), "/v1/chat/completions").await
+    state
+        .chat_with_request(body, combo.as_deref(), "/v1/chat/completions", request_id_header(&headers).as_deref())
+        .await
 }
 
 async fn responses(
@@ -54,7 +56,9 @@ async fn responses(
         return Err(RouterError::bad_request("request body must be a JSON object"));
     }
     let combo = combo_header(&headers);
-    state.chat(body, combo.as_deref(), "/v1/responses").await
+    state
+        .chat_with_request(body, combo.as_deref(), "/v1/responses", request_id_header(&headers).as_deref())
+        .await
 }
 
 fn combo_header(headers: &HeaderMap) -> Option<String> {
@@ -66,13 +70,22 @@ fn combo_header(headers: &HeaderMap) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+fn request_id_header(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("x-nd-request-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.chars().take(128).collect())
+}
+
 fn authorize(state: &RouterState, headers: &HeaderMap) -> Result<(), RouterError> {
     let value = headers
         .get(AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default();
     let token = value.strip_prefix("Bearer ").unwrap_or_default();
-    if !token.is_empty() && token == state.key() {
+    if state.accepts_key(token) {
         Ok(())
     } else {
         Err(RouterError {

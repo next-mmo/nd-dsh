@@ -31,6 +31,19 @@ pub struct CliCompletion {
     pub total_tokens: u64,
 }
 
+/// Web lanes return finished text only; usage is estimated at four characters
+/// per token so ND's existing completion/SSE builders stay uniform.
+pub fn completion_from_text(prompt: &str, text: &str) -> CliCompletion {
+    let prompt_tokens = (prompt.chars().count() / 4) as u64;
+    let completion_tokens = (text.chars().count() / 4) as u64;
+    CliCompletion {
+        text: text.to_owned(),
+        prompt_tokens,
+        completion_tokens,
+        total_tokens: prompt_tokens + completion_tokens,
+    }
+}
+
 pub fn agy_binary() -> String {
     // Test override; production uses whatever `agy` resolves to on PATH.
     std::env::var("ND_AGY_BIN").unwrap_or_else(|_| "agy".to_owned())
