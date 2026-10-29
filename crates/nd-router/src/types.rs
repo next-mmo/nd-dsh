@@ -10,6 +10,9 @@ pub const STORE_FILE: &str = "router-state.json";
 pub const USAGE_FILE: &str = "usage.jsonl";
 pub const MAX_USAGE_LINES: usize = 5_000;
 pub const REQUEST_TIMEOUT_SECS: u64 = 120;
+/// Web lanes own a real browser turn, which can take the engine's full 10 minutes.
+pub const WEB_REQUEST_TIMEOUT_SECS: u64 = 620;
+pub const WEB_TEST_TIMEOUT_SECS: u64 = 300;
 pub const MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -75,6 +78,9 @@ pub struct ComboRecord {
     pub models: Vec<ComboEntry>,
     #[serde(default)]
     pub config: Value,
+    /// Private combos keep resolving through `/v1` but stay out of personal chat.
+    #[serde(default)]
+    pub hidden_from_chat: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -266,6 +272,7 @@ pub struct SaveComboInput {
     pub name: String,
     pub strategy: Option<String>,
     pub models: Vec<ComboEntry>,
+    pub hidden_from_chat: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -285,4 +292,19 @@ pub struct AccountIdInput {
 #[serde(rename_all = "camelCase")]
 pub struct ComboIdInput {
     pub combo_id: String,
+}
+
+/// Loopback bridge hosted by trusted Electron main that drives the visible
+/// ChatGPT Web / Gemini Web tabs for the router's web lanes.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebBridgeConfig {
+    pub url: String,
+    pub token: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetExternalKeyInput {
+    pub external_key: String,
 }

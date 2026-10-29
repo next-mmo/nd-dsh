@@ -18,12 +18,31 @@ pub struct RouterServer {
 }
 
 impl RouterServer {
-    pub fn start(state: Arc<RouterState>) -> anyhow::Result<Self> {
+    pub fn start(state: Arc<RouterState>, preferred_port: u16) -> anyhow::Result<Self> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
             .build()?;
-        let listener = runtime.block_on(async { tokio::net::TcpListener::bind(("127.0.0.1", 0)).await })?;
+        let listener = runtime.block_on(async move {
+            let mut last_error = None;
+            for offset in 0..10u16 {
+                let port = preferred_port.saturating_add(offset);
+                if port == 0 {
+                    break;
+                }
+                match tokio::net::TcpListener::bind(("127.0.0.1", port)).await {
+                    Ok(listener) => return Ok(listener),
+                    Err(error) => last_error = Some(error),
+                }
+            }
+            match tokio::net::TcpListener::bind(("127.0.0.1", 0)).await {
+                Ok(listener) => Ok(listener),
+                Err(error) => Err(match last_error {
+                    Some(previous) => anyhow::anyhow!("ND Router could not bind loopback: {error} (preferred port: {previous})"),
+                    None => anyhow::anyhow!("ND Router could not bind loopback: {error}"),
+                }),
+            }
+        })?;
         let port = listener.local_addr()?.port();
         let (shutdown, receiver) = oneshot::channel();
         let app = http::app(Arc::clone(&state));

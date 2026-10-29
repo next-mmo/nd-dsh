@@ -303,6 +303,8 @@ export interface EngineSessionSummary {
   createdAt: number
   updatedAt: number
   running: boolean
+  /** Router-owned web turns never surface in chat lists. */
+  hidden?: boolean
   /** Browser tab owned by this chat; selecting it activates that tab. */
   browserTabId?: string
   /** ND-side archival flag, resolved from the desktop archive store. */

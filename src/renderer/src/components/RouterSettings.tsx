@@ -1,12 +1,16 @@
 import { useEffect, useState } from 'react'
 import { NineRouterSettings } from './NineRouterSettings'
-import type {
-  RouterComboEntry,
-  RouterProviderView,
-  RouterState,
-  RouterTestResult,
-  RouterUsageSummary,
+import {
+  ROUTER_WEB_LANE_MODELS,
+  isRouterWebProviderKind,
+  type RouterComboEntry,
+  type RouterProviderView,
+  type RouterState,
+  type RouterTestResult,
+  type RouterUsageSummary,
 } from '../../../shared/router'
+import { RouterExternalApi } from './RouterExternalApi'
+import { RouterPlayground } from './RouterPlayground'
 import {
   SettingsButton,
   SettingsNote,
@@ -31,13 +35,15 @@ interface ComboDraftEntry {
   model: string
 }
 
+type ProviderKindChoice = 'openai-compatible' | 'antigravity' | 'qoder' | 'chatgpt-web' | 'gemini-web'
+
 export function RouterSettings({ onError }: RouterSettingsProps) {
   const [state, setState] = useState<RouterState | null>(null)
   const [usage, setUsage] = useState<RouterUsageSummary | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [tests, setTests] = useState<Record<string, RouterTestResult>>({})
 
-  const [providerKind, setProviderKind] = useState<'openai-compatible' | 'antigravity' | 'qoder'>('openai-compatible')
+  const [providerKind, setProviderKind] = useState<ProviderKindChoice>('openai-compatible')
   const [providerName, setProviderName] = useState('')
   const [providerBaseUrl, setProviderBaseUrl] = useState('')
   const [providerModels, setProviderModels] = useState('')
@@ -46,6 +52,8 @@ export function RouterSettings({ onError }: RouterSettingsProps) {
   const [comboName, setComboName] = useState('')
   const [comboStrategy, setComboStrategy] = useState<'priority' | 'round-robin'>('priority')
   const [comboEntries, setComboEntries] = useState<ComboDraftEntry[]>([{ providerId: '', model: '' }])
+  const [comboShowInChat, setComboShowInChat] = useState(true)
+  const [comboVisibilityTouched, setComboVisibilityTouched] = useState(false)
 
   useEffect(() => {
     let mounted = true
@@ -82,8 +90,25 @@ export function RouterSettings({ onError }: RouterSettingsProps) {
       .finally(() => setBusy(null))
   }
 
+  const changeProviderKind = (kind: ProviderKindChoice): void => {
+    setProviderKind(kind)
+    if (isRouterWebProviderKind(kind) && !providerModels.trim()) {
+      setProviderModels(ROUTER_WEB_LANE_MODELS[kind].join(', '))
+    }
+  }
+
   const addProvider = (): void => {
     const models = providerModels.split(/[\n,]/).map((model) => model.trim()).filter(Boolean)
+    if (isRouterWebProviderKind(providerKind)) {
+      apply('provider', () => window.ndDshRouter.saveProvider({
+        kind: providerKind,
+        ...(providerName.trim() ? { name: providerName.trim() } : {}),
+        models: models.length > 0 ? models : ROUTER_WEB_LANE_MODELS[providerKind],
+      }))
+      setProviderName('')
+      setProviderModels('')
+      return
+    }
     if (!providerName.trim()) {
       onError('Give the provider a name.')
       return
@@ -123,15 +148,27 @@ export function RouterSettings({ onError }: RouterSettingsProps) {
       onError('Give the combo a name and at least one provider/model entry.')
       return
     }
-    apply('combo', () => window.ndDshRouter.saveCombo({ name: comboName.trim(), strategy: comboStrategy, models }))
+    apply('combo', () => window.ndDshRouter.saveCombo({
+      name: comboName.trim(),
+      strategy: comboStrategy,
+      models,
+      hiddenFromChat: !comboVisibleInChat,
+    }))
     setComboName('')
     setComboEntries([{ providerId: '', model: '' }])
+    setComboVisibilityTouched(false)
+    setComboShowInChat(true)
   }
 
   const disabled = !state?.endpoint || busy !== null
   const providers = state?.providers ?? []
   const combos = state?.combos ?? []
   const counters = state?.counters ?? { requests: 0, ok: 0, failed: 0, lastError: null }
+  const draftHasWebLane = comboEntries.some((entry) => {
+    const provider = providers.find((candidate) => candidate.id === entry.providerId)
+    return provider ? isRouterWebProviderKind(provider.kind) : false
+  })
+  const comboVisibleInChat = comboVisibilityTouched ? comboShowInChat : !draftHasWebLane
 
   return (
     <>
@@ -150,8 +187,9 @@ export function RouterSettings({ onError }: RouterSettingsProps) {
                 </StatusChip>
               </span>
               <span className={rowDesc}>
-                Routes model requests across providers and accounts, with ordered fallback. Every combo becomes a model
-                in ND's picker under “ND Router”. External apps use ND Gateway, which forwards here.
+                Routes model requests across providers and accounts, with ordered fallback. Visible combos become models in
+                ND's picker; private web combos stay callable at the loopback endpoint and in the playground. Local apps use
+                the external API section below.
               </span>
               {state?.endpoint ? <span className={rowPathText}>{state.endpoint}</span> : null}
               {state && !state.endpoint ? (
@@ -164,11 +202,13 @@ export function RouterSettings({ onError }: RouterSettingsProps) {
           </SettingsRow>
           <SettingsNote>
             Free lanes first: point an OpenAI-compatible provider at a local plugin gateway (for example dsh-our-free-model),
-            or add Antigravity or Qoder CLI to route the installed CLIs' free models across accounts. Prompt Shield still
-            runs before anything leaves ND.
+            or add Antigravity, Qoder CLI, ChatGPT Web, or Gemini Web. Web lanes drive the embedded browser's signed-in session
+            and stay private by default. Prompt Shield still runs before anything leaves ND.
           </SettingsNote>
         </div>
       </SettingsSection>
+
+      <RouterPlayground state={state} onError={onError} />
 
       <SettingsSection title="Providers">
         <div className="space-y-1.5">
@@ -198,25 +238,28 @@ export function RouterSettings({ onError }: RouterSettingsProps) {
               onRemoveAccount={(accountId) => apply(`account-remove:${provider.id}`, () => window.ndDshRouter.deleteAccount(provider.id, accountId))}
             />
           ))}
-          {providers.length === 0 ? <SettingsNote>No providers yet. Add an OpenAI-compatible endpoint, Antigravity, or Qoder CLI below.</SettingsNote> : null}
+          {providers.length === 0 ? <SettingsNote>No providers yet. Add an OpenAI-compatible endpoint, Antigravity, Qoder CLI, ChatGPT Web, or Gemini Web below.</SettingsNote> : null}
 
           <SettingsRow className="items-start">
             <div className="flex min-w-0 flex-1 flex-col gap-2">
-              <div className="flex items-center gap-2">
-                <div className="flex gap-1">
-                  <SettingsButton active={providerKind === 'openai-compatible'} disabled={disabled} onClick={() => setProviderKind('openai-compatible')}>
-                    OpenAI-compatible
-                  </SettingsButton>
-                  <SettingsButton active={providerKind === 'antigravity'} disabled={disabled} onClick={() => setProviderKind('antigravity')}>
-                    Antigravity (agy CLI)
-                  </SettingsButton>
-                  <SettingsButton active={providerKind === 'qoder'} disabled={disabled} onClick={() => setProviderKind('qoder')}>
-                    Qoder CLI
-                  </SettingsButton>
-                </div>
+              <div className="flex min-w-0 items-center gap-2">
+                <select
+                  aria-label="Provider kind"
+                  className="h-8 w-[230px] shrink-0 rounded-md border border-border bg-surface-1 px-2 text-[11px] text-soft"
+                  value={providerKind}
+                  disabled={disabled}
+                  onChange={(event) => changeProviderKind(event.target.value as ProviderKindChoice)}
+                >
+                  <option value="openai-compatible">OpenAI-compatible</option>
+                  <option value="antigravity">Antigravity (agy CLI)</option>
+                  <option value="qoder">Qoder CLI</option>
+                  <option value="chatgpt-web">ChatGPT Web</option>
+                  <option value="gemini-web">Gemini Web</option>
+                </select>
+                <span className={rowDesc}>Web lanes use the embedded browser; no key is stored.</span>
               </div>
               <div className="flex min-w-0 gap-2">
-                <Input aria-label="Provider name" placeholder="Name, e.g. Free plugin" value={providerName} disabled={disabled} onChange={(event) => setProviderName(event.target.value)} className="max-w-[180px]" />
+                <Input aria-label="Provider name" placeholder={isRouterWebProviderKind(providerKind) ? 'Name (optional)' : 'Name, e.g. Free plugin'} value={providerName} disabled={disabled} onChange={(event) => setProviderName(event.target.value)} className="max-w-[180px]" />
                 {providerKind === 'openai-compatible' ? (
                   <Input aria-label="Provider base URL" placeholder="http://127.0.0.1:8326" value={providerBaseUrl} disabled={disabled} onChange={(event) => setProviderBaseUrl(event.target.value)} className="min-w-0 flex-1 font-mono text-[11px]" />
                 ) : null}
@@ -224,7 +267,7 @@ export function RouterSettings({ onError }: RouterSettingsProps) {
               <div className="flex min-w-0 gap-2">
                 <Input
                   aria-label="Provider models"
-                  placeholder={providerKind === 'antigravity' ? 'Models, e.g. gemini-3.8-flash-medium, claude-sonnet-5-5-medium (from `agy models`)' : providerKind === 'qoder' ? 'Models, e.g. auto, lite, performance (from `qoder --list-models`)' : 'Models (comma separated, optional)'}
+                  placeholder={providerKind === 'antigravity' ? 'Models, e.g. gemini-3.8-flash-medium, claude-sonnet-5-5-medium (from `agy models`)' : providerKind === 'qoder' ? 'Models, e.g. auto, lite, performance (from `qoder --list-models`)' : providerKind === 'chatgpt-web' ? 'Model id (default: default)' : providerKind === 'gemini-web' ? 'Gemini modes, e.g. 3.5 Flash-Lite, 3.8 Flash, 3.1 Pro' : 'Models (comma separated, optional)'}
                   value={providerModels}
                   disabled={disabled}
                   onChange={(event) => setProviderModels(event.target.value)}
@@ -246,6 +289,11 @@ export function RouterSettings({ onError }: RouterSettingsProps) {
                   and/or supplies a personal access token (QODER_PERSONAL_ACCESS_TOKEN). ND never reads the CLI's stored
                   tokens. Requests run one turn with tools disabled, so the CLI answers instead of touching your workspace.
                 </span>
+              ) : isRouterWebProviderKind(providerKind) ? (
+                <span className={rowDesc}>
+                  Drives the embedded browser's signed-in {providerKind === 'chatgpt-web' ? 'ChatGPT' : 'Gemini'} session. Every
+                  router request starts a fresh conversation. New web combos stay private unless you opt them into personal chat.
+                </span>
               ) : null}
               <div className="flex items-center gap-1">
                 <SettingsButton disabled={disabled} onClick={addProvider}>Add provider</SettingsButton>
@@ -263,6 +311,7 @@ export function RouterSettings({ onError }: RouterSettingsProps) {
                 <span className="flex items-center gap-2">
                   <strong className={rowTitle}>{combo.name}</strong>
                   <StatusChip neutral>{combo.strategy === 'round-robin' ? 'Round-robin' : 'Priority'}</StatusChip>
+                  {combo.hiddenFromChat ? <StatusChip neutral>Private</StatusChip> : null}
                 </span>
                 <span className={rowDesc}>
                   {combo.models.map((entry) => {
@@ -272,6 +321,19 @@ export function RouterSettings({ onError }: RouterSettingsProps) {
                 </span>
               </div>
               <div className="flex shrink-0 items-center gap-2">
+                <span className={rowDesc}>Personal chat</span>
+                <Switch
+                  aria-label={`Show ${combo.name} in personal chat`}
+                  checked={!combo.hiddenFromChat}
+                  disabled={disabled}
+                  onCheckedChange={(checked) => apply(`combo-visibility:${combo.id}`, () => window.ndDshRouter.saveCombo({
+                    id: combo.id,
+                    name: combo.name,
+                    strategy: combo.strategy,
+                    models: combo.models,
+                    hiddenFromChat: !checked,
+                  }))}
+                />
                 <SettingsButton disabled={disabled} onClick={() => apply(`combo-remove:${combo.id}`, () => window.ndDshRouter.deleteCombo(combo.id))}>
                   Remove
                 </SettingsButton>
@@ -291,6 +353,20 @@ export function RouterSettings({ onError }: RouterSettingsProps) {
                   ))}
                 </div>
               </div>
+              <div className="flex items-center gap-2">
+                <Switch
+                  aria-label="Show new combo in personal chat"
+                  checked={comboVisibleInChat}
+                  disabled={disabled}
+                  onCheckedChange={(checked) => {
+                    setComboVisibilityTouched(true)
+                    setComboShowInChat(checked)
+                  }}
+                />
+                <span className={rowDesc}>
+                  {comboVisibleInChat ? 'Show in personal chat' : 'Private — callable at /v1, hidden from personal chat'}
+                </span>
+              </div>
               {comboEntries.map((entry, index) => (
                 <div key={index} className="flex items-center gap-2">
                   <select
@@ -298,7 +374,12 @@ export function RouterSettings({ onError }: RouterSettingsProps) {
                     className="h-8 shrink-0 rounded-md border border-border bg-surface-1 px-2 text-[11px] text-soft"
                     value={entry.providerId}
                     disabled={disabled}
-                    onChange={(event) => setComboEntries((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, providerId: event.target.value } : item))}
+                    onChange={(event) => {
+                      const provider = providers.find((candidate) => candidate.id === event.target.value)
+                      setComboEntries((current) => current.map((item, itemIndex) => itemIndex === index
+                        ? { ...item, providerId: event.target.value, model: item.model || provider?.models[0] || '' }
+                        : item))
+                    }}
                   >
                     <option value="">Provider…</option>
                     {providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}
@@ -326,6 +407,8 @@ export function RouterSettings({ onError }: RouterSettingsProps) {
           </SettingsRow>
         </div>
       </SettingsSection>
+
+      <RouterExternalApi state={state} onError={onError} />
 
       <SettingsSection title="Usage">
         <SettingsRow>
@@ -380,6 +463,7 @@ function ProviderRow({
 }) {
   const isAgy = provider.kind === 'antigravity'
   const isQoder = provider.kind === 'qoder'
+  const isWeb = isRouterWebProviderKind(provider.kind)
   const [label, setLabel] = useState('')
   const [key, setKey] = useState('')
   const [selector, setSelector] = useState('')
@@ -390,7 +474,8 @@ function ProviderRow({
         <div className={rowStack}>
           <span className="flex items-center gap-2">
             <strong className={rowTitle}>{provider.name}</strong>
-            <StatusChip neutral>{provider.kind}</StatusChip>
+            <StatusChip neutral>{kindLabel(provider.kind)}</StatusChip>
+            {isWeb ? <StatusChip neutral>Web lane</StatusChip> : null}
             {provider.hasSecret ? <StatusChip good>Key saved</StatusChip> : null}
           </span>
           <span className={rowPathText}>
@@ -398,7 +483,9 @@ function ProviderRow({
               ? 'agy CLI (signed-in accounts from the Antigravity app)'
               : isQoder
                 ? 'qoder CLI (per-account profiles or personal access tokens)'
-                : provider.baseUrl || '—'}
+                : isWeb
+                  ? 'Embedded browser · signed-in session'
+                  : provider.baseUrl || '—'}
           </span>
           {provider.models.length > 0 ? <span className={rowDesc}>{provider.models.join(', ')}</span> : null}
           {test ? (
@@ -418,7 +505,7 @@ function ProviderRow({
         </div>
       </div>
 
-      {provider.accounts.length > 0 ? (
+      {!isWeb && provider.accounts.length > 0 ? (
         <div className="mt-2 space-y-1 border-t border-border-soft pt-2">
           {provider.accounts.map((account) => (
             <div key={account.id} className="flex items-center justify-between gap-3">
@@ -435,31 +522,45 @@ function ProviderRow({
         </div>
       ) : null}
 
-      <div className="mt-2 flex items-center gap-2 border-t border-border-soft pt-2">
-        <Input aria-label={`${provider.name} account label`} placeholder="Account label" value={label} disabled={disabled} onChange={(event) => setLabel(event.target.value)} className="max-w-[180px]" />
-        {isAgy ? (
-          <Input aria-label={`${provider.name} agy account name`} placeholder="agy account name, e.g. account-2" value={selector} disabled={disabled} onChange={(event) => setSelector(event.target.value)} className="max-w-[220px] font-mono text-[11px]" />
-        ) : (
-          <Input aria-label={`${provider.name} account API key`} type="password" autoComplete="off" placeholder={isQoder ? 'Personal access token (optional)' : 'Account API key'} value={key} disabled={disabled} onChange={(event) => setKey(event.target.value)} className="max-w-[220px]" />
-        )}
-        {isQoder ? (
-          <Input aria-label={`${provider.name} CLI config dir`} placeholder="CLI profile dir (QODER_CONFIG_DIR)" value={configDir} disabled={disabled} onChange={(event) => setConfigDir(event.target.value)} className="max-w-[240px] font-mono text-[11px]" />
-        ) : null}
-        <SettingsButton
-          disabled={disabled || !label.trim() || (isAgy ? !selector.trim() : isQoder ? !key.trim() && !configDir.trim() : !key.trim())}
-          onClick={() => {
-            onAddAccount({ label: label.trim(), apiKey: key.trim(), selector: selector.trim(), configDir: configDir.trim() })
-            setLabel('')
-            setKey('')
-            setSelector('')
-            setConfigDir('')
-          }}
-        >
-          Add account
-        </SettingsButton>
-      </div>
+      {!isWeb ? (
+        <div className="mt-2 flex items-center gap-2 border-t border-border-soft pt-2">
+          <Input aria-label={`${provider.name} account label`} placeholder="Account label" value={label} disabled={disabled} onChange={(event) => setLabel(event.target.value)} className="max-w-[180px]" />
+          {isAgy ? (
+            <Input aria-label={`${provider.name} agy account name`} placeholder="agy account name, e.g. account-2" value={selector} disabled={disabled} onChange={(event) => setSelector(event.target.value)} className="max-w-[220px] font-mono text-[11px]" />
+          ) : (
+            <Input aria-label={`${provider.name} account API key`} type="password" autoComplete="off" placeholder={isQoder ? 'Personal access token (optional)' : 'Account API key'} value={key} disabled={disabled} onChange={(event) => setKey(event.target.value)} className="max-w-[220px]" />
+          )}
+          {isQoder ? (
+            <Input aria-label={`${provider.name} CLI config dir`} placeholder="CLI profile dir (QODER_CONFIG_DIR)" value={configDir} disabled={disabled} onChange={(event) => setConfigDir(event.target.value)} className="max-w-[240px] font-mono text-[11px]" />
+          ) : null}
+          <SettingsButton
+            disabled={disabled || !label.trim() || (isAgy ? !selector.trim() : isQoder ? !key.trim() && !configDir.trim() : !key.trim())}
+            onClick={() => {
+              onAddAccount({ label: label.trim(), apiKey: key.trim(), selector: selector.trim(), configDir: configDir.trim() })
+              setLabel('')
+              setKey('')
+              setSelector('')
+              setConfigDir('')
+            }}
+          >
+            Add account
+          </SettingsButton>
+        </div>
+      ) : null}
     </div>
   )
+}
+
+function kindLabel(kind: string): string {
+  switch (kind) {
+    case 'chatgpt-web': return 'ChatGPT Web'
+    case 'gemini-web': return 'Gemini Web'
+    case 'openai-compatible': return 'OpenAI-compatible'
+    case 'antigravity': return 'Antigravity'
+    case 'qoder': return 'Qoder CLI'
+    case 'gemini-cli': return 'Gemini CLI'
+    default: return kind
+  }
 }
 
 function message(cause: unknown): string {

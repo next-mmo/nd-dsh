@@ -1084,7 +1084,7 @@ describe('Gemini Web model selection', () => {
     try {
       const { sessionId } = await engine.createSession({ cwd: '/workspace' })
       await engine.run('hello', { sessionId, model: '3.5 Flash-Lite' })
-      expect(internals.applyModel).toHaveBeenCalledWith(driver, '3.5 Flash-Lite', expect.any(AbortSignal))
+      expect(internals.applyModel).toHaveBeenCalledWith(driver, '3.5 Flash-Lite', expect.any(AbortSignal), false)
       expect(internals.submitPrompt).toHaveBeenCalledOnce()
     } finally {
       await engine.close()

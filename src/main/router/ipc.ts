@@ -1,9 +1,9 @@
 import { dialog, ipcMain, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { NINE_ROUTER_IPC } from '../../shared/nine-router.js'
+import { ROUTER_IPC, type RouterPlaygroundInput } from '../../shared/router.js'
 import type { NineRouterManagedRuntime } from './nine-router-managed.js'
 import { NineRouterDashboard } from './nine-router-dashboard.js'
 import { connectNineRouter, discoverNineRouterModels } from './nine-router-connector.js'
-import { ROUTER_IPC } from '../../shared/router.js'
 import type { RouterService } from './router-service.js'
 
 type Handler = (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown | Promise<unknown>
@@ -34,6 +34,17 @@ export function registerRouterIpc(window: BrowserWindow, service: RouterService,
   handle(ROUTER_IPC.testProvider, (_event, providerId) => service.testProvider(id(providerId, 'Provider id')))
   handle(ROUTER_IPC.usage, () => service.usage())
   handle(ROUTER_IPC.resetUsage, () => service.resetUsage())
+  handle(ROUTER_IPC.externalKeyState, () => service.externalKeyState())
+  handle(ROUTER_IPC.revealExternalKey, () => service.revealExternalKey())
+  handle(ROUTER_IPC.rotateExternalKey, () => service.rotateExternalKey())
+  handle(ROUTER_IPC.playgroundStart, (_event, input) => {
+    service.playgroundStart(input as RouterPlaygroundInput, (event) => {
+      if (!window.isDestroyed()) window.webContents.send(ROUTER_IPC.playgroundEvent, event)
+    })
+  })
+  handle(ROUTER_IPC.playgroundStop, (_event, requestId) => {
+    service.playgroundStop(id(requestId, 'Request id'))
+  })
 
   handle(NINE_ROUTER_IPC.state, () => managed?.state() ?? Promise.reject(new Error('Managed 9Router unavailable')))
   handle(NINE_ROUTER_IPC.discover, (_event, input) => discoverNineRouterModels(input as never))

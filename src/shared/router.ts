@@ -1,7 +1,33 @@
 import type { NineRouterDesktopApi } from './nine-router.js'
 
-export type RouterProviderKind = 'openai-compatible' | 'antigravity' | 'gemini-cli' | 'qoder'
+export type RouterProviderKind =
+  | 'openai-compatible'
+  | 'antigravity'
+  | 'gemini-cli'
+  | 'qoder'
+  | 'chatgpt-web'
+  | 'gemini-web'
+export type RouterWebProviderKind = 'chatgpt-web' | 'gemini-web'
 export type RouterComboStrategy = 'priority' | 'round-robin'
+
+/** Seed models for web lanes; Gemini's live picker can replace these later. */
+export const ROUTER_WEB_LANE_MODELS: Record<RouterWebProviderKind, string[]> = {
+  'chatgpt-web': ['default'],
+  'gemini-web': ['3.5 Flash-Lite', '3.8 Flash', '3.1 Pro', '4 Argon'],
+}
+
+export function isRouterWebProviderKind(kind: string): kind is RouterWebProviderKind {
+  return kind === 'chatgpt-web' || kind === 'gemini-web'
+}
+
+export const ROUTER_HEADERS = {
+  combo: 'x-nd-route-combo',
+  requestId: 'x-nd-request-id',
+  resolvedCombo: 'x-nd-router-combo',
+  resolvedProvider: 'x-nd-router-provider',
+  resolvedModel: 'x-nd-router-model',
+  latencyMs: 'x-nd-router-latency-ms',
+} as const
 
 export interface RouterAccountView {
   id: string
@@ -42,6 +68,8 @@ export interface RouterComboView {
   name: string
   strategy: RouterComboStrategy
   models: RouterComboEntry[]
+  /** Web-lane combos default to private: they stay callable but leave the personal picker. */
+  hiddenFromChat: boolean
 }
 
 export interface RouterCounters {
@@ -98,6 +126,7 @@ export interface RouterComboInput {
   name: string
   strategy?: RouterComboStrategy
   models: RouterComboEntry[]
+  hiddenFromChat?: boolean
 }
 
 export interface RouterTestResult {
@@ -108,6 +137,49 @@ export interface RouterTestResult {
   model: string
   error?: string | null
   preview?: string
+}
+
+export interface RouterExternalApiState {
+  endpoint?: string
+  hasKey: boolean
+  /** False when OS-backed secure storage is unavailable and the key is per-launch. */
+  persisted: boolean
+}
+
+export interface RouterExternalKey extends RouterExternalApiState {
+  endpoint: string
+  key: string
+}
+
+export type RouterPlaygroundRoute =
+  | { kind: 'combo'; combo: string }
+  | { kind: 'model'; providerId: string; model: string }
+
+export interface RouterPlaygroundMessage {
+  role: 'system' | 'user' | 'assistant'
+  content: string
+}
+
+export interface RouterPlaygroundInput {
+  requestId: string
+  route: RouterPlaygroundRoute
+  messages: RouterPlaygroundMessage[]
+  stream?: boolean
+}
+
+export interface RouterPlaygroundEvent {
+  requestId: string
+  type: 'phase' | 'delta' | 'done' | 'error'
+  phase?: 'connecting' | 'waiting' | 'streaming'
+  delta?: string
+  text?: string
+  status?: number
+  combo?: string
+  provider?: string
+  model?: string
+  latencyMs?: number
+  error?: string
+  code?: string
 }
 
 export const ROUTER_IPC = {
@@ -121,6 +193,12 @@ export const ROUTER_IPC = {
   testProvider: 'router:test-provider',
   usage: 'router:usage',
   resetUsage: 'router:reset-usage',
+  externalKeyState: 'router:external-key-state',
+  revealExternalKey: 'router:reveal-external-key',
+  rotateExternalKey: 'router:rotate-external-key',
+  playgroundStart: 'router:playground-start',
+  playgroundStop: 'router:playground-stop',
+  playgroundEvent: 'router:playground-event',
 } as const
 
 export interface RouterDesktopApi extends NineRouterDesktopApi {
@@ -134,6 +212,12 @@ export interface RouterDesktopApi extends NineRouterDesktopApi {
   testProvider(providerId: string): Promise<RouterTestResult>
   usage(): Promise<RouterUsageSummary>
   resetUsage(): Promise<RouterUsageSummary>
+  externalKeyState(): Promise<RouterExternalApiState>
+  revealExternalKey(): Promise<RouterExternalKey>
+  rotateExternalKey(): Promise<RouterExternalKey>
+  playgroundStart(input: RouterPlaygroundInput): Promise<void>
+  playgroundStop(requestId: string): Promise<void>
+  onPlaygroundEvent(listener: (event: RouterPlaygroundEvent) => void): () => void
 }
 
 export const MANAGED_ROUTER_PROVIDER_ID = 'nd-router'

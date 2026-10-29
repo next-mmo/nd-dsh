@@ -1,5 +1,6 @@
-use crate::state::RouterState;
-use crate::types::{ComboEntry, SaveAccountInput, SaveComboInput, SaveProviderInput};
+use crate::state::{RouterOptions, RouterState};
+use crate::types::{ComboEntry, SaveAccountInput, SaveComboInput, SaveProviderInput, WebBridgeConfig};
+use crate::RouterServer;
 use axum::http::StatusCode;
 use axum::routing::post;
 use axum::{Json, Router};
@@ -35,6 +36,7 @@ fn combo_input(name: &str, strategy: &str, entries: Vec<ComboEntry>) -> SaveComb
         name: name.to_owned(),
         strategy: Some(strategy.to_owned()),
         models: entries,
+        hidden_from_chat: None,
     }
 }
 
@@ -138,6 +140,135 @@ async fn retries_the_next_lane_on_retryable_upstream_failure() {
     assert_eq!(usage["requests"], 2);
     assert_eq!(usage["ok"], 1);
     assert_eq!(usage["failed"], 1);
+}
+
+async fn mock_web_bridge() -> (String, String, Arc<Mutex<Vec<(Option<String>, Value)>>>) {
+    let calls: Arc<Mutex<Vec<(Option<String>, Value)>>> = Arc::new(Mutex::new(Vec::new()));
+    let token = "ndr_bridge_test".to_owned();
+    let handler_calls = Arc::clone(&calls);
+    let handler_token = token.clone();
+    let app = Router::new().route(
+        "/v1/web/chat",
+        post(move |headers: axum::http::HeaderMap, Json(body): Json<Value>| {
+            let calls = Arc::clone(&handler_calls);
+            let expected = format!("Bearer {handler_token}");
+            async move {
+                let request_id = headers
+                    .get("x-nd-request-id")
+                    .and_then(|value| value.to_str().ok())
+                    .map(ToOwned::to_owned);
+                calls.lock().unwrap().push((request_id, body.clone()));
+                let authorized = headers.get("authorization").and_then(|value| value.to_str().ok()) == Some(expected.as_str());
+                if !authorized {
+                    return (StatusCode::UNAUTHORIZED, Json(json!({"error": "bad bridge token"})));
+                }
+                let engine = body.get("engine").and_then(Value::as_str).unwrap_or_default().to_owned();
+                let model = body.get("model").and_then(Value::as_str).unwrap_or_default().to_owned();
+                (
+                    StatusCode::OK,
+                    Json(json!({
+                        "ok": true,
+                        "text": "web pong",
+                        "engineId": engine,
+                        "model": model,
+                        "latencyMs": 1,
+                    })),
+                )
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.expect("bind web bridge");
+    let address = listener.local_addr().expect("web bridge address");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    (format!("http://{address}"), token, calls)
+}
+
+fn web_provider_input(id: &str, kind: &str, models: &[&str]) -> SaveProviderInput {
+    SaveProviderInput {
+        id: Some(id.to_owned()),
+        kind: Some(kind.to_owned()),
+        name: Some(id.to_owned()),
+        base_url: None,
+        models: Some(models.iter().map(|model| (*model).to_owned()).collect()),
+        is_active: Some(true),
+        priority: Some(0),
+        api_key: None,
+        clear_secret: false,
+    }
+}
+
+#[tokio::test]
+async fn routes_web_lanes_through_the_bridge_and_keeps_web_combos_private() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let (bridge_url, bridge_token, calls) = mock_web_bridge().await;
+    let state = RouterState::with_options(
+        temp.path().to_path_buf(),
+        RouterOptions {
+            external_key: Some("ndr_ext_test_external_key_1234".to_owned()),
+            web_bridge: Some(WebBridgeConfig { url: bridge_url, token: bridge_token }),
+            preferred_port: None,
+        },
+    )
+    .expect("state");
+    state.save_provider(web_provider_input("chatgpt-web", "chatgpt-web", &["default"])).expect("web provider");
+    state
+        .save_combo(combo_input("web", "priority", vec![combo_entry("chatgpt-web", "default")]))
+        .expect("web combo");
+
+    let snapshot = state.snapshot();
+    assert_eq!(snapshot["combos"][0]["hiddenFromChat"].as_bool(), Some(true));
+    assert_eq!(snapshot["providers"][0]["models"][0], "default");
+    assert!(state.accepts_key("ndr_ext_test_external_key_1234"));
+    assert!(!state.accepts_key("ndr_ext_wrong_key_1234567890"));
+    state.set_external_key("ndr_ext_rotated_key_123456").expect("rotate key");
+    assert!(state.accepts_key("ndr_ext_rotated_key_123456"));
+    assert!(state.set_external_key("not-a-router-key").is_err());
+
+    let response = state
+        .chat_with_request(
+            json!({"model": "web", "messages": [{"role": "user", "content": "hello web"}]}),
+            None,
+            "/v1/chat/completions",
+            Some("req-web-1"),
+        )
+        .await
+        .expect("web chat");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers().get("x-nd-router-provider").and_then(|value| value.to_str().ok()), Some("chatgpt-web"));
+    assert_eq!(response.headers().get("x-nd-router-model").and_then(|value| value.to_str().ok()), Some("default"));
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.expect("body");
+    let value: Value = serde_json::from_slice(&bytes).expect("json");
+    assert_eq!(value["choices"][0]["message"]["content"], "web pong");
+
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].0.as_deref(), Some("req-web-1"));
+    assert_eq!(calls[0].1["engine"], "chatgpt-web");
+    assert_eq!(calls[0].1["prompt"], "hello web");
+}
+
+#[tokio::test]
+async fn an_explicit_visible_override_keeps_a_web_combo_in_chat() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let state = RouterState::new(temp.path().to_path_buf()).expect("state");
+    state.save_provider(web_provider_input("gemini-web", "gemini-web", &["3.5 Flash-Lite"])).expect("web provider");
+    let mut input = combo_input("web-visible", "priority", vec![combo_entry("gemini-web", "3.5 Flash-Lite")]);
+    input.hidden_from_chat = Some(false);
+    state.save_combo(input).expect("combo");
+    assert_eq!(state.snapshot()["combos"][0]["hiddenFromChat"].as_bool(), Some(false));
+}
+
+#[test]
+fn preferred_port_falls_back_when_occupied() {
+    let occupied = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("occupied listener");
+    let port = occupied.local_addr().expect("occupied address").port();
+    let temp = tempfile::tempdir().expect("tempdir");
+    let state = RouterState::new(temp.path().to_path_buf()).expect("state");
+    let server = RouterServer::start(Arc::clone(&state), port).expect("router server");
+    assert_ne!(server.port, port);
+    assert!(server.port > 0);
 }
 
 #[tokio::test]

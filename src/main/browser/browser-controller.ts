@@ -626,6 +626,42 @@ export class BrowserController {
     return { x: Math.max(0, content.width - 1), y: Math.max(0, content.height - 1), width: 1280, height: 900 }
   }
 
+  /**
+   * Show one tab over the app for a router-owned web turn and return a restore
+   * callback. Some providers (Gemini) only stream while their view owns a real
+   * on-screen rect; ChatGPT can stay background-attached. The app's own layout
+   * is untouched; hiding the view brings the normal UI back.
+   */
+  presentTabForRouterTurn(tabId: string): () => void {
+    const tab = this.requireTab(tabId)
+    const wasVisible = this.visible
+    const previousBounds = this.bounds
+    const content = this.window.getContentBounds()
+    if (!wasVisible) {
+      this.visible = true
+      this.bounds = { x: 0, y: 0, width: content.width, height: content.height }
+    }
+    // Gemini only streams while its page is actually on screen; raise ND for the
+    // turn instead of stalling behind another app.
+    if (!this.window.isDestroyed()) {
+      this.window.show()
+      this.window.focus()
+    }
+    this.window.contentView.addChildView(tab.view)
+    tab.view.setBounds(this.bounds)
+    tab.view.setVisible(true)
+    let restored = false
+    return () => {
+      if (restored) return
+      restored = true
+      if (!wasVisible) {
+        this.visible = false
+        this.bounds = previousBounds
+        this.syncViewVisibility()
+      }
+    }
+  }
+
   async click(tabId: string, ref: string, revision: number): Promise<unknown> {
     return this.semanticAction(tabId, 'click', { ref, revision })
   }

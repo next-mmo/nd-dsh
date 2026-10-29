@@ -40,7 +40,7 @@ export const SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   { id: 'engines', title: 'Coding engines', section: 'Coding engines · Engines', tab: 'engines', enginesSubTab: 'engines', keywords: ['engine', 'codex', 'agy', 'antigravity', 'harness', 'default chat'] },
   { id: 'engines-gateway', title: 'ND Gateway', section: 'Coding engines · Gateway', tab: 'engines', enginesSubTab: 'gateway', keywords: ['gateway', 'codex', 'chatgpt', 'external apps'] },
   { id: 'engines-tokens', title: 'Token efficiency (saver & tool optimization)', section: 'Coding engines · Token efficiency', tab: 'engines', enginesSubTab: 'tokens', keywords: ['token', 'saver', 'optimization', 'tool call', 'context budget'] },
-  { id: 'router', title: 'ND Router', section: 'ND Router', tab: 'router', keywords: ['router', 'combo', 'fallback', 'routing', 'free model', 'provider accounts', 'gateway', 'round robin'] },
+  { id: 'router', title: 'ND Router', section: 'ND Router', tab: 'router', keywords: ['router', 'combo', 'fallback', 'routing', 'free model', 'provider accounts', 'gateway', 'round robin', 'playground', 'external api', 'api key', 'chatgpt web', 'gemini web', 'private route'] },
   { id: 'presets', title: 'Agent presets', section: 'Agent presets', tab: 'presets', keywords: ['preset', 'agent', 'notes', 'links'] },
 ]
 

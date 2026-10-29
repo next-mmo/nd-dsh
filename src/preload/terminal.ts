@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { ND_GATEWAY_IPC, type NdGatewayDesktopApi, type NdGatewayState } from '../shared/gateway.js'
 import { PROMPT_SHIELD_IPC, type PromptShieldDesktopApi, type PromptShieldState } from '../shared/prompt-shield.js'
 import { NINE_ROUTER_IPC } from '../shared/nine-router.js'
-import { ROUTER_IPC, type RouterDesktopApi } from '../shared/router.js'
+import { ROUTER_IPC, type RouterDesktopApi, type RouterPlaygroundEvent } from '../shared/router.js'
 import { TERMINAL_IPC, type TerminalDesktopApi, type TerminalExitEvent, type TerminalOutputEvent, type TerminalStateEvent } from '../shared/terminal.js'
 import { TOKEN_SAVER_IPC, type TokenSaverDesktopApi, type TokenSaverState } from '../shared/token-saver.js'
 
@@ -81,6 +81,16 @@ const routerApi: RouterDesktopApi = {
   testProvider: (providerId) => ipcRenderer.invoke(ROUTER_IPC.testProvider, providerId),
   usage: () => ipcRenderer.invoke(ROUTER_IPC.usage),
   resetUsage: () => ipcRenderer.invoke(ROUTER_IPC.resetUsage),
+  externalKeyState: () => ipcRenderer.invoke(ROUTER_IPC.externalKeyState),
+  revealExternalKey: () => ipcRenderer.invoke(ROUTER_IPC.revealExternalKey),
+  rotateExternalKey: () => ipcRenderer.invoke(ROUTER_IPC.rotateExternalKey),
+  playgroundStart: (input) => ipcRenderer.invoke(ROUTER_IPC.playgroundStart, input),
+  playgroundStop: (requestId) => ipcRenderer.invoke(ROUTER_IPC.playgroundStop, requestId),
+  onPlaygroundEvent: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, value: RouterPlaygroundEvent) => listener(value)
+    ipcRenderer.on(ROUTER_IPC.playgroundEvent, handler)
+    return () => ipcRenderer.removeListener(ROUTER_IPC.playgroundEvent, handler)
+  },
 }
 
 const gatewayApi: NdGatewayDesktopApi = {

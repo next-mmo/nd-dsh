@@ -28,7 +28,7 @@ export const CHATGPT_DOM_TURNS_SCRIPT = `
     const className = typeof node.className === 'string' ? node.className : (node.getAttribute?.('class') || '');
     if (/\\b(?:sr-only|visually-hidden|turn-action-controls)\\b/i.test(className)) return '';
     if (node.hasAttribute?.('data-conversation-role')) return '';
-    if (/^h[1-6]$/i.test(tag) && /^(?:You said|ChatGPT said):?$/i.test((node.textContent || '').trim())) return '';
+    if (/^h[1-6]$/i.test(tag) && /^(?:You said|ChatGPT said):?/i.test((node.textContent || '').trim())) return '';
 
     const mdCopy = node.getAttribute?.('data-markdown-copy');
     if (mdCopy === 'exclude') return '';
@@ -244,9 +244,9 @@ export const CHATGPT_DOM_TURNS_SCRIPT = `
     if (legacyFallback && !nodes.length) {
       const headings = Array.from(document.querySelectorAll('main h1, main h2, main h3, main h4, main h5, main h6, main [role="heading"]'))
         .filter((el) => !isHiddenChatGptNode(el));
-      const roleHeadings = headings.filter(el => /^(You said|ChatGPT said):?$/.test(el.textContent?.trim() || ''));
+      const roleHeadings = headings.filter(el => /^(?:You said|ChatGPT said):?/i.test(el.textContent?.trim() || ''));
       for (const heading of roleHeadings) {
-        const hRole = heading.textContent.trim().startsWith('You said') ? 'user' : 'assistant';
+        const hRole = /^You said/i.test(heading.textContent?.trim() || '') ? 'user' : 'assistant';
         let root = heading.parentElement;
         let lastSingleRoot = null;
         let matched = false;

@@ -94,6 +94,7 @@ pub fn sanitize_provider(
         Some(models) => sanitize_models(models.clone()),
         None => existing.map(|record| record.models.clone()).unwrap_or_default(),
     };
+    let models = if models.is_empty() { default_models(&kind) } else { models };
     Ok(ProviderRecord {
         id,
         kind,
@@ -111,7 +112,7 @@ pub fn sanitize_provider(
 pub fn sanitize_combo(
     input: &SaveComboInput,
     existing: Option<&ComboRecord>,
-    provider_ids: &[String],
+    providers: &[ProviderRecord],
 ) -> Result<ComboRecord, String> {
     let name = input.name.trim();
     if name.is_empty() || name.chars().count() > 64 {
@@ -128,7 +129,7 @@ pub fn sanitize_combo(
     let mut models: Vec<ComboEntry> = Vec::new();
     for entry in &input.models {
         let provider_id = entry.provider_id.trim();
-        if provider_id.is_empty() || !provider_ids.iter().any(|id| id == provider_id) {
+        if provider_id.is_empty() || !providers.iter().any(|provider| provider.id == provider_id) {
             return Err(format!("combo entry references an unknown provider: {provider_id}"));
         }
         let model = entry.model.trim();
@@ -148,12 +149,24 @@ pub fn sanitize_combo(
     if models.is_empty() {
         return Err("a combo needs at least one provider/model entry".to_owned());
     }
+    // Web-lane combos are private unless the caller explicitly says otherwise.
+    // They still resolve by name through /v1; only the personal picker skips them.
+    let includes_web_lane = models.iter().any(|entry| {
+        providers
+            .iter()
+            .any(|provider| provider.id == entry.provider_id && catalog::is_web_kind(&provider.kind))
+    });
+    let hidden_from_chat = input
+        .hidden_from_chat
+        .or_else(|| existing.map(|record| record.hidden_from_chat))
+        .unwrap_or(includes_web_lane);
     Ok(ComboRecord {
         id,
         name: name.to_owned(),
         strategy: catalog::normalize_strategy(input.strategy.as_deref()),
         models,
         config: existing.map(|record| record.config.clone()).unwrap_or_else(|| serde_json::json!({})),
+        hidden_from_chat,
     })
 }
 
@@ -176,6 +189,21 @@ fn default_name(kind: &str) -> String {
         catalog::KIND_ANTIGRAVITY => "Antigravity".to_owned(),
         catalog::KIND_GEMINI_CLI => "Gemini CLI".to_owned(),
         catalog::KIND_QODER => "Qoder CLI".to_owned(),
+        catalog::KIND_CHATGPT_WEB => "ChatGPT Web".to_owned(),
+        catalog::KIND_GEMINI_WEB => "Gemini Web".to_owned(),
         _ => "OpenAI-compatible".to_owned(),
+    }
+}
+
+fn default_models(kind: &str) -> Vec<String> {
+    match kind {
+        catalog::KIND_CHATGPT_WEB => vec!["default".to_owned()],
+        catalog::KIND_GEMINI_WEB => vec![
+            "3.5 Flash-Lite".to_owned(),
+            "3.8 Flash".to_owned(),
+            "3.1 Pro".to_owned(),
+            "4 Argon".to_owned(),
+        ],
+        _ => Vec::new(),
     }
 }
