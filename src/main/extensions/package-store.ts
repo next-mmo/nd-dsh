@@ -1,3 +1,4 @@
+import { BUILTIN_EXTENSION_PACKAGES } from '../../shared/builtin-extension-packages.js'
 import { randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import { dirname, join, relative, resolve, sep } from 'node:path'
@@ -86,7 +87,7 @@ export class ExtensionPackageStore {
   /** The manifest of the active version, or undefined when the package is unknown. */
   async activeManifest(extensionId: string): Promise<NdExtensionManifest | undefined> {
     const record = await this.record(extensionId)
-    if (record?.manifest.executable && record.source.kind !== 'builtin') {
+    if (record?.manifest.executable) {
       throw new Error('ND Security blocked executable extension: signed approval missing')
     }
     return record ? structuredClone(record.manifest) : undefined
@@ -99,6 +100,7 @@ export class ExtensionPackageStore {
     const validated = validateNdExtensionManifest(parsed)
     if (!validated.ok) throw new Error(`Installed package ${extensionId}@${version} failed re-validation`)
     const permissionIssues = manifestPermissionIssues(validated.manifest)
+    if (validated.manifest.executable) throw new Error('ND Security blocked unapproved executable extension version')
     if (permissionIssues.length > 0) {
       throw new Error(`Installed package ${extensionId}@${version} failed permission re-validation`)
     }
@@ -317,8 +319,12 @@ export class ExtensionPackageStore {
         const validated = validateNdExtensionManifest(candidate.manifest)
         if (!validated.ok || manifestPermissionIssues(validated.manifest).length > 0) continue
         const source = candidate.source as NdPackageSourceView | undefined
-        if (validated.manifest.executable && source?.kind !== 'builtin') continue
+        // The index is writable data, not a security trust root. A record
+        // labeling itself "builtin" is NOT proof of first-party provenance.
+        if (validated.manifest.executable) continue
         if (!source || typeof source.location !== 'string' || typeof source.kind !== 'string') continue
+        if (source.kind === 'builtin' && !BUILTIN_EXTENSION_PACKAGES.some(manifest =>
+          JSON.stringify(manifest) === JSON.stringify(validated.manifest))) continue
         packages.push({
           manifest: validated.manifest,
           source,
