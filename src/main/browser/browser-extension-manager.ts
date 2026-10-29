@@ -140,7 +140,15 @@ export class BrowserExtensionManager {
 
     for (const item of this.value.extensions) {
       if (!item.enabled) {
-        const manifest = await readManifest(item.path).catch(() => undefined)
+        // Existing unsigned/unpacked extensions also stay disabled after an update:
+      // preventing only new installation would leave a persistent bypass.
+      if (item.source !== 'bundled' || !item.catalogId) {
+        item.enabled = false
+        const id = persistedId(item.path)
+        this.records.set(id, recordFromManifest(id, item, false, undefined))
+        continue
+      }
+      const manifest = await readManifest(item.path).catch(() => undefined)
         const id = persistedId(item.path)
         this.records.set(id, recordFromManifest(id, item, false, manifest))
         continue
@@ -231,10 +239,10 @@ export class BrowserExtensionManager {
     return previewFromManifest(extensionPath, manifest)
   }
 
-  async install(path: string): Promise<BrowserExtensionRecord> {
-    return this.installPath(resolve(path), {
-      source: 'unpacked',
-    })
+  async install(_path: string): Promise<BrowserExtensionRecord> {
+    // ND Security: unpacked third-party code cannot install without a signed,
+    // verified release workflow. Developer mode cannot bypass this policy.
+    throw new Error('ND Security blocked unsigned browser extension installation')
   }
 
   async previewCatalog(catalogId: string): Promise<BrowserExtensionInstallPreview> {
@@ -317,6 +325,9 @@ export class BrowserExtensionManager {
     if (!item) throw new Error('Built-in browser extension persistence record is missing')
 
     if (enabled) {
+      if (item.source !== 'bundled' || !item.catalogId) {
+        throw new Error('ND Security blocked enabling an unsigned browser extension')
+      }
       if (item.source === 'bundled' && item.catalogId) {
         const refreshed = await this.materializeBundledExtension(item.catalogId)
         if (refreshed) item.path = refreshed
@@ -352,6 +363,9 @@ export class BrowserExtensionManager {
     extensionPath: string,
     metadata: Pick<PersistedExtension, 'source' | 'catalogId' | 'storeId' | 'publisher'>,
   ): Promise<BrowserExtensionRecord> {
+    if (metadata.source !== 'bundled' || !metadata.catalogId) {
+      throw new Error('ND Security requires an ND-reviewed and bundled browser extension')
+    }
     const manifest = await readManifest(extensionPath)
     const existing = this.value.extensions.find((item) => item.path === extensionPath)
     const item: PersistedExtension = existing ?? {

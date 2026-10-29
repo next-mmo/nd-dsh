@@ -89,6 +89,7 @@ import { registerLocalRuntimeIpc } from './local-runtime/ipc.js'
 import { UsageLedger } from './usage/usage-ledger.js'
 import { ThemeService } from './theme.js'
 import { registerTerminalIpc } from './terminal/ipc.js'
+import { NineRouterManagedRuntime } from './router/nine-router-managed.js'
 import { RouterService } from './router/router-service.js'
 import { TerminalManager } from './terminal/terminal-manager.js'
 import { ProjectWorkspaceCoordinator } from './workspace/project-workspace-coordinator.js'
@@ -253,6 +254,8 @@ async function createWindow(cdpPort: number): Promise<void> {
   // once the router answers with combos.
   const routerService = new RouterService(core, providers, join(userData, 'nd-router'))
   await routerService.initialize()
+  const nineRouterManaged = new NineRouterManagedRuntime(core, join(userData, 'nd-router'))
+  await nineRouterManaged.initialize()
   markStartup('core-ready')
   activeCore = core
   workspace.attachFileSystem(createCoreWorkspaceFileSystem(core))
@@ -529,7 +532,7 @@ async function createWindow(cdpPort: number): Promise<void> {
     if (!window.isDestroyed()) window.webContents.send('browser-companion:changed-event', state)
     void browserPlatform.notifyCompanionChanged()
   })
-  const disposeTerminalIpc = registerTerminalIpc(window, terminalManager, routerService)
+  const disposeTerminalIpc = registerTerminalIpc(window, terminalManager, routerService, nineRouterManaged)
   const disposeDesignIpc = registerDesignIpc(window, design, ndPencil)
   const disposeOrganizationIpc = registerOrganizationIpc(window, organizationStore, organization, projectWorkspace, projectRuntime, executionCoordinator, () => launcherPopup.window(), localRuntime)
   const disposeLocalRuntimeIpc = registerLocalRuntimeIpc(window, localRuntime)
@@ -884,6 +887,7 @@ async function createWindow(cdpPort: number): Promise<void> {
     browserCompanion.setListener(undefined)
     disposeDesignIpc()
     disposeTerminalIpc()
+    void nineRouterManaged.dispose().catch((error) => console.error('9Router cleanup failed:', error))
     disposeIpc()
     disposeCoreReady()
     disposeHarnessJournalRecovery()

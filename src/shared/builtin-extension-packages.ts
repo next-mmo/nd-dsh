@@ -7,6 +7,7 @@
 
 import { ND_EXTENSION_API_VERSION, ND_EXTENSION_PROTOCOL, type NdExtensionManifest } from './extension-package.js'
 
+export const ND_SECURITY_ID = 'nd.security'
 export const DAILY_ESSENTIALS_ID = 'nd.daily-essentials'
 export const PROJECT_WORKFLOW_ID = 'nd.project-workflow'
 export const WALLPAPER_MANAGER_ID = 'nd.wallpaper-manager'
@@ -276,7 +277,34 @@ export const PROJECT_WORKFLOW_MANIFEST: NdExtensionManifest = {
   },
 }
 
+export const ND_SECURITY_MANIFEST: NdExtensionManifest = {
+  protocol: ND_EXTENSION_PROTOCOL,
+  id: ND_SECURITY_ID,
+  name: 'ND Security',
+  description: 'Protected, always-on security authority. Its enforcement is in the trusted main process and nd-core, not this UI.',
+  version: '1.0.0',
+  apiVersion: ND_EXTENSION_API_VERSION,
+  contexts: ['personal', 'company', 'project'],
+  permissions: ['security.read'],
+  settings: [],
+  contributions: {
+    tools: [], skills: [], workflows: [], commands: [],
+    views: [{
+      id: 'security-report',
+      title: 'ND Security',
+      description: 'Security verification and audit status.',
+      kind: 'detail',
+      host: 'security.status',
+      contexts: ['personal', 'company', 'project'],
+      itemTitleKey: 'title',
+      itemBodyKey: 'detail',
+      actions: [],
+    }],
+  },
+}
+
 export const BUILTIN_EXTENSION_PACKAGES: readonly NdExtensionManifest[] = [
+  ND_SECURITY_MANIFEST,
   DAILY_ESSENTIALS_MANIFEST,
   WALLPAPER_MANAGER_MANIFEST,
   PROJECT_WORKFLOW_MANIFEST,

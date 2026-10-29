@@ -1,3 +1,5 @@
+import type { NineRouterDesktopApi } from './nine-router.js'
+
 export type RouterProviderKind = 'openai-compatible' | 'antigravity' | 'gemini-cli' | 'qoder'
 export type RouterComboStrategy = 'priority' | 'round-robin'
 
@@ -121,7 +123,7 @@ export const ROUTER_IPC = {
   resetUsage: 'router:reset-usage',
 } as const
 
-export interface RouterDesktopApi {
+export interface RouterDesktopApi extends NineRouterDesktopApi {
   state(): Promise<RouterState>
   saveProvider(input: RouterProviderInput): Promise<RouterState>
   deleteProvider(providerId: string): Promise<RouterState>

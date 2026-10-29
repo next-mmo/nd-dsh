@@ -3,19 +3,20 @@ import { TERMINAL_IPC, type TerminalCreateInput, type TerminalPaneLayout } from 
 import { registerTokenSaverIpc } from '../token-saver/ipc.js'
 import { registerPromptShieldIpc } from '../prompt-shield/ipc.js'
 import { registerRouterIpc } from '../router/ipc.js'
+import type { NineRouterManagedRuntime } from '../router/nine-router-managed.js'
 import type { RouterService } from '../router/router-service.js'
 import { registerToolRoutingIpc } from '../organization/tool-routing-ipc.js'
 import type { TerminalManager } from './terminal-manager.js'
 
 type Handler = (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown | Promise<unknown>
 
-export function registerTerminalIpc(window: BrowserWindow, manager: TerminalManager, router?: RouterService): () => void {
+export function registerTerminalIpc(window: BrowserWindow, manager: TerminalManager, router?: RouterService, nineRouter?: NineRouterManagedRuntime): () => void {
   // Token Saver, Prompt Shield, ND Router and Tool Routing are registered
   // beside the small terminal preload/IPC bridge to avoid expanding the
   // already-large desktop IPC composition root.
   const disposeTokenSaverIpc = registerTokenSaverIpc(window)
   const disposePromptShieldIpc = registerPromptShieldIpc(window)
-  const disposeRouterIpc = router ? registerRouterIpc(window, router) : () => undefined
+  const disposeRouterIpc = router ? registerRouterIpc(window, router, nineRouter) : () => undefined
   const { dispose: disposeToolRoutingIpc } = registerToolRoutingIpc(window)
   const channels: string[] = []
   const handle = (channel: string, listener: Handler): void => {

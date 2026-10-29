@@ -14,7 +14,7 @@ import {
   type NdBrowserFocusEvent,
 } from '../../shared/nd-invocations.js'
 import type { OrganizationMutation, OrganizationSnapshot } from '../../shared/organization.js'
-import { BUILTIN_EXTENSION_PACKAGES, defaultActivationContexts, WALLPAPER_MANAGER_ID } from '../../shared/builtin-extension-packages.js'
+import { BUILTIN_EXTENSION_PACKAGES, defaultActivationContexts, ND_SECURITY_ID, WALLPAPER_MANAGER_ID } from '../../shared/builtin-extension-packages.js'
 import { captureDisplayUnderPointer, captureScreenRegion } from '../capture/app-capture.js'
 import {
   applyWallpaperFromFolder,
@@ -543,6 +543,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
 
   handle(ND_EXTENSIONS_IPC.setActivation, async (_event, extensionId, context, enabled) => {
     const id = shortId(extensionId, 'Extension id')
+    if (id === ND_SECURITY_ID && enabled !== true) throw new Error('ND Security cannot be disabled')
     const target = await deps.broker.resolveContext(asNdContext(context))
     const manifest = await deps.packages.activeManifest(id)
     if (!manifest) throw new Error(`Unknown extension package: ${id}`)
@@ -727,6 +728,10 @@ export function registerNativeHostHandlers(
   computerUse?: ComputerUseService | null,
 ): { dispose: () => void } {
   const { host, providers } = deps
+  host.register('security.status', async () => ({
+    title: 'ND Security',
+    detail: 'ND Security cannot be disabled. Signed managed-release verification is available; other installer-family gates and a signed remote catalog remain under development.',
+  }))
   const organization = deps.organization
   const translator = new NdTranslateService(deps.browser)
   const history = new TranslateHistoryStore(join(app.getPath('userData'), 'nd-translate-history.json'))
@@ -2823,7 +2828,7 @@ async function seedBuiltinPackages(deps: NdIpcDependencies): Promise<void> {
       const context = kind === 'personal' ? { kind: 'personal' as const } : undefined
       if (!context) continue
       const existing = await deps.state.activation(manifest.id, context)
-      if (!existing) await deps.state.setActivation(manifest.id, context, true)
+      if (!existing || (manifest.id === ND_SECURITY_ID && !existing.enabled)) await deps.state.setActivation(manifest.id, context, true)
     }
   }
 }

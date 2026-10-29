@@ -1,10 +1,15 @@
-import { ipcMain, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
+import { dialog, ipcMain, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
+import { NINE_ROUTER_IPC } from '../../shared/nine-router.js'
+import type { NineRouterManagedRuntime } from './nine-router-managed.js'
+import { NineRouterDashboard } from './nine-router-dashboard.js'
+import { connectNineRouter, discoverNineRouterModels } from './nine-router-connector.js'
 import { ROUTER_IPC } from '../../shared/router.js'
 import type { RouterService } from './router-service.js'
 
 type Handler = (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown | Promise<unknown>
 
-export function registerRouterIpc(window: BrowserWindow, service: RouterService): () => void {
+export function registerRouterIpc(window: BrowserWindow, service: RouterService, managed?: NineRouterManagedRuntime): () => void {
+  const dashboard = new NineRouterDashboard(window)
   const channels: string[] = []
   const handle = (channel: string, listener: Handler): void => {
     ipcMain.removeHandler(channel)
@@ -30,7 +35,28 @@ export function registerRouterIpc(window: BrowserWindow, service: RouterService)
   handle(ROUTER_IPC.usage, () => service.usage())
   handle(ROUTER_IPC.resetUsage, () => service.resetUsage())
 
+  handle(NINE_ROUTER_IPC.state, () => managed?.state() ?? Promise.reject(new Error('Managed 9Router unavailable')))
+  handle(NINE_ROUTER_IPC.discover, (_event, input) => discoverNineRouterModels(input as never))
+  handle(NINE_ROUTER_IPC.connect, (_event, input) => connectNineRouter(service, input as never))
+  handle(NINE_ROUTER_IPC.pickInstall, async () => {
+    if (!managed) throw new Error('Managed 9Router unavailable')
+    const result = await dialog.showOpenDialog(window, { title: 'Choose an ND-signed 9Router release folder', properties: ['openDirectory'] })
+    return !result.canceled && result.filePaths[0]
+      ? managed.installFromDirectory(result.filePaths[0])
+      : managed.state()
+  })
+  handle(NINE_ROUTER_IPC.prepare, (_event, password) => managed?.prepare(typeof password === 'string' ? password : '') ?? Promise.reject(new Error('Managed runtime unavailable')))
+  handle(NINE_ROUTER_IPC.start, () => managed?.start() ?? Promise.reject(new Error('Managed runtime unavailable')))
+  handle(NINE_ROUTER_IPC.stop, () => managed?.stop() ?? Promise.reject(new Error('Managed runtime unavailable')))
+  handle(NINE_ROUTER_IPC.dashboardOpen, (_event, url) => {
+    if (typeof url !== 'string') throw new Error('Invalid 9Router URL')
+    return dashboard.open(url)
+  })
+  handle(NINE_ROUTER_IPC.dashboardBounds, (_event, bounds) => dashboard.bounds(bounds as never))
+  handle(NINE_ROUTER_IPC.dashboardClose, () => dashboard.close())
+
   return () => {
+    dashboard.close()
     for (const channel of channels) ipcMain.removeHandler(channel)
   }
 }

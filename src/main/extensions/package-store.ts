@@ -180,6 +180,10 @@ export class ExtensionPackageStore {
       throw new Error(`Invalid extension package: ${summary}`)
     }
     const manifest = validated.manifest
+    // ND Security fail-closed gate: executable third-party extension packages must
+    // use the separately signed, approved runtime workflow. Manifest validation
+    // alone never authorizes executable or MCP runtime installation.
+    if (manifest.executable) throw new Error('ND Security blocked executable extension: signed release approval required')
     const permissionIssues = manifestPermissionIssues(manifest)
     if (permissionIssues.length > 0) {
       throw new Error(`Invalid extension package: ${permissionIssues.map((issue) => issue.message).join('; ')}`)

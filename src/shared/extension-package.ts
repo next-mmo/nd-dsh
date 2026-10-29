@@ -21,6 +21,7 @@ export const ND_EXTENSION_API_VERSION = 1
 
 /** ND API grants a package may request; executable trust is a separate record. */
 export const ND_EXTENSION_PERMISSIONS = [
+  'security.read',
   'notes.read',
   'notes.write',
   'capture.screen',
@@ -73,6 +74,7 @@ export interface NdHostMethodDescriptor {
 }
 
 export const ND_HOST_METHODS = [
+  { id: 'security.status', title: 'View ND Security state', permission: 'security.read', contexts: ['personal', 'company', 'project'], sensitive: false },
   { id: 'note.create', title: 'Save a note', permission: 'notes.write', contexts: ['personal', 'company', 'project'], sensitive: false },
   { id: 'note.search', title: 'Search notes', permission: 'notes.read', contexts: ['personal', 'company', 'project'], sensitive: false },
   { id: 'note.open', title: 'Open a note', permission: 'notes.read', contexts: ['personal', 'company', 'project'], sensitive: false },

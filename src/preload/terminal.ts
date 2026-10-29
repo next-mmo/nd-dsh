@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { ND_GATEWAY_IPC, type NdGatewayDesktopApi, type NdGatewayState } from '../shared/gateway.js'
 import { PROMPT_SHIELD_IPC, type PromptShieldDesktopApi, type PromptShieldState } from '../shared/prompt-shield.js'
+import { NINE_ROUTER_IPC } from '../shared/nine-router.js'
 import { ROUTER_IPC, type RouterDesktopApi } from '../shared/router.js'
 import { TERMINAL_IPC, type TerminalDesktopApi, type TerminalExitEvent, type TerminalOutputEvent, type TerminalStateEvent } from '../shared/terminal.js'
 import { TOKEN_SAVER_IPC, type TokenSaverDesktopApi, type TokenSaverState } from '../shared/token-saver.js'
@@ -60,6 +61,16 @@ const promptShieldApi: PromptShieldDesktopApi = {
 }
 
 const routerApi: RouterDesktopApi = {
+  nineRouterState: () => ipcRenderer.invoke(NINE_ROUTER_IPC.state),
+  nineRouterDiscover: (input) => ipcRenderer.invoke(NINE_ROUTER_IPC.discover, input),
+  nineRouterConnect: (input) => ipcRenderer.invoke(NINE_ROUTER_IPC.connect, input),
+  nineRouterInstall: () => ipcRenderer.invoke(NINE_ROUTER_IPC.pickInstall),
+  nineRouterPrepare: (password) => ipcRenderer.invoke(NINE_ROUTER_IPC.prepare, password),
+  nineRouterStart: () => ipcRenderer.invoke(NINE_ROUTER_IPC.start),
+  nineRouterStop: () => ipcRenderer.invoke(NINE_ROUTER_IPC.stop),
+  nineRouterDashboardOpen: (baseUrl) => ipcRenderer.invoke(NINE_ROUTER_IPC.dashboardOpen, baseUrl),
+  nineRouterDashboardBounds: (bounds) => ipcRenderer.invoke(NINE_ROUTER_IPC.dashboardBounds, bounds),
+  nineRouterDashboardClose: () => ipcRenderer.invoke(NINE_ROUTER_IPC.dashboardClose),
   state: () => ipcRenderer.invoke(ROUTER_IPC.state),
   saveProvider: (input) => ipcRenderer.invoke(ROUTER_IPC.saveProvider, input),
   deleteProvider: (providerId) => ipcRenderer.invoke(ROUTER_IPC.deleteProvider, providerId),

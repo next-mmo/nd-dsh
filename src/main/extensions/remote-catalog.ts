@@ -65,6 +65,9 @@ export class RemoteExtensionCatalog {
   }
 
   async install(id: string, packages: ExtensionPackageStore, scratchRoot: string): Promise<void> {
+    // Until the catalog is ND-signed with a pinned publisher key, hashes in
+    // downloadable metadata alone do not authenticate the release publisher.
+    throw new Error('ND Security: remote extension catalog is not signed; installation is disabled')
     if (!this.entries.has(id)) await this.refresh()
     const entry = this.entries.get(id)
     if (!entry) throw new Error('Unknown catalog extension')

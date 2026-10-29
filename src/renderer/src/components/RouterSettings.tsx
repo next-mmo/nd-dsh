@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { NineRouterSettings } from './NineRouterSettings'
 import type {
   RouterComboEntry,
   RouterProviderView,
@@ -134,6 +135,7 @@ export function RouterSettings({ onError }: RouterSettingsProps) {
 
   return (
     <>
+      <NineRouterSettings onError={onError} />
       <SettingsSection title="ND Router" className="mt-3.5">
         <div className="space-y-1.5">
           <SettingsRow>
