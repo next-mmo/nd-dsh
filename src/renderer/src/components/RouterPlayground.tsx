@@ -6,6 +6,7 @@ import {
   type RouterPlaygroundRoute,
   type RouterState,
 } from '../../../shared/router'
+import { cn } from '../lib/utils'
 import {
   SettingsButton,
   SettingsNote,
@@ -21,6 +22,7 @@ import { Textarea } from './ui/textarea'
 interface RouterPlaygroundProps {
   state: RouterState | null
   onError(message: string): void
+  embedded?: boolean
 }
 
 interface ChatTurn {
@@ -28,7 +30,7 @@ interface ChatTurn {
   content: string
 }
 
-export function RouterPlayground({ state, onError }: RouterPlaygroundProps) {
+export function RouterPlayground({ state, onError, embedded = false }: RouterPlaygroundProps) {
   const [routeValue, setRouteValue] = useState('')
   const [system, setSystem] = useState('')
   const [input, setInput] = useState('')
@@ -184,9 +186,8 @@ export function RouterPlayground({ state, onError }: RouterPlaygroundProps) {
 
   const busy = running || status === 'Connecting…' || status === 'Waiting for reply…' || status === 'Streaming…'
 
-  return (
-    <SettingsSection title="Playground">
-      <div className="space-y-1.5">
+  const content = (
+    <div className="space-y-1.5">
         <SettingsRow className="items-start">
           <div className="flex min-w-0 flex-1 flex-col gap-2">
             <div className="flex min-w-0 items-center gap-2">
@@ -200,7 +201,7 @@ export function RouterPlayground({ state, onError }: RouterPlaygroundProps) {
                 {options.length === 0 ? <option value="">No routes yet</option> : null}
                 {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
-              <span className={rowValueText}>{busy ? `${elapsed} ms` : status}</span>
+              <span className={rowValueText}>{busy ? `${elapsed} ms` : null}</span>
             </div>
 
             <Input
@@ -211,7 +212,10 @@ export function RouterPlayground({ state, onError }: RouterPlaygroundProps) {
               onChange={(event) => setSystem(event.target.value)}
             />
 
-            <div className="max-h-[220px] min-h-[92px] overflow-auto rounded-md border border-border-soft bg-surface-1 px-2.5 py-2">
+            <div className={cn(
+              'overflow-auto rounded-md border border-border-soft bg-surface-1 px-2.5 py-2',
+              embedded ? 'min-h-[180px] max-h-[42vh]' : 'min-h-[92px] max-h-[220px]',
+            )}>
               {messages.length === 0 && pending === null ? (
                 <span className={rowDesc}>Send a prompt to test this route. Hidden web combos are testable here.</span>
               ) : null}
@@ -267,9 +271,9 @@ export function RouterPlayground({ state, onError }: RouterPlaygroundProps) {
           API lanes stream tokens. ChatGPT Web and Gemini Web finish one turn at a time in the visible browser, so their reply
           appears when the turn completes. Stop cancels the browser turn.
         </SettingsNote>
-      </div>
-    </SettingsSection>
+    </div>
   )
+  return embedded ? content : <SettingsSection title="Playground">{content}</SettingsSection>
 }
 
 function message(cause: unknown): string {

@@ -32,6 +32,7 @@ import {
   type CapabilitySubTab,
   type EnginesSubTab,
   type GeneralSubTab,
+  type RouterSubTab,
   type SettingsTab,
 } from '../lib/settings-route'
 
@@ -52,6 +53,8 @@ interface SettingsPaneProps {
   onSelectCapabilitySubTab?: (subTab: CapabilitySubTab) => void
   enginesSubTab?: EnginesSubTab
   onSelectEnginesSubTab?: (subTab: EnginesSubTab) => void
+  routerSubTab?: RouterSubTab
+  onSelectRouterSubTab?: (subTab: RouterSubTab) => void
   /** Opens an existing chat session in the Agent workbench. */
   onOpenSession?(sessionId: string): void
   /** ND extension packages management, rendered above the agent-capability catalog. */
@@ -96,6 +99,8 @@ export function SettingsPane({
   onSelectCapabilitySubTab,
   enginesSubTab: propEnginesSubTab,
   onSelectEnginesSubTab,
+  routerSubTab,
+  onSelectRouterSubTab,
   onOpenSession,
   extensionsExtra,
 }: SettingsPaneProps) {
@@ -117,6 +122,7 @@ export function SettingsPane({
     if (entry.subTab) handleSelectSubTab(entry.subTab)
     if (entry.capabilitySubTab && onSelectCapabilitySubTab) onSelectCapabilitySubTab(entry.capabilitySubTab)
     if (entry.enginesSubTab && onSelectEnginesSubTab) onSelectEnginesSubTab(entry.enginesSubTab)
+    if (entry.routerSubTab && onSelectRouterSubTab) onSelectRouterSubTab(entry.routerSubTab)
     setSearch('')
   }
 
@@ -209,9 +215,11 @@ export function SettingsPane({
             {...(onSelectEnginesSubTab !== undefined ? { onSelectSubTab: onSelectEnginesSubTab } : {})}
           />
         ) : tab === 'router' ? (
-          <div className="min-h-0 overflow-auto px-[26px] pb-[42px] pt-4">
-            <RouterSettings onError={onError} />
-          </div>
+          <RouterSettings
+            onError={onError}
+            {...(routerSubTab !== undefined ? { subTab: routerSubTab } : {})}
+            {...(onSelectRouterSubTab !== undefined ? { onSelectSubTab: onSelectRouterSubTab } : {})}
+          />
         ) : tab === 'presets' ? (
           <PresetSettings onError={onError} {...(onOpenSession ? { onOpenSession } : {})} />
         ) : tab === 'appearance' ? (

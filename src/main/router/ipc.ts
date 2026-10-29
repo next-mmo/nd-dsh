@@ -1,4 +1,4 @@
-import { dialog, ipcMain, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
+import { app, dialog, ipcMain, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { NINE_ROUTER_IPC } from '../../shared/nine-router.js'
 import { ROUTER_IPC, type RouterPlaygroundInput } from '../../shared/router.js'
 import type { NineRouterManagedRuntime } from './nine-router-managed.js'
@@ -51,6 +51,10 @@ export function registerRouterIpc(window: BrowserWindow, service: RouterService,
   handle(NINE_ROUTER_IPC.connect, (_event, input) => connectNineRouter(service, input as never))
   handle(NINE_ROUTER_IPC.pickInstall, async () => {
     if (!managed) throw new Error('Managed 9Router unavailable')
+    // QA/automation seam in development only. The folder still has to pass the
+    // full ND Security signature, inventory, and hash verification.
+    const automatedSource = !app.isPackaged ? process.env.ND_9ROUTER_INSTALL_DIR?.trim() : undefined
+    if (automatedSource) return managed.installFromDirectory(automatedSource)
     const result = await dialog.showOpenDialog(window, { title: 'Choose an ND-signed 9Router release folder', properties: ['openDirectory'] })
     return !result.canceled && result.filePaths[0]
       ? managed.installFromDirectory(result.filePaths[0])

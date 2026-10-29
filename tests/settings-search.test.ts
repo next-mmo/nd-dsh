@@ -23,6 +23,15 @@ describe('settings search', () => {
     expect(results[0]?.subTab).toBe('shortcuts')
   })
 
+  it('jumps to ND Router sub-tabs', () => {
+    const playground = searchSettings('playground')
+    expect(playground.some((entry) => entry.id === 'router-playground' && entry.routerSubTab === 'playground')).toBe(true)
+    const external = searchSettings('external api')
+    expect(external.some((entry) => entry.id === 'router-external' && entry.routerSubTab === 'access')).toBe(true)
+    const nineRouter = searchSettings('9router')
+    expect(nineRouter.some((entry) => entry.id === 'router-9router' && entry.routerSubTab === 'nine-router')).toBe(true)
+  })
+
   it('caps results to keep the dropdown scannable', () => {
     expect(searchSettings('e', 3).length).toBeLessThanOrEqual(3)
     expect(SETTINGS_SEARCH_ENTRIES.length).toBeGreaterThan(10)

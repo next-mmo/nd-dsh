@@ -18,6 +18,7 @@ export class NineRouterDashboard {
     const base = parseNineRouterBaseUrl(baseUrl)
     const target = new URL(base.toString())
     target.pathname = '/dashboard'
+    await probeDashboard(target)
     this.close()
     const profile = session.fromPartition('persist:nd-router-nine-admin')
     profile.setPermissionRequestHandler((_wc, _permission, respond) => respond(false))
@@ -89,7 +90,7 @@ export class NineRouterDashboard {
     this.view = view
     this.origin = allowedOrigin
     try { await view.webContents.loadURL(target.toString()) }
-    catch (error) { this.close(); throw error }
+    catch (error) { this.close(); throw dashboardError(target, error) }
   }
 
   bounds(value: { x: number; y: number; width: number; height: number }): void {
@@ -122,4 +123,39 @@ export class NineRouterDashboard {
   }
 
   get dashboardOrigin(): string | undefined { return this.origin }
+}
+
+const DASHBOARD_PROBE_TIMEOUT_MS = 2_500
+
+/** Fail before creating a view when nothing is listening on the gateway port. */
+async function probeDashboard(target: URL): Promise<void> {
+  try {
+    await fetch(target.toString(), {
+      method: 'GET',
+      redirect: 'manual',
+      cache: 'no-store',
+      signal: AbortSignal.timeout(DASHBOARD_PROBE_TIMEOUT_MS),
+    })
+  } catch (error) {
+    throw dashboardError(target, error)
+  }
+}
+
+function dashboardError(target: URL, error: unknown): Error {
+  const code = errorCode(error)
+  if (code === 'ERR_CONNECTION_REFUSED' || code === 'ECONNREFUSED') {
+    return new Error(`9Router is not reachable at ${target.origin}. Start your local 9Router and check the gateway URL.`)
+  }
+  if (code === 'ERR_CONNECTION_TIMED_OUT' || code === 'ERR_TIMED_OUT' || code === 'ETIMEDOUT' || code === 'UND_ERR_CONNECT_TIMEOUT') {
+    return new Error(`9Router did not respond at ${target.origin}. Check that it is running and the gateway URL is correct.`)
+  }
+  return new Error(`9Router dashboard could not load at ${target.origin}${code ? ` (${code})` : ''}. Check the gateway URL and that 9Router is running.`)
+}
+
+function errorCode(error: unknown): string | undefined {
+  const record = error as { code?: unknown; errno?: unknown; cause?: { code?: unknown } } | undefined
+  if (record && typeof record.code === 'string') return record.code
+  if (record && typeof record.errno === 'string') return record.errno
+  if (record?.cause && typeof record.cause.code === 'string') return record.cause.code
+  return undefined
 }

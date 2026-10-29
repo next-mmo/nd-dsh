@@ -15,9 +15,10 @@ import {
 interface RouterExternalApiProps {
   state: RouterState | null
   onError(message: string): void
+  embedded?: boolean
 }
 
-export function RouterExternalApi({ state, onError }: RouterExternalApiProps) {
+export function RouterExternalApi({ state, onError, embedded = false }: RouterExternalApiProps) {
   const [info, setInfo] = useState<RouterExternalApiState | null>(null)
   const [key, setKey] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
@@ -70,9 +71,8 @@ export function RouterExternalApi({ state, onError }: RouterExternalApiProps) {
       .finally(() => setBusy(null))
   }
 
-  return (
-    <SettingsSection title="External API">
-      <div className="space-y-1.5">
+  const content = (
+    <div className="space-y-1.5">
         <SettingsRow>
           <div className={rowStack}>
             <span className="flex items-center gap-2">
@@ -149,9 +149,9 @@ export function RouterExternalApi({ state, onError }: RouterExternalApiProps) {
             <SettingsButton onClick={() => copy(curl, 'curl')}>{copied === 'curl' ? 'Copied' : 'Copy curl'}</SettingsButton>
           </SettingsRow>
         ) : null}
-      </div>
-    </SettingsSection>
+    </div>
   )
+  return embedded ? content : <SettingsSection title="External API">{content}</SettingsSection>
 }
 
 function message(cause: unknown): string {

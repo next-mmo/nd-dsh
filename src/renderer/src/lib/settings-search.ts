@@ -1,4 +1,4 @@
-import type { CapabilitySubTab, EnginesSubTab, GeneralSubTab, SettingsTab } from './settings-route.js'
+import type { CapabilitySubTab, EnginesSubTab, GeneralSubTab, RouterSubTab, SettingsTab } from './settings-route.js'
 
 export interface SettingsSearchEntry {
   id: string
@@ -8,6 +8,7 @@ export interface SettingsSearchEntry {
   subTab?: GeneralSubTab
   capabilitySubTab?: CapabilitySubTab
   enginesSubTab?: EnginesSubTab
+  routerSubTab?: RouterSubTab
   keywords: string[]
 }
 
@@ -41,7 +42,13 @@ export const SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   { id: 'engines', title: 'Coding engines', section: 'Coding engines · Engines', tab: 'engines', enginesSubTab: 'engines', keywords: ['engine', 'codex', 'agy', 'antigravity', 'harness', 'default chat'] },
   { id: 'engines-gateway', title: 'ND Gateway', section: 'Coding engines · Gateway', tab: 'engines', enginesSubTab: 'gateway', keywords: ['gateway', 'codex', 'chatgpt', 'external apps'] },
   { id: 'engines-tokens', title: 'Token efficiency (saver & tool optimization)', section: 'Coding engines · Token efficiency', tab: 'engines', enginesSubTab: 'tokens', keywords: ['token', 'saver', 'optimization', 'tool call', 'context budget'] },
-  { id: 'router', title: 'ND Router', section: 'ND Router', tab: 'router', keywords: ['router', 'combo', 'fallback', 'routing', 'free model', 'provider accounts', 'gateway', 'round robin', 'playground', 'external api', 'api key', 'chatgpt web', 'gemini web', 'private route'] },
+  { id: 'router', title: 'ND Router', section: 'ND Router · Overview', tab: 'router', routerSubTab: 'overview', keywords: ['router', 'combo', 'fallback', 'routing', 'free model', 'provider accounts', 'gateway', 'round robin', 'playground', 'external api', 'api key', 'chatgpt web', 'gemini web', 'private route'] },
+  { id: 'router-providers', title: 'Router providers & accounts', section: 'ND Router · Providers', tab: 'router', routerSubTab: 'providers', keywords: ['provider', 'account', 'api key', 'openai', 'antigravity', 'agy', 'qoder', 'chatgpt web', 'gemini web', 'web lane'] },
+  { id: 'router-routes', title: 'Router routes & combos', section: 'ND Router · Routes', tab: 'router', routerSubTab: 'routes', keywords: ['route', 'routes', 'combo', 'combos', 'fallback', 'priority', 'round robin', 'private', 'personal chat'] },
+  { id: 'router-playground', title: 'ND Router playground', section: 'ND Router · Playground', tab: 'router', routerSubTab: 'playground', keywords: ['playground', 'test route', 'try model', 'prompt', 'chat test'] },
+  { id: 'router-external', title: 'Router external API key', section: 'ND Router · External API', tab: 'router', routerSubTab: 'access', keywords: ['external api', 'api key', 'endpoint', 'loopback', 'curl', 'openai compatible', 'rotate key'] },
+  { id: 'router-9router', title: '9Router integration', section: 'ND Router · 9Router', tab: 'router', routerSubTab: 'nine-router', keywords: ['9router', 'nine router', 'local gateway', 'connect', 'discover models', 'api key', 'dashboard', 'install', 'setup', 'how to use', 'managed runtime', 'nd security', 'signed'] },
+  { id: 'router-usage', title: 'Router usage & latency', section: 'ND Router · Usage', tab: 'router', routerSubTab: 'usage', keywords: ['usage', 'requests', 'latency', 'errors', 'activity', 'reset'] },
   { id: 'presets', title: 'Agent presets', section: 'Agent presets', tab: 'presets', keywords: ['preset', 'agent', 'notes', 'links'] },
 ]
 

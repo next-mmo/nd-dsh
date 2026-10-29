@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { capabilitySubTabFromLocation, enginesSubTabFromLocation, generalSubTabFromLocation, settingsHash, settingsTabFromLocation } from '../src/renderer/src/lib/settings-route.js'
+import { capabilitySubTabFromLocation, enginesSubTabFromLocation, generalSubTabFromLocation, routerSubTabFromLocation, settingsHash, settingsTabFromLocation } from '../src/renderer/src/lib/settings-route.js'
 
 describe('settings route', () => {
   it('builds addressable model and extension settings tabs', () => {
@@ -40,6 +40,18 @@ describe('settings route', () => {
     expect(enginesSubTabFromLocation({ hash: '#/settings?tab=engines&subtab=tokens', search: '' })).toBe('tokens')
     expect(enginesSubTabFromLocation({ hash: '#/settings?tab=engines&subtab=token', search: '' })).toBe('tokens')
     expect(enginesSubTabFromLocation({ hash: '#/settings?tab=engines', search: '' })).toBe('engines')
+  })
+
+  it('builds and parses addressable ND Router sub-tabs', () => {
+    expect(settingsHash('router')).toBe('#/settings?tab=router')
+    expect(settingsHash('router', 'overview')).toBe('#/settings?tab=router')
+    expect(settingsHash('router', 'playground')).toBe('#/settings?tab=router&subtab=playground')
+    expect(settingsHash('router', 'access')).toBe('#/settings?tab=router&subtab=access')
+    expect(routerSubTabFromLocation({ hash: '#/settings?tab=router&subtab=playground', search: '' })).toBe('playground')
+    expect(routerSubTabFromLocation({ hash: '#/settings?tab=router&subtab=external-api', search: '' })).toBe('access')
+    expect(routerSubTabFromLocation({ hash: '#/settings?tab=router&subtab=9router', search: '' })).toBe('nine-router')
+    expect(routerSubTabFromLocation({ hash: '#/settings?tab=router&subtab=usage', search: '' })).toBe('usage')
+    expect(routerSubTabFromLocation({ hash: '#/settings?tab=router', search: '' })).toBe('overview')
   })
 
   it('accepts plural aliases and a regular query string', () => {

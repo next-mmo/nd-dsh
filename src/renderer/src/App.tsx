@@ -69,11 +69,13 @@ import {
   capabilitySubTabFromLocation,
   enginesSubTabFromLocation,
   generalSubTabFromLocation,
+  routerSubTabFromLocation,
   settingsHash,
   settingsTabFromLocation,
   type CapabilitySubTab,
   type EnginesSubTab,
   type GeneralSubTab,
+  type RouterSubTab,
   type SettingsTab,
 } from './lib/settings-route'
 
@@ -140,7 +142,9 @@ function hashForView(view: ProductView, settingsTab: SettingsTab, settingsSubTab
       ? settingsSubTabs.capabilities
       : settingsTab === 'engines'
         ? settingsSubTabs.engines
-        : undefined
+        : settingsTab === 'router'
+          ? settingsSubTabs.router
+          : undefined
   return settingsHash(settingsTab, subTab)
 }
 
@@ -148,6 +152,7 @@ interface SettingsSubTabs {
   general: GeneralSubTab
   capabilities: CapabilitySubTab
   engines: EnginesSubTab
+  router: RouterSubTab
 }
 
 function settingsSubTabsFromLocation(): SettingsSubTabs {
@@ -155,6 +160,7 @@ function settingsSubTabsFromLocation(): SettingsSubTabs {
     general: generalSubTabFromLocation(),
     capabilities: capabilitySubTabFromLocation(),
     engines: enginesSubTabFromLocation(),
+    router: routerSubTabFromLocation(),
   }
 }
 
@@ -2302,6 +2308,8 @@ export default function App() {
                   onSelectCapabilitySubTab={(subTab) => setSettingsSubTabs((current) => ({ ...current, capabilities: subTab }))}
                   enginesSubTab={settingsSubTabs.engines}
                   onSelectEnginesSubTab={(subTab) => setSettingsSubTabs((current) => ({ ...current, engines: subTab }))}
+                  routerSubTab={settingsSubTabs.router}
+                  onSelectRouterSubTab={(subTab) => setSettingsSubTabs((current) => ({ ...current, router: subTab }))}
                   onOpenSession={openSession}
                   extensionsExtra={ndExtensions ? (
                     <ExtensionPackagesCard

@@ -2,6 +2,7 @@ export type SettingsTab = 'general' | 'appearance' | 'models' | 'capabilities' |
 export type GeneralSubTab = 'runtime' | 'workspace' | 'browser' | 'privacy' | 'shortcuts' | 'about'
 export type CapabilitySubTab = 'engine' | 'memory' | 'context' | 'lifecycle'
 export type EnginesSubTab = 'engines' | 'gateway' | 'tokens'
+export type RouterSubTab = 'overview' | 'providers' | 'routes' | 'playground' | 'access' | 'nine-router' | 'usage'
 
 export interface LocationLike {
   hash: string
@@ -69,7 +70,28 @@ const QUERY_ENGINES_SUBTAB = new Map<string, EnginesSubTab>([
   ['token', 'tokens'],
 ])
 
-export function settingsHash(tab: SettingsTab, subtab?: GeneralSubTab | CapabilitySubTab | EnginesSubTab): string {
+const QUERY_ROUTER_SUBTAB = new Map<string, RouterSubTab>([
+  ['overview', 'overview'],
+  ['providers', 'providers'],
+  ['provider', 'providers'],
+  ['routes', 'routes'],
+  ['route', 'routes'],
+  ['combos', 'routes'],
+  ['combo', 'routes'],
+  ['playground', 'playground'],
+  ['test', 'playground'],
+  ['access', 'access'],
+  ['external', 'access'],
+  ['external-api', 'access'],
+  ['api', 'access'],
+  ['nine-router', 'nine-router'],
+  ['9router', 'nine-router'],
+  ['ninerouter', 'nine-router'],
+  ['usage', 'usage'],
+  ['activity', 'usage'],
+])
+
+export function settingsHash(tab: SettingsTab, subtab?: GeneralSubTab | CapabilitySubTab | EnginesSubTab | RouterSubTab): string {
   if (tab === 'general' && subtab && subtab !== 'runtime') {
     return `#/settings?tab=general&subtab=${subtab}`
   }
@@ -78,6 +100,9 @@ export function settingsHash(tab: SettingsTab, subtab?: GeneralSubTab | Capabili
   }
   if (tab === 'engines' && subtab && subtab !== 'engines') {
     return `#/settings?tab=engines&subtab=${subtab}`
+  }
+  if (tab === 'router' && subtab && subtab !== 'overview') {
+    return `#/settings?tab=router&subtab=${subtab}`
   }
   return `#/settings?tab=${TAB_QUERY[tab]}`
 }
@@ -137,4 +162,16 @@ export function enginesSubTabFromLocation(location?: LocationLike): EnginesSubTa
     if (match) return match
   }
   return 'engines'
+}
+
+export function routerSubTabFromLocation(location?: LocationLike): RouterSubTab {
+  const loc = location ?? getGlobalLocation()
+  const hashQuery = loc.hash.includes('?') ? loc.hash.slice(loc.hash.indexOf('?') + 1) : ''
+  const subtabValue = new URLSearchParams(hashQuery).get('subtab')
+    ?? new URLSearchParams(loc.search).get('subtab')
+  if (subtabValue) {
+    const match = QUERY_ROUTER_SUBTAB.get(subtabValue.trim().toLowerCase())
+    if (match) return match
+  }
+  return 'overview'
 }
