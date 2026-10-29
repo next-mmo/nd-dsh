@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import {
   Building2,
   Camera,
@@ -50,6 +50,8 @@ interface Props {
   onOpenChange(open: boolean): void
   /** The popup owns dismissal after validation or successful execution. */
   closeBeforeRun?: boolean
+  /** Changes on every popup hide so the next reveal starts without a stale query. */
+  resetSignal?: number
   organization: OrganizationSnapshot | null
   currentUrl?: string | undefined
   /** Explicit context selector; the popup defaults to Personal, the in-app launcher to the current context. */
@@ -199,6 +201,7 @@ export function QuickLauncher({
   open,
   onOpenChange,
   closeBeforeRun = true,
+  resetSignal,
   organization,
   currentUrl,
   contexts = [],
@@ -223,6 +226,11 @@ export function QuickLauncher({
   const [query, setQuery] = useState('')
   const [media, setMedia] = useState<NdMediaSessionState | null>(null)
   const running = useRef(false)
+  // Reset while the popup window is hidden; the next reveal is already clean.
+  useLayoutEffect(() => {
+    if (resetSignal === undefined) return
+    setQuery('')
+  }, [resetSignal])
   const companies = organization?.companies ?? []
   const projects = organization?.projects ?? []
   const activeCompany = companies.find((item) => item.id === organization?.activeCompanyId) ?? companies[0]

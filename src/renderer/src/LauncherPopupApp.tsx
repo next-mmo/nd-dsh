@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { launcherBrowserTabPayload, type LauncherHandoffTarget } from '../../shared/quick-launcher'
 import type { ThemeState } from '../../shared/contracts'
@@ -35,13 +35,66 @@ export default function LauncherPopupApp(): React.ReactNode {
   // resets the selector so a stale project context can never linger.
   const [launcherContextId, setLauncherContextId] = useState('personal')
   const [extensionCommands, setExtensionCommands] = useState<NdCommandView[]>([])
-  // Each reveal remounts the launcher so its entrance replays and no stale
-  // query survives from the previous opening.
-  const [revealEpoch, setRevealEpoch] = useState(0)
+  // The palette stays mounted for the window's lifetime. Main hides the window
+  // and then signals the surface, so the expensive reset (clear query, drop the
+  // previous context, rebuild the list) happens while nothing is on screen.
+  // Revealing only flips a DOM attribute, so it never re-renders the palette.
+  const [resetSignal, setResetSignal] = useState(0)
 
-  useEffect(() => {
-    const off = window.ndDsh.window?.onLauncherPopupShow?.(() => setRevealEpoch((value) => value + 1))
-    return () => off?.()
+  useLayoutEffect(() => {
+    // A freshly loaded popup is hidden and unfocused; `visibilityState` alone
+    // can be unreliable in Electron, so focus is the honest signal for whether
+    // the surface is already on screen (HMR, browser preview).
+    document.body.dataset.launcherReveal = document.hasFocus() ? 'enter' : 'primed'
+    return () => {
+      delete document.body.dataset.launcherReveal
+    }
+  }, [])
+
+  // Layout effects run before the first paint, and the window can only be
+  // shown after that paint, so neither reveal signal can be missed on the
+  // first opening. Everything here is a DOM flip: no reveal re-renders the
+  // palette that already exists behind it.
+  useLayoutEffect(() => {
+    const focusSurface = (): void => {
+      const input = document.querySelector<HTMLInputElement>('[data-slot="command-input"]')
+      input?.focus({ preventScroll: true })
+      const list = document.querySelector<HTMLElement>('[data-slot="command-list"]')
+      if (list) list.scrollTop = 0
+    }
+    const onShow = (): void => {
+      setLauncherContextId('personal')
+      document.body.dataset.launcherReveal = 'enter'
+      // The window becomes focusable during this same tick; retry after the
+      // first frame so the search field owns the keyboard, not a stale item.
+      focusSurface()
+      requestAnimationFrame(focusSurface)
+    }
+    const onHide = (): void => {
+      setLauncherContextId('personal')
+      setResetSignal((value) => value + 1)
+      document.body.dataset.launcherReveal = 'primed'
+    }
+    const onFocus = (): void => {
+      // Fallback for an OS reveal that raced the explicit show signal.
+      if (document.body.dataset.launcherReveal === 'primed') document.body.dataset.launcherReveal = 'enter'
+      focusSurface()
+    }
+    const offShow = window.ndDsh.window?.onLauncherPopupShow?.(onShow)
+    const offHide = window.ndDsh.window?.onLauncherPopupHide?.(onHide)
+    // Belt-and-braces: if the window is hidden by the OS, the next reveal must
+    // still start from the primed keyframe instead of a finished card.
+    const onVisibility = (): void => {
+      if (document.visibilityState === 'hidden') onHide()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('focus', onFocus)
+    return () => {
+      offShow?.()
+      offHide?.()
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('focus', onFocus)
+    }
   }, [])
 
   useEffect(() => {
@@ -56,13 +109,10 @@ export default function LauncherPopupApp(): React.ReactNode {
       .then((next) => { if (mounted) setTheme(next) })
       .catch(() => undefined)
     const offTheme = window.ndDsh.theme?.onChanged(setTheme)
-    const onFocus = (): void => setLauncherContextId('personal')
-    window.addEventListener('focus', onFocus)
     return () => {
       mounted = false
       offOrganization()
       offTheme?.()
-      window.removeEventListener('focus', onFocus)
     }
   }, [])
 
@@ -330,8 +380,8 @@ export default function LauncherPopupApp(): React.ReactNode {
   return (
     <div className="launcher-popup-mode h-screen w-screen overflow-hidden bg-transparent p-2 font-sans">
       <QuickLauncher
-        key={`launcher-${revealEpoch}`}
         open
+        resetSignal={resetSignal}
         closeBeforeRun={false}
         onOpenChange={hidePopup}
         organization={orgState}

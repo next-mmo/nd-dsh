@@ -200,6 +200,11 @@ const api: DesktopApi = {
       ipcRenderer.on(IPC.windowLauncherPopupShowEvent, handler)
       return () => ipcRenderer.removeListener(IPC.windowLauncherPopupShowEvent, handler)
     },
+    onLauncherPopupHide: (listener) => {
+      const handler = () => listener()
+      ipcRenderer.on(IPC.windowLauncherPopupHideEvent, handler)
+      return () => ipcRenderer.removeListener(IPC.windowLauncherPopupHideEvent, handler)
+    },
     handoffLauncherPopup: (target, text, context) => ipcRenderer.invoke(IPC.windowLauncherHandoff, target, text, context),
     onCaptureRequest: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, action: Parameters<typeof listener>[0]) => listener(action)

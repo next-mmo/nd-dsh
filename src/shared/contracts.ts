@@ -888,6 +888,8 @@ export interface DesktopApi {
     hideLauncherPopup?(): Promise<void>
     /** Main reveals the launcher popup; the surface replays its entrance and resets. */
     onLauncherPopupShow?(listener: () => void): () => void
+    /** Main hid the popup; the surface primes its next entrance while invisible. */
+    onLauncherPopupHide?(listener: () => void): () => void
     handoffLauncherPopup?(target: LauncherHandoffTarget, text?: string, context?: import('./nd-context.js').NdContext): Promise<void>
     /** A global capture hotkey fired in main; the renderer runs the matching flow. */
     onCaptureRequest?(listener: (action: GlobalShortcutId) => void): () => void
@@ -925,6 +927,7 @@ export const IPC = {
   windowToggleLauncherPopup: 'window:toggle-launcher-popup',
   windowHideLauncherPopup: 'window:hide-launcher-popup',
   windowLauncherPopupShowEvent: 'window:launcher-popup-show-event',
+  windowLauncherPopupHideEvent: 'window:launcher-popup-hide-event',
   windowLauncherHandoff: 'window:launcher-handoff',
   windowLauncherHandoffEvent: 'window:launcher-handoff-event',
   browserState: 'browser:state',

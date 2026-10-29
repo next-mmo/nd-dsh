@@ -12,7 +12,12 @@ vi.mock('electron', async () => {
     setVisibleOnAllWorkspaces = vi.fn()
     setBounds = vi.fn()
     focus = vi.fn()
-    webContents = { getURL: () => 'file:///nd/index.html', isLoading: () => this.loading, send: vi.fn() }
+    webContents = {
+      getURL: () => 'file:///nd/index.html',
+      isLoading: () => this.loading,
+      send: vi.fn(),
+      isDestroyed: () => false,
+    }
     constructor() { super(); windows.push(this) }
     isDestroyed() { return this.destroyed }
     isVisible() { return this.visible }
@@ -31,6 +36,7 @@ vi.mock('electron', async () => {
 })
 
 import { BrowserWindow } from 'electron'
+import { IPC } from '../src/shared/contracts.js'
 import { createLauncherPopup } from '../src/main/launcher-popup.js'
 
 describe('launcher popup lifecycle', () => {
@@ -84,6 +90,19 @@ describe('launcher popup lifecycle', () => {
     controller.dispose()
     controller.dispose()
     expect(controller.window()).toBeNull()
+  })
+
+  it('primes the surface after hiding so the next reveal needs no reset on screen', () => {
+    const { controller, popup } = setup()
+    popup.loading = false
+    popup.emit('ready-to-show')
+    expect(popup.isVisible()).toBe(true)
+    popup.webContents.send.mockClear()
+
+    controller.toggle()
+
+    expect(popup.isVisible()).toBe(false)
+    expect(popup.webContents.send).toHaveBeenCalledWith(IPC.windowLauncherPopupHideEvent)
   })
 
   it('handles failed loading and allows a fresh retry', async () => {

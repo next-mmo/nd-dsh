@@ -1901,10 +1901,14 @@ function ExtensionViewDialog({
   }
 
   useEffect(() => () => { targetGeneration.current.revision += 1 }, [])
-  // The keep-alive titlebar stays live above dialogs, so a full-screen view
-  // must start below it instead of sliding underneath its click targets.
+  // The keep-alive titlebar stays live above dialogs, so every extension view
+  // starts below it — not only a full-screen one. Otherwise a centered dialog
+  // slides under the titlebar and loses its own header row.
   useLayoutEffect(() => {
-    if (!expanded) return
+    if (!target) {
+      setHeaderInset(0)
+      return
+    }
     const header = document.querySelector('header.app-drag')
     if (!(header instanceof HTMLElement)) {
       setHeaderInset(0)
@@ -1915,7 +1919,7 @@ function ExtensionViewDialog({
     const observer = new ResizeObserver(update)
     observer.observe(header)
     return () => observer.disconnect()
-  }, [expanded])
+  }, [target, expanded])
 
   const targetKey = target ? `${target.extensionId}:${target.viewId}:${contextKey(target.context)}` : null
   const currentData = target && data && loadedTarget === targetKey
@@ -2711,7 +2715,15 @@ function ExtensionViewDialog({
           maxHeight: 'none',
           transform: 'none',
           translate: 'none',
-        } : undefined}
+        } : {
+          top: headerInset + 12,
+          // Keep the horizontal centering the dialog utilities ask for, but
+          // anchor below the keep-alive titlebar: a vertically centered card
+          // would slide its header row underneath it.
+          translate: '-50% 0',
+          transform: 'none',
+          maxHeight: `calc(100dvh - ${headerInset + 24}px)`,
+        }}
       >
         <Button
           type="button"

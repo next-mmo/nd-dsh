@@ -94,7 +94,7 @@ export function createLauncherPopup(options: {
     // Focus leaving the popup (click into another app) dismisses it, like
     // Raycast. Hide instead of destroy so the next toggle reuses the surface.
     popup.on('blur', () => {
-      if (popup && !popup.isDestroyed() && popup.isVisible()) popup.hide()
+      if (popup === target && !target.isDestroyed() && target.isVisible()) hidePopupWindow(target)
     })
     return popup
   }
@@ -119,11 +119,24 @@ export function createLauncherPopup(options: {
       width: popupWidth,
       height: popupHeight,
     })
-    // Tell the surface before the window appears so it can restart its
-    // entrance animation and drop any query left from the previous opening.
+    // The surface keeps the palette mounted and primes it (cleared query,
+    // opacity zero) as soon as the previous reveal hides. The window can
+    // therefore appear already at its entrance keyframe: this event only
+    // starts the animation, so no stale full-size frame is ever painted.
     target.webContents.send(IPC.windowLauncherPopupShowEvent)
     target.show()
     target.focus()
+  }
+
+  /**
+   * Hiding is synchronous and the surface is told afterwards, while it is
+   * invisible. That gives the renderer the whole closed interval to clear its
+   * query and re-prime the entrance instead of paying for it on reveal.
+   */
+  const hidePopupWindow = (target: BrowserWindow): void => {
+    if (target.isDestroyed()) return
+    target.hide()
+    if (!target.webContents.isDestroyed()) target.webContents.send(IPC.windowLauncherPopupHideEvent)
   }
 
   const toggle = (): void => {
@@ -142,7 +155,7 @@ export function createLauncherPopup(options: {
 
   const hide = (): void => {
     pendingShow = false
-    if (popup && !popup.isDestroyed()) popup.hide()
+    if (popup && !popup.isDestroyed()) hidePopupWindow(popup)
   }
 
   const handoff = (target: LauncherHandoffTarget, text?: string, context?: NdContext): void => {
