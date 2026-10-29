@@ -97,6 +97,7 @@ export class NineRouterManagedRuntime {
   async initialize(): Promise<void> {
     const installed = await jsonFile<InstalledRuntime>(this.installedFile)
     if (installed && typeof installed.version === 'string' && typeof installed.directory === 'string'
+      && /^[a-f0-9]{64}$/.test(installed.directory.split(/[\\/]/).pop() ?? '')
       && installed.directory.startsWith(join(this.root, 'versions') + (process.platform === 'win32' ? '\\' : '/'))) {
       this.installed = installed
     }
@@ -218,7 +219,26 @@ export class NineRouterManagedRuntime {
       }, 30_000)
       this.processId = processId
       this.port = port
+      // Core spawning means the executable was started, not that the HTTP
+      // service is ready. Don't report a usable gateway until /api/health answers.
+      let ready = false
+      for (let attempt = 0; attempt < 25 && this.processId === processId; attempt++) {
+        try {
+          const response = await fetch('http://127.0.0.1:' + port + '/api/health', {
+            redirect: 'error', cache: 'no-store',
+            signal: AbortSignal.timeout(1000),
+          })
+          if (response.ok && Number(response.headers.get('content-length') ?? 0) < 1024) {
+            const data = await response.json() as { ok?: unknown }
+            if (data?.ok === true) { ready = true; break }
+          }
+        } catch { /* service is not ready yet */ }
+        await new Promise(resolve => setTimeout(resolve, 300))
+      }
+      if (!ready) throw new Error('Managed 9Router failed its startup health check')
     } catch (e) {
+      await this.core.request('process.cancel', { processId }, 5_000).catch(() => undefined)
+      if (this.processId === processId) { this.processId = undefined; this.port = undefined }
       this.lastError = e instanceof Error ? e.message : String(e)
       throw e
     }

@@ -8,8 +8,11 @@ export function parseNineRouterBaseUrl(raw: string): URL {
   let url: URL
   try { url = new URL(raw.trim()) } catch { throw new Error('9Router URL must be absolute') }
   const loopback = url.hostname === '127.0.0.1' || url.hostname === 'localhost' || url.hostname === '[::1]'
-  if ((loopback && url.protocol !== 'http:' && url.protocol !== 'https:')
-      || (!loopback && url.protocol !== 'https:')) throw new Error('9Router requires HTTPS outside loopback')
+  // External hosts require explicit remote-gateway policy and DNS/IP egress
+  // controls. Do not allow an arbitrary renderer string to make main-process
+  // HTTPS requests to private networks, metadata endpoints, or rebinding hosts.
+  if (!loopback) throw new Error('9Router currently supports loopback gateways only')
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('Unsupported gateway URL scheme')
   if (url.username || url.password || url.search || url.hash || url.pathname.replace(/\/+$/, '') !== '/v1') {
     throw new Error('9Router URL must end with /v1 and have no credentials, query or fragment')
   }

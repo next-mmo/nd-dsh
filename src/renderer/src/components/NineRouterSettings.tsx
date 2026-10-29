@@ -17,7 +17,12 @@ export function NineRouterSettings({ onError }: Props) {
   const surface = useRef<HTMLDivElement>(null)
 
   const refresh = useCallback(async () => {
-    setState(await window.ndDshRouter.nineRouterState())
+    const next = await window.ndDshRouter.nineRouterState()
+    setState(next)
+    // Managed instances use an allocated port, not a fixed 20128 endpoint.
+    if (next.running && next.endpoint) {
+      setBaseUrl(previous => previous === 'http://127.0.0.1:20128/v1' ? next.endpoint! : previous)
+    }
   }, [])
 
   useEffect(() => {

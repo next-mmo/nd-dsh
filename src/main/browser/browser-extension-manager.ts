@@ -128,7 +128,7 @@ export class BrowserExtensionManager {
     await this.load()
     let bundledPathChanged = false
     for (const item of this.value.extensions) {
-      if (item.source === 'bundled' && item.catalogId) {
+      if (item.source === 'bundled' && item.catalogId && CATALOG.some(entry => entry.id === item.catalogId && entry.packagePolicy === 'bundled')) {
         const currentPath = await this.materializeBundledExtension(item.catalogId)
         if (currentPath && currentPath !== item.path) {
           item.path = currentPath

@@ -64,42 +64,10 @@ export class RemoteExtensionCatalog {
     this.entries = entries
   }
 
-  async install(id: string, packages: ExtensionPackageStore, scratchRoot: string): Promise<void> {
-    // Until the catalog is ND-signed with a pinned publisher key, hashes in
-    // downloadable metadata alone do not authenticate the release publisher.
+  async install(_id: string, _packages: ExtensionPackageStore, _scratchRoot: string): Promise<void> {
+    // An unsigned catalog cannot authorize runnable third-party packages.
+    // Re-enable only after ND-pinned publisher signatures are verified.
     throw new Error('ND Security: remote extension catalog is not signed; installation is disabled')
-    if (!this.entries.has(id)) await this.refresh()
-    const entry = this.entries.get(id)
-    if (!entry) throw new Error('Unknown catalog extension')
-    await fs.mkdir(scratchRoot, { recursive: true })
-    const directory = await fs.mkdtemp(join(scratchRoot, 'install-'))
-    const controller = new AbortController()
-    const deadline = setTimeout(() => controller.abort(), 120_000)
-    let nextFile = 0
-    try {
-      const downloads = await Promise.allSettled(Array.from({ length: Math.min(4, entry.files.length) }, async () => {
-        while (nextFile < entry.files.length) {
-          const file = entry.files[nextFile++]!
-          const url = `https://raw.githubusercontent.com/zila-kh/nd-dsh/${entry.revision}/extensions/${entry.directory}/${file.path.split('/').map(encodeURIComponent).join('/')}`
-          const data = await this.readBounded(url, file.bytes, controller.signal)
-          const digest = Buffer.from(await webcrypto.subtle.digest('SHA-256', data)).toString('hex')
-          if (data.byteLength !== file.bytes || digest !== file.sha256) throw new Error('Extension download failed integrity verification')
-          const target = join(directory, file.path)
-          await fs.mkdir(dirname(target), { recursive: true })
-          await fs.writeFile(target, new Uint8Array(data))
-          if (file.executable && process.platform !== 'win32') await fs.chmod(target, 0o755)
-        }
-      }).map((operation) => operation.catch((error) => { controller.abort(); throw error })))
-      const failure = downloads.find((result) => result.status === 'rejected')
-      if (failure?.status === 'rejected') throw failure.reason
-      const manifest = validateNdExtensionManifest(JSON.parse(await fs.readFile(join(directory, 'nd-extension.json'), 'utf8')))
-      if (!manifest.ok || JSON.stringify(manifest.manifest) !== JSON.stringify(entry.manifest)) throw new Error('Downloaded manifest does not match the catalog')
-      await packages.installFromDirectory(directory, { expectId: id, source: { kind: 'remote', location: this.catalogUrl, revision: entry.revision } })
-    } finally {
-      controller.abort()
-      clearTimeout(deadline)
-      await fs.rm(directory, { recursive: true, force: true })
-    }
   }
 
   private async readBounded(url: string, limit: number, signal: AbortSignal): Promise<ArrayBuffer> {
