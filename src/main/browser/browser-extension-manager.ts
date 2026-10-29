@@ -138,23 +138,26 @@ export class BrowserExtensionManager {
     }
     if (bundledPathChanged) await this.persist()
 
+    // Never load a persisted unpacked/unsigned browser extension. The previous
+    // check only ran for disabled items, allowing an enabled record to bypass it.
+    let blockedChanged = false
     for (const item of this.value.extensions) {
-      if (!item.enabled) {
-        // Existing unsigned/unpacked extensions also stay disabled after an update:
-      // preventing only new installation would leave a persistent bypass.
-      if (item.source !== 'bundled' || !item.catalogId) {
+      if (!this.isApprovedBundled(item)) {
+        if (item.enabled) blockedChanged = true
         item.enabled = false
         const id = persistedId(item.path)
         this.records.set(id, recordFromManifest(id, item, false, undefined))
         continue
       }
-      const manifest = await readManifest(item.path).catch(() => undefined)
+      if (!item.enabled) {
+        const manifest = await readManifest(item.path).catch(() => undefined)
         const id = persistedId(item.path)
         this.records.set(id, recordFromManifest(id, item, false, manifest))
         continue
       }
       await this.loadOne(item).catch(() => undefined)
     }
+    if (blockedChanged) await this.persist()
     await this.applyDefaultExtensions()
     this.onChanged()
   }
@@ -289,6 +292,13 @@ export class BrowserExtensionManager {
     }
   }
 
+  private isApprovedBundled(item: PersistedExtension): boolean {
+    return item.source === 'bundled'
+      && typeof item.catalogId === 'string'
+      && CATALOG.some(entry => entry.id === item.catalogId && entry.packagePolicy === 'bundled')
+      && item.path === join(this.bundledRoot, item.catalogId)
+  }
+
   async reloadAll(): Promise<BrowserExtensionRecord[]> {
     for (const record of this.records.values()) {
       const loaded = this.browserSession.extensions.getExtension(record.id)
@@ -296,24 +306,31 @@ export class BrowserExtensionManager {
     }
     this.records.clear()
 
+    let blockedChanged = false
     for (const item of this.value.extensions) {
-      if (item.source === 'bundled' && item.catalogId) {
-        const refreshed = await this.materializeBundledExtension(item.catalogId)
-        if (refreshed) item.path = refreshed
+      if (!this.isApprovedBundled(item)) {
+        if (item.enabled) blockedChanged = true
+        item.enabled = false
+        const id = persistedId(item.path)
+        this.records.set(id, recordFromManifest(id, item, false, undefined))
+        continue
       }
+      const refreshed = await this.materializeBundledExtension(item.catalogId!)
+      if (!refreshed) {
+        item.enabled = false
+        blockedChanged = true
+        continue
+      }
+      item.path = refreshed
       const manifest = await readManifest(item.path).catch(() => undefined)
-      if (!item.enabled) {
+      if (!item.enabled || !manifest) {
         const id = persistedId(item.path)
         this.records.set(id, recordFromManifest(id, item, false, manifest))
         continue
       }
-      if (!manifest) {
-        const id = persistedId(item.path)
-        this.records.set(id, recordFromManifest(id, item, true, undefined))
-        continue
-      }
       await this.loadOne(item, manifest).catch(() => undefined)
     }
+    if (blockedChanged) await this.persist()
     this.onChanged()
     return this.list()
   }
@@ -325,7 +342,7 @@ export class BrowserExtensionManager {
     if (!item) throw new Error('Built-in browser extension persistence record is missing')
 
     if (enabled) {
-      if (item.source !== 'bundled' || !item.catalogId) {
+      if (!this.isApprovedBundled(item)) {
         throw new Error('ND Security blocked enabling an unsigned browser extension')
       }
       if (item.source === 'bundled' && item.catalogId) {
@@ -363,7 +380,9 @@ export class BrowserExtensionManager {
     extensionPath: string,
     metadata: Pick<PersistedExtension, 'source' | 'catalogId' | 'storeId' | 'publisher'>,
   ): Promise<BrowserExtensionRecord> {
-    if (metadata.source !== 'bundled' || !metadata.catalogId) {
+    if (metadata.source !== 'bundled' || !metadata.catalogId
+      || !CATALOG.some(entry => entry.id === metadata.catalogId && entry.packagePolicy === 'bundled')
+      || extensionPath !== join(this.bundledRoot, metadata.catalogId)) {
       throw new Error('ND Security requires an ND-reviewed and bundled browser extension')
     }
     const manifest = await readManifest(extensionPath)
@@ -400,6 +419,7 @@ export class BrowserExtensionManager {
   }
 
   private async loadOne(item: PersistedExtension, manifestInput?: Record<string, unknown>): Promise<BrowserExtensionRecord> {
+    if (!this.isApprovedBundled(item)) throw new Error('ND Security rejected an unsigned browser extension at load boundary')
     const manifest = manifestInput ?? await readManifest(item.path)
     let extension: Extension | undefined
     try {
