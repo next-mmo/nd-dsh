@@ -329,6 +329,8 @@ async function createWindow(cdpPort: number): Promise<void> {
     initialProfileId: browserProfiles.activeProfileId(),
     partitionForProfile: browserProfilePartition,
     profileLabel: (profileId) => browserProfiles.profileName(profileId),
+    profileExists: (profileId) => browserProfiles.listSync().some((profile) => profile.id === profileId),
+    defaultProfileId: () => browserProfiles.defaultProfileId(),
     onMediaState: (state) => {
       if (!window.isDestroyed()) window.webContents.send(IPC.mediaStateEvent, state)
       const popup = launcherPopup.window()
@@ -446,6 +448,11 @@ async function createWindow(cdpPort: number): Promise<void> {
   }, zcodeEngine, piEngine, cursorEngine, claudeEngine, engineSpawn, directEngineJournal, nativeAgent)
   activeEngineRouter = engineRouter
   engineRouter.setBrowserAccessProvider(browserPlatform)
+  // A web chat or router lane owns the visible browser while its turn runs;
+  // switching identities mid-turn would hide the page the engine is driving.
+  browserPlatform.setProfileSwitchGuard(() => engineRouter.hasRunningWebTurn()
+    ? 'Finish the active ChatGPT Web / Gemini Web turn before switching browser profiles'
+    : undefined)
   // The router's web lanes need the engine router; start the private loopback
   // bridge first, then hand its descriptor to the Rust router. API lanes still
   // initialize when the bridge cannot start.

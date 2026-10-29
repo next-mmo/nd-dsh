@@ -31,6 +31,7 @@ import { ElectronPageDriver, PageGuardError, type PageDriver } from '../../brows
 import { VisibleCdpConnection } from '../../browser/visible-cdp-connection.js'
 import type { WorkspaceService } from '../../workspace/workspace-service.js'
 import { discardWebImages, stageWebImages, type StagedWebImages } from '../web-attachments.js'
+import { createdProfileId, sessionProfileId } from '../web-engine-profile.js'
 import {
   canSwitchTransport,
   planWebTransports,
@@ -94,6 +95,8 @@ interface StoredGeminiWebSession {
   conversationUrl?: string
   /** ND browser tab owned by this chat; recreated if the user closes it. */
   browserTabId?: string
+  /** Chrome-style profile that owns this chat's browser tab and sign-in. */
+  browserProfileId?: string
   cwd?: string
   title: string
   createdAt: number
@@ -304,9 +307,10 @@ export class GeminiWebEngine {
     return { sessionId, engineId: GEMINI_WEB_ENGINE_ID, events: [...session.transcript] }
   }
 
-  async createSession(input: { cwd?: string; hidden?: boolean; isolated?: boolean; title?: string } = {}): Promise<{ sessionId: string }> {
+  async createSession(input: { cwd?: string; hidden?: boolean; isolated?: boolean; title?: string; profileId?: string } = {}): Promise<{ sessionId: string }> {
     const sessionId = `gemini-web-${randomUUID()}`
     const now = Date.now()
+    const profileId = createdProfileId(this.options.browser, input.profileId)
     const session: StoredGeminiWebSession = {
       sessionId,
       ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
@@ -314,6 +318,10 @@ export class GeminiWebEngine {
       createdAt: now,
       updatedAt: now,
       running: false,
+      // A chat keeps the identity it was started with: its cookies and sign-in
+      // live in that profile's partition, so reopening it after a restart or a
+      // profile switch must return to the same one.
+      ...(profileId ? { browserProfileId: profileId } : {}),
       ...(input.hidden ? { hidden: true } : {}),
       ...(input.isolated ? { isolated: true } : {}),
       sequence: 0,
@@ -480,13 +488,21 @@ export class GeminiWebEngine {
   /** Each chat owns its browser tab so switching chats switches conversations. */
   private async ensureSessionTab(session: StoredGeminiWebSession, targetUrl: string): Promise<string> {
     const browser = this.options.browser
+    // Sessions from before browser profiles existed were signed in through the
+    // historical partition, which the default profile still owns.
+    const desiredProfile = sessionProfileId(browser, session.browserProfileId)
+    if (session.browserProfileId !== desiredProfile) {
+      session.browserProfileId = desiredProfile
+      this.persistStore()
+    }
     const existing = session.browserTabId
     if (existing && browser.tabUrl(existing) !== undefined) {
       await browser.activateTab(existing)
-      if (!sameGeminiUrl(browser.state().url, targetUrl)) await browser.navigate(targetUrl, existing)
+      const currentUrl = browser.tabUrl(existing) ?? ''
+      if (!sameGeminiUrl(currentUrl, targetUrl)) await browser.navigate(targetUrl, existing)
       return existing
     }
-    const tab = await browser.createTab(targetUrl, true)
+    const tab = await browser.createTab(targetUrl, true, desiredProfile)
     session.browserTabId = tab.id
     this.persistStore()
     return tab.id
@@ -1393,6 +1409,7 @@ export class GeminiWebEngine {
         if (session.hidden === true) continue
         if (typeof session.conversationUrl !== 'string' || !isGeminiConversationUrl(session.conversationUrl)) delete session.conversationUrl
         if (typeof session.browserTabId !== 'string' || session.browserTabId === '') delete session.browserTabId
+        if (typeof session.browserProfileId !== 'string' || session.browserProfileId === '') delete session.browserProfileId
         session.running = false
         session.transcript = Array.isArray(session.transcript) ? session.transcript.slice(-MAX_TRANSCRIPT_EVENTS) : []
         session.seenTurnKeys = Array.isArray(session.seenTurnKeys) ? session.seenTurnKeys.slice(-500) : []

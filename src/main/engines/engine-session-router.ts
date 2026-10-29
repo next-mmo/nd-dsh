@@ -390,24 +390,19 @@ export class EngineSessionRouter {
         }
       }
       const browser = this.chatGptWebBrowser
-      const returnUrl = browser?.state().url
+      const focus = this.browserFocus(browser)
       const result = await engine.run(this.shieldPrompt(appendWebTextFiles(optimizedPrompt, options?.files ?? [], 'ChatGPT Web'), options?.promptShieldOverride), {
         ...(options?.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
         cwd: workspaceRoot,
         ...(options?.images?.length ? { images: options.images } : {}),
       })
       // ChatGPT temporarily owns the canonical visible browser while the turn
-      // is active. After a successful turn, restore the user's app preview so
-      // any Git fast-forward becomes visible immediately. On auth/setup errors
-      // leave ChatGPT visible so the user can fix the page and retry.
-      // `about:blank` is the browser's empty initial state, not a preview to
-      // restore. Leaving ChatGPT visible in that case keeps the completed
-      // conversation open instead of erasing it immediately after the turn.
-      if (browser && returnUrl && isRestorableBrowserUrl(returnUrl)) {
-        await browser.navigate(returnUrl).catch((error) => {
-          this.chatGptWebLog?.(`[chatgpt-web] could not restore previous browser URL: ${error instanceof Error ? error.message : String(error)}`)
-        })
-      }
+      // is active. After a successful turn, hand the pane back to the tab and
+      // profile the user had, so any Git fast-forward becomes visible again
+      // and a chat bound to another profile does not leave that identity
+      // selected. On auth/setup errors leave ChatGPT visible so the user can
+      // fix the page and retry.
+      await this.restoreBrowserFocus(browser, focus)
       return result
     }
     if (requested === GEMINI_WEB_ENGINE_ID) {
@@ -427,7 +422,7 @@ export class EngineSessionRouter {
         }
       }
       const browser = this.geminiWebBrowser
-      const returnUrl = browser?.state().url
+      const focus = this.browserFocus(browser)
       const result = await engine.run(this.shieldPrompt(appendWebTextFiles(optimizedPrompt, options?.files ?? [], 'Gemini Web'), options?.promptShieldOverride), {
         ...(options?.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
         ...(options?.model !== undefined ? { model: options.model } : {}),
@@ -435,13 +430,10 @@ export class EngineSessionRouter {
         ...(options?.images?.length ? { images: options.images } : {}),
       })
       // Like ChatGPT Web, Gemini owns the canonical visible browser while the
-      // turn is active; restore the user's app preview afterwards. On
-      // auth/setup errors leave Gemini visible so the user can fix the page.
-      if (browser && returnUrl && isRestorableBrowserUrl(returnUrl)) {
-        await browser.navigate(returnUrl).catch((error) => {
-          this.geminiWebLog?.(`[gemini-web] could not restore previous browser URL: ${error instanceof Error ? error.message : String(error)}`)
-        })
-      }
+      // turn is active; the pane returns to the user's own tab and profile
+      // afterwards. On auth/setup errors leave Gemini visible so the user can
+      // fix the page.
+      await this.restoreBrowserFocus(browser, focus)
       return result
     }
     if (this.chatGptWeb?.listSessions().some((session) => session.running) || this.geminiWeb?.listSessions().some((session) => session.running)) {
@@ -507,16 +499,20 @@ export class EngineSessionRouter {
     const prompt = this.shieldPrompt(input.prompt)
     const workspaceRoot = this.workspace.state().root
     const browser = engineId === CHATGPT_WEB_ENGINE_ID ? this.chatGptWebBrowser : this.geminiWebBrowser
-    const returnUrl = browser?.state().url
+    const focus = this.browserFocus(browser)
     const started = Date.now()
     const created = await engine.createSession({
       cwd: workspaceRoot,
       hidden: true,
       isolated: true,
+      // A private lane runs in the identity the user is browsing as, and the
+      // session records it so a retry after a restart lands in the same jar.
+      ...(browser ? { profileId: browser.activeProfileId() } : {}),
       title: engineId === CHATGPT_WEB_ENGINE_ID ? 'ND Router · ChatGPT Web' : 'ND Router · Gemini Web',
     })
     const sessionId = created.sessionId
     let keepTab = false
+    let laneTabId: string | undefined
     let detachBackground: (() => void) | undefined
     let restorePresentation: (() => void) | undefined
     const stopOnAbort = (): void => {
@@ -534,6 +530,7 @@ export class EngineSessionRouter {
       // duration of the turn and restore the app UI afterwards.
       if (browser) {
         const tabId = await engine.ensureBrowserTab(sessionId)
+        laneTabId = tabId ?? undefined
         if (tabId) {
           if (engineId === GEMINI_WEB_ENGINE_ID) {
             restorePresentation = browser.presentTabForRouterTurn(tabId)
@@ -586,11 +583,50 @@ export class EngineSessionRouter {
       await engine.deleteSession(sessionId, { closeTab: !keepTab }).catch((error) => {
         this.chatGptWebLog?.(`[router web lane] could not clean up session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`)
       })
-      if (!keepTab && browser && returnUrl && isRestorableBrowserUrl(returnUrl)) {
-        await browser.navigate(returnUrl).catch((error) => {
-          this.chatGptWebLog?.(`[router web lane] could not restore previous browser URL: ${error instanceof Error ? error.message : String(error)}`)
-        })
+      if (keepTab && browser && laneTabId && browser.tabUrl(laneTabId) !== undefined) {
+        // A login or challenge page is only useful where the user can see it:
+        // hand the lane's tab, and the profile that owns it, over visibly.
+        await browser.activateTab(laneTabId).catch(() => undefined)
+      } else {
+        await this.restoreBrowserFocus(browser, focus)
       }
+    }
+  }
+
+  /** True while any ChatGPT Web or Gemini Web turn is in flight. */
+  hasRunningWebTurn(): boolean {
+    return Boolean(
+      this.chatGptWeb?.listSessions().some((session) => session.running)
+      || this.geminiWeb?.listSessions().some((session) => session.running),
+    )
+  }
+
+  /** The tab and profile the user was looking at before a web turn took over. */
+  private browserFocus(browser: BrowserController | undefined): { profileId: string; tabId: string } | undefined {
+    if (!browser || typeof browser.activeProfileId !== 'function' || typeof browser.activeTabId !== 'function') {
+      return undefined
+    }
+    return { profileId: browser.activeProfileId(), tabId: browser.activeTabId() }
+  }
+
+  /**
+   * Return the visible browser to the tab and profile the user had before a
+   * web turn. Activating the original tab also restores its profile identity;
+   * when that tab is gone, the profile switch alone brings the user's tab set
+   * back.
+   */
+  private async restoreBrowserFocus(
+    browser: BrowserController | undefined,
+    focus: { profileId: string; tabId: string } | undefined,
+  ): Promise<void> {
+    if (!browser || !focus) return
+    if (typeof browser.tabUrl === 'function' && typeof browser.activateTab === 'function'
+      && browser.tabUrl(focus.tabId) !== undefined) {
+      await browser.activateTab(focus.tabId).catch(() => undefined)
+      return
+    }
+    if (typeof browser.switchProfile === 'function') {
+      await browser.switchProfile(focus.profileId).catch(() => undefined)
     }
   }
 
@@ -888,26 +924,6 @@ function appendWebTextFiles(prompt: string, files: readonly HarnessRunFile[], en
     throw new Error(`${engineName} can attach images and text/code files only. Use a CLI engine for binary files or folders: ${names}${more}`)
   }
   return inline.suffix ? `${prompt}\n\n${inline.suffix}` : prompt
-}
-
-function isChatGptUrl(value: string): boolean {
-  try {
-    return new URL(value).origin === 'https://chatgpt.com'
-  } catch {
-    return false
-  }
-}
-
-function isGeminiUrl(value: string): boolean {
-  try {
-    return new URL(value).origin === 'https://gemini.google.com'
-  } catch {
-    return false
-  }
-}
-
-export function isRestorableBrowserUrl(value: string): boolean {
-  return value.trim().toLowerCase() !== 'about:blank' && !isChatGptUrl(value) && !isGeminiUrl(value)
 }
 
 function sameWorkspaceRoot(left: string, right: string): boolean {

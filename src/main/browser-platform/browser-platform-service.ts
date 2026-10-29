@@ -30,6 +30,7 @@ export class BrowserPlatformService {
   private readonly policy: BrowserPolicyService
   private readonly router: BrowserTargetRouter
   private onChanged: ((state: BrowserPlatformState) => void) | undefined
+  private profileSwitchGuard: (() => string | undefined) | undefined
   private closed = false
 
   constructor(
@@ -247,11 +248,18 @@ export class BrowserPlatformService {
   }
 
   private assertProfileSwitchSafe(): void {
+    const guardReason = this.profileSwitchGuard?.()
+    if (guardReason) throw new Error(guardReason)
     const activity = this.browser.externalActivity()
     if (!activity) return
     throw new Error(activity === 'router-turn'
       ? 'Finish the active ChatGPT Web / Gemini Web turn before switching browser profiles'
       : 'Finish the active background browser run before switching browser profiles')
+  }
+
+  /** Blocks identity switches while another owner drives the visible browser. */
+  setProfileSwitchGuard(guard: (() => string | undefined) | undefined): void {
+    this.profileSwitchGuard = guard
   }
 
   async select(selection: BrowserSelection): Promise<BrowserPlatformState> {

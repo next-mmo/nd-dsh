@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { EngineSessionRouter, isRestorableBrowserUrl } from '../src/main/engines/engine-session-router.js'
+import { EngineSessionRouter } from '../src/main/engines/engine-session-router.js'
 import type { WorkspaceState } from '../src/shared/contracts.js'
 import { ND_WORKSPACE_CONTEXT_MARKER } from '../src/shared/workspace-context.js'
 import { CHATGPT_WEB_ENGINE_ID, CLAUDE_CODE_CLI_ENGINE_ID, CODEX_CLI_ENGINE_ID, GEMINI_WEB_ENGINE_ID, ND_NATIVE_ENGINE_ID } from '../src/shared/coding-engines.js'
@@ -377,14 +377,6 @@ describe('native direct transcript retention', () => {
   })
 })
 
-describe('ChatGPT Web browser restoration', () => {
-  it('does not restore the empty browser state over a completed chat', () => {
-    expect(isRestorableBrowserUrl('about:blank')).toBe(false)
-    expect(isRestorableBrowserUrl('ABOUT:BLANK')).toBe(false)
-    expect(isRestorableBrowserUrl('https://chatgpt.com/c/abc')).toBe(false)
-    expect(isRestorableBrowserUrl('http://localhost:5173/')).toBe(true)
-  })
-})
 
 async function withTempWorkspace(fn: (root: string) => Promise<void>): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), 'nd-router-workspace-'))
@@ -449,7 +441,15 @@ describe('Web chat image attachments', () => {
       stop: vi.fn(),
       createSession: vi.fn(async () => ({ sessionId })),
     }
-    const browser = { state: () => ({ url: 'https://example.com/preview' }), navigate: vi.fn(async () => {}) }
+    const browser = {
+      state: () => ({ url: 'https://example.com/preview' }),
+      navigate: vi.fn(async () => {}),
+      activeProfileId: () => 'default',
+      activeTabId: () => 'tab-1',
+      tabUrl: () => undefined,
+      activateTab: vi.fn(async () => ({})),
+      switchProfile: vi.fn(async () => ({})),
+    }
     const harness = { status: () => ({ state: 'ready' }), run: vi.fn(), gatewayRpc: vi.fn(), stop: vi.fn() }
     const workspace = { state: () => workspaceState, assertUsable: vi.fn() }
     const runtime = { browser, git: {} as never, storePath: 'unused', engine }
@@ -481,7 +481,15 @@ describe('Web chat image attachments', () => {
       stop: vi.fn(),
       createSession: vi.fn(async () => ({ sessionId })),
     }
-    const browser = { state: () => ({ url: 'https://example.com/preview' }), navigate: vi.fn(async () => {}) }
+    const browser = {
+      state: () => ({ url: 'https://example.com/preview' }),
+      navigate: vi.fn(async () => {}),
+      activeProfileId: () => 'default',
+      activeTabId: () => 'tab-1',
+      tabUrl: () => undefined,
+      activateTab: vi.fn(async () => ({})),
+      switchProfile: vi.fn(async () => ({})),
+    }
     const harness = { status: () => ({ state: 'ready' }), run: vi.fn(), gatewayRpc: vi.fn(), stop: vi.fn() }
     const workspace = { state: () => workspaceState, assertUsable: vi.fn() }
     const runtime = { browser, git: {} as never, storePath: 'unused', engine }

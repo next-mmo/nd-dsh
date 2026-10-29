@@ -577,11 +577,11 @@ describe('ChatGPT Web project binding management and persistence', () => {
         const { sessionId } = await engine.createSession({ cwd: '/workspace/direct' })
         const session = internals.sessions.get(sessionId)
         await expect(internals.openBoundConversation(session, new AbortController().signal)).rejects.toThrow('no CDP target id')
-        expect(createTab).toHaveBeenLastCalledWith('https://chatgpt.com/', true)
+        expect(createTab).toHaveBeenLastCalledWith('https://chatgpt.com/', true, 'default')
 
         await engine.setProjectBinding('/workspace/direct', 'https://chatgpt.com/g/g-p-6a9bf2a6a8c8191ba1ee77c51bc0967-app/project')
         await expect(internals.openBoundConversation(session, new AbortController().signal)).rejects.toThrow('no CDP target id')
-        expect(createTab).toHaveBeenLastCalledWith('https://chatgpt.com/g/g-p-6a9bf2a6a8c8191ba1ee77c51bc0967-app/project', true)
+        expect(createTab).toHaveBeenLastCalledWith('https://chatgpt.com/g/g-p-6a9bf2a6a8c8191ba1ee77c51bc0967-app/project', true, 'default')
       } finally {
         await engine.close()
       }
@@ -663,7 +663,7 @@ describe('ChatGPT Web project binding management and persistence', () => {
         if (!session) throw new Error('guest session missing')
         session.conversationUrl = 'https://chatgpt.com/uc/6aaac7f2-abcd-ef01'
         await expect(internals.openBoundConversation(session, new AbortController().signal)).rejects.toThrow('no CDP target id')
-        expect(createTab).toHaveBeenLastCalledWith('https://chatgpt.com/uc/6aaac7f2-abcd-ef01', true)
+        expect(createTab).toHaveBeenLastCalledWith('https://chatgpt.com/uc/6aaac7f2-abcd-ef01', true, 'default')
       } finally {
         await engine.close()
       }

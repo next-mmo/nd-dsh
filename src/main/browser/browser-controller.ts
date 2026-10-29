@@ -47,6 +47,10 @@ export interface BrowserControllerOptions {
   partitionForProfile?: (profileId: string) => string
   /** Human label for a profile, surfaced on target descriptors. */
   profileLabel?: (profileId: string) => string
+  /** Whether a profile record still exists; deleted profiles must not resurrect. */
+  profileExists?: (profileId: string) => boolean
+  /** The profile ND treats as its primary identity (the global default). */
+  defaultProfileId?: () => string
 }
 
 const EXTENSION_RUNTIME_PRELOAD_ID = 'nd-extension-runtime'
@@ -113,6 +117,8 @@ export class BrowserController {
   private readonly extensionRuntimePreload: string | undefined
   private readonly partitionForProfile: (profileId: string) => string
   private readonly profileLabelFor: (profileId: string) => string
+  private readonly profileExistsFor: (profileId: string) => boolean
+  private readonly defaultProfileFor: () => string
   private sessionCreatedListener: ((profileId: string, session: Session) => void) | undefined
   private downloadAuthorizationHandler: ((request: BrowserDownloadAuthorizationRequest) => Promise<boolean>) | undefined
   private extensionPopup: BrowserExtensionPopupRuntime | undefined
@@ -139,6 +145,8 @@ export class BrowserController {
     this.extensionRuntimePreload = options.extensionRuntimePreload
     this.partitionForProfile = options.partitionForProfile ?? (() => BROWSER_PARTITION)
     this.profileLabelFor = options.profileLabel ?? (() => 'ND Browser')
+    this.profileExistsFor = options.profileExists ?? (() => true)
+    this.defaultProfileFor = options.defaultProfileId ?? (() => DEFAULT_BROWSER_PROFILE_ID)
     this.activeProfileValue = options.initialProfileId ?? DEFAULT_BROWSER_PROFILE_ID
     this.mediaTracker = new BrowserMediaTracker(options.onMediaState ?? (() => undefined))
     claimExtensionPopupContext(this)
@@ -183,6 +191,16 @@ export class BrowserController {
 
   profileLabel(): string {
     return this.profileLabelFor(this.activeProfileValue)
+  }
+
+  /** False once a profile has been deleted, so engines rebind instead of resurrecting it. */
+  profileExists(profileId: string): boolean {
+    return this.profileExistsFor(profileId)
+  }
+
+  /** The global default profile: ND's primary identity and fallback. */
+  defaultProfileId(): string {
+    return this.defaultProfileFor()
   }
 
   /** True while a router web turn owns the visible/background browser surface. */
