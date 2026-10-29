@@ -57,6 +57,9 @@
   --composer: rgb(29 30 35 / 96%);
   --meta: rgb(24 25 30 / 92%);
   --browser: #0d0e11;
+  --nd-canvas-bg: #18181c;
+  --nd-canvas-dot: rgb(255 255 255 / 12%);
+  --nd-canvas-frame-shadow: 0 18px 55px -22px rgb(0 0 0 / 80%);
   --inset: rgb(0 0 0 / 22%);
   --selected: rgb(10 132 255 / 17%);
   --selected-row: #d3dcec;
@@ -143,6 +146,9 @@
   --composer: rgb(255 255 255 / 94%);
   --meta: rgb(242 242 247 / 90%);
   --browser: #ececf0;
+  --nd-canvas-bg: #e8e8eb;
+  --nd-canvas-dot: rgb(24 24 27 / 14%);
+  --nd-canvas-frame-shadow: 0 18px 55px -28px rgb(24 24 27 / 45%);
   --inset: rgb(30 30 35 / 5%);
   --selected: rgb(0 122 255 / 12%);
   --selected-row: rgb(0 122 255 / 14%);

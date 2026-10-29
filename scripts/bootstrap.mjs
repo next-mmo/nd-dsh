@@ -7,24 +7,19 @@ import { fileURLToPath } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const harnessRoot = join(root, 'vendor', 'deepseek-harness')
-const ndPencilUpstreamRoot = join(root, 'vendor', 'openpencil')
 const harnessPin = JSON.parse(await fs.readFile(join(root, 'vendor', 'deepseek-harness.json'), 'utf8'))
-const ndPencilUpstreamPin = JSON.parse(await fs.readFile(join(root, 'vendor', 'openpencil.json'), 'utf8'))
 const harnessRepository = requireString(harnessPin.repository, 'vendor/deepseek-harness.json repository')
-// Harness tracks upstream latest during beta; only ND Pencil is commit-pinned.
+// Harness tracks upstream latest during beta.
 const harnessBranch = typeof harnessPin.branch === 'string' && harnessPin.branch.trim()
   ? harnessPin.branch.trim()
   : 'master'
-const ndPencilUpstreamRepository = requireString(ndPencilUpstreamPin.repository, 'vendor/openpencil.json repository')
-const ndPencilUpstreamCommit = requireCommit(ndPencilUpstreamPin.commit, 'ND Pencil upstream commit')
 const flags = new Set(process.argv.slice(2))
 
 if (flags.has('--help')) {
   console.log(`Usage: node scripts/bootstrap.mjs [options]\n\n` +
     `  --check                Verify prerequisites and upstream sources only\n` +
     `  --skip-root-install    Skip the ND-DSH pnpm install\n` +
-    `  --skip-dsh-build       Skip install/build inside DeepSeek Harness\n` +
-    `  --build-nd-pencil      Compile and stage the bundled ND Pencil runtime\n`)
+    `  --skip-dsh-build       Skip install/build inside DeepSeek Harness\n`)
   process.exit(0)
 }
 
@@ -41,19 +36,10 @@ await ensureSource({
   repository: harnessRepository,
   branch: harnessBranch,
 })
-await ensureSource({
-  name: 'ND Pencil upstream',
-  root: ndPencilUpstreamRoot,
-  marker: 'Cargo.toml',
-  submodulePath: 'vendor/openpencil',
-  repository: ndPencilUpstreamRepository,
-  commit: ndPencilUpstreamCommit,
-})
 await syncTrackedSource('Harness', harnessRoot, harnessBranch)
-await verifyPinnedSource('ND Pencil upstream', ndPencilUpstreamRoot, ndPencilUpstreamCommit)
 
 if (flags.has('--check')) {
-  console.log('Bootstrap check passed for DeepSeek Harness and the ND Pencil upstream source.')
+  console.log('Bootstrap check passed for DeepSeek Harness.')
   process.exit(0)
 }
 
@@ -71,12 +57,6 @@ if (!flags.has('--skip-dsh-build')) {
   // typecheck aborts on its own test files here and leaves the runtime without
   // the client artifacts the web profile loads. See scripts/build-harness.mjs.
   await run(process.execPath, ['scripts/build-harness.mjs', '--skip-install'], root, { env: harnessEnv })
-}
-
-if (flags.has('--build-nd-pencil')) {
-  await run(process.execPath, ['scripts/build-nd-pencil.mjs'], root)
-} else {
-  console.log('\nND Pencil upstream source is pinned and ready. Run `pnpm nd-pencil:build` when developing the embedded Freeform canvas.')
 }
 
 await run('corepack', ['pnpm', 'verify'], root)
@@ -122,31 +102,9 @@ async function syncTrackedSource(name, sourceRoot, branch) {
   console.log(`${name} synced to upstream ${branch} latest at ${current.slice(0, 12)}.`)
 }
 
-async function verifyPinnedSource(name, sourceRoot, expectedCommit) {
-  const status = await capture('git', ['status', '--porcelain'], sourceRoot)
-  if (status.trim()) throw new Error(`${name} submodule has local changes. Clean it before bootstrapping.`)
-
-  let current = (await capture('git', ['rev-parse', 'HEAD'], sourceRoot)).trim().toLowerCase()
-  if (current !== expectedCommit) {
-    console.log(`Checking out pinned ${name} commit ${expectedCommit}...`)
-    await run('git', ['fetch', 'origin', expectedCommit, '--depth=1'], sourceRoot)
-    await run('git', ['checkout', '--detach', expectedCommit], sourceRoot)
-    await run('git', ['submodule', 'update', '--init', '--recursive'], sourceRoot)
-    current = (await capture('git', ['rev-parse', 'HEAD'], sourceRoot)).trim().toLowerCase()
-  }
-  if (current !== expectedCommit) throw new Error(`${name} pin mismatch: expected ${expectedCommit}, found ${current}`)
-  console.log(`${name} pinned at ${current.slice(0, 12)}.`)
-}
-
 function requireString(value, field) {
   if (typeof value !== 'string' || !value.trim()) throw new Error(`${field} is invalid`)
   return value.trim()
-}
-
-function requireCommit(value, field) {
-  const commit = requireString(value, field)
-  if (!/^[0-9a-f]{40}$/i.test(commit)) throw new Error(`${field} must be a full 40-character SHA`)
-  return commit.toLowerCase()
 }
 
 function run(command, args, cwd, options = {}) {

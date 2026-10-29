@@ -1,16 +1,22 @@
 import { describe, expect, it } from 'vitest'
 import { readFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 import { parseDocument } from 'yaml'
 import { zstdCompressSync } from 'node:zlib'
 import { decodeChildJournal, childOverlap } from '../benchmarks/coordination-policy/child-evidence.mjs'
 import { comparePairs, summarizeEvents } from '../benchmarks/coordination-policy/metrics.mjs'
 
-const url = new URL('../configs/dsh/agent-presets/nd-dsh/agent.cordis.yml', import.meta.url)
+const url = new URL('../configs/dsh/nd-dsh.patch.yml', import.meta.url)
 const document = parseDocument(await readFile(url, 'utf8'), { customTags: [{ tag: 'tag:yaml.org,2002:js', resolve: source => source }] })
 if (document.errors.length) throw document.errors[0]
-const expression = document.toJS()[0].config.prefix
-const render = mode => new Function('process', 'baseUrl', `return ${expression}`)({ env: { ND_DSH_WORKSPACE_CONTEXT: 'test context', ND_DSH_COORDINATION_POLICY: mode }, getBuiltinModule: process.getBuiltinModule }, url.href)
+const presetRow = document.toJS()
+  .flatMap(row => row?.insert ?? [])
+  .find(entry => entry.id === 'preset-nd-dsh')
+if (!presetRow) throw new Error('nd-dsh.patch.yml declares no preset-nd-dsh row')
+const expression = presetRow.config.plugins.find(plugin => plugin.id === 'persona').config.prefix
+const dshHomePath = relative => fileURLToPath(new URL(relative.replace(/^\.agent-presets\//, 'agent-presets/'), url))
+const render = mode => new Function('process', 'baseUrl', 'dshHomePath', `return ${expression}`)({ env: { ND_DSH_WORKSPACE_CONTEXT: 'test context', ND_DSH_COORDINATION_POLICY: mode }, getBuiltinModule: process.getBuiltinModule }, url.href, dshHomePath)
 const verified = (duration, polls = 0) => ({ outcome: 'completed', totalWallMs: duration, inputSnapshotSha256: 'same-inputs', promptSha256: 'same-prompt', route: { model: 'same-model', provider: 'same-provider' }, verification: { passed: true }, metrics: { statusPolls: polls }, childExecutionOverlapVerified: true })
 const pairs = () => Array.from({ length: 5 }, (_, index) => ({ pair: index + 1, baseline: verified(1000), candidate: verified(750, 4) }))
 const call = (id, start, name = 'subagent') => ({ type: 'tool/call', time: start, data: { callId: id, name } })

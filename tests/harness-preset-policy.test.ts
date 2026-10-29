@@ -19,13 +19,13 @@ describe('blockPresetSelection', () => {
   })
 
   it('blocks making cordis the default preset', () => {
-    const result = blockPresetSelection('settings.update', { ns: 'agent-presets', patch: { default: 'cordis' } })
+    const result = blockPresetSelection('settings.update', { ns: 'agent-preset-registry', patch: { default: 'cordis' } })
 
     expect(result).toEqual({ ok: false, error: { code: 'agent-preset/blocked', message: PRESET_BLOCK_REASON } })
   })
 
   it('allows other preset defaults and unrelated settings namespaces', () => {
-    expect(blockPresetSelection('settings.update', { ns: 'agent-presets', patch: { default: 'code' } })).toBeUndefined()
+    expect(blockPresetSelection('settings.update', { ns: 'agent-preset-registry', patch: { default: 'code' } })).toBeUndefined()
     expect(blockPresetSelection('settings.update', { ns: 'ui-theme', patch: { preference: 'dark' } })).toBeUndefined()
   })
 

@@ -28,9 +28,6 @@ const agentStagedBinary = join(agentOutput, agentBinaryName)
 const browserHostStagedBinary = join(browserHostOutput, browserHostBinaryName)
 const codexOutput = join(harnessOutput, 'node_modules', '@deepseek-ai', 'dsh-subagent-codex')
 const cordisGroupOutput = join(harnessOutput, 'node_modules', '@deepseek-ai', 'cordis-plugin-group')
-const pencilBuildScript = join(root, 'scripts', 'build-nd-pencil.mjs')
-const pencilBinaryName = process.platform === 'win32' ? 'op-host-web-server.exe' : 'op-host-web-server'
-const pencilBinary = join(root, 'resources', 'nd-pencil', 'bin', pencilBinaryName)
 const corepack = process.platform === 'win32' ? 'corepack.cmd' : 'corepack'
 const cargo = process.platform === 'win32' ? 'cargo.exe' : 'cargo'
 const harnessEnv = { ...process.env, CI: 'true' }
@@ -126,13 +123,10 @@ console.log(
 await fs.copyFile(join(harnessSource, 'LICENSE'), join(harnessOutput, 'LICENSE'))
 await fs.copyFile(join(harnessSource, 'THIRD_PARTY_NOTICES.md'), join(harnessOutput, 'THIRD_PARTY_NOTICES.md'))
 
-console.log('\nBuilding and staging the ND Pencil runtime...')
-await run(process.execPath, [pencilBuildScript], root)
-
-// Every redistributed surface needs a notice in the artifact: the Harness and
-// Pencil ship their own, the npm/Electron/Chromium files ship beside the app,
-// and this generated aggregate covers the app.asar packages and the crates
-// linked into the native binaries. verify-release.mjs asserts it arrives.
+// Every redistributed surface needs a notice in the artifact: the Harness ships
+// its own, the npm/Electron/Chromium files ship beside the app, and this
+// generated aggregate covers the app.asar packages and the crates linked into
+// the native binaries. verify-release.mjs asserts it arrives.
 console.log('\nGenerating the aggregated third-party notices...')
 await run(process.execPath, [join(root, 'scripts', 'gen-third-party-notices.mjs')], root)
 
@@ -154,10 +148,8 @@ const required = [
   join(root, 'extensions', 'browser-companion', 'manifest.json'),
   join(root, 'extensions', 'browser-companion', 'service-worker.js'),
   join(root, 'scripts', 'nd-browser-companion-runtime.mjs'),
+  join(root, 'scripts', 'nd-design-mcp.mjs'),
   join(root, 'scripts', 'register-browser-native-host.mjs'),
-  pencilBinary,
-  join(root, 'resources', 'nd-pencil', 'bin', 'web-bundle', 'op_host_web.js'),
-  join(root, 'resources', 'nd-pencil', 'bin', 'web-bundle', 'op_host_web_bg.wasm'),
   join(stageRoot, 'THIRD_PARTY_NOTICES.nd-dsh.md'),
 ]
 for (const path of required) await requireFile(path, 'Release runtime file')
@@ -181,13 +173,8 @@ await run(process.execPath, [join(harnessOutput, 'lib', 'bin.js'), '--help'], ro
 const rootManifest = await readJson(join(root, 'package.json'))
 const harnessManifest = await readJson(join(harnessOutput, 'package.json'))
 const agentBrowserManifest = await readJson(join(root, 'node_modules', 'agent-browser', 'package.json'))
-const pencilPin = await readJson(join(root, 'vendor', 'openpencil.json'))
 const harnessPin = await readJson(join(root, 'vendor', 'deepseek-harness.json'))
 const harnessCommit = await gitHead(harnessSource)
-const pencilCommit = await gitHead(join(root, 'vendor', 'openpencil'))
-if (pencilPin.commit !== pencilCommit) {
-  throw new Error(`ND Pencil source pin mismatch: expected ${String(pencilPin.commit)}, found ${pencilCommit}`)
-}
 // The Harness tracks upstream during beta, so no frozen pin gates development.
 // A release is different: it must ship the exact commit that was recorded when
 // the runtime was last reviewed and synced, otherwise the provenance in the
@@ -215,7 +202,6 @@ const manifest = {
     nativeHostSha256: await sha256(browserHostStagedBinary),
   },
   harness: { version: harnessManifest.version, commit: harnessCommit },
-  ndPencil: { version: pencilPin.release, commit: pencilCommit, sha256: await sha256(pencilBinary) },
   agentBrowser: { version: agentBrowserManifest.version },
 }
 await fs.writeFile(join(stageRoot, 'release-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
@@ -224,7 +210,6 @@ console.log('\nRelease runtime staged successfully.')
 console.log(`ND Core: ${rootManifest.version} / protocol 1`)
 console.log(`Browser Companion: ${rootManifest.version} / protocol 1`)
 console.log(`Harness: ${harnessManifest.version} @ ${harnessCommit.slice(0, 12)}`)
-console.log(`ND Pencil: ${pencilPin.release} @ ${pencilCommit.slice(0, 12)}`)
 console.log(`Manifest: ${join(stageRoot, 'release-manifest.json')}`)
 
 async function deploy(packageName, destination, productionOnly) {

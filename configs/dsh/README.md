@@ -21,10 +21,13 @@ node <harness>/apps/cli/lib/bin.js --profile web --patch configs/dsh/nd-dsh.patc
   agent-browser internally to the exact active built-in `WebContentsView`
   target for host-side inspection, but raw agent-browser MCP tools are not
   exposed to the model because that would bypass the unified policy boundary.
-- **`agent-presets/nd-dsh/`** is the ND-DSH agent preset (the standard coding
-  toolset plus the ND-DSH persona and the bundled `live-browser` skill). The
-  desktop installs it into the harness-home user preset root at launch; the
-  shipped `standard`, `code` (PTC/code mode), and `cordis` (creator mode)
+- **The ND-DSH agent preset** is the `preset-nd-dsh` declaration inside
+  `nd-dsh.patch.yml`: the standard coding toolset plus the ND-DSH persona and
+  the bundled `live-browser` skill. Harness 0.2.1 reads agent presets only from
+  `@deepseek-ai/dsh-agent-preset` declarations in a patch layer, so the old
+  user-preset directory is no longer a preset source. The desktop still copies
+  `agent-presets/nd-dsh/` into `$DSH_HOME/.agent-presets` for its skills and
+  coordination policy assets. The shipped `standard`, `ptc`, and `cordis`
   presets remain available from the launcher's system root.
 
 Filesystem and shell providers use `workspace-write` by default. Set

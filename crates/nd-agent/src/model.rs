@@ -64,6 +64,11 @@ const TOOLS: &[(&str, &str, &str)] = &[
         "Invoke an installed ND extension native-host command or view through ND's policy and grant broker",
         r#"{"type":"object","properties":{"extensionId":{"type":"string"},"contributionId":{"type":"string"},"input":{"type":"object"}},"required":["extensionId","contributionId"]}"#,
     ),
+    (
+        "nd_design",
+        "Read or edit the live ND Pencil canvas through ND's controlled design session. Use state first; never write .op files with workspace tools.",
+        r#"{"type":"object","properties":{"action":{"type":"string","enum":["state","open","create","apply","undo","redo","save","export"]},"path":{"type":"string"},"name":{"type":"string"},"commands":{"type":"array","items":{"type":"object"},"maxItems":100},"format":{"type":"string","enum":["spec","svg"]}},"required":["action"]}"#,
+    ),
 ];
 
 pub fn tool_names() -> Vec<&'static str> {

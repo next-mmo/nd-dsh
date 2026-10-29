@@ -142,6 +142,7 @@ and in the product.
 | `accountmgt.accounts.list` / `.create` / `.update` / `.delete` | `accountmgt.read` / `accountmgt.write` | The Account Manager metadata store (service, email, mailbox/site links, status); Personal only. It never stores passwords or verification codes. |
 | `browser.openUrl` / `browser.search` | `browser.navigate` | Navigate the visible embedded ND browser |
 | `browser.openExternal` | `browser.openExternal` | Open an http(s) URL in the system browser |
+| `media.download.current` / `.status` / `.prepare` / `.start` / `.cancel` / `.reveal` | `media.download` | The YouTube Downloader host surface: read the **active** YouTube tab, acquire pinned yt-dlp + Deno after SHA-256 verification, start one single-file MP4/M4A download, poll status, cancel, or reveal a completed file. Personal only; status/cancel/reveal are user gestures. |
 | `browser.translate` | `browser.navigate` | Translate text in the ND browser (see §7 for providers and result states) |
 | `browser.translate.history` / `browser.translate.history.clear` | `translate.history` | Read or clear translation history |
 | `os.openTarget` | `os.launch` | Pick and open an app, file, or folder (user selection only; no shell strings) |
@@ -363,7 +364,8 @@ Rules for a web view:
   sandboxed web-view contract above.
 - Executable lifecycle hooks; instruction-only hooks remain instructions.
 - A second general-purpose JavaScript runtime, or running Raycast/VS Code
-  packages unchanged.
+  packages unchanged. The YouTube Downloader's pinned Deno is an implementation
+  detail of its native host, never a runtime a package can select or ship.
 - An OS sandbox for external MCP executables: they run with your desktop user's
   OS permissions, which activation details say explicitly. Executable trust is
   separate from ND API grants.
@@ -428,6 +430,23 @@ ships only a sandboxed canvas UI whose privileged actions are
 `disk.reveal`. Its pure layout logic (`ui/sunburst.js`) is unit-tested
 directly from the repository; desktop coverage is in
 `tests/disk-cleaner-extension.test.ts` and `e2e/disk-cleaner.spec.ts`.
+
+`YouTube Downloader` under `extensions/youtube-downloader` is the reference for
+a pinned native tool behind a web view. It is fully external and Windows-only:
+first use downloads reviewed yt-dlp (Unlicense) and Deno (MIT) releases into
+`<userData>/runtimes/media-downloader`, checks exact byte counts and SHA-256,
+and never executes them during setup. Downloads run through nd-core with one
+fixed argv, ignore yt-dlp config files, import no cookies, never use ffmpeg,
+and write only into a per-job staging directory; exactly one verified MP4/M4A
+is moved into Downloads. The package ships no binaries. It accepts single
+YouTube watch/Shorts/live/`youtu.be` links only, runs one job at a time, and
+keeps status/cancel/reveal behind a user gesture. Deno is an implementation
+detail of this native host, not a runtime packages may select. Coverage:
+`tests/youtube-downloader-extension.test.ts`, `tests/media-download-service.test.ts`,
+`tests/media-download-tools.test.ts`, and `e2e/youtube-downloader.spec.ts`.
+Live tool installation and a real download are opt-in via
+`ND_MEDIA_DOWNLOAD_E2E=1`; `ND_DSH_MEDIA_DOWNLOAD_DIR` and
+`ND_DSH_MEDIA_TOOLS_ROOT` redirect an E2E run away from real user folders.
 
 For the real model-backed coding autopilot scenario, build first and configure
 the gitignored `.env.e2e`. In PowerShell, run:

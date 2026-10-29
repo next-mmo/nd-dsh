@@ -85,7 +85,7 @@ export function PresetSettings({ onError, onOpenSession }: PresetSettingsProps) 
     setBusyId(preset.id)
     setNotice(null)
     try {
-      const result = await window.ndDsh.dsh.rpc('settings.update', { ns: 'agent-presets', patch: { default: preset.id } })
+      const result = await window.ndDsh.dsh.rpc('settings.update', { ns: 'agent-preset-registry', patch: { default: preset.id } })
       if (!result.ok) throw new Error(result.error?.message ?? 'settings.update failed')
       setPresets((current) => current.map((row) => ({ ...row, isDefault: row.id === preset.id })))
       setNotice(`${preset.name ?? preset.id} is now the default preset for new sessions.`)

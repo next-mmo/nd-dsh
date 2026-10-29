@@ -14,8 +14,8 @@ Use the current root `AGENTS.md` as the authority for product and security requi
 - Give one worker at a time ownership of a running ND app, embedded browser session, or open ND Pencil document. Other workers can inspect source, prepare changes, or verify independent contracts while that resource is in use.
 - Agent browser work must use the canonical embedded `WebContentsView` with the shared `ND_DSH_AGENT_BROWSER_CONFIG` and `ND_DSH_AGENT_BROWSER_SESSION`. Do not launch hidden automation browsers for agent tasks. Preserve loopback-only CDP, context isolation, renderer sandboxing, and workspace-scoped policy.
 - Keep desktop capabilities behind narrow IPC contracts. Renderer changes must fail closed when trusted preload is missing; never insert production demo companies or fake sessions to make a worker's UI check pass.
-- Use ND Pencil terminology in product surfaces and preserve upstream attribution and its tested source pin. Stage the bundled engine under `resources/nd-pencil`; do not require a separate upstream installation or PATH setup. Preserve the managed engine's loopback, token, allowed-origin, sandbox, and network restrictions from `AGENTS.md`.
-- Manipulate an open Freeform document through the controlled ND Pencil editor/MCP bridge. Serialize document operations and avoid concurrent filesystem writes to `.op` JSON. Building a concept should change the active project's real application source as a reviewable Git diff.
+- Use ND Pencil terminology in product surfaces. The editor is in-repo React/DOM/SVG plus the main-owned `DesignSessionService`; do not add a vendored editor, native design binary, child view, or design shell. Preserve the v2 `.op` schema, legacy import/backup, workspace containment, and atomic save rules from `AGENTS.md`.
+- Manipulate an open Freeform document through the typed `nd_design` tool/loopback MCP bridge. Serialize document operations; never write `.op` JSON directly or concurrently. Building a concept should change the active project's real application source as a reviewable Git diff.
 
 ## Verification and delivery
 

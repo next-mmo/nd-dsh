@@ -1,4 +1,5 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, screen, shell, type IpcMainInvokeEvent } from 'electron'
+import type { ChildProcess } from 'node:child_process'
 import { join } from 'node:path'
 import { CAPABILITIES_IPC, type CapabilityKind, type CapabilityProviderStatus, type CapabilitySubjectType } from '../shared/capabilities.js'
 import { asRunImages } from './run-images.js'
@@ -22,6 +23,7 @@ import { capturePrimaryDisplay, captureSelfWindow } from './capture/app-capture.
 import { describePick, ExternalElementStage, formatExternalElementContext, pickElementInExternalApp, RecentPickStore, type ExternalPick } from './capture/external-inspect.js'
 import type { BrowserController } from './browser/browser-controller.js'
 import type { BrowserPlatformService } from './browser-platform/browser-platform-service.js'
+import type { MediaSpawnProcess } from './media-download/media-download-service.js'
 import type { CapabilityRegistry } from './capabilities/capability-registry.js'
 import type { DshSurfaceController } from './dsh/dsh-surface.js'
 import type { CodingEngineRegistry } from './engines/coding-engine-registry.js'
@@ -78,6 +80,10 @@ interface IpcDependencies {
   browser: BrowserController
   /** Multi-tab browser platform, for extension hosts that manage real browser tabs. */
   browserPlatform?: Pick<BrowserPlatformService, 'createTab' | 'activateTab' | 'closeTab' | 'tabs'>
+  /** nd-core-backed spawner for the media downloader; no background policy is injected. */
+  mediaDownloadSpawn?: MediaSpawnProcess
+  /** Whole-tree teardown for a media-download child. */
+  stopProcess?: (child: ChildProcess, timeoutMs?: number) => Promise<void>
   dshSurface: DshSurfaceController
   engines: CodingEngineRegistry
   capabilities: CapabilityRegistry
@@ -339,6 +345,8 @@ export function registerIpc(deps: IpcDependencies): () => void {
     organization: deps.organizationStore,
     browser: deps.browser,
     ...(deps.browserPlatform ? { browserPlatform: deps.browserPlatform } : {}),
+    ...(deps.mediaDownloadSpawn ? { spawnProcess: deps.mediaDownloadSpawn } : {}),
+    ...(deps.stopProcess ? { stopProcess: deps.stopProcess } : {}),
     providers: deps.providers,
     workflow: workflowService,
     ...(deps.coreMedia ? { media: deps.coreMedia } : {}),

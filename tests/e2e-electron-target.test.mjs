@@ -35,14 +35,13 @@ describe('Electron release target', () => {
     roots.push(root)
     const executable = join(root, 'ND-DSH-test.exe')
     await writeFile(executable, 'test-package-placeholder')
-    const env = { ND_DSH_E2E_EXECUTABLE: executable, ND_DSH_NODE_BIN: 'host-node', ND_DSH_HARNESS_ROOT: 'source-runtime', ND_DSH_CORE_BIN: 'debug-core', ND_PENCIL_BINARY: 'source-pencil', ND_AGENT_BINARY: 'debug-agent' }
+    const env = { ND_DSH_E2E_EXECUTABLE: executable, ND_DSH_NODE_BIN: 'host-node', ND_DSH_HARNESS_ROOT: 'source-runtime', ND_DSH_CORE_BIN: 'debug-core', ND_AGENT_BINARY: 'debug-agent' }
     const options = electronLaunchOptions('test-profile', root, env)
     expect(options.executablePath).toBe(executable)
     expect(options.args).toEqual(['--user-data-dir=test-profile'])
     expect(options.env.ND_DSH_NODE_BIN).toBeUndefined()
     expect(options.env.ND_DSH_HARNESS_ROOT).toBeUndefined()
     expect(options.env.ND_DSH_CORE_BIN).toBeUndefined()
-    expect(options.env.ND_PENCIL_BINARY).toBeUndefined()
     expect(options.env.ND_AGENT_BINARY).toBeUndefined()
     const hash = createHash('sha256').update('test-package-placeholder').digest('hex')
     expect(electronTargetIdentity(env).artifact).toBe('ND-DSH-test.exe#sha256:' + hash)

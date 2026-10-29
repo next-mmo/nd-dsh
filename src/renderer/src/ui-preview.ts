@@ -30,7 +30,12 @@ import {
   ND_WORKSPACE_CONTEXT_ID,
   OPENVIKING_MEMORY_ID,
 } from '../../shared/capabilities'
-import type { DesignDesktopApi, DesignFreeformState, DesignProjectState } from '../../shared/design'
+import type { DesignChangedEvent, DesignDesktopApi, DesignFreeformState, DesignProjectState, DesignSessionSync } from '../../shared/design'
+import {
+  applyDesignCommands,
+  createEmptyDesignDocument,
+  type DesignDocument,
+} from '../../shared/nd-design/index'
 import type { OrganizationDesktopApi, OrganizationMutation, OrganizationSnapshot } from '../../shared/organization'
 import type { WorkflowPluginsDesktopApi } from '../../shared/workflow-plugins'
 import type { WorkspaceProfile } from '../../shared/workspace-profile'
@@ -59,7 +64,7 @@ const themeEvents = signal<ThemeState>()
 const gitEvents = signal<GitStatusSnapshot>()
 const qaEvents = signal<QaState>()
 const organizationEvents = signal<OrganizationSnapshot>()
-const freeformEvents = signal<DesignFreeformState>()
+const designEvents = signal<DesignChangedEvent>()
 
 let workspace: WorkspaceState = {
   root: 'C:/workspace/nd-product',
@@ -439,7 +444,24 @@ let organization: OrganizationSnapshot = {
   coordination: [],
 }
 
-let freeform: DesignFreeformState = { engine: 'nd-pencil', status: 'ready', available: true, visible: false, dirty: false, documentPath: '.nd/design/home.op', documentName: 'home.op', version: '0.8.4' }
+let previewDesignDocument: DesignDocument | null = createEmptyDesignDocument('Preview design')
+let previewDesignRevision = 1
+let previewDesignSelection: string[] = []
+let freeform: DesignFreeformState = {
+  engine: 'nd-pencil',
+  status: 'ready',
+  available: true,
+  visible: true,
+  dirty: false,
+  documentPath: '.nd/design/home.op',
+  documentName: 'home.op',
+  version: '2',
+  revision: 1,
+  canUndo: false,
+  canRedo: false,
+  selectionCount: 0,
+  agentEditing: false,
+}
 const designProject: DesignProjectState = {
   root: workspace.root,
   kind: 'shadcn',
@@ -952,22 +974,123 @@ const desktopApi: DesktopApi = {
   },
 }
 
+function previewSync(): DesignSessionSync {
+  return { state: freeform, document: previewDesignDocument, assets: {} }
+}
+
+function emitPreviewDesign(reason: DesignChangedEvent['reason'], includeDocument = true): void {
+  designEvents.emit({
+    state: freeform,
+    reason,
+    ...(includeDocument && previewDesignDocument ? { document: previewDesignDocument, assets: {} } : {}),
+  })
+}
+
 const designApi: DesignDesktopApi = {
   state: async () => designProject,
   refresh: async () => designProject,
   previewHtml: async () => designProject.preview!,
   startDevPreview: async () => designProject.preview!,
   stopPreview: async () => undefined,
-  freeformState: async () => freeform,
-  freeformInitialize: async () => freeform,
-  freeformSetup: async () => freeform,
-  freeformSetBounds: async () => undefined,
-  freeformSetVisible: async (visible) => { freeform = { ...freeform, visible }; freeformEvents.emit(freeform); return freeform },
-  freeformOpen: async (path) => { freeform = { ...freeform, status: 'ready', available: true, documentPath: path, documentName: previewDocumentName(path), visible: true }; freeformEvents.emit(freeform); return freeform },
-  freeformCreate: async (path) => { freeform = { ...freeform, status: 'ready', available: true, documentPath: path, documentName: previewDocumentName(path), visible: true, dirty: true }; freeformEvents.emit(freeform); return freeform },
-  freeformSave: async () => { freeform = { ...freeform, dirty: false }; freeformEvents.emit(freeform); return freeform },
-  freeformClose: async () => { const { documentPath: _closedPath, documentName: _closedName, ...openFreeform } = freeform; freeform = { ...openFreeform, visible: false, dirty: false }; freeformEvents.emit(freeform); return freeform },
-  onFreeformState: freeformEvents.on,
+  designState: async () => freeform,
+  designSync: async () => previewSync(),
+  designOpen: async (path) => {
+    previewDesignDocument = createEmptyDesignDocument(previewDocumentName(path))
+    previewDesignRevision = 1
+    previewDesignSelection = []
+    freeform = {
+      ...freeform,
+      status: 'ready',
+      visible: true,
+      dirty: false,
+      documentPath: path,
+      documentName: previewDocumentName(path),
+      revision: previewDesignRevision,
+      canUndo: false,
+      canRedo: false,
+      selectionCount: 0,
+    }
+    emitPreviewDesign('open')
+    return previewSync()
+  },
+  designCreate: async (path, name) => {
+    previewDesignDocument = createEmptyDesignDocument(name || previewDocumentName(path))
+    previewDesignRevision = 1
+    previewDesignSelection = []
+    freeform = {
+      ...freeform,
+      status: 'ready',
+      visible: true,
+      dirty: false,
+      documentPath: path,
+      documentName: previewDocumentName(path),
+      revision: previewDesignRevision,
+      canUndo: false,
+      canRedo: false,
+      selectionCount: 0,
+    }
+    emitPreviewDesign('open')
+    return previewSync()
+  },
+  designClose: async () => {
+    previewDesignDocument = null
+    previewDesignRevision = 0
+    previewDesignSelection = []
+    freeform = {
+      ...freeform,
+      status: 'idle',
+      visible: false,
+      dirty: false,
+      revision: 0,
+      canUndo: false,
+      canRedo: false,
+      selectionCount: 0,
+      agentEditing: false,
+    }
+    emitPreviewDesign('close', false)
+    return previewSync()
+  },
+  designApply: async (baseRevision, commands) => {
+    if (!previewDesignDocument) throw new Error('No ND Pencil document is open')
+    if (baseRevision !== previewDesignRevision) return { ok: false, conflict: true, sync: previewSync() }
+    const result = applyDesignCommands(previewDesignDocument, commands)
+    previewDesignDocument = result.document
+    previewDesignRevision += 1
+    freeform = {
+      ...freeform,
+      dirty: true,
+      revision: previewDesignRevision,
+      canUndo: true,
+      canRedo: false,
+      selectionCount: previewDesignSelection.length,
+    }
+    return {
+      ok: true,
+      revision: previewDesignRevision,
+      changedIds: result.changedIds,
+      createdIds: result.createdIds,
+      deletedIds: result.deletedIds,
+      state: freeform,
+    }
+  },
+  designUndo: async () => previewSync(),
+  designRedo: async () => previewSync(),
+  designSave: async () => {
+    freeform = { ...freeform, dirty: false }
+    emitPreviewDesign('save', false)
+    return freeform
+  },
+  designSetSelection: async (ids) => {
+    previewDesignSelection = ids
+    freeform = { ...freeform, selectionCount: ids.length }
+  },
+  designBuild: async () => ({
+    specPath: '.nd/design/.build/preview/spec.json',
+    svgPath: '.nd/design/.build/preview/reference.svg',
+    prompt: 'Build the ND Pencil design into the active project’s real source. Read .nd/design/.build/preview/spec.json and use .nd/design/.build/preview/reference.svg as the visual reference. Reuse project components and tokens, verify in the live app, and show the real source diff.',
+  }),
+  designImportAsset: async (input) => ({ path: '.nd/design/assets/preview-image', dataUrl: input.dataUrl }),
+  onDesignChanged: designEvents.on,
 }
 
 const organizationApi: OrganizationDesktopApi = {

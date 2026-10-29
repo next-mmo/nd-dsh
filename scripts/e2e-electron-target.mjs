@@ -65,7 +65,7 @@ export function electronLaunchOptions(profileDir, cwd = process.cwd(), env = pro
   if (target.kind === 'packaged') {
     // A developer's .env must not substitute source runtimes for bundled bytes.
     for (const key of ['ND_DSH_NODE_BIN', 'ND_DSH_HARNESS_ROOT', 'ND_DSH_PROJECT_ROOT', 'ND_DSH_CORE_BIN',
-      'ND_DSH_MANAGED_RUNTIME_ROOT', 'ND_DSH_PATCH', 'ND_DSH_PRESET_DIR', 'ND_PENCIL_BINARY', 'ND_AGENT_BINARY', 'ELECTRON_RUN_AS_NODE']) delete launchEnv[key]
+      'ND_DSH_MANAGED_RUNTIME_ROOT', 'ND_DSH_PATCH', 'ND_DSH_PRESET_DIR', 'ND_AGENT_BINARY', 'ELECTRON_RUN_AS_NODE']) delete launchEnv[key]
   }
   return {
     ...(target.kind === 'packaged' ? { executablePath: target.executable } : {}),

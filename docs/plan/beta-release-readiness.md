@@ -113,7 +113,7 @@ These are the highest-risk gaps from the current gate.
 On a clean Windows VM with no development tooling:
 
 - [ ] Install/run the exact RC artifact.
-- [ ] Verify ND Core, Harness/runtime, ND Pencil, browser host, and required CLI/runtime dependencies resolve.
+- [ ] Verify ND Core, Harness/runtime, browser host, and required CLI/runtime dependencies resolve. ND Pencil must open from the in-repo editor with no external design runtime or PATH setup.
 - [ ] Decide whether Git/Node are bundled or explicit beta prerequisites.
 - [ ] Start ND offline and confirm startup/recovery behavior is understandable.
 - [ ] Confirm no accidental dependency on the source checkout, pnpm store, Cargo target, or developer PATH.

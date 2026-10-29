@@ -82,9 +82,11 @@ Use these rows when filling the committed evidence template. Unit/E2E references
 | `native-extensions` | `tests/nd-extension-package.test.ts`, `tests/nd-extension-lifecycle.test.ts`, `tests/nd-invocation-broker.test.ts`, `tests/wallpaper-native.test.ts`, `pnpm ext:validate --builtins`, `e2e/nd-home-extensions.spec.ts` | user-authored package install/activate/rollback, deny-wins org policy, grant/revocation, real Windows wallpaper change. The **agent-side native-host bridge is deliberately deferred**: no coding engine can invoke ND native host methods yet, so do not record that acceptance bullet as demonstrable |
 | `nd-home` | `tests/nd-extension-lifecycle.test.ts` (Home notes/captures/chats, managed folder, corrupt-record quarantine), `tests/harness-session-scope.test.ts`, `e2e/nd-home-extensions.spec.ts` | ND Home usable before any company exists; personal notes/captures/chats persist and stay out of active-workspace listings |
 | `workspace-profiles` | `tests/workspace-profile.test.ts`, `e2e/smoke.spec.ts` (General ↔ Coding shell) | switching General/Coding is understandable and correctly scoped; unsupported actions refuse with clear wording |
-| `nd-pencil` | ND Pencil controller/readiness/runtime tests, static product boundary verification, packaged `e2e/nd-pencil.spec.ts` | sketch, save and reopen an edited design; Build into App produces a real project source diff and passing verification |
+| `nd-pencil` | In-repo schema/command/session tests, design bridge + MCP tests, `scripts/verify-design.mjs`, `e2e/design-editor.spec.ts`, `e2e/design-migration.spec.ts` | sketch/agent edit, save and reopen; legacy import preserves a backup; Build into App produces a real project source diff and passing verification |
 
 The evidence file intentionally uses exactly these IDs. `tests/verify-beta-three-layer.test.ts` now checks that the template and final gate cannot drift apart.
+
+For `nd-pencil`, the live `nd_design` edit depends on a bootable ND Harness. A Harness that answers HTTP 401 without publishing its authenticated URL is a Harness blocker, not a pass for the agent-editing bullet; the design bridge and MCP server can still be verified independently.
 
 ## 0. Prepare the exact RC
 

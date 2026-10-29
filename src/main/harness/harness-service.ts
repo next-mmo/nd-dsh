@@ -39,30 +39,33 @@ const UI_CONTEXT_MARKER = '\n\n[ND-DSH LIVE UI CONTEXT]'
 
 /**
  * ND owns the product's agent identity, so every session runs the shipped
- * ND preset. The runtime applies its persisted settings AFTER the ND patch
- * overlay, so the overlay's own `default:` row cannot beat a stale persisted
- * selection; the launch-time write below keeps the product preset
+ * ND preset. A stale persisted selection in the runtime home must not silently
+ * change it; the launch-time write below keeps the product preset
  * authoritative. `ND_DSH_PRESET` is a developer override (preset validation).
  */
 export const ND_DSH_PRESET_ID = process.env.ND_DSH_PRESET ?? 'nd-dsh'
 
+/** Harness 0.2.1 renamed the default-preset settings namespace. */
+const PRESET_SETTINGS_NS = 'agent-preset-registry'
+const PRESET_SECTION = /^agent-preset-registry:\s*$/
+
 /**
- * Rewrite the runtime settings.yaml so `agent-presets.default` is the given
- * preset id. Returns the updated text and whether anything changed.
+ * Rewrite the runtime settings.yaml so the preset registry default is the
+ * given preset id. Returns the updated text and whether anything changed.
  */
 export function withDefaultPreset(settings: string, presetId: string): { content: string; changed: boolean } {
   const eol = settings.includes('\r\n') ? '\r\n' : '\n'
   const lines = settings.split(/\r?\n/)
   let sectionIndex = -1
   for (let i = 0; i < lines.length; i++) {
-    if (/^agent-presets:\s*$/.test(lines[i]!)) {
+    if (PRESET_SECTION.test(lines[i]!)) {
       sectionIndex = i
       break
     }
   }
   if (sectionIndex < 0) {
     const trimmed = settings.trimEnd()
-    return { content: `${trimmed}${trimmed.length > 0 ? eol + eol : ''}agent-presets:${eol}  default: ${presetId}${eol}`, changed: true }
+    return { content: `${trimmed}${trimmed.length > 0 ? eol + eol : ''}${PRESET_SETTINGS_NS}:${eol}  default: ${presetId}${eol}`, changed: true }
   }
   for (let i = sectionIndex + 1; i < lines.length; i++) {
     if (/^\S/.test(lines[i]!)) break
@@ -120,7 +123,7 @@ export function blockPresetSelection(method: string, payload: unknown): GatewayR
   }
   if (method === 'settings.update') {
     const record = payload as { ns?: unknown; patch?: unknown } | undefined
-    if (record?.ns === 'agent-presets') {
+    if (record?.ns === PRESET_SETTINGS_NS) {
       const patch = record.patch as { default?: unknown } | undefined
       if (patch?.default === BLOCKED_PRESET_ID) return blockedPresetResult()
     }
@@ -694,7 +697,8 @@ export class HarnessService {
     // Upstream heals the flat module fallback only for its own dependency
     // closure; ND-inserted entries need their links staged before boot.
     ensureProfilePluginLinks(dshHome, harnessRoot())
-    // The nd-dsh preset ships with the desktop; a fresh copy keeps it current.
+    // The preset declaration lives in the ND patch overlay; the harness home
+    // carries only its skill and coordination-policy assets.
     await fs.cp(presetsDir, join(dshHome, '.agent-presets'), { recursive: true, force: true })
     // Persisted runtime settings outrank the ND patch overlay; pin the product
     // preset so a stale persisted selection cannot silently change sessions.

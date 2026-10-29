@@ -49,7 +49,7 @@ Read `createWindow` in `src/main/index.ts` and confirm:
 - Browser tools share `ND_DSH_AGENT_BROWSER_CONFIG` and `ND_DSH_AGENT_BROWSER_SESSION`; the embedded `WebContentsView` is canonical; no hidden automation browser.
 - `.env*` ignored; no live keys in tests (dummy tokens only); downloaded or vendored binaries hash-validated.
 - No engine-specific branching inside Rust crates.
-- ND Pencil naming: `OpenPencil` strings confined to vendor, provenance, or selector contexts.
+- ND Pencil is 100% in-repo; the retired OpenPencil vendor/runtime must not reappear in code or packaging.
 
 ### 6. Report
 

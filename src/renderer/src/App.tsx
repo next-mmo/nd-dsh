@@ -250,7 +250,7 @@ export default function App() {
   }, [sessionsCollapsed, sessionsWidthPx, threadCollapsed])
   const [gitEditable, setGitEditable] = useState(false)
   const [workspaceCollapsed, setWorkspaceCollapsed] = useState(false)
-  const [externalPrompt, setExternalPrompt] = useState<{ id: string; text: string } | null>(null)
+  const [externalPrompt, setExternalPrompt] = useState<{ id: string; text: string; autoSend?: boolean } | null>(null)
   const [sessionOpenRequest, setSessionOpenRequest] = useState<{ id: string; sessionId: string } | null>(null)
   const [theme, setTheme] = useState<ThemeState | null>(null)
   const [appInspectCountdown, setAppInspectCountdown] = useState<number | null>(null)
@@ -1046,6 +1046,11 @@ export default function App() {
   const askAgent = (prompt: string): void => {
     setExternalPrompt({ id: crypto.randomUUID(), text: prompt })
     switchToWorkbench('agent')
+  }
+
+  /** Starts a design prompt in the current agent chat without hiding the canvas. */
+  const askAgentInPlace = (prompt: string): void => {
+    setExternalPrompt({ id: crypto.randomUUID(), text: prompt, autoSend: true })
   }
 
   /** Opens an existing session in the Agent workbench from another surface. */
@@ -2256,6 +2261,7 @@ export default function App() {
                     harness={harnessStatus}
                     onWorkspaceChanged={changeWorkspace}
                     onAskAgent={askAgent}
+                    onAskAgentInPlace={askAgentInPlace}
                     onError={notify}
                     onNotify={notify}
                   />

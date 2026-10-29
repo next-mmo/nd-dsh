@@ -41,11 +41,15 @@ release claim.
 ## ND Pencil acceptance
 
 In a disposable project, open Design → ND Pencil, create a canvas, draw a
-rectangle, save it, close it, and reopen it. Confirm that the edited shape is
-preserved in the project's `.op` design document and that no separate design
-application or account setup is required. For Build into App, inspect the
-active project's real source diff and verification result before accepting
-the generated application. A saved `.op` document alone is design intent.
+rectangle and add text, undo/redo once, save, close and reopen. Confirm the
+edits are preserved in the project's `.op` design document and that no
+separate design application, runtime install or account setup is required.
+With ND Harness active, ask the agent to add or change a shape and confirm the
+canvas updates while the chat remains visible. Import an older `.op` document
+only in a disposable folder; confirm the migration report and the backup under
+`.nd/design/.backups/`. For Build into App, inspect the active project's real
+source diff and verification result before accepting the generated application.
+A saved `.op` document alone is design intent.
 
 ## Before replacing a build
 

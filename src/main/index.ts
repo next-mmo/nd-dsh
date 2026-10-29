@@ -44,9 +44,12 @@ import { createCoreComputer } from './core/core-computer.js'
 import { createCoreApiHttp } from './core/core-api-http.js'
 import { createCoreWorkspaceFileSystem } from './core/core-workspace.js'
 import { createCoreWorktreeGit } from './core/core-worktree-git.js'
+import { DesignAgentBridge } from './design/design-agent-bridge.js'
+import { DesignAgentTool } from './design/design-agent-tool.js'
 import { DesignService } from './design/design-service.js'
+import { DesignSessionService } from './design/design-session-service.js'
+import { DesignStore } from './design/design-store.js'
 import { registerDesignIpc } from './design/ipc.js'
-import { NdPencilController } from './design/nd-pencil-controller.js'
 import { DshSurfaceController } from './dsh/dsh-surface.js'
 import { pickFreePort } from './dsh/gateway-client.js'
 import { AntigravityEngine } from './engines/antigravity/antigravity-engine.js'
@@ -122,7 +125,8 @@ let activeCursorEngine: CursorCliEngine | undefined
 let activeClaudeEngine: ClaudeCodeCliEngine | undefined
 let activeEngineRouter: EngineSessionRouter | undefined
 let activeRestApiService: NdRestApiService | undefined
-let activeNdPencil: NdPencilController | undefined
+let activeDesignSession: DesignSessionService | undefined
+let activeDesignBridge: DesignAgentBridge | undefined
 let activeTerminalManager: TerminalManager | undefined
 let activeCore: CoreClient | undefined
 let activeExecutionCoordinator: ExecutionCoordinator | undefined
@@ -229,7 +233,6 @@ async function createWindow(cdpPort: number): Promise<void> {
     )
     await localRuntime.initialize()
   }
-  const ndPencilPreload = join(currentDirectory, '../preload/nd-pencil.cjs')
   const workspace = new WorkspaceService(process.env.ND_DSH_WORKSPACE?.trim() || process.cwd())
   const providers = new ProviderStore()
   // Per-task cost measurement is always on; it never waits for a benchmark to
@@ -375,6 +378,9 @@ async function createWindow(cdpPort: number): Promise<void> {
   // Project dev servers and machine verification are ND-owned system work,
   // not engine children: keep them Rust-owned without inheriting a worker permit.
   const unscopedCoreSpawn = createCoreSpawn(core, undefined, backgroundPolicyPath)
+  // The media downloader must not inherit the background Node policy
+  // (NODE_OPTIONS=--require …); Deno treats it as an unknown runtime flag.
+  const mediaDownloadSpawn = createCoreSpawn(core)
   const git = new GitService(workspace, { core })
   const harnessJournal = new CoreSessionJournalStore(core)
   const directEngineJournal = new CoreSessionJournalStore(core, {
@@ -494,8 +500,19 @@ async function createWindow(cdpPort: number): Promise<void> {
   })
   activeProjectRuntime = projectRuntime
   const design = new DesignService(workspace, browser)
-  const ndPencil = new NdPencilController(window, workspace, projectRoot(), ndPencilPreload)
-  await ndPencil.initialize()
+  const designSession = new DesignSessionService(
+    new DesignStore(workspace.state().root),
+    (event) => {
+      if (!window.isDestroyed()) window.webContents.send(DESIGN_IPC.designChanged, event)
+    },
+  )
+  const designAgentTool = new DesignAgentTool(designSession)
+  nativeBroker.setDesignAgentTool(designAgentTool)
+  const designBridge = new DesignAgentBridge(designAgentTool, join(bundledResourceRoot(), 'scripts', 'nd-design-mcp.mjs'))
+  await designBridge.start().catch((error) => {
+    console.warn('ND Pencil design bridge failed to start; live canvas editing will be unavailable:', error instanceof Error ? error.message : String(error))
+  })
+  activeDesignBridge = designBridge
   const coreWorktreeGit = createCoreWorktreeGit(core)
   taskWorktrees = new TaskWorktreeManager(coreWorktreeGit)
   // Task worktrees are ND's own isolated checkouts for this project, so the
@@ -516,7 +533,7 @@ async function createWindow(cdpPort: number): Promise<void> {
   const coreSystemVolume = createCoreSystemVolume(core)
   const coreVault = createCoreVault(core)
   const coreApiHttp = createCoreApiHttp(core)
-  const disposeIpc = registerIpc({ window, preloadPath: preload, launcherPopup, shortcuts: shortcutRegistry, browser, browserPlatform, dshSurface, engines, engineRouter, nativeToolBroker: nativeBroker, ownsWorktree: (cwd) => taskWorktrees?.ownsRoot(cwd) === true, harness, projectWorkspace, workspaces, theme, providers, externalElements, recentPicks, git, corePackageSnapshot: createCorePackageSnapshot(core), coreGit: coreGit.exec.bind(coreGit), coreMedia, coreClipboard, coreMediaKeys, coreSystemVolume, coreVault, coreApiHttp, coreDisk: createCoreDiskScan(core), coreComputer: createCoreComputer(core), qa, sessionArchive, usageLedger, capabilities, organizationStore })
+  const disposeIpc = registerIpc({ window, preloadPath: preload, launcherPopup, shortcuts: shortcutRegistry, browser, browserPlatform, mediaDownloadSpawn, stopProcess: stopCoreManagedChildProcess, dshSurface, engines, engineRouter, nativeToolBroker: nativeBroker, ownsWorktree: (cwd) => taskWorktrees?.ownsRoot(cwd) === true, harness, projectWorkspace, workspaces, theme, providers, externalElements, recentPicks, git, corePackageSnapshot: createCorePackageSnapshot(core), coreGit: coreGit.exec.bind(coreGit), coreMedia, coreClipboard, coreMediaKeys, coreSystemVolume, coreVault, coreApiHttp, coreDisk: createCoreDiskScan(core), coreComputer: createCoreComputer(core), qa, sessionArchive, usageLedger, capabilities, organizationStore })
   if (nativeAgent.ready()) void nativeAgent.start().catch((error) => {
     console.warn('ND Agent private runtime could not initialize:', error instanceof Error ? error.message : String(error))
   })
@@ -530,12 +547,12 @@ async function createWindow(cdpPort: number): Promise<void> {
     void browserPlatform.notifyCompanionChanged()
   })
   const disposeTerminalIpc = registerTerminalIpc(window, terminalManager, routerService)
-  const disposeDesignIpc = registerDesignIpc(window, design, ndPencil)
+  const disposeDesignIpc = registerDesignIpc(window, design, designSession)
   const disposeOrganizationIpc = registerOrganizationIpc(window, organizationStore, organization, projectWorkspace, projectRuntime, executionCoordinator, () => launcherPopup.window(), localRuntime)
   const disposeLocalRuntimeIpc = registerLocalRuntimeIpc(window, localRuntime)
   mainWindow = window
   activeHarness = harness
-  activeNdPencil = ndPencil
+  activeDesignSession = designSession
 
   projectRuntime.setListener((status) => {
     if (!window.isDestroyed()) window.webContents.send(ORGANIZATION_IPC.runtimeChanged, status)
@@ -557,7 +574,9 @@ async function createWindow(cdpPort: number): Promise<void> {
     })
     const rootChanged = lastWorkspaceRoot !== state.root
     lastWorkspaceRoot = state.root
-    if (rootChanged) void ndPencil.setVisible(false)
+    if (rootChanged) void designSession.handleWorkspaceChanged(state.root).catch((error) => {
+      console.warn('ND Pencil workspace synchronization failed:', error instanceof Error ? error.message : String(error))
+    })
     // Git belongs to the active workspace/project context. A project can
     // become unlinked or change identity without changing the filesystem root,
     // so refresh on every workspace state event rather than only root changes.
@@ -567,9 +586,6 @@ async function createWindow(cdpPort: number): Promise<void> {
     if (!window.isDestroyed()) window.webContents.send(IPC.workspaceStateEvent, state)
     void design.handleWorkspaceChanged(state).catch((error) => {
       console.warn('Design workspace synchronization failed:', error instanceof Error ? error.message : String(error))
-    })
-    void ndPencil.handleWorkspaceChanged(state.root).catch((error) => {
-      console.warn('ND Pencil workspace synchronization failed:', error instanceof Error ? error.message : String(error))
     })
   })
   git.setStateListener((state) => {
@@ -586,7 +602,6 @@ async function createWindow(cdpPort: number): Promise<void> {
   theme.attach(window, (color) => {
     browser.setBackgroundColor(color)
     dshSurface.setBackgroundColor(color)
-    ndPencil.setBackgroundColor(color)
   })
   theme.setOnChanged((state) => {
     if (!window.isDestroyed()) window.webContents.send(IPC.themeChangedEvent, state)
@@ -600,9 +615,6 @@ async function createWindow(cdpPort: number): Promise<void> {
   browser.setStateListener((state) => {
     if (!window.isDestroyed()) window.webContents.send(IPC.browserStateEvent, state)
     browserPlatform.notifyBrowserChanged()
-  })
-  ndPencil.setStateListener((state) => {
-    if (!window.isDestroyed()) window.webContents.send(DESIGN_IPC.freeformChanged, state)
   })
   dshSurface.setStateListener((state) => {
     if (!window.isDestroyed()) window.webContents.send(IPC.dshViewStateEvent, state)
@@ -693,9 +705,10 @@ async function createWindow(cdpPort: number): Promise<void> {
   })
   window.webContents.on('before-input-event', (event, input) => {
     if ((input.control || input.meta) && input.key.toLowerCase() === 's' && input.type === 'keyDown') {
-      if (ndPencil.state().visible && ndPencil.state().dirty) {
+      const state = designSession.state()
+      if (state.visible && state.dirty) {
         event.preventDefault()
-        void ndPencil.save().catch((error) => console.error('Shortcut save failed:', error))
+        void designSession.save().catch((error) => console.error('Shortcut save failed:', error))
       }
     }
   })
@@ -826,10 +839,11 @@ async function createWindow(cdpPort: number): Promise<void> {
     window.focus()
   }
 
-  let closeAfterFreeformSave = false
-  let savingFreeformForClose = false
+  let closeAfterDesignSave = false
+  let savingDesignForClose = false
   window.on('close', (event) => {
     if (shutdownStarted) return
+    const designDirty = designSession.state().dirty
     if (localRuntime?.isAlwaysOn()) {
       event.preventDefault()
       const hide = (): void => {
@@ -838,35 +852,35 @@ async function createWindow(cdpPort: number): Promise<void> {
           localRuntime?.setBackground(true)
         }
       }
-      if (!ndPencil.state().dirty) {
+      if (!designDirty) {
         hide()
         return
       }
-      if (savingFreeformForClose) return
-      savingFreeformForClose = true
-      void ndPencil.close()
+      if (savingDesignForClose) return
+      savingDesignForClose = true
+      void designSession.flushForClose()
         .then(() => {
-          savingFreeformForClose = false
+          savingDesignForClose = false
           hide()
         })
         .catch((error) => {
-          savingFreeformForClose = false
-          console.error('Refusing to background ND with an unsaved Freeform document:', error)
+          savingDesignForClose = false
+          console.error('Refusing to background ND with an unsaved ND Pencil document:', error)
         })
       return
     }
-    if (closeAfterFreeformSave || !ndPencil.state().dirty) return
+    if (closeAfterDesignSave || !designDirty) return
     event.preventDefault()
-    if (savingFreeformForClose) return
-    savingFreeformForClose = true
-    void ndPencil.close()
+    if (savingDesignForClose) return
+    savingDesignForClose = true
+    void designSession.flushForClose()
       .then(() => {
-        closeAfterFreeformSave = true
+        closeAfterDesignSave = true
         if (!window.isDestroyed()) window.close()
       })
       .catch((error) => {
-        savingFreeformForClose = false
-        console.error('Refusing to close ND with an unsaved Freeform document:', error)
+        savingDesignForClose = false
+        console.error('Refusing to close ND with an unsaved ND Pencil document:', error)
       })
   })
 
@@ -875,7 +889,6 @@ async function createWindow(cdpPort: number): Promise<void> {
     organizationStore.setOnChanged(undefined)
     broadcastOrganization.cancel()
     workspace.setStateListener(undefined)
-    ndPencil.setStateListener(undefined)
     disposeOrganizationIpc()
     disposeLocalRuntimeIpc()
     disposeBrowserPlatformIpc()
@@ -890,7 +903,9 @@ async function createWindow(cdpPort: number): Promise<void> {
     if (activeQa === qa) { activeQa = undefined; beginQaClose(qa) }
     if (activeProjectRuntime === projectRuntime) { activeProjectRuntime = undefined; beginProjectRuntimeClose(projectRuntime) }
     design.destroy()
-    if (activeNdPencil === ndPencil) { activeNdPencil = undefined; beginNdPencilClose(ndPencil) }
+    if (activeDesignBridge === designBridge) { activeDesignBridge = undefined; beginDesignBridgeClose(designBridge) }
+    designSession.destroy()
+    if (activeDesignSession === designSession) activeDesignSession = undefined
     if (activeEngineRouter === engineRouter) { activeEngineRouter = undefined; beginEngineRouterClose(engineRouter) }
     if (activeRestApiService === restApiService) { activeRestApiService = undefined; beginRestApiClose(restApiService) }
     if (activeBrowserPlatform === browserPlatform) { activeBrowserPlatform = undefined; beginBrowserPlatformClose(browserPlatform) }
@@ -941,7 +956,7 @@ app.on('will-quit', () => {
 
 app.on('before-quit', (event) => {
   if (shutdownStarted) return
-  const ndPencilForRetry = activeNdPencil
+  const designSessionForRetry = activeDesignSession
   let coreToClose: CoreClient | undefined
   if (activeHarness) {
     const harness = activeHarness
@@ -1027,10 +1042,15 @@ app.on('before-quit', (event) => {
     coreToClose = activeCore
     activeCore = undefined
   }
-  if (activeNdPencil) {
-    const ndPencil = activeNdPencil
-    activeNdPencil = undefined
-    beginNdPencilClose(ndPencil)
+  if (activeDesignBridge) {
+    const designBridge = activeDesignBridge
+    activeDesignBridge = undefined
+    beginDesignBridgeClose(designBridge)
+  }
+  if (activeDesignSession) {
+    const designSession = activeDesignSession
+    activeDesignSession = undefined
+    beginDesignSessionClose(designSession)
   }
   if (coreToClose) beginCoreCloseAfterTrackedServices(coreToClose)
   if (closingServices.size === 0) {
@@ -1072,9 +1092,9 @@ app.on('before-quit', (event) => {
     void log.flush()
     if (results.some((result) => result.status === 'rejected')) {
       shutdownStarted = false
-      if (ndPencilForRetry) activeNdPencil = ndPencilForRetry
+      if (designSessionForRetry) activeDesignSession = designSessionForRetry
       if (coreToClose) activeCore = coreToClose
-      console.error('ND quit was canceled because the Freeform document could not be saved safely.')
+      console.error('ND quit was canceled because the ND Pencil document could not be saved safely.')
       return
     }
     // An engine or the Harness runtime can still start a browser daemon while it
@@ -1172,13 +1192,17 @@ function beginTerminalClose(terminalManager: TerminalManager): void {
   trackClose(terminalManager.shutdown().catch((error) => console.error('Failed to close session terminals cleanly:', error)))
 }
 
-function beginNdPencilClose(ndPencil: NdPencilController): void {
-  trackClose(ndPencil.close()
+function beginDesignBridgeClose(designBridge: DesignAgentBridge): void {
+  trackClose(designBridge.destroy().catch((error) => console.error('Failed to close the ND Pencil design bridge cleanly:', error)))
+}
+
+function beginDesignSessionClose(designSession: DesignSessionService): void {
+  trackClose(designSession.flushForClose()
     .catch((error) => {
       console.error('Failed to save/close ND Pencil cleanly:', error)
       throw error
     })
-    .then(() => ndPencil.destroy()))
+    .then(() => designSession.destroy()))
 }
 
 function trackClose(promise: Promise<void>): void {

@@ -3,9 +3,10 @@
 //
 // Several redistribution surfaces already carry their own notices: the staged
 // Harness ships upstream's `LICENSE` and `THIRD_PARTY_NOTICES.md`, agent-browser
-// and ND Pencil ship their license texts inside their resource folders, and
-// electron-builder copies Electron's and Chromium's license files into the app.
-// What no artifact records is what the application itself redistributes: the npm
+// ships its license text inside its resource folder, and electron-builder copies
+// Electron's and Chromium's license files into the app. ND Pencil is original
+// in-repo code and has no separate upstream notice. What no artifact records is
+// what the application itself redistributes: the npm
 // packages bundled into app.asar and the Rust crates linked into the nd-core and
 // nd-browser-host binaries. This generator closes that gap and writes
 // `.release/THIRD_PARTY_NOTICES.nd-dsh.md`, which release staging ships as
@@ -31,7 +32,6 @@ const rootManifest = await readJson(join(root, 'package.json'))
 const electronManifest = await readJson(join(root, 'node_modules', 'electron', 'package.json'))
 const agentBrowserManifest = await readJson(join(root, 'node_modules', 'agent-browser', 'package.json'))
 const harnessPin = await readJson(join(root, 'vendor', 'deepseek-harness.json'))
-const pencilPin = await readJson(join(root, 'vendor', 'openpencil.json'))
 const vscodeGitPin = await readJson(join(root, 'vendor', 'vscode-git.json'))
 const stagedHarnessVersion = await readJson(join(stageRoot, 'harness', 'package.json'))
   .then((manifest) => manifest.version)
@@ -68,7 +68,6 @@ lines.push('| Component | Version | License | Notice in this distribution |')
 lines.push('| --- | --- | --- | --- |')
 lines.push(`| DeepSeek Harness | ${stagedHarnessVersion ?? 'unstaged'} @ ${shortCommit(harnessPin.lastSyncedCommit)} | MIT | \`vendor/deepseek-harness/LICENSE\` and its generated \`THIRD_PARTY_NOTICES.md\` |`)
 lines.push(`| agent-browser | ${agentBrowserManifest.version} | ${declaredLicense(agentBrowserManifest)} | \`node_modules/agent-browser/LICENSE\` |`)
-lines.push(`| ND Pencil (upstream OpenPencil, pinned) | ${pencilPin.release ?? 'unstaged'} @ ${shortCommit(pencilPin.commit)} | MIT | \`nd-pencil/LICENSE.openpencil\` (upstream notice preserved) |`)
 lines.push(`| Source Control panel (derived from microsoft/vscode \`extensions/git\`) | @ ${shortCommit(vscodeGitPin.commit)} | ${vscodeGitPin.license} | \`vendor/vscode-git.LICENSE\` |`)
 lines.push(`| Electron | ${electronManifest.version} | ${declaredLicense(electronManifest)} | \`LICENSE.electron.txt\` beside the application |`)
 lines.push(`| Node.js (Harness runtime) | ${process.versions.node} | MIT and bundled third-party licenses | \`node/LICENSE\` |`)

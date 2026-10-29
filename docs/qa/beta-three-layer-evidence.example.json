@@ -333,7 +333,7 @@
     },
     {
       "id": "nd-pencil",
-      "name": "Bundled ND Pencil design editing and persistence",
+      "name": "In-repo ND Pencil design editing, agent editing and persistence",
       "severity": "P1",
       "betaExposed": true,
       "unit": {

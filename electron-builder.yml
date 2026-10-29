@@ -44,6 +44,7 @@ extraResources:
     to: scripts
     filter:
       - external-inspect-mcp.mjs
+      - nd-design-mcp.mjs
       - install-harness-runtime.mjs
       - nd-extension-mcp.mjs
       - nd-extension-runtime.mjs
@@ -64,8 +65,6 @@ extraResources:
       - '**/*'
       # Chromium's generated rule-set index; it is rebuilt per profile at runtime.
       - '!**/_metadata/**'
-  - from: resources/nd-pencil
-    to: nd-pencil
   - from: resources/nd-bundles
     to: nd-bundles
   - from: LICENSE

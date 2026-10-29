@@ -77,6 +77,42 @@ describe('ND Agent trusted tool broker', () => {
     ])
   })
 
+  it('blocks generic workspace writes to ND Pencil documents', async () => {
+    const { broker, request } = fixture()
+    await expect(broker.call({
+      sessionId: 'nd-native-one',
+      cwd: project,
+      name: 'nd_workspace_write',
+      arguments: { path: '.nd/design/home.op', data: '{}' },
+    })).rejects.toThrow(/nd_design/)
+    expect(request.mock.calls.map(([method]) => method)).toEqual([
+      'effectJournal.append',
+      'effectJournal.append',
+    ])
+    expect(request.mock.calls[1]?.[1].state).toBe('failed')
+  })
+
+  it('routes ND Pencil mutations through the injected design bridge', async () => {
+    const { broker, request } = fixture()
+    const design = { call: vi.fn(async () => ({ revision: 3, changedIds: ['n1'] })) }
+    broker.setDesignAgentTool(design as never)
+    await expect(broker.call({
+      sessionId: 'nd-native-one',
+      cwd: project,
+      name: 'nd_design',
+      arguments: { action: 'apply', commands: [{ op: 'delete', ids: ['n1'] }] },
+    })).resolves.toEqual({ revision: 3, changedIds: ['n1'] })
+    expect(design.call).toHaveBeenCalledWith({
+      sessionCwd: project,
+      action: 'apply',
+      args: { action: 'apply', commands: [{ op: 'delete', ids: ['n1'] }] },
+    })
+    expect(request.mock.calls.map(([method]) => method)).toEqual([
+      'effectJournal.append',
+      'effectJournal.append',
+    ])
+  })
+
   it('limits Git to broker-constructed workspace operations', async () => {
     const { broker, request } = fixture()
     await broker.call({

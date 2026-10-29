@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import type { BrowserPlatformService } from '../../browser-platform/browser-platform-service.js'
 import { BUILTIN_BROWSER_TARGET_ID } from '../../browser/browser-controller.js'
 import type { CoreClient } from '../../core/core-client.js'
+import type { DesignAgentTool } from '../../design/design-agent-tool.js'
 import type { WorkspaceService } from '../../workspace/workspace-service.js'
 import { sessionInWorkspace } from '../../workspace/path-utils.js'
 import type { NativeToolRequest, NdNativeEngine } from './nd-native-engine.js'
@@ -28,11 +29,16 @@ export interface NativeToolBrokerOptions {
  * workspace binding before crossing any ND service boundary. */
 export class NdNativeToolBroker {
   private extensionInvoker: NativeExtensionInvoker | undefined
+  private designAgent: DesignAgentTool | undefined
 
   constructor(private readonly options: NativeToolBrokerOptions) {}
 
   setExtensionInvoker(invoker: NativeExtensionInvoker | undefined): void {
     this.extensionInvoker = invoker
+  }
+
+  setDesignAgentTool(tool: DesignAgentTool | undefined): void {
+    this.designAgent = tool
   }
 
   /** An intent without a terminal receipt may already have reached the host.
@@ -110,6 +116,9 @@ export class NdNativeToolBroker {
         }
         case 'nd_workspace_write': {
           const path = relativeWorkspacePath(session.cwd, args, 'path')
+          if (path.toLowerCase().endsWith('.op')) {
+            throw new Error('ND Agent must edit ND Pencil documents through nd_design; writing .op files with workspace tools is blocked')
+          }
           const data = stringArg(args, 'data')
           effectDispatched = true
           result = await this.options.core.request('workspace.write', {
@@ -117,6 +126,17 @@ export class NdNativeToolBroker {
             path,
             data,
           }, 15_000)
+          break
+        }
+        case 'nd_design': {
+          if (!this.designAgent) throw new Error('ND Pencil design bridge is unavailable')
+          const action = stringArg(args, 'action')
+          effectDispatched = action !== 'state'
+          result = await this.designAgent.call({
+            sessionCwd: session.cwd,
+            action,
+            args,
+          })
           break
         }
         case 'nd_git':

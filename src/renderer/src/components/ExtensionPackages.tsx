@@ -64,6 +64,7 @@ const EXTENSION_ACCENTS: Record<string, { icon: LucideIcon; tileClassName: strin
   'nd.disk-cleaner': { icon: HardDrive, tileClassName: 'border-cyan-500/25 bg-cyan-500/15 text-cyan-500' },
   'nd.api-studio': { icon: Braces, tileClassName: 'border-fuchsia-500/25 bg-fuchsia-500/15 text-fuchsia-500' },
   'nd.computer-use': { icon: MonitorPlay, tileClassName: 'border-lime-500/25 bg-lime-500/15 text-lime-500' },
+  'nd.youtube-downloader': { icon: Download, tileClassName: 'border-red-500/25 bg-red-500/15 text-red-500' },
 }
 
 function ExtensionIconTile({ id, large = false }: { id: string; large?: boolean }): React.ReactNode {
@@ -3843,6 +3844,7 @@ const PERMISSION_LABELS: Record<string, string> = {
   'clipboard.write': 'Write copied text',
   'browser.navigate': 'Navigate the built-in browser',
   'browser.openExternal': 'Open links in your system browser',
+  'media.download': 'Download YouTube video and audio',
   'os.launch': 'Open apps and files on this device',
   'os.wallpaper.write': 'Change desktop wallpaper',
   'process.read': 'See running processes',

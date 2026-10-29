@@ -18,8 +18,6 @@ const required = [
   '.gitmodules',
   '.env.example',
   'configs/dsh/nd-dsh.patch.yml',
-  'configs/dsh/agent-presets/nd-dsh/preset.yml',
-  'configs/dsh/agent-presets/nd-dsh/agent.cordis.yml',
   'configs/dsh/agent-presets/nd-dsh/coordination-policy.md',
   'configs/dsh/agent-presets/nd-dsh/skills/live-browser/SKILL.md',
   '.dsh/skills/live-browser/SKILL.md',
@@ -90,7 +88,7 @@ if (Object.keys(packageJson.scripts ?? {}).some((name) => name.includes('mock') 
   errors.push('package.json must not expose the retired mock/web-sidecar prototype as a product script')
 }
 
-// The Harness submodule tracks upstream latest; the ND Pencil submodule stays commit-pinned.
+// The Harness submodule tracks upstream latest.
 function gitmodulesSection(content, submodulePath) {
   const escaped = submodulePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   return new RegExp(`\\[submodule "${escaped}"\\]([^\\[]*)`).exec(content)?.[1] ?? ''
@@ -100,9 +98,6 @@ const harnessSection = gitmodulesSection(gitmodules, 'vendor/deepseek-harness')
 if (!harnessSection.includes(harnessRepository)) errors.push('DeepSeek Harness submodule URL is missing or differs from pin metadata')
 if (harnessBranch && !new RegExp(`^\\s*branch\\s*=\\s*${harnessBranch}\\s*$`, 'm').test(harnessSection)) {
   errors.push(`DeepSeek Harness submodule must track the upstream ${harnessBranch} branch`)
-}
-if (/^\s*branch\s*=/m.test(gitmodulesSection(gitmodules, 'vendor/openpencil'))) {
-  errors.push('Pinned ND Pencil upstream submodule must not track a moving branch')
 }
 
 const vendorReadme = await fs.readFile(join(root, 'vendor/README.md'), 'utf8')
@@ -133,30 +128,39 @@ if (patch.includes('policy: never')) {
   errors.push('configs/dsh/nd-dsh.patch.yml must not pin the Harness approval policy to never (the engine default ask backs the approval UI)')
 }
 
-const preset = await fs.readFile(join(root, 'configs/dsh/agent-presets/nd-dsh/agent.cordis.yml'), 'utf8')
+const presetBlock = /- id: preset-nd-dsh\b([\s\S]*?)(?=\n# ND owns the product preset)/.exec(patch)?.[1] ?? ''
+if (!presetBlock) {
+  errors.push('configs/dsh/nd-dsh.patch.yml must declare the ND-DSH agent preset (preset-nd-dsh)')
+}
 for (const needle of [
+  "name: '@deepseek-ai/dsh-agent-preset'",
+  'id: nd-dsh',
+  'name: ND-DSH',
   '@deepseek-ai/dsh-persona',
   '@deepseek-ai/dsh-skill-filesystem',
   '@deepseek-ai/dsh-tool-skill',
-  "new URL('skills/', baseUrl)",
+  "dshHomePath('.agent-presets/nd-dsh/skills')",
   '@deepseek-ai/dsh-tool-web',
   '@deepseek-ai/dsh-plan-mode',
   '@deepseek-ai/dsh-compaction-basic',
+  '@deepseek-ai/dsh-tool-subagent-control',
+  '@deepseek-ai/dsh-workflow-ptc',
   'provider: codex',
   'toolName: subagent_codex',
 ]) {
-  if (!preset.includes(needle)) errors.push(`configs/dsh/agent-presets/nd-dsh/agent.cordis.yml is missing ${needle}`)
+  if (!presetBlock.includes(needle)) errors.push(`configs/dsh/nd-dsh.patch.yml preset declaration is missing ${needle}`)
 }
-const codexToolBlock = /- id: tool-subagent-codex\b([\s\S]*?)(?=\n\s*- id:|$)/.exec(preset)?.[1] ?? ''
+if (/@deepseek-ai\/dsh-tool-subagent-control\/list-agents/.test(presetBlock)) {
+  errors.push('configs/dsh/nd-dsh.patch.yml must not mount the removed tool-subagent-control/list-agents subpath')
+}
+const codexToolBlock = /- id: tool-subagent-codex\b([\s\S]*?)(?=\n\s*- id:|$)/.exec(presetBlock)?.[1] ?? ''
 if (!codexToolBlock || /disabled:\s*true/.test(codexToolBlock)) {
   errors.push('ND-DSH Codex coding-engine tool must be enabled in the standard agent preset')
 }
-const personaBlock = /- id: persona\b([\s\S]*?)(?=\n\s*- id:|$)/.exec(preset)?.[1] ?? ''
+const personaBlock = /- id: persona\b([\s\S]*?)(?=\n\s*- id:|$)/.exec(presetBlock)?.[1] ?? ''
 if (!personaBlock.includes('prefix:')) {
-  errors.push('configs/dsh/agent-presets/nd-dsh/agent.cordis.yml persona row must configure prefix')
+  errors.push('configs/dsh/nd-dsh.patch.yml preset persona row must configure prefix')
 }
-const presetMeta = await fs.readFile(join(root, 'configs/dsh/agent-presets/nd-dsh/preset.yml'), 'utf8')
-if (!presetMeta.includes('name: ND-DSH')) errors.push('configs/dsh/agent-presets/nd-dsh/preset.yml must name the ND-DSH preset')
 
 const mainProcess = await fs.readFile(join(root, 'src/main/index.ts'), 'utf8')
 if (!mainProcess.includes("app.commandLine.appendSwitch('remote-debugging-address', '127.0.0.1')")) {

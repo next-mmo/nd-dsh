@@ -1,10 +1,14 @@
 import { ipcMain, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
-import type { BrowserBounds } from '../../shared/contracts.js'
+import { ND_DESIGN_LIMITS, type DesignCommand } from '../../shared/nd-design/index.js'
 import { DESIGN_IPC } from '../../shared/design.js'
 import type { DesignService } from './design-service.js'
-import type { NdPencilController } from './nd-pencil-controller.js'
+import type { DesignSessionService } from './design-session-service.js'
 
-export function registerDesignIpc(window: BrowserWindow, design: DesignService, ndPencil: NdPencilController): () => void {
+export function registerDesignIpc(
+  window: BrowserWindow,
+  design: DesignService,
+  session: DesignSessionService,
+): () => void {
   const channels: string[] = []
   const handle = (channel: string, listener: (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown | Promise<unknown>): void => {
     ipcMain.removeHandler(channel)
@@ -20,15 +24,21 @@ export function registerDesignIpc(window: BrowserWindow, design: DesignService, 
   handle(DESIGN_IPC.previewHtml, (_event, value) => design.previewHtml(asPath(value, 'Template path')))
   handle(DESIGN_IPC.startDevPreview, () => design.startDevPreview())
   handle(DESIGN_IPC.stopPreview, () => design.stopPreview())
-  handle(DESIGN_IPC.freeformState, () => ndPencil.state())
-  handle(DESIGN_IPC.freeformInitialize, () => ndPencil.reinitialize())
-  handle(DESIGN_IPC.freeformSetup, () => ndPencil.setup())
-  handle(DESIGN_IPC.freeformSetBounds, (_event, value) => ndPencil.setBounds(asBounds(value)))
-  handle(DESIGN_IPC.freeformSetVisible, (_event, value) => ndPencil.setVisible(Boolean(value)))
-  handle(DESIGN_IPC.freeformOpen, (_event, value) => ndPencil.open(asPath(value, 'Freeform path')))
-  handle(DESIGN_IPC.freeformCreate, (_event, value) => ndPencil.create(asPath(value, 'Freeform path')))
-  handle(DESIGN_IPC.freeformSave, () => ndPencil.save())
-  handle(DESIGN_IPC.freeformClose, () => ndPencil.close())
+
+  handle(DESIGN_IPC.designState, () => session.state())
+  handle(DESIGN_IPC.designSync, () => session.sync())
+  handle(DESIGN_IPC.designOpen, (_event, value) => session.open(asPath(value, 'ND Pencil path')))
+  handle(DESIGN_IPC.designCreate, (_event, value, name) => session.create(asPath(value, 'ND Pencil path'), asOptionalName(name)))
+  handle(DESIGN_IPC.designClose, (_event, value) => session.close(value === undefined ? true : Boolean(value)))
+  handle(DESIGN_IPC.designApply, (_event, revision, commands) => session.apply(asRevision(revision), asCommands(commands)))
+  handle(DESIGN_IPC.designUndo, () => session.undo())
+  handle(DESIGN_IPC.designRedo, () => session.redo())
+  handle(DESIGN_IPC.designSave, () => session.save())
+  handle(DESIGN_IPC.designSetSelection, (_event, ids) => {
+    session.setSelection(asSelection(ids))
+  })
+  handle(DESIGN_IPC.designBuild, () => session.build())
+  handle(DESIGN_IPC.designImportAsset, (_event, value) => session.importAsset(asImportAsset(value)))
 
   return () => {
     for (const channel of channels) ipcMain.removeHandler(channel)
@@ -46,13 +56,53 @@ function asPath(value: unknown, label: string): string {
   return value.trim()
 }
 
-function asBounds(value: unknown): BrowserBounds {
-  if (!value || typeof value !== 'object') throw new Error('Freeform bounds are required')
-  const record = value as Record<string, unknown>
-  const read = (key: keyof BrowserBounds): number => {
-    const number = Number(record[key])
-    if (!Number.isFinite(number) || number < 0 || number > 100_000) throw new Error(`${key} must be a finite non-negative number`)
-    return number
+function asOptionalName(value: unknown): string | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== 'string' || value.length > 200) throw new Error('ND Pencil name must be a short string')
+  return value.trim() || undefined
+}
+
+function asRevision(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 1_000_000_000) {
+    throw new Error('ND Pencil revision must be a non-negative integer')
   }
-  return { x: read('x'), y: read('y'), width: read('width'), height: read('height') }
+  return value
+}
+
+function asCommands(value: unknown): DesignCommand[] {
+  if (!Array.isArray(value) || value.length === 0) throw new Error('ND Pencil apply requires a non-empty command array')
+  if (value.length > ND_DESIGN_LIMITS.maxCommandsPerBatch) throw new Error('ND Pencil command batch is too large')
+  let bytes = 0
+  try {
+    bytes = JSON.stringify(value).length
+  } catch {
+    throw new Error('ND Pencil commands must be JSON serializable')
+  }
+  if (bytes > ND_DESIGN_LIMITS.maxBatchBytes) throw new Error('ND Pencil command batch is too large')
+  for (const item of value) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error('ND Pencil command must be an object')
+    const op = (item as { op?: unknown }).op
+    if (typeof op !== 'string' || !['insert', 'update', 'delete', 'reorder', 'group', 'ungroup'].includes(op)) {
+      throw new Error('ND Pencil command op is invalid')
+    }
+  }
+  return value as DesignCommand[]
+}
+
+function asSelection(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length > 500) throw new Error('ND Pencil selection must be an array of at most 500 ids')
+  return value.map((id) => {
+    if (typeof id !== 'string' || !id || id.length > 128) throw new Error('ND Pencil selection contains an invalid id')
+    return id
+  })
+}
+
+function asImportAsset(value: unknown): { dataUrl: string; name?: string } {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('ND Pencil image input is invalid')
+  const record = value as Record<string, unknown>
+  if (typeof record.dataUrl !== 'string' || record.dataUrl.length > ND_DESIGN_LIMITS.maxAssetBytes * 1.5) {
+    throw new Error('ND Pencil image is too large')
+  }
+  const name = asOptionalName(record.name)
+  return { dataUrl: record.dataUrl, ...(name ? { name } : {}) }
 }

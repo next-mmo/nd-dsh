@@ -19,14 +19,8 @@ artifacts/
 
 # Pinned upstream infrastructure populated by git submodule/bootstrap.
 /vendor/deepseek-harness/
-/vendor/openpencil/
 !/vendor/README.md
 !/vendor/deepseek-harness.json
-!/vendor/openpencil.json
-!/vendor/openpencil.LICENSE
-
-# Built ND Pencil runtime staged for packaging; never commit platform binaries.
-/resources/nd-pencil/bin/
 
 *.tsbuildinfo
 

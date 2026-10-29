@@ -122,7 +122,7 @@ interface ChatPanelProps {
   onError(message: string): void
   onOpenSettings?(tab?: SettingsTab): void
   onOpenFile?(path: string): void
-  externalPrompt?: { id: string; text: string } | null
+  externalPrompt?: { id: string; text: string; autoSend?: boolean } | null
   onExternalPromptConsumed?(): void
   /** One-shot capture (data URL) from a capture shortcut; attached unsent. */
   incomingImage?: { id: string; dataUrl: string } | null
@@ -251,6 +251,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   const [threads, setThreads] = useState<Record<string, ThreadEntry[]>>({})
   const [busySessions, setBusySessions] = useState<Set<string>>(new Set())
   const [submitting, setSubmitting] = useState(false)
+  const [autoSendText, setAutoSendText] = useState<string | null>(null)
   const [models, setModels] = useState<SessionModels | null>(null)
   const [modelCatalogState, setModelCatalogState] = useState<ModelCatalogState>('idle')
   const [providerRoutes, setProviderRoutes] = useState<ModelProvider[]>([])
@@ -1004,6 +1005,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
     if (!externalPrompt) return
     setPrompt(externalPrompt.text)
     onExternalPromptConsumed?.()
+    if (externalPrompt.autoSend) setAutoSendText(externalPrompt.text)
   }, [externalPrompt, onExternalPromptConsumed])
 
   // Capture shortcuts attach their shot here; nothing sends until the user does.
@@ -1444,8 +1446,8 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
     addFiles(files)
   }
 
-  const run = async (): Promise<void> => {
-    const input = prompt
+  const run = async (override?: string): Promise<void> => {
+    const input = override ?? prompt
     const attachmentCount = pendingImages.length + pendingFiles.length
     if ((!input.trim() && attachmentCount === 0) || busy || submitting) return
     const outbound = input.trim() ? input : 'Please review the attached file(s) and continue.'
@@ -1547,6 +1549,12 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
       setSubmitting(false)
     }
   }
+
+  useEffect(() => {
+    if (!autoSendText) return
+    setAutoSendText(null)
+    void run(autoSendText)
+  }, [autoSendText])
 
   const stop = async (): Promise<void> => {
     const targetSessionId = activeSessionId

@@ -39,9 +39,11 @@ for (const marker of [
   'from: node_modules/agent-browser',
   'from: resources/browser-extensions',
   'to: browser-extensions',
-  'from: resources/nd-pencil',
 ]) {
   if (!builderConfig.includes(marker)) throw new Error(`electron-builder.yml is missing: ${marker}`)
+}
+if (builderConfig.includes('resources/nd-pencil') || builderConfig.includes('nd-pencil')) {
+  throw new Error('electron-builder.yml still packages the retired ND Pencil runtime')
 }
 const extraResourcesConfig = builderConfig.split('extraResources:')[1] ?? ''
 if (/to:\s*nd-extensions(?:\/|\s)/.test(extraResourcesConfig)) throw new Error('Optional extension packages must not be bundled')
@@ -87,16 +89,16 @@ if (!configOnly) {
     'scripts/nd-browser-companion-runtime.mjs',
     'scripts/nd-agent-browser-cli.mjs',
     'scripts/nd-background-process.cjs',
+    'scripts/nd-design-mcp.mjs',
     'scripts/nd-vault-cli.mjs',
     'scripts/register-browser-native-host.mjs',
+    'configs/dsh/nd-dsh.patch.yml',
     '.release/harness/lib/bin.js',
     '.release/harness/LICENSE',
     '.release/harness/THIRD_PARTY_NOTICES.md',
     '.release/THIRD_PARTY_NOTICES.nd-dsh.md',
     'LICENSE',
-    'vendor/openpencil.LICENSE',
     'vendor/vscode-git.LICENSE',
-    'resources/nd-pencil/LICENSE.openpencil',
     'node_modules/agent-browser/LICENSE',
     'node_modules/electron/dist/LICENSE',
     'node_modules/electron/dist/LICENSES.chromium.html',
@@ -106,9 +108,6 @@ if (!configOnly) {
     '.release/harness/node_modules/@deepseek-ai/dsh-subagent-codex/node_modules/@openai/codex/package.json',
     '.release/harness/node_modules/@deepseek-ai/dsh-app-boot/package.json',
     'node_modules/agent-browser/bin/agent-browser.js',
-    `resources/nd-pencil/bin/${process.platform === 'win32' ? 'op-host-web-server.exe' : 'op-host-web-server'}`,
-    'resources/nd-pencil/bin/web-bundle/op_host_web.js',
-    'resources/nd-pencil/bin/web-bundle/op_host_web_bg.wasm',
   ]
   for (const relativePath of requiredFiles) {
     const path = join(root, relativePath)
@@ -131,6 +130,7 @@ if (!configOnly) {
     || manifest.browserCompanion.nativeHostSha256.length !== 64) {
     throw new Error('Packaged Browser Companion provenance is missing or invalid')
   }
+  if ('ndPencil' in manifest) throw new Error('Release manifest still records the retired ND Pencil runtime')
   verifyThirdPartyNotices()
 }
 
@@ -163,10 +163,13 @@ function verifyThirdPartyNotices() {
       throw new Error(`Third-party notices do not name the runtime dependency ${name}`)
     }
   }
-  for (const component of ['DeepSeek Harness', 'agent-browser', 'ND Pencil', 'Electron', 'Chromium', 'Node.js']) {
+  for (const component of ['DeepSeek Harness', 'agent-browser', 'Electron', 'Chromium', 'Node.js']) {
     if (!notices.includes(component)) {
       throw new Error(`Third-party notices do not include the bundled component ${component}`)
     }
+  }
+  if (/OpenPencil|nd-pencil\/LICENSE/i.test(notices)) {
+    throw new Error('Third-party notices still attribute the retired ND Pencil runtime')
   }
   if (!/Native runtime crates[\s\S]*\| Crate \|/.test(notices)) {
     throw new Error('Third-party notices do not include the native runtime crate table')

@@ -305,9 +305,9 @@ A **Public Beta** still requires restored CI, signed installers with an update c
 | Rust core runtime | 🚢 Shipped | Single production runtime `nd-core` (Rust sidecar): runtime permits, process/PTY lifecycle, durable effect journal with restart replay, decision-kernel contract — organization truth stays ND/TypeScript-owned |
 | Unified browser platform | 🚢 Shipped | ND built-in multi-tab browser is the primary target; Browser Companion is an optional explicit external Chrome/Chromium target behind the same governed BrowserTarget/router contract |
 | In-app browser extension runtime | 🧪 Beta | Extensions load into the ND-owned browser session with in-app toolbar/action popups; broader compatibility is evidence-gated and never falls back to external Chrome |
-| ND Pencil | 🚢 Shipped | Native Freeform design surface (bundled `resources/nd-pencil`, sandboxed child view) editing the active project's real source — see [`docs/nd-pencil.md`](docs/nd-pencil.md) |
+| ND Pencil | 🚢 Shipped | 100% in-repo Freeform editor (React/DOM/SVG, `.op` v2, shared human/agent undo, live `nd_design` bridge) that builds into the active project's real source — see [`docs/nd-pencil.md`](docs/nd-pencil.md) |
 | Policy gate | 🚢 Shipped | Main-process DENY/ALLOW/ASK enforcement for approval-bearing organization runs |
-| Packaging & installers | 🧪 Beta | Private Windows portable `0.1.1` with bundled ND Core, Harness, ND Pencil, and agent-browser. Signed installers, an update channel, and a clean-machine install are still pending |
+| Packaging & installers | 🧪 Beta | Private Windows portable `0.1.1` with bundled ND Core, Harness, the in-repo ND Pencil editor, and agent-browser. Signed installers, an update channel, and a clean-machine install are still pending |
 | Codex onboarding | 🛠 Planned | Native authentication and health checks in first-run onboarding |
 | More execution providers | 🛠 Planned | Additional local/offline and remote/cloud workers behind the same ND task/workspace/evidence contract |
 | Broader company templates | 🛠 Planned | Non-coding business roles once the software-company loop is reliable |
@@ -327,7 +327,7 @@ The full, ordered roadmap lives in [`docs/roadmap.md`](docs/roadmap.md), and the
 - Built-in browser: ND-owned persistent Chromium session composed of sandboxed Electron `WebContentsView` tabs; site permissions deny by default.
 - Browser extensions: supported packages load into the same ND browser session. Extension action popups stay inside the ND window; built-in extension execution never silently falls back to external Chrome.
 - Browser automation: attaches to the exact visible ND tab through loopback CDP; no hidden second browser. Browser Companion is an explicit optional target, not the built-in runtime.
-- ND Pencil: sandboxed, context-isolated child view; the managed engine binds to loopback only with a per-instance token/allowed-origin contract, denies popups/permissions, and blocks upstream authentication, collaboration, and built-in AI routes.
+- ND Pencil: the editor runs inside the trusted, context-isolated renderer; main owns document validation, workspace containment, atomic saves, and undo. The default Harness reaches the canvas only through a loopback MCP bridge with a per-launch bearer token, and generic workspace tools cannot write `.op` files.
 - IPC: main-frame sender validation and narrow contracts.
 - Workspace: path containment and symlink protections.
 - Provider credentials: separated from provider metadata, encrypted at rest when OS secure storage is available, and never returned to React after storage.
@@ -347,9 +347,12 @@ src/main/harness/         primary Harness adapter
 src/main/browser/         ND built-in Chromium tabs/profile/extension runtime + agent-browser integration
 src/main/browser-platform/ unified BrowserTarget routing, policy, credentials and extension management
 src/main/extensions/      ND extension packages, lifecycle and trusted invocation broker
+src/main/design/          ND Pencil session, document lifecycle, store and agent bridge
 src/preload/              trusted renderer bridge
 src/renderer/             ND product UI
+src/renderer/src/design/  in-repo React/DOM/SVG ND Pencil editor
 src/shared/               cross-process contracts
+src/shared/nd-design/     ND Pencil v2 document engine, commands, import and export
 schema/                   nd.extension/1 manifest JSON Schema
 examples/nd-extension-hello/  minimal installable ND extension sample
 docs/extensions/          ND extension authoring guide
@@ -358,7 +361,7 @@ configs/dsh/              ND Harness overlay and agent preset
 tests/                    product/unit contracts
 vendor/deepseek-harness/  runtime submodule (tracks upstream latest)
 crates/                   Rust core: nd-protocol, nd-runtime, nd-core, nd-browser-host
-resources/nd-pencil/      bundled ND Pencil engine (pinned upstream source: vendor/openpencil)
+scripts/nd-design-mcp.mjs Harness MCP bridge for live ND Pencil editing
 ```
 
 ## License

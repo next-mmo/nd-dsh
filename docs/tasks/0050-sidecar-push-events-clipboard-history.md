@@ -17,7 +17,7 @@ Same framing as PRD 0008 §1 and task 0045: take the useful architectural idea f
 
 magibarapp ships **no LICENSE file** (checked 2026-10-06: `GET /repos/invisal/magibarapp/license` → 404, `license: null`). Unlicensed means all rights reserved by default.
 
-This task takes **behavioural and architectural inspiration only**. No source code, no translated ports, no copied comments or doc prose, no substantially similar expression. Every design decision below is restated in ND terms and must be implemented against ND's own contracts. Contrast the deliberate handling of `vendor/openpencil`, which preserves an MIT notice in `vendor/openpencil.LICENSE` and a tested pin in `vendor/openpencil.json` — magibarapp has no such grant and must not be vendored, copied, or patched into this repository.
+This task takes **behavioural and architectural inspiration only**. No source code, no translated ports, no copied comments or doc prose, no substantially similar expression. Every design decision below is restated in ND terms and must be implemented against ND's own contracts. Contrast the deliberate handling of a properly licensed upstream, which preserves its notice and tested pin — magibarapp has no such grant and must not be vendored, copied, or patched into this repository.
 
 ## Why this is a sidecar task
 

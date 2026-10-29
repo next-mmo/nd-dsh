@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark light" />
+  <!-- Mirrors the CSP the ND asset server sets on this document; defense in depth. -->
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'none'; script-src nd-extension-ui:; style-src nd-extension-ui: 'unsafe-inline'; img-src nd-extension-ui: data: blob:; font-src nd-extension-ui:; connect-src 'none'; base-uri 'none'; form-action 'none'" />
+  <title>YouTube Downloader</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main id="app">
+    <header class="app-header">
+      <div class="brand">
+        <span class="mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="5" width="18" height="14" rx="4"></rect>
+            <path d="M10 9.5v5l4.2-2.5z"></path>
+          </svg>
+        </span>
+        <div>
+          <h1>YouTube Downloader</h1>
+          <p class="subtitle">Single video · MP4 up to 720p or M4A audio</p>
+        </div>
+      </div>
+      <span id="setup-badge" class="badge">Setup required</span>
+    </header>
+
+    <div id="banner" class="banner" role="alert" hidden></div>
+
+    <section id="setup-card" class="card">
+      <div class="card-head">
+        <div>
+          <h2>One-time setup</h2>
+          <p id="setup-message" class="muted">The downloader needs two pinned tools.</p>
+        </div>
+        <button id="setup-button" class="btn primary" type="button">Set up downloader</button>
+      </div>
+      <div id="setup-progress" class="progress" hidden>
+        <div id="setup-bar" class="progress-fill"></div>
+      </div>
+      <ul id="tool-list" class="tool-list"></ul>
+      <p id="setup-error" class="error" hidden></p>
+      <p class="fineprint">
+        Official GitHub releases, pinned and SHA-256 verified. Setup never runs the tools;
+        the first download does. About 61 MB total.
+      </p>
+    </section>
+
+    <section class="card">
+      <div class="current-row">
+        <div class="current-info">
+          <span class="eyebrow">Active YouTube tab</span>
+          <strong id="current-title">No YouTube video detected</strong>
+          <span id="current-url" class="muted mono">Open a watch, Shorts, or live page in the ND browser.</span>
+        </div>
+        <button id="use-current" class="btn ghost" type="button" disabled>Use current tab</button>
+      </div>
+
+      <label class="field-label" for="url">Video URL</label>
+      <input id="url" class="input" type="url" inputmode="url" autocomplete="off" spellcheck="false"
+        placeholder="https://www.youtube.com/watch?v=…" />
+
+      <div class="download-row">
+        <div class="segmented" role="group" aria-label="Download format">
+          <button type="button" class="seg" data-mode="video" aria-pressed="true">Video · MP4</button>
+          <button type="button" class="seg" data-mode="audio" aria-pressed="false">Audio · M4A</button>
+        </div>
+        <button id="start" class="btn primary" type="button" disabled>Download</button>
+      </div>
+      <p id="start-hint" class="hint">Paste a link or use the active tab.</p>
+    </section>
+
+    <section id="active-card" class="card active-card" hidden>
+      <div class="card-head">
+        <div class="grow">
+          <span class="eyebrow">Active download</span>
+          <h2 id="active-title"></h2>
+          <p id="active-meta" class="muted"></p>
+        </div>
+        <button id="cancel" class="btn danger ghost" type="button">Cancel</button>
+      </div>
+      <div class="progress"><div id="active-bar" class="progress-fill"></div></div>
+      <p id="active-detail" class="muted mono"></p>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <div>
+          <h2>Recent downloads</h2>
+          <p class="muted">Saved to your Downloads folder. Nothing here is uploaded anywhere.</p>
+        </div>
+      </div>
+      <div id="jobs" class="job-list"></div>
+    </section>
+
+    <footer class="footer">
+      <span>Download only content you own or have permission to save. YouTube's terms and the video owner's rights apply.</span>
+      <span>Windows only · No playlists · No sign-in-only videos</span>
+    </footer>
+  </main>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

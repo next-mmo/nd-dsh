@@ -1,4 +1,9 @@
 import type { BrowserBounds } from './contracts.js'
+import type {
+  DesignCommand,
+  DesignDocument,
+  DesignMigrationReport,
+} from './nd-design/index.js'
 
 export type DesignProjectKind = 'shadcn' | 'next' | 'react' | 'vite' | 'static-html' | 'web' | 'canvas'
 
@@ -32,7 +37,7 @@ export interface DesignFreeformDocumentEntry {
   name: string
 }
 
-export type DesignFreeformStatus = 'unavailable' | 'installing' | 'idle' | 'starting' | 'ready' | 'error'
+export type DesignFreeformStatus = 'idle' | 'ready' | 'saving' | 'error'
 
 export interface DesignFreeformState {
   engine: 'nd-pencil'
@@ -43,7 +48,60 @@ export interface DesignFreeformState {
   documentPath?: string
   documentName?: string
   version?: string
+  revision: number
+  canUndo: boolean
+  canRedo: boolean
+  selectionCount: number
+  agentEditing: boolean
   error?: string
+  migration?: DesignMigrationReport
+}
+
+export interface DesignSessionSync {
+  state: DesignFreeformState
+  document: DesignDocument | null
+  assets: Record<string, string>
+}
+
+export interface DesignApplyAck {
+  ok: true
+  revision: number
+  changedIds: string[]
+  createdIds: string[]
+  deletedIds: string[]
+  state: DesignFreeformState
+}
+
+export interface DesignApplyConflict {
+  ok: false
+  conflict: true
+  sync: DesignSessionSync
+}
+
+export type DesignApplyResponse = DesignApplyAck | DesignApplyConflict
+
+export interface DesignChangedEvent {
+  state: DesignFreeformState
+  document?: DesignDocument
+  assets?: Record<string, string>
+  reason: 'open' | 'close' | 'agent' | 'undo' | 'redo' | 'save' | 'conflict'
+  changedIds?: string[]
+}
+
+export interface DesignBuildResult {
+  specPath: string
+  svgPath: string
+  prompt: string
+}
+
+export interface DesignImportAssetInput {
+  dataUrl: string
+  name?: string
+}
+
+export interface DesignImportedAsset {
+  path: string
+  dataUrl: string
 }
 
 export interface DesignPreviewState {
@@ -81,16 +139,19 @@ export interface DesignDesktopApi {
   previewHtml(path: string): Promise<DesignPreviewState>
   startDevPreview(): Promise<DesignPreviewState>
   stopPreview(): Promise<void>
-  freeformState(): Promise<DesignFreeformState>
-  freeformInitialize(): Promise<DesignFreeformState>
-  freeformSetup(): Promise<DesignFreeformState>
-  freeformSetBounds(bounds: BrowserBounds): Promise<void>
-  freeformSetVisible(visible: boolean): Promise<DesignFreeformState>
-  freeformOpen(path: string): Promise<DesignFreeformState>
-  freeformCreate(path: string): Promise<DesignFreeformState>
-  freeformSave(): Promise<DesignFreeformState>
-  freeformClose(): Promise<DesignFreeformState>
-  onFreeformState(listener: (state: DesignFreeformState) => void): () => void
+  designState(): Promise<DesignFreeformState>
+  designSync(): Promise<DesignSessionSync>
+  designOpen(path: string): Promise<DesignSessionSync>
+  designCreate(path: string, name?: string): Promise<DesignSessionSync>
+  designClose(save?: boolean): Promise<DesignSessionSync>
+  designApply(baseRevision: number, commands: DesignCommand[]): Promise<DesignApplyResponse>
+  designUndo(): Promise<DesignSessionSync>
+  designRedo(): Promise<DesignSessionSync>
+  designSave(): Promise<DesignFreeformState>
+  designSetSelection(ids: string[]): Promise<void>
+  designBuild(): Promise<DesignBuildResult>
+  designImportAsset(input: DesignImportAssetInput): Promise<DesignImportedAsset>
+  onDesignChanged(listener: (event: DesignChangedEvent) => void): () => void
 }
 
 export const DESIGN_IPC = {
@@ -99,14 +160,17 @@ export const DESIGN_IPC = {
   previewHtml: 'design:preview-html',
   startDevPreview: 'design:start-dev-preview',
   stopPreview: 'design:stop-preview',
-  freeformState: 'design:freeform-state',
-  freeformInitialize: 'design:freeform-initialize',
-  freeformSetup: 'design:freeform-setup',
-  freeformSetBounds: 'design:freeform-set-bounds',
-  freeformSetVisible: 'design:freeform-set-visible',
-  freeformOpen: 'design:freeform-open',
-  freeformCreate: 'design:freeform-create',
-  freeformSave: 'design:freeform-save',
-  freeformClose: 'design:freeform-close',
-  freeformChanged: 'design:freeform-changed',
+  designState: 'design:session-state',
+  designSync: 'design:session-sync',
+  designOpen: 'design:session-open',
+  designCreate: 'design:session-create',
+  designClose: 'design:session-close',
+  designApply: 'design:session-apply',
+  designUndo: 'design:session-undo',
+  designRedo: 'design:session-redo',
+  designSave: 'design:session-save',
+  designSetSelection: 'design:session-set-selection',
+  designBuild: 'design:session-build',
+  designImportAsset: 'design:session-import-asset',
+  designChanged: 'design:session-changed',
 } as const
