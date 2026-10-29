@@ -1,4 +1,4 @@
-import { BrowserWindow, WebContentsView, session } from 'electron'
+import { BrowserWindow, WebContentsView, dialog, session, shell, type Session } from 'electron'
 import { parseNineRouterBaseUrl } from './nine-router-connector.js'
 
 /**
@@ -9,6 +9,8 @@ import { parseNineRouterBaseUrl } from './nine-router-connector.js'
 export class NineRouterDashboard {
   private view: WebContentsView | undefined
   private origin: string | undefined
+  private profile: Session | undefined
+  private downloadListener: ((event: Electron.Event, item: Electron.DownloadItem, contents: Electron.WebContents) => void) | undefined
 
   constructor(private readonly window: BrowserWindow) {}
 
@@ -31,7 +33,27 @@ export class NineRouterDashboard {
       },
     })
     const allowedOrigin = target.origin
-    view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    view.webContents.setWindowOpenHandler(({ url }) => {
+      try {
+        const target = new URL(url)
+        if (target.protocol === 'https:' && target.hostname !== 'localhost' && target.hostname !== '127.0.0.1') {
+          // Never auto-open a link from the third-party dashboard. OAuth links
+          // may require a system browser, so make the user approve the exact host.
+          void dialog.showMessageBox(this.window, {
+            type: 'question',
+            buttons: ['Cancel', 'Open in system browser'],
+            defaultId: 0,
+            cancelId: 0,
+            title: '9Router external authentication',
+            message: '9Router wants to open an external sign-in page.',
+            detail: target.origin + '\nOnly continue if you trust this sign-in provider.',
+          }).then(result => {
+            if (result.response === 1) void shell.openExternal(url)
+          }).catch(() => undefined)
+        }
+      } catch { /* refuse malformed URLs */ }
+      return { action: 'deny' }
+    })
     view.webContents.on('will-navigate', (event, url) => {
       try {
         const next = new URL(url)
@@ -43,9 +65,11 @@ export class NineRouterDashboard {
         if (new URL(url).origin !== allowedOrigin) event.preventDefault()
       } catch { event.preventDefault() }
     })
-    profile.on('will-download', (_event, item, source) => {
+    this.profile = profile
+    this.downloadListener = (_event, item, source) => {
       if (source === view.webContents) item.cancel()
-    })
+    }
+    profile.on('will-download', this.downloadListener)
     this.window.contentView.addChildView(view)
     view.setBounds({ x: 0, y: 0, width: 0, height: 0 })
     view.setVisible(false)
@@ -71,6 +95,9 @@ export class NineRouterDashboard {
 
   close(): void {
     const view = this.view
+    if (this.profile && this.downloadListener) this.profile.removeListener('will-download', this.downloadListener)
+    this.profile = undefined
+    this.downloadListener = undefined
     this.view = undefined
     this.origin = undefined
     if (!view) return
