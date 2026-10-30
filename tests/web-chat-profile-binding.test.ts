@@ -129,6 +129,109 @@ describe('web chat browser profile binding', () => {
   })
 })
 
+describe('router web lanes stay headless', () => {
+  it.each([
+    [CHATGPT_WEB_ENGINE_ID, 'https://chatgpt.com/'],
+    [GEMINI_WEB_ENGINE_ID, 'https://gemini.google.com/app'],
+  ])('creates %s lane tabs outside the active slot', async (engineId, homeUrl) => {
+    const directory = mkdtempSync(join(tmpdir(), `nd-lane-${engineId}-`))
+    const browser = profileBrowser({
+      tabUrl: vi.fn((tabId: string) => (tabId === 'chat-tab' ? homeUrl : 'about:blank')),
+    })
+    const Engine = engineId === CHATGPT_WEB_ENGINE_ID ? ChatGptWebEngine : GeminiWebEngine
+    const engine = new Engine({
+      browser: browser as never,
+      workspace: { state: () => workspaceState } as never,
+      storePath: join(directory, 'sessions.json'),
+    })
+    try {
+      const { sessionId } = await engine.createSession({ cwd: '/workspace', hidden: true, isolated: true })
+      expect(await engine.ensureBrowserTab(sessionId)).toBe('chat-tab')
+      expect(browser.createTab).toHaveBeenCalledWith(homeUrl, false, 'work')
+      expect(browser.activateTab).not.toHaveBeenCalled()
+    } finally {
+      await engine.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('attaches a Gemini lane headlessly and never presents or focuses it', async () => {
+    const detach = vi.fn()
+    const browser = {
+      ...profileBrowser(),
+      attachTabForRouterTurn: vi.fn(() => detach),
+      windowIsOnScreen: vi.fn(() => true),
+    }
+    const sessionId = `${GEMINI_WEB_ENGINE_ID}-lane`
+    const engine = {
+      run: vi.fn(async () => ({ sessionId })),
+      listSessions: () => [],
+      ownsSession: () => true,
+      stop: vi.fn(),
+      ensureBrowserTab: vi.fn(async () => 'lane-tab'),
+      createSession: vi.fn(async () => ({ sessionId })),
+      deleteSession: vi.fn(async () => undefined),
+      transcript: vi.fn(async () => ({
+        sessionId,
+        engineId: GEMINI_WEB_ENGINE_ID,
+        events: [{
+          type: 'assistant/message',
+          seq: 1,
+          time: 1,
+          data: { message: { role: 'assistant', content: [{ type: 'text', text: 'headless-ok' }] } },
+        }],
+      })),
+    }
+    const router = new EngineSessionRouter(
+      { status: () => ({ state: 'ready' }), run: vi.fn(), gatewayRpc: vi.fn(), stop: vi.fn() } as never,
+      { ownsSession: () => false } as never,
+      { state: () => workspaceState, assertUsable: vi.fn() } as never,
+      undefined,
+      undefined,
+      { browser, storePath: 'unused', engine } as never,
+    )
+
+    await expect(router.runWebLane({ engineId: GEMINI_WEB_ENGINE_ID, prompt: 'hello' })).resolves.toMatchObject({ text: 'headless-ok' })
+
+    expect(browser.attachTabForRouterTurn).toHaveBeenCalledWith('lane-tab')
+    expect(detach).toHaveBeenCalledOnce()
+    expect(browser.activateTab).not.toHaveBeenCalledWith('lane-tab')
+    expect(engine.deleteSession).toHaveBeenCalledWith(sessionId, { closeTab: true })
+  })
+
+  it('refuses a Gemini lane while the ND window is minimized', async () => {
+    const browser = {
+      ...profileBrowser(),
+      attachTabForRouterTurn: vi.fn(() => () => undefined),
+      windowIsOnScreen: vi.fn(() => false),
+    }
+    const sessionId = `${GEMINI_WEB_ENGINE_ID}-hidden`
+    const engine = {
+      run: vi.fn(),
+      listSessions: () => [],
+      ownsSession: () => true,
+      stop: vi.fn(),
+      ensureBrowserTab: vi.fn(async () => 'lane-tab'),
+      createSession: vi.fn(async () => ({ sessionId })),
+      deleteSession: vi.fn(async () => undefined),
+      transcript: vi.fn(async () => ({ sessionId, engineId: GEMINI_WEB_ENGINE_ID, events: [] })),
+    }
+    const router = new EngineSessionRouter(
+      { status: () => ({ state: 'ready' }), run: vi.fn(), gatewayRpc: vi.fn(), stop: vi.fn() } as never,
+      { ownsSession: () => false } as never,
+      { state: () => workspaceState, assertUsable: vi.fn() } as never,
+      undefined,
+      undefined,
+      { browser, storePath: 'unused', engine } as never,
+    )
+
+    await expect(router.runWebLane({ engineId: GEMINI_WEB_ENGINE_ID, prompt: 'hello' }))
+      .rejects.toThrow("Gemini Web streams only while ND's window is on screen")
+    expect(browser.attachTabForRouterTurn).not.toHaveBeenCalled()
+    expect(engine.run).not.toHaveBeenCalled()
+  })
+})
+
 describe('web turns restore the user tab and profile', () => {
   it.each([CHATGPT_WEB_ENGINE_ID, GEMINI_WEB_ENGINE_ID])('returns %s to the tab the user had', async (engineId) => {
     const sessionId = `${engineId}-focus`

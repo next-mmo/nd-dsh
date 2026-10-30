@@ -60,7 +60,7 @@ export class WebLaneTimeoutError extends Error {
 
 export class WebLaneQueueFullError extends Error {
   constructor() {
-    super('The visible browser already has the maximum number of queued web-lane turns')
+    super('The background browser already has the maximum number of queued web-lane turns')
     this.name = 'WebLaneQueueFullError'
   }
 }
@@ -68,7 +68,7 @@ export class WebLaneQueueFullError extends Error {
 /**
  * Internal loopback bridge between the Rust router and Electron's web engines.
  *
- * Both web engines drive ND's single visible browser, so jobs are serialized
+ * Both web engines drive ND's single embedded browser, so jobs are serialized
  * globally. Every job creates its own hidden web session inside the engine
  * router; the bridge never touches browser or session state directly.
  */

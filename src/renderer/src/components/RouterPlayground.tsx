@@ -268,8 +268,9 @@ export function RouterPlayground({ state, onError, embedded = false }: RouterPla
           </div>
         </SettingsRow>
         <SettingsNote>
-          API lanes stream tokens. ChatGPT Web and Gemini Web finish one turn at a time in the visible browser, so their reply
-          appears when the turn completes. Stop cancels the browser turn.
+          API lanes stream tokens. ChatGPT Web and Gemini Web run one turn at a time in the background, so their reply
+          appears when the turn completes. Stop cancels the browser turn. ND only opens the provider page when you need
+          to sign in or clear a challenge.
         </SettingsNote>
     </div>
   )

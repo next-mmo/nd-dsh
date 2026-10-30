@@ -662,7 +662,10 @@ export class ChatGptWebEngine {
       if (!activeTurn?.progress || activeTurn.progress.submission === 'none') continue
       if (!this.browserMayHostSession(session)) continue
       try {
-        const driver = new ElectronPageDriver(this.options.browser, this.options.browser.activeTabId(), CHATGPT_ORIGINS)
+        const tabId = session.browserTabId && typeof this.options.browser.tabUrl === 'function'
+          ? session.browserTabId
+          : this.options.browser.activeTabId()
+        const driver = new ElectronPageDriver(this.options.browser, tabId, CHATGPT_ORIGINS)
         try {
           await driver.evaluate<boolean>(`(() => {
             const button = document.querySelector('button[data-testid="stop-button"], main form button[aria-label="Stop generating"], main form button[aria-label="Stop streaming"], main form button[aria-label="Stop"]');
@@ -716,10 +719,13 @@ export class ChatGptWebEngine {
     assertTurnActive(signal)
     await this.options.browser.ensureAgentReady()
     assertTurnActive(signal)
+    const targetId = session.hidden === true
+      ? await this.options.browser.targetIdForTab(tabId)
+      : this.options.browser.state()?.targetId
     const driver: PageDriver = transport === 'extension'
       ? new ElectronPageDriver(this.options.browser, tabId, CHATGPT_ORIGINS)
       : await VisibleCdpConnection.connect(this.options.browser, {
-        targetId: this.options.browser.state()?.targetId,
+        targetId,
         allowedOrigins: CHATGPT_ORIGINS,
       })
     try {
@@ -776,12 +782,12 @@ export class ChatGptWebEngine {
     }
     const existing = session.browserTabId
     if (existing && browser.tabUrl(existing) !== undefined) {
-      await browser.activateTab(existing)
+      if (!session.hidden) await browser.activateTab(existing)
       const currentUrl = browser.tabUrl(existing) ?? ''
       if (!sameConversationUrl(currentUrl, targetUrl)) await browser.navigate(targetUrl, existing)
       return existing
     }
-    const tab = await browser.createTab(targetUrl, true, desiredProfile)
+    const tab = await browser.createTab(targetUrl, !session.hidden, desiredProfile)
     session.browserTabId = tab.id
     this.persistStore()
     return tab.id
@@ -1432,7 +1438,11 @@ export class ChatGptWebEngine {
   }
 
   private browserMayHostSession(session: StoredChatGptWebSession): boolean {
-    const currentUrl = this.options.browser.state().url
+    // Hidden router lanes own a tab outside the active slot; ask that tab, not
+    // whichever page the user happens to be looking at.
+    const currentUrl = session.browserTabId && typeof this.options.browser.tabUrl === 'function'
+      ? this.options.browser.tabUrl(session.browserTabId) ?? ''
+      : this.options.browser.state().url
     if (!isChatGptPageUrl(currentUrl)) return false
     return session.conversationUrl === undefined || sameConversationUrl(currentUrl, session.conversationUrl)
   }

@@ -445,7 +445,9 @@ export class GeminiWebEngine {
       if (!activeTurn?.progress || activeTurn.progress.submission === 'none') continue
       if (!this.browserMayHostSession(session)) continue
       try {
-        const tabId = this.options.browser.activeTabId()
+        const tabId = session.browserTabId && typeof this.options.browser.tabUrl === 'function'
+          ? session.browserTabId
+          : this.options.browser.activeTabId()
         const driver = new ElectronPageDriver(this.options.browser, tabId, GEMINI_ORIGINS)
         try {
           await driver.evaluate<boolean>(`(() => {
@@ -497,12 +499,12 @@ export class GeminiWebEngine {
     }
     const existing = session.browserTabId
     if (existing && browser.tabUrl(existing) !== undefined) {
-      await browser.activateTab(existing)
+      if (!session.hidden) await browser.activateTab(existing)
       const currentUrl = browser.tabUrl(existing) ?? ''
       if (!sameGeminiUrl(currentUrl, targetUrl)) await browser.navigate(targetUrl, existing)
       return existing
     }
-    const tab = await browser.createTab(targetUrl, true, desiredProfile)
+    const tab = await browser.createTab(targetUrl, !session.hidden, desiredProfile)
     session.browserTabId = tab.id
     this.persistStore()
     return tab.id
@@ -526,7 +528,9 @@ export class GeminiWebEngine {
     await this.options.browser.ensureAgentReady()
     assertTurnActive(signal)
 
-    const targetId = typeof this.options.browser?.state === 'function' ? this.options.browser.state()?.targetId : undefined
+    const targetId = session.hidden === true
+      ? await this.options.browser.targetIdForTab(tabId)
+      : typeof this.options.browser?.state === 'function' ? this.options.browser.state()?.targetId : undefined
     const driver: PageDriver = transport === 'extension'
       ? new ElectronPageDriver(this.options.browser, tabId, GEMINI_ORIGINS)
       : await VisibleCdpConnection.connect(this.options.browser, { targetId, allowedOrigins: GEMINI_ORIGINS })
@@ -1387,7 +1391,11 @@ export class GeminiWebEngine {
   }
 
   private browserMayHostSession(session: StoredGeminiWebSession): boolean {
-    const currentUrl = this.options.browser.state().url
+    // Hidden router lanes own a tab outside the active slot; ask that tab, not
+    // whichever page the user happens to be looking at.
+    const currentUrl = session.browserTabId && typeof this.options.browser.tabUrl === 'function'
+      ? this.options.browser.tabUrl(session.browserTabId) ?? ''
+      : this.options.browser.state().url
     if (!isGeminiPageUrl(currentUrl)) return false
     return session.conversationUrl === undefined || sameGeminiUrl(currentUrl, session.conversationUrl)
   }

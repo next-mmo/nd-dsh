@@ -133,7 +133,7 @@ export class BrowserController {
   private destroyPromise: Promise<void> | undefined
   private destroying = false
   private readonly backgroundAttached = new Set<string>()
-  private readonly routerPresented = new Set<string>()
+  private readonly routerHeadless = new Set<string>()
 
   constructor(
     private readonly window: BrowserWindow,
@@ -205,7 +205,7 @@ export class BrowserController {
 
   /** True while a router web turn owns the visible/background browser surface. */
   externalActivity(): 'router-turn' | 'background-render' | undefined {
-    if (this.routerPresented.size > 0) return 'router-turn'
+    if (this.routerHeadless.size > 0) return 'router-turn'
     if (this.backgroundAttached.size > 0) return 'background-render'
     return undefined
   }
@@ -492,6 +492,7 @@ export class BrowserController {
     if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close()
     this.tabs.delete(tabId)
     this.backgroundAttached.delete(tabId)
+    this.routerHeadless.delete(tabId)
     if (this.lastTabByProfile.get(tab.profileId) === tabId) this.lastTabByProfile.delete(tab.profileId)
     this.onTabClosed?.(tabId)
 
@@ -547,10 +548,14 @@ export class BrowserController {
       height: Math.max(0, Math.round(bounds.height)),
     }
     const active = this.activeTab()
-    if (!this.backgroundAttached.has(active.id)) active.view.setBounds(this.bounds)
+    if (!this.backgroundAttached.has(active.id) && !this.routerHeadless.has(active.id)) active.view.setBounds(this.bounds)
     for (const id of this.backgroundAttached) {
       const tab = this.tabs.get(id)
       if (tab) tab.view.setBounds(this.visible ? this.bounds : this.backgroundRenderBounds())
+    }
+    for (const id of this.routerHeadless) {
+      const tab = this.tabs.get(id)
+      if (tab) tab.view.setBounds(this.headlessRenderBounds())
     }
     this.syncExtensionPopupBounds()
   }
@@ -738,42 +743,47 @@ export class BrowserController {
     return { x: Math.max(0, content.width - 1), y: Math.max(0, content.height - 1), width: 1280, height: 900 }
   }
 
+  /** A full page viewport whose view exposes exactly one pixel in the window's
+   * top-left corner, so the page stays visible to Chromium without covering
+   * the app. */
+  private headlessRenderBounds(): Rectangle {
+    return { x: 1 - 1280, y: 1 - 900, width: 1280, height: 900 }
+  }
+
   /**
-   * Show one tab over the app for a router-owned web turn and return a restore
-   * callback. Some providers (Gemini) only stream while their view owns a real
-   * on-screen rect; ChatGPT can stay background-attached. The app's own layout
-   * is untouched; hiding the view brings the normal UI back.
+   * Keep one router lane tab live without painting the provider page over the
+   * app. The page needs real bounds and a visible view — Chromium hides pages
+   * whose view is fully outside the window — so the view keeps a 1px corner
+   * inside the window and the rest of its 1280x900 rect outside it. The app's
+   * UI stays on screen, the window is never raised, and the lane keeps a normal
+   * desktop viewport for the provider's own layout.
    */
-  presentTabForRouterTurn(tabId: string): () => void {
+  attachTabForRouterTurn(tabId: string): () => void {
     const tab = this.requireTab(tabId)
-    const wasVisible = this.visible
-    const previousBounds = this.bounds
-    const content = this.window.getContentBounds()
-    if (!wasVisible) {
-      this.visible = true
-      this.bounds = { x: 0, y: 0, width: content.width, height: content.height }
-    }
-    // Gemini only streams while its page is actually on screen; raise ND for the
-    // turn instead of stalling behind another app.
-    if (!this.window.isDestroyed()) {
-      this.window.show()
-      this.window.focus()
-    }
-    this.window.contentView.addChildView(tab.view)
-    tab.view.setBounds(this.bounds)
+    this.routerHeadless.add(tabId)
+    tab.view.setBounds(this.headlessRenderBounds())
     tab.view.setVisible(true)
-    this.routerPresented.add(tabId)
     let restored = false
     return () => {
       if (restored) return
       restored = true
-      this.routerPresented.delete(tabId)
-      if (!wasVisible) {
-        this.visible = false
-        this.bounds = previousBounds
-        this.syncViewVisibility()
-      }
+      this.routerHeadless.delete(tabId)
+      if (this.tabs.has(tabId)) this.syncViewVisibility()
     }
+  }
+
+  /** True while the window itself can keep a headless page visible. */
+  windowIsOnScreen(): boolean {
+    return !this.window.isDestroyed() && this.window.isVisible() && !this.window.isMinimized()
+  }
+
+  /** CDP target for any tab, including router lanes that never become active. */
+  async targetIdForTab(tabId: string): Promise<string> {
+    const tab = this.requireTab(tabId)
+    if (tab.state.targetId) return tab.state.targetId
+    const targetId = await this.getTargetId(tab.view.webContents)
+    tab.state.targetId = targetId
+    return targetId
   }
 
   async click(tabId: string, ref: string, revision: number): Promise<unknown> {
@@ -1006,7 +1016,7 @@ export class BrowserController {
     this.tabs.clear()
     this.sessionsByProfile.clear()
     this.lastTabByProfile.clear()
-    this.routerPresented.clear()
+    this.routerHeadless.clear()
   }
 
   /**
@@ -1253,6 +1263,13 @@ export class BrowserController {
 
   private syncViewVisibility(): void {
     for (const tab of this.tabs.values()) {
+      if (this.routerHeadless.has(tab.id)) {
+        // Router lanes keep their page on screen for Chromium while the app UI
+        // stays on top; they never fill the pane, even if the user opens it.
+        tab.view.setBounds(this.headlessRenderBounds())
+        tab.view.setVisible(true)
+        continue
+      }
       if (this.backgroundAttached.has(tab.id)) {
         // Attached tabs render offscreen while the surface is hidden and fill
         // the pane when the user opens the browser during a translation.

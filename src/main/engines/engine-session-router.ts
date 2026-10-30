@@ -499,7 +499,6 @@ export class EngineSessionRouter {
     const prompt = this.shieldPrompt(input.prompt)
     const workspaceRoot = this.workspace.state().root
     const browser = engineId === CHATGPT_WEB_ENGINE_ID ? this.chatGptWebBrowser : this.geminiWebBrowser
-    const focus = this.browserFocus(browser)
     const started = Date.now()
     const created = await engine.createSession({
       cwd: workspaceRoot,
@@ -513,8 +512,7 @@ export class EngineSessionRouter {
     const sessionId = created.sessionId
     let keepTab = false
     let laneTabId: string | undefined
-    let detachBackground: (() => void) | undefined
-    let restorePresentation: (() => void) | undefined
+    let detachHeadless: (() => void) | undefined
     const stopOnAbort = (): void => {
       void engine.stop(sessionId).catch(() => undefined)
     }
@@ -524,19 +522,24 @@ export class EngineSessionRouter {
       if (input.signal?.aborted) {
         throw new WebTurnError({ code: 'cancelled', message: 'Web lane request was cancelled', phase: 'open' })
       }
-      // Router turns often run from Settings while the browser surface is
-      // hidden. ChatGPT renders under a background-attached tab; Gemini only
-      // streams while its view owns an on-screen rect, so present it for the
-      // duration of the turn and restore the app UI afterwards.
+      // Router turns are headless: the lane tab is attached with a full page
+      // viewport but only one pixel inside the window, so Chromium keeps the
+      // page visible and streaming while the app UI stays in front. The window
+      // is never raised or focused.
       if (browser) {
         const tabId = await engine.ensureBrowserTab(sessionId)
         laneTabId = tabId ?? undefined
         if (tabId) {
-          if (engineId === GEMINI_WEB_ENGINE_ID) {
-            restorePresentation = browser.presentTabForRouterTurn(tabId)
-          } else if (!browser.state().visible) {
-            detachBackground = browser.attachTabForBackgroundRendering(tabId)
+          if (engineId === GEMINI_WEB_ENGINE_ID && !browser.windowIsOnScreen()) {
+            // Gemini stops streaming when Chromium hides its page, which is
+            // what a minimized or hidden ND window produces.
+            throw new WebTurnError({
+              code: 'page-busy',
+              message: "Gemini Web streams only while ND's window is on screen. Restore the ND window, then retry.",
+              phase: 'open',
+            })
           }
+          detachHeadless = browser.attachTabForRouterTurn(tabId)
         }
       }
       if (engineId === GEMINI_WEB_ENGINE_ID) {
@@ -578,8 +581,7 @@ export class EngineSessionRouter {
       throw error
     } finally {
       input.signal?.removeEventListener('abort', stopOnAbort)
-      detachBackground?.()
-      restorePresentation?.()
+      detachHeadless?.()
       await engine.deleteSession(sessionId, { closeTab: !keepTab }).catch((error) => {
         this.chatGptWebLog?.(`[router web lane] could not clean up session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`)
       })
@@ -587,8 +589,6 @@ export class EngineSessionRouter {
         // A login or challenge page is only useful where the user can see it:
         // hand the lane's tab, and the profile that owns it, over visibly.
         await browser.activateTab(laneTabId).catch(() => undefined)
-      } else {
-        await this.restoreBrowserFocus(browser, focus)
       }
     }
   }
