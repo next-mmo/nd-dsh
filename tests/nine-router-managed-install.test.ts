@@ -62,6 +62,32 @@ async function signedReleaseFixture(): Promise<Fixture> {
   return { root, publicKeyPem }
 }
 
+async function packageFixture(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), 'nd-9router-package-'))
+  cleanups.push(() => rm(root, { recursive: true, force: true }))
+  await mkdir(join(root, 'app', 'node_modules', 'dep'), { recursive: true })
+  await writeFile(join(root, 'package.json'), JSON.stringify({ name: '9router', version: '0.5.75-test' }))
+  await writeFile(join(root, 'app', 'server.js'), '/* standalone server placeholder */')
+  await writeFile(join(root, 'app', 'custom-server.js'), '/* custom server placeholder */')
+  await writeFile(join(root, 'app', 'node_modules', 'dep', 'index.js'), 'module.exports = 1')
+  return root
+}
+
+async function unsignedManifestFixture(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), 'nd-9router-unsigned-'))
+  cleanups.push(() => rm(root, { recursive: true, force: true }))
+  await mkdir(join(root, 'runtime'), { recursive: true })
+  await writeFile(join(root, 'runtime', 'node'), 'test runtime placeholder; never executed')
+  await writeFile(join(root, 'server.js'), '/* test server placeholder */')
+  await writeFile(join(root, 'release-manifest.json'), JSON.stringify({
+    schemaVersion: 1,
+    version: '0.2.0-local',
+    runtimeEntry: 'runtime/node',
+    serverEntry: 'server.js',
+  }))
+  return root
+}
+
 async function managedRuntime(dataDir: string): Promise<NineRouterManagedRuntime> {
   const core = {
     onEvent: vi.fn(() => () => undefined),
@@ -71,6 +97,99 @@ async function managedRuntime(dataDir: string): Promise<NineRouterManagedRuntime
   await runtime.initialize()
   return runtime
 }
+
+describe('NineRouterManagedRuntime unverified import', () => {
+  afterEach(async () => {
+    vi.unstubAllGlobals()
+    await Promise.all(cleanups.splice(0).map(cleanup => cleanup()))
+  })
+
+  it('imports a local 9Router package as unverified and blocks start after the files change', async () => {
+    const source = await packageFixture()
+    const dataDir = await mkdtemp(join(tmpdir(), 'nd-9router-data-'))
+    cleanups.push(() => rm(dataDir, { recursive: true, force: true }))
+    const runtime = await managedRuntime(dataDir)
+
+    const imported = await runtime.importUnverified(source)
+    expect(imported).toMatchObject({
+      installed: true,
+      trusted: false,
+      verification: 'unverified',
+      integrity: 'ok',
+      version: '0.5.75-test',
+      signingKeyConfigured: false,
+    })
+    const record = JSON.parse(await readFile(join(dataDir, '9router-managed', 'installed.json'), 'utf8')) as {
+      verification: string
+      runtimeMode: string
+      serverEntry: string
+      workingDirectory: string
+      inventoryDigest: string
+      directory: string
+    }
+    expect(record.verification).toBe('unverified')
+    expect(record.runtimeMode).toBe('system-node')
+    expect(record.serverEntry).toBe('app/custom-server.js')
+    expect(record.workingDirectory).toBe('app')
+    expect(record.inventoryDigest).toMatch(/^[a-f0-9]{64}$/)
+
+    await writeFile(join(record.directory, 'app', 'server.js'), 'tampered after import')
+    await expect(runtime.start()).rejects.toThrow(/files changed/)
+    expect((await runtime.state()).integrity).toBe('changed')
+  })
+
+  it('accepts an unsigned release manifest and mounts its bundled runtime', async () => {
+    const source = await unsignedManifestFixture()
+    const dataDir = await mkdtemp(join(tmpdir(), 'nd-9router-data-'))
+    cleanups.push(() => rm(dataDir, { recursive: true, force: true }))
+    const runtime = await managedRuntime(dataDir)
+
+    const imported = await runtime.importUnverified(source)
+    expect(imported).toMatchObject({ verification: 'unverified', integrity: 'ok', version: '0.2.0-local' })
+    const record = JSON.parse(await readFile(join(dataDir, '9router-managed', 'installed.json'), 'utf8')) as {
+      runtimeMode: string
+      runtimeEntry: string
+      serverEntry: string
+    }
+    expect(record.runtimeMode).toBe('bundled')
+    expect(record.runtimeEntry).toBe('runtime/node')
+    expect(record.serverEntry).toBe('server.js')
+  })
+
+  it('starts an unverified import without receiving ND-managed secrets', async () => {
+    const source = await packageFixture()
+    const dataDir = await mkdtemp(join(tmpdir(), 'nd-9router-data-'))
+    cleanups.push(() => rm(dataDir, { recursive: true, force: true }))
+    const core = {
+      onEvent: vi.fn(() => () => undefined),
+      request: vi.fn(async (_method: string, _params: Record<string, unknown>) => ({})),
+    }
+    const runtime = new NineRouterManagedRuntime(core as never, dataDir)
+    await runtime.initialize()
+    await runtime.importUnverified(source)
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })))
+
+    const started = await runtime.start()
+    expect(started.running).toBe(true)
+    expect(started.endpoint).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/v1$/)
+    const spawn = core.request.mock.calls.find((call) => call[0] === 'process.spawn')
+    expect(spawn).toBeTruthy()
+    const payload = spawn![1] as unknown as { command: string; args: string[]; cwd: string; env: Record<string, string> }
+    expect(payload.command).toBe(process.execPath)
+    expect(payload.args[0]).toContain(join('app', 'custom-server.js'))
+    expect(payload.cwd).toContain(join('9router-managed', 'versions'))
+    expect(payload.env.PORT).toMatch(/^\d+$/)
+    expect(payload.env.DATA_DIR).toContain(join('9router-managed', 'data'))
+    expect(payload.env.JWT_SECRET).toBeUndefined()
+    expect(payload.env.INITIAL_PASSWORD).toBeUndefined()
+    expect(payload.env.REQUIRE_API_KEY).toBeUndefined()
+
+    await runtime.stop()
+  })
+})
 
 describe('NineRouterManagedRuntime signed install', () => {
   beforeEach(() => {

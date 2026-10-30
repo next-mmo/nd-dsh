@@ -1,11 +1,18 @@
 import { app, safeStorage } from 'electron'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { createServer } from 'node:net'
-import { promises as fs } from 'node:fs'
+import { existsSync, promises as fs } from 'node:fs'
 import { join, dirname } from 'node:path'
 import type { CoreClient } from '../core/core-client.js'
 import { verifyApprovedRelease, type ReleasePolicy } from '../security/verified-release.js'
 import type { NineRouterState } from '../../shared/nine-router.js'
+import {
+  assertInventoryDigest,
+  detectLocalReleaseEntries,
+  inventoryLocalRelease,
+  isInsideDirectory,
+  LocalReleaseError,
+} from './local-release.js'
 
 const PACKAGE_ID = 'nd.9router-runtime'
 const REPOSITORY = 'https://github.com/next-mmo/9router-nd-dsh'
@@ -37,6 +44,14 @@ interface RuntimeSecrets {
 interface InstalledRuntime {
   version: string
   directory: string
+  /** Absent on records written before unverified imports existed: those are signed. */
+  verification?: 'signed' | 'unverified'
+  runtimeMode?: 'bundled' | 'system-node'
+  runtimeEntry?: string
+  serverEntry?: string
+  workingDirectory?: string
+  nodePath?: string
+  inventoryDigest?: string
 }
 
 interface ReleaseManifest {
@@ -80,6 +95,8 @@ export class NineRouterManagedRuntime {
   private port: number | undefined
   private installed: InstalledRuntime | undefined
   private lastError: string | undefined
+  /** Last inventory result for an unverified import; start is the authoritative check. */
+  private unverifiedIntegrity: NineRouterState['integrity']
   private readonly removeExitListener: () => void
 
   constructor(private readonly core: CoreClient, dataDir: string) {
@@ -100,20 +117,38 @@ export class NineRouterManagedRuntime {
       && /^[a-f0-9]{64}$/.test(installed.directory.split(/[\\/]/).pop() ?? '')
       && installed.directory.startsWith(join(this.root, 'versions') + (process.platform === 'win32' ? '\\' : '/'))) {
       this.installed = installed
+      // Do not hash a large local import just to answer a status poll; start()
+      // re-checks the inventory before anything executes.
+      if ((installed.verification ?? 'signed') === 'unverified') this.unverifiedIntegrity = 'ok'
     }
   }
 
   async state(): Promise<NineRouterState> {
-    const trusted = this.installed ? await verifyApprovedRelease(this.installed.directory, publisherPolicy()).then(
-      () => true, () => false,
-    ) : false
+    const record = this.installed
+    const verification = record?.verification ?? (record ? 'signed' : undefined)
+    let trusted = false
+    let integrity: NineRouterState['integrity']
+    if (record) {
+      if (verification === 'signed') {
+        trusted = await verifyApprovedRelease(record.directory, publisherPolicy()).then(
+          () => true, () => false,
+        )
+        integrity = trusted ? 'ok' : 'changed'
+      } else {
+        // Unverified imports carry no publisher claim. The inventory is
+        // re-checked before every start; a status poll reports the last result.
+        integrity = this.unverifiedIntegrity ?? 'ok'
+      }
+    }
     return {
-      installed: Boolean(this.installed),
+      installed: Boolean(record),
       managed: true,
       running: Boolean(this.processId),
       trusted,
       signingKeyConfigured: Object.keys(publisherPolicy().trustedKeys).length > 0,
-      ...(this.installed?.version ? { version: this.installed.version } : {}),
+      ...(verification ? { verification } : {}),
+      ...(integrity ? { integrity } : {}),
+      ...(record?.version ? { version: record.version } : {}),
       ...(this.processId && this.port ? { endpoint: 'http://127.0.0.1:' + this.port + '/v1' } : {}),
       ...(this.lastError ? { lastError: this.lastError } : {}),
     }
@@ -134,9 +169,65 @@ export class NineRouterManagedRuntime {
       const exists = await fs.stat(destination).then(() => true, () => false)
       if (exists) await verifyApprovedRelease(destination, policy)
       else await fs.rename(stage, destination)
-      const record = { version: report.version, directory: destination }
+      const record: InstalledRuntime = { version: report.version, directory: destination, verification: 'signed' }
       await saveJsonAtomic(this.installedFile, record)
       this.installed = record
+      this.unverifiedIntegrity = undefined
+      this.lastError = undefined
+    } finally {
+      await fs.rm(stage, { recursive: true, force: true }).catch(() => undefined)
+    }
+    return this.state()
+  }
+
+  /**
+   * Import a local 9Router folder without a publisher signature. The UI asks
+   * for explicit consent first. ND copies and hash-pins the files, refuses
+   * symlinks and out-of-tree entries, and re-checks the inventory before every
+   * start — but it cannot prove who built this folder. The runtime keeps its
+   * own dashboard credentials; ND does not inject managed secrets into it.
+   */
+  async importUnverified(source: string): Promise<NineRouterState> {
+    if (this.processId) throw new Error('Stop the managed 9Router runtime before importing another build')
+    const sourceRoot = typeof source === 'string' ? source.trim() : ''
+    if (!sourceRoot) throw new LocalReleaseError('choose a 9Router folder')
+    if (isInsideDirectory(this.root, sourceRoot)) throw new LocalReleaseError('choose a folder outside ND\'s managed 9Router store')
+    if (isInsideDirectory(sourceRoot, this.root)) throw new LocalReleaseError('the chosen folder contains ND\'s managed 9Router store')
+    const entries = await detectLocalReleaseEntries(sourceRoot)
+    const sourceInventory = await inventoryLocalRelease(sourceRoot)
+    const stage = join(this.root, 'staging', randomUUID())
+    const destination = join(this.root, 'versions', sourceInventory.digest)
+    await fs.mkdir(dirname(stage), { recursive: true })
+    try {
+      await fs.cp(sourceRoot, stage, {
+        recursive: true,
+        errorOnExist: true,
+        force: false,
+        dereference: false,
+        filter: (source) => source.split(/[\\/]/).pop() !== '.git',
+      })
+      const stagedInventory = await inventoryLocalRelease(stage)
+      if (stagedInventory.digest !== sourceInventory.digest) {
+        throw new LocalReleaseError('the folder changed while it was being copied')
+      }
+      await fs.mkdir(dirname(destination), { recursive: true })
+      const exists = await fs.stat(destination).then(() => true, () => false)
+      if (exists) await assertInventoryDigest(destination, sourceInventory.digest)
+      else await fs.rename(stage, destination)
+      const record: InstalledRuntime = {
+        version: entries.version,
+        directory: destination,
+        verification: 'unverified',
+        runtimeMode: entries.runtimeMode,
+        serverEntry: entries.serverEntry,
+        workingDirectory: entries.workingDirectory,
+        inventoryDigest: sourceInventory.digest,
+        ...(entries.runtimeEntry ? { runtimeEntry: entries.runtimeEntry } : {}),
+        ...(entries.nodePath ? { nodePath: entries.nodePath } : {}),
+      }
+      await saveJsonAtomic(this.installedFile, record)
+      this.installed = record
+      this.unverifiedIntegrity = 'ok'
       this.lastError = undefined
     } finally {
       await fs.rm(stage, { recursive: true, force: true }).catch(() => undefined)
@@ -145,6 +236,9 @@ export class NineRouterManagedRuntime {
   }
 
   async prepare(password: string): Promise<NineRouterState> {
+    if (this.installed && (this.installed.verification ?? 'signed') === 'unverified') {
+      throw new Error('Unverified imports keep their own dashboard credentials. Create the account in the 9Router dashboard.')
+    }
     if (typeof password !== 'string' || password.length < 12 || password.length > 256) {
       throw new Error('Choose an initial 9Router dashboard password of at least 12 characters')
     }
@@ -177,13 +271,43 @@ export class NineRouterManagedRuntime {
 
   async start(): Promise<NineRouterState> {
     if (this.processId) return this.state()
-    if (!this.installed) throw new Error('No signed 9Router release is installed')
-    await verifyApprovedRelease(this.installed.directory, publisherPolicy())
-    const secrets = await this.loadSecrets()
-    const manifest = (await jsonFile<ReleaseManifest>(join(this.installed.directory, 'release-manifest.json')))
-    if (!manifest?.runtimeEntry || !manifest?.serverEntry) throw new Error('Invalid signed 9Router release')
-    const runtime = join(this.installed.directory, ...manifest.runtimeEntry.split('/'))
-    const server = join(this.installed.directory, ...manifest.serverEntry.split('/'))
+    const record = this.installed
+    if (!record) throw new Error('No 9Router build is installed')
+    const verification = record.verification ?? 'signed'
+    let runtime: string
+    let server: string
+    let workingDirectory: string
+    let secrets: RuntimeSecrets | undefined
+    if (verification === 'signed') {
+      await verifyApprovedRelease(record.directory, publisherPolicy())
+      secrets = await this.loadSecrets()
+      const manifest = (await jsonFile<ReleaseManifest>(join(record.directory, 'release-manifest.json')))
+      if (!manifest?.runtimeEntry || !manifest?.serverEntry) throw new Error('Invalid signed 9Router release')
+      runtime = join(record.directory, ...manifest.runtimeEntry.split('/'))
+      server = join(record.directory, ...manifest.serverEntry.split('/'))
+      workingDirectory = record.directory
+    } else {
+      try {
+        await assertInventoryDigest(record.directory, record.inventoryDigest ?? '')
+        this.unverifiedIntegrity = 'ok'
+      } catch (error) {
+        this.unverifiedIntegrity = 'changed'
+        this.lastError = error instanceof Error ? error.message : String(error)
+        throw error
+      }
+      if (!record.serverEntry) throw new Error('Unverified 9Router import is missing its server entry; import the folder again')
+      if (record.runtimeMode === 'system-node') {
+        if (!record.nodePath || !existsSync(record.nodePath)) {
+          throw new Error('The Node.js runtime used for this import is no longer available. Reinstall Node.js or import a release folder with a bundled runtime.')
+        }
+        runtime = record.nodePath
+      } else {
+        if (!record.runtimeEntry) throw new Error('Unverified 9Router import is missing its runtime entry; import the folder again')
+        runtime = join(record.directory, ...record.runtimeEntry.split('/'))
+      }
+      server = join(record.directory, ...record.serverEntry.split('/'))
+      workingDirectory = join(record.directory, ...(record.workingDirectory ?? '.').split('/'))
+    }
     const port = await freeLoopbackPort()
     const processId = randomUUID()
     this.lastError = undefined
@@ -192,7 +316,7 @@ export class NineRouterManagedRuntime {
         id: processId,
         command: runtime,
         args: [server, '--port', String(port), '--no-browser', '--skip-update'],
-        cwd: this.installed.directory,
+        cwd: workingDirectory,
         inheritEnv: false,
         env: {
           PATH: process.env.PATH ?? '',
@@ -208,13 +332,17 @@ export class NineRouterManagedRuntime {
           DATA_DIR: join(this.root, 'data'),
           BASE_URL: 'http://127.0.0.1:' + port,
           NEXT_PUBLIC_BASE_URL: 'http://127.0.0.1:' + port,
-          JWT_SECRET: secrets.jwt,
-          API_KEY_SECRET: secrets.api,
-          MACHINE_ID_SALT: secrets.salt,
-          INITIAL_PASSWORD: secrets.initialPassword,
-          REQUIRE_API_KEY: 'true',
-          ENABLE_REQUEST_LOGS: 'false',
-          OBSERVABILITY_ENABLED: 'false',
+          // Signed releases receive ND-generated secrets. Unverified imports
+          // deliberately do not: they keep their own dashboard credentials.
+          ...(secrets ? {
+            JWT_SECRET: secrets.jwt,
+            API_KEY_SECRET: secrets.api,
+            MACHINE_ID_SALT: secrets.salt,
+            INITIAL_PASSWORD: secrets.initialPassword,
+            REQUIRE_API_KEY: 'true',
+            ENABLE_REQUEST_LOGS: 'false',
+            OBSERVABILITY_ENABLED: 'false',
+          } : {}),
         },
       }, 30_000)
       this.processId = processId

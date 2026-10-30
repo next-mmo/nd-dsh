@@ -324,7 +324,7 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab }: 
                       <strong className={rowTitle}>9Router</strong>
                       <StatusChip neutral>{nineRouterConnected ? 'Connected' : 'Not connected'}</StatusChip>
                     </span>
-                    <span className={rowDesc}>Connect an existing local 9Router or install an ND-signed managed runtime.</span>
+                    <span className={rowDesc}>Connect an existing local 9Router or run an ND-managed 9Router build (signed or explicitly unverified).</span>
                   </div>
                   <SettingsButton onClick={() => selectSubTab('nine-router')}>Open</SettingsButton>
                 </SettingsRow>

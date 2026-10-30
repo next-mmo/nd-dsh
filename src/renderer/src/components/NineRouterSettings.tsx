@@ -72,13 +72,22 @@ export function NineRouterSettings({ onError, onConnected }: Props) {
 
   const run = (action: () => Promise<unknown>, message?: string): void => {
     setBusy(true)
-    void action().then(() => { if (message) setSuccess(message); return refresh() })
-      .catch(e => onError(errorMessage(e)))
+    void action()
+      .then(() => { if (message) setSuccess(message); return refresh() })
+      .catch(async (e) => {
+        onError(errorMessage(e))
+        // A refused start still changes what the panel should show (last error,
+        // integrity, trust); never leave the old state on screen.
+        await refresh().catch(() => undefined)
+      })
       .finally(() => setBusy(false))
   }
 
   const managedReady = Boolean(state?.running && state.endpoint)
   const canOpenDashboard = managedReady || baseUrlTouched || key.trim().length > 0
+  const unverified = state?.verification === 'unverified'
+  const integrityChanged = state?.integrity === 'changed'
+  const startReady = Boolean(state?.installed && (unverified ? !integrityChanged : state.trusted))
 
   const openDashboard = async (): Promise<void> => {
     setBusy(true)
@@ -113,7 +122,7 @@ export function NineRouterSettings({ onError, onConnected }: Props) {
             >
               <span className="flex min-w-0 flex-col gap-[3px]">
                 <strong className={rowTitle}>How to install and use</strong>
-                <span className={rowDesc}>Connect an existing local 9Router, or install an ND-signed managed runtime.</span>
+                <span className={rowDesc}>Connect an existing local 9Router, or run a signed or explicitly unverified managed runtime.</span>
               </span>
               <StatusChip neutral>{guideOpen ? 'Hide' : 'Show'}</StatusChip>
             </button>
@@ -126,7 +135,8 @@ export function NineRouterSettings({ onError, onConnected }: Props) {
                   </GuideStep>
                   <GuideStep index={2}>
                     <strong>ND-managed runtime</strong> — ND Security verifies an ND-signed release before install and again
-                    before launch. The direct install stays disabled until a signing key is provisioned.
+                    before launch. Until a signing key is provisioned, use <strong>Import local (unverified)</strong> for a build
+                    you trust: ND pins its file hashes and refuses it if they change, but makes no publisher claim.
                   </GuideStep>
                   <GuideStep index={3}>
                     For an existing gateway, enter its loopback URL (usually <code className="font-mono text-[10px]">{DEFAULT_BASE_URL}</code>)
@@ -144,7 +154,8 @@ export function NineRouterSettings({ onError, onConnected }: Props) {
                 </ol>
                 <SettingsNote>
                   Loopback gateways only. ND stores the gateway key in its secure store and never reads 9Router account
-                  passwords. Managed releases are signature-verified; unsigned or tampered builds are rejected.
+                  passwords. Signed releases are signature-verified; unverified imports are hash-pinned and never described
+                  as verified.
                 </SettingsNote>
               </div>
             ) : null}
@@ -161,22 +172,33 @@ export function NineRouterSettings({ onError, onConnected }: Props) {
                 <StatusChip good={state?.signingKeyConfigured} warn={!state?.signingKeyConfigured}>
                   {state?.signingKeyConfigured ? 'ND Security verifier ready' : 'ND Security: signing key not provisioned'}
                 </StatusChip>
-                {state?.installed ? (
+                {state?.installed && unverified ? (
+                  <>
+                    <StatusChip warn>Unverified local import</StatusChip>
+                    <StatusChip good={!integrityChanged} warn={integrityChanged}>
+                      {integrityChanged ? 'Files changed after import' : 'Files hash-pinned'}
+                    </StatusChip>
+                  </>
+                ) : null}
+                {state?.installed && !unverified ? (
                   <StatusChip good={state.trusted} warn={!state.trusted}>
                     {state.trusted ? 'Release verified' : 'Release verification failed'}
                   </StatusChip>
                 ) : null}
               </div>
               <span className={rowDesc}>
-                ND Security verifies an ND-signed 9Router release before install and again before launch. Unsigned or tampered
-                builds are rejected.
+                Signed releases are verified before install and launch. Unverified imports are hash-pinned instead; ND makes
+                no publisher claim and refuses changed files.
               </span>
               {state?.lastError ? <span className={rowPathText}>{state.lastError}</span> : null}
               <div className="flex flex-wrap gap-1">
                 <SettingsButton disabled={busy || !state?.signingKeyConfigured} onClick={() => run(() => window.ndDshRouter.nineRouterInstall(), 'Signed release verified and installed')}>
                   Install signed 9Router
                 </SettingsButton>
-                <SettingsButton disabled={busy || !state?.installed || !state?.trusted} onClick={() => run(() => window.ndDshRouter.nineRouterStart(), 'Managed runtime started')}>
+                <SettingsButton disabled={busy || Boolean(state?.running)} onClick={() => run(() => window.ndDshRouter.nineRouterImportUnverified(), 'Unverified 9Router imported and hash-pinned')}>
+                  Import local (unverified)
+                </SettingsButton>
+                <SettingsButton disabled={busy || !startReady} onClick={() => run(() => window.ndDshRouter.nineRouterStart(), 'Managed runtime started')}>
                   Start
                 </SettingsButton>
                 <SettingsButton disabled={busy || !state?.installed} onClick={() => run(() => window.ndDshRouter.nineRouterStop(), 'Managed runtime stopped')}>
@@ -184,7 +206,7 @@ export function NineRouterSettings({ onError, onConnected }: Props) {
                 </SettingsButton>
                 <SettingsButton disabled={busy} onClick={() => run(refresh)}>Refresh status</SettingsButton>
               </div>
-              {state?.installed && !state?.running ? (
+              {state?.installed && !state?.running && !unverified ? (
                 <div className="flex flex-wrap gap-2">
                   <Input
                     type="password"
@@ -203,8 +225,17 @@ export function NineRouterSettings({ onError, onConnected }: Props) {
               ) : null}
               {!state?.signingKeyConfigured ? (
                 <p className="text-[10px] text-faint">
-                  Managed install is unavailable until ND provisions a signed 9Router release and publisher key. Connect an
-                  existing local 9Router instead.
+                  Signed install is unavailable until ND provisions a signed 9Router release and publisher key. Import a local
+                  folder you trust as unverified, or connect an existing local 9Router below.
+                </p>
+              ) : null}
+              {unverified ? (
+                <p className="text-[10px] text-faint">
+                  Unverified import: ND did not verify a publisher signature. The files are hash-pinned and re-checked before
+                  every start; any change blocks launch. This build keeps its own dashboard account and does not receive
+                  ND-managed secrets.{integrityChanged
+                    ? ' The files changed after import — import the folder again to accept the new contents.'
+                    : ''}
                 </p>
               ) : null}
             </div>

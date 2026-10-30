@@ -65,6 +65,7 @@ const routerApi: RouterDesktopApi = {
   nineRouterDiscover: (input) => ipcRenderer.invoke(NINE_ROUTER_IPC.discover, input),
   nineRouterConnect: (input) => ipcRenderer.invoke(NINE_ROUTER_IPC.connect, input),
   nineRouterInstall: () => ipcRenderer.invoke(NINE_ROUTER_IPC.pickInstall),
+  nineRouterImportUnverified: () => ipcRenderer.invoke(NINE_ROUTER_IPC.importUnverified),
   nineRouterPrepare: (password) => ipcRenderer.invoke(NINE_ROUTER_IPC.prepare, password),
   nineRouterStart: () => ipcRenderer.invoke(NINE_ROUTER_IPC.start),
   nineRouterStop: () => ipcRenderer.invoke(NINE_ROUTER_IPC.stop),

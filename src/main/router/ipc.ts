@@ -60,6 +60,28 @@ export function registerRouterIpc(window: BrowserWindow, service: RouterService,
       ? managed.installFromDirectory(result.filePaths[0])
       : managed.state()
   })
+  handle(NINE_ROUTER_IPC.importUnverified, async () => {
+    if (!managed) throw new Error('Managed 9Router unavailable')
+    // Dev/QA seam: the folder still goes through detection, bounds, symlink
+    // checks, copying, and hash pinning; only the publisher signature is absent.
+    const automatedSource = !app.isPackaged ? process.env.ND_9ROUTER_IMPORT_DIR?.trim() : undefined
+    if (automatedSource) return managed.importUnverified(automatedSource)
+    const consent = await dialog.showMessageBox(window, {
+      type: 'warning',
+      title: 'Import an unverified 9Router',
+      message: 'ND cannot verify who built this local 9Router.',
+      detail: 'The folder will be copied, hash-pinned, and launched as-is. ND does not verify a publisher signature; malicious code can access what your user account can reach and use network access. The import keeps its own dashboard credentials and does not receive ND-managed secrets. Continue only for a build you trust.',
+      buttons: ['Cancel', 'Import unverified…'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    })
+    if (consent.response !== 1) return managed.state()
+    const result = await dialog.showOpenDialog(window, { title: 'Choose a local 9Router folder (unverified)', properties: ['openDirectory'] })
+    return !result.canceled && result.filePaths[0]
+      ? managed.importUnverified(result.filePaths[0])
+      : managed.state()
+  })
   handle(NINE_ROUTER_IPC.prepare, (_event, password) => managed?.prepare(typeof password === 'string' ? password : '') ?? Promise.reject(new Error('Managed runtime unavailable')))
   handle(NINE_ROUTER_IPC.start, () => managed?.start() ?? Promise.reject(new Error('Managed runtime unavailable')))
   handle(NINE_ROUTER_IPC.stop, () => managed?.stop() ?? Promise.reject(new Error('Managed runtime unavailable')))

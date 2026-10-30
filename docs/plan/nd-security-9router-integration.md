@@ -16,6 +16,18 @@ Status: **Security foundation only; NOT installed, enabled, verified or producti
 - Tests for valid approved releases, manipulated payload, wrong signing key, and dangerous manifest paths.
 - No untrusted runtime execution, downloader, process spawning, settings installation button or registered security promise is introduced by this commit.
 
+## Unverified local import (2026-10-31, DEV)
+
+`ND Router → 9Router → Import local (unverified)` is a deliberate, consented path for a 9Router build the user already has. It is **not** a publisher attestation and does not satisfy the production signed-release gate.
+
+- The user confirms a warning dialog; ND then copies the chosen folder, refuses symlinks, non-regular files, path escapes and size/count limit violations, and stores a SHA-256 inventory digest with `verification: 'unverified'` and `trusted: false`.
+- Before every start ND re-inventories the copied tree and refuses to launch if any file changed. The import keeps its own dashboard credentials; ND deliberately does not inject `JWT_SECRET`, `API_KEY_SECRET`, `MACHINE_ID_SALT` or an initial password.
+- Accepted layouts: a release folder with `release-manifest.json` (`runtimeEntry`, `serverEntry`, optional `workingDirectory`) plus its bundled runtime, or the npm 9Router package layout (`app/server.js` / `app/custom-server.js`) run with an installed Node.
+- Dev/QA seam: `ND_9ROUTER_IMPORT_DIR` (unpackaged builds only) skips the picker, not the checks.
+- Live evidence 2026-10-31: imported npm `9router` 0.5.75, started, `/api/health` returned `{ok:true}`, the embedded dashboard opened in ND at the allocated loopback port, and Stop terminated it. `tests/nine-router-managed-install.test.ts` covers package and manifest imports, tamper refusal, and absence of ND-managed secrets.
+
+Production managed install still requires the gates below: an ND-pinned publisher key in signed builds and a reviewed, signed release artifact.
+
 ## Production gates **not yet implemented**
 
 1. Pin an ND-owned publisher public key in signed ND desktop builds. **No key is provisioned in this branch**, so installation must remain unavailable.
