@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto'
 import type { RouterService } from './router-service.js'
-import type { NineRouterConnectInput, NineRouterModel } from '../../shared/nine-router.js'
+import {
+  NINE_ROUTER_EXTERNAL_PROVIDER_ID,
+  type NineRouterConnectInput,
+  type NineRouterModel,
+} from '../../shared/nine-router.js'
 
 /** Gateway URLs are user-specified, but never an arbitrary http private-network request. */
 export function parseNineRouterBaseUrl(raw: string): URL {
@@ -77,7 +81,7 @@ export async function connectNineRouter(
 ): Promise<{ connected: number; endpoint: string }> {
   const baseUrl = parseNineRouterBaseUrl(input.baseUrl).toString().replace(/\/$/, '')
   const models = await discoverNineRouterModels(input, fetcher)
-  const providerId = 'nine-router-external'
+  const providerId = NINE_ROUTER_EXTERNAL_PROVIDER_ID
   await router.saveProvider({
     id: providerId,
     kind: 'openai-compatible',

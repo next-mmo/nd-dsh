@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import type { NineRouterModel, NineRouterState } from '../../../shared/nine-router'
+import {
+  NINE_ROUTER_EXTERNAL_PROVIDER_ID,
+  type NineRouterModel,
+  type NineRouterState,
+} from '../../../shared/nine-router'
+import type { RouterState, RouterTestResult } from '../../../shared/router'
 import {
   SettingsButton,
   SettingsNote,
@@ -18,6 +23,7 @@ const DEFAULT_BASE_URL = 'http://127.0.0.1:20128/v1'
 
 export function NineRouterSettings({ onError, onConnected }: Props) {
   const [state, setState] = useState<NineRouterState | null>(null)
+  const [routerState, setRouterState] = useState<RouterState | null>(null)
   const [baseUrl, setBaseUrl] = useState(DEFAULT_BASE_URL)
   const [baseUrlTouched, setBaseUrlTouched] = useState(false)
   const [key, setKey] = useState('')
@@ -28,13 +34,22 @@ export function NineRouterSettings({ onError, onConnected }: Props) {
   const [guideOpen, setGuideOpen] = useState(true)
   const [success, setSuccess] = useState('')
   const surface = useRef<HTMLDivElement>(null)
+  const baseUrlTouchedRef = useRef(false)
 
   const refresh = useCallback(async () => {
-    const next = await window.ndDshRouter.nineRouterState()
+    const [next, router] = await Promise.all([
+      window.ndDshRouter.nineRouterState(),
+      window.ndDshRouter.state(),
+    ])
     setState(next)
-    // Managed instances use an allocated port, not a fixed 20128 endpoint.
+    setRouterState(router)
+    const saved = router.providers.find((provider) => provider.id === NINE_ROUTER_EXTERNAL_PROVIDER_ID)
+    // The managed runtime allocates a new loopback port per start; its endpoint
+    // is authoritative unless the user is deliberately editing an external URL.
     if (next.running && next.endpoint) {
-      setBaseUrl(previous => previous === DEFAULT_BASE_URL ? next.endpoint! : previous)
+      if (!baseUrlTouchedRef.current) setBaseUrl(next.endpoint)
+    } else if (saved && !baseUrlTouchedRef.current) {
+      setBaseUrl((current) => (current === DEFAULT_BASE_URL ? saved.baseUrl : current))
     }
   }, [])
 
@@ -83,8 +98,12 @@ export function NineRouterSettings({ onError, onConnected }: Props) {
       .finally(() => setBusy(false))
   }
 
+  const nineProvider = routerState?.providers.find((provider) => provider.id === NINE_ROUTER_EXTERNAL_PROVIDER_ID) ?? null
+  const nineRouteCount = routerState?.combos.filter((combo) => combo.name.startsWith('9R: ')).length ?? 0
+  const keySaved = Boolean(nineProvider?.hasSecret)
+  const managedEndpoint = state?.running ? state.endpoint : undefined
   const managedReady = Boolean(state?.running && state.endpoint)
-  const canOpenDashboard = managedReady || baseUrlTouched || key.trim().length > 0
+  const canOpenDashboard = managedReady || baseUrlTouched || key.trim().length > 0 || Boolean(nineProvider)
   const unverified = state?.verification === 'unverified'
   const integrityChanged = state?.integrity === 'changed'
   const startReady = Boolean(state?.installed && (unverified ? !integrityChanged : state.trusted))
@@ -198,7 +217,16 @@ export function NineRouterSettings({ onError, onConnected }: Props) {
                 <SettingsButton disabled={busy || Boolean(state?.running)} onClick={() => run(() => window.ndDshRouter.nineRouterImportUnverified(), 'Unverified 9Router imported and hash-pinned')}>
                   Import local (unverified)
                 </SettingsButton>
-                <SettingsButton disabled={busy || !startReady} onClick={() => run(() => window.ndDshRouter.nineRouterStart(), 'Managed runtime started')}>
+                <SettingsButton disabled={busy || !startReady} onClick={() => run(async () => {
+                  const next = await window.ndDshRouter.nineRouterStart()
+                  if (next.endpoint) {
+                    baseUrlTouchedRef.current = false
+                    setBaseUrlTouched(false)
+                    setBaseUrl(next.endpoint)
+                  }
+                  onConnected?.()
+                  return next
+                }, 'Managed runtime started')}>
                   Start
                 </SettingsButton>
                 <SettingsButton disabled={busy || !state?.installed} onClick={() => run(() => window.ndDshRouter.nineRouterStop(), 'Managed runtime stopped')}>
@@ -245,13 +273,22 @@ export function NineRouterSettings({ onError, onConnected }: Props) {
             <div className="flex w-full flex-col gap-2">
               <div className="flex flex-wrap items-center gap-2">
                 <strong className={rowTitle}>Existing 9Router</strong>
-                <StatusChip neutral>External gateway</StatusChip>
+                {nineProvider ? (
+                  <StatusChip good>Connected · {nineProvider.models.length} models</StatusChip>
+                ) : (
+                  <StatusChip neutral>Not connected</StatusChip>
+                )}
+                {keySaved ? <StatusChip neutral>Key saved in ND</StatusChip> : null}
               </div>
               <div className="flex min-w-0 flex-wrap gap-2">
                 <Input
                   aria-label="9Router API URL"
                   value={baseUrl}
-                  onChange={event => { setBaseUrl(event.target.value); setBaseUrlTouched(true) }}
+                  onChange={event => {
+                    baseUrlTouchedRef.current = true
+                    setBaseUrl(event.target.value)
+                    setBaseUrlTouched(true)
+                  }}
                   placeholder={DEFAULT_BASE_URL}
                   className="min-w-[260px] flex-1 font-mono text-[11px]"
                 />
@@ -261,21 +298,49 @@ export function NineRouterSettings({ onError, onConnected }: Props) {
                   aria-label="9Router gateway API key"
                   value={key}
                   onChange={event => setKey(event.target.value)}
-                  placeholder="Gateway API key"
+                  placeholder={keySaved ? 'Key saved in ND — enter to replace' : 'Gateway API key'}
                   className="min-w-[190px] flex-1 font-mono text-[11px]"
                 />
               </div>
+              {managedEndpoint && baseUrl !== managedEndpoint ? (
+                <span className={rowDesc}>
+                  Managed runtime is on <span className="font-mono">{managedEndpoint}</span>.{' '}
+                  <button
+                    type="button"
+                    className="underline"
+                    onClick={() => {
+                      baseUrlTouchedRef.current = false
+                      setBaseUrlTouched(false)
+                      setBaseUrl(managedEndpoint)
+                    }}
+                  >
+                    Use it
+                  </button>
+                </span>
+              ) : null}
+              {nineProvider ? (
+                <span className={rowDesc}>
+                  Saved target {nineProvider.baseUrl} · {nineRouteCount} 9R: routes. ND keeps the gateway key; enter it again
+                  only to replace it or refresh the model list.
+                </span>
+              ) : null}
               <div className="flex flex-wrap gap-1">
                 <SettingsButton disabled={busy || !key.trim()} onClick={() => run(async () => {
                   setModels(await window.ndDshRouter.nineRouterDiscover({ baseUrl, apiKey: key }))
                 }, 'Model discovery completed')}>Discover models</SettingsButton>
                 <SettingsButton disabled={busy || !key.trim()} onClick={() => run(async () => {
                   const connected = await window.ndDshRouter.nineRouterConnect({ baseUrl, apiKey: key })
-                  setSuccess(`Connected ${connected.connected} models as 9R: routes. Toggle Personal chat per route if you want it private.`)
-                  setKey('')
+                  setSuccess(`Connected ${connected.connected} models as 9R: routes. The key is stored in ND. Toggle Personal chat per route if you want it private.`)
                   setGuideOpen(false)
                   onConnected?.()
                 })}>Connect to ND Router</SettingsButton>
+                {nineProvider && keySaved ? (
+                  <SettingsButton disabled={busy} onClick={() => run(async () => {
+                    const result = await window.ndDshRouter.testProvider(NINE_ROUTER_EXTERNAL_PROVIDER_ID)
+                    if (!result.ok) throw new Error(savedConnectionError(result))
+                    return result
+                  }, 'Saved 9Router connection answered')}>Test saved connection</SettingsButton>
+                ) : null}
                 <SettingsButton disabled={busy || !canOpenDashboard} onClick={openDashboard}>Open dashboard inside ND</SettingsButton>
                 {dashboard ? (
                   <SettingsButton disabled={busy} onClick={() => {
@@ -329,4 +394,23 @@ function errorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error)
   // Keep IPC mechanics out of the user-facing notice.
   return message.replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/, '')
+}
+
+/**
+ * A 9Router 404 for missing provider credentials still proves the gateway and
+ * the saved key are reachable; never present that as a bad key.
+ */
+function savedConnectionError(result: RouterTestResult): string {
+  let message = typeof result.error === 'string' ? result.error : ''
+  try {
+    const parsed = JSON.parse(message) as { error?: { message?: unknown }; message?: unknown }
+    const nested = parsed?.error?.message ?? parsed?.message
+    if (typeof nested === 'string') message = nested
+  } catch {
+    // Keep the raw text.
+  }
+  if (/no active credentials|model_not_found/i.test(message)) {
+    return `9Router is reachable with the saved key, but ${result.model} has no credentials in 9Router. Add an account in its dashboard or use a model that already has one.`
+  }
+  return message || `9Router test failed (HTTP ${result.statusCode})`
 }

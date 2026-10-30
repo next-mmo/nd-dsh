@@ -28,6 +28,13 @@ Status: **Security foundation only; NOT installed, enabled, verified or producti
 
 Production managed install still requires the gates below: an ND-pinned publisher key in signed builds and a reviewed, signed release artifact.
 
+## Saved connection visibility (2026-10-31, DEV)
+
+- The 9Router panel reads the live Router state and shows `Connected · N models`, the `9R:` route count and `Key saved in ND`; the gateway key stays in the core secret store and is never rendered.
+- Connecting no longer clears the key input; it stays masked for the session, and later visits show the saved-key state instead of an empty, unexplained form.
+- Starting the managed runtime aligns the saved 9Router provider's base URL to the runtime's newly allocated loopback port. No `apiKey` is sent, so the core keeps the stored secret.
+- `Test saved connection` uses the stored secret. A 9Router 404 for missing provider credentials is reported as "reachable with the saved key, but this model has no credentials", never as a bad key.
+
 ## Production gates **not yet implemented**
 
 1. Pin an ND-owned publisher public key in signed ND desktop builds. **No key is provisioned in this branch**, so installation must remain unavailable.

@@ -163,4 +163,43 @@ describe('RouterService', () => {
     expect(core.request).toHaveBeenCalledWith('router.setExternalKey', { externalKey: rotated.key }, 10_000)
     expect(service.revealExternalKey().key).toBe(rotated.key)
   })
+
+  it('aligns the saved 9Router provider with a new managed endpoint without dropping its secret', async () => {
+    const calls: Array<{ method: string; input: unknown }> = []
+    const localCore = {
+      request: vi.fn(async (method: string, input?: unknown) => {
+        calls.push({ method, input })
+        if (method === 'router.state') {
+          return {
+            providers: [{
+              id: 'nine-router-external',
+              kind: 'openai-compatible',
+              name: '9Router',
+              baseUrl: 'http://127.0.0.1:6536/v1',
+              models: ['alicode/glm-5'],
+              isActive: true,
+              priority: 0,
+              hasSecret: true,
+              accounts: [],
+            }],
+            combos: [],
+            counters: { requests: 0, ok: 0, failed: 0, lastError: null },
+          }
+        }
+        return {}
+      }),
+    }
+    const localService = new RouterService(localCore as never, providers as never, dir, () => undefined)
+
+    await expect(localService.syncNineRouterEndpoint('http://127.0.0.1:1147/v1')).resolves.toBe(true)
+
+    const save = calls.find((call) => call.method === 'router.saveProvider')
+    expect(save?.input).toMatchObject({
+      id: 'nine-router-external',
+      baseUrl: 'http://127.0.0.1:1147/v1',
+      models: ['alicode/glm-5'],
+    })
+    expect(save?.input).not.toHaveProperty('apiKey')
+    expect(save?.input).not.toHaveProperty('clearSecret')
+  })
 })

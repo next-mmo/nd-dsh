@@ -83,7 +83,20 @@ export function registerRouterIpc(window: BrowserWindow, service: RouterService,
       : managed.state()
   })
   handle(NINE_ROUTER_IPC.prepare, (_event, password) => managed?.prepare(typeof password === 'string' ? password : '') ?? Promise.reject(new Error('Managed runtime unavailable')))
-  handle(NINE_ROUTER_IPC.start, () => managed?.start() ?? Promise.reject(new Error('Managed runtime unavailable')))
+  handle(NINE_ROUTER_IPC.start, async () => {
+    if (!managed) throw new Error('Managed runtime unavailable')
+    const state = await managed.start()
+    if (state.endpoint) {
+      try {
+        await service.syncNineRouterEndpoint(state.endpoint)
+      } catch (error) {
+        // The runtime is up; keep the old route target visible instead of
+        // failing a successful start.
+        console.warn('[9router] could not align the saved provider endpoint:', error)
+      }
+    }
+    return state
+  })
   handle(NINE_ROUTER_IPC.stop, () => managed?.stop() ?? Promise.reject(new Error('Managed runtime unavailable')))
   handle(NINE_ROUTER_IPC.dashboardOpen, (_event, url) => {
     if (typeof url !== 'string') throw new Error('Invalid 9Router URL')

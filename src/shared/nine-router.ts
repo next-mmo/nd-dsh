@@ -1,3 +1,5 @@
+export const NINE_ROUTER_EXTERNAL_PROVIDER_ID = 'nine-router-external'
+
 export const NINE_ROUTER_IPC = {
   state: 'router:9router-state',
   discover: 'router:9router-discover',

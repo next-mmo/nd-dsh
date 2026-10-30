@@ -17,6 +17,7 @@ import {
 } from '../../shared/router.js'
 import type { CoreClient } from '../core/core-client.js'
 import type { ProviderStore } from '../providers.js'
+import { NINE_ROUTER_EXTERNAL_PROVIDER_ID } from '../../shared/nine-router.js'
 import { RouterExternalKeyStore } from './external-key-store.js'
 import type { WebLaneBridgeDescriptor } from './web-lane-bridge.js'
 
@@ -89,6 +90,31 @@ export class RouterService {
   async saveProvider(input: RouterProviderInput): Promise<RouterState> {
     await this.core.request('router.saveProvider', input)
     return this.refreshedState()
+  }
+
+  /**
+   * Keep the saved 9Router provider pointed at the managed runtime's current
+   * loopback port. No apiKey is sent, so the core keeps the stored secret; only
+   * the endpoint changes across managed starts. Returns true when it moved.
+   */
+  async syncNineRouterEndpoint(endpoint: string): Promise<boolean> {
+    let url: URL
+    try { url = new URL(endpoint) } catch { return false }
+    if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !url.port || url.pathname !== '/v1') return false
+    const target = url.toString().replace(/\/$/, '')
+    const state = await this.state()
+    const provider = state.providers.find((candidate) => candidate.id === NINE_ROUTER_EXTERNAL_PROVIDER_ID)
+    if (!provider || provider.baseUrl === target) return false
+    await this.saveProvider({
+      id: provider.id,
+      kind: 'openai-compatible',
+      name: provider.name,
+      baseUrl: target,
+      models: provider.models,
+      isActive: provider.isActive,
+      priority: provider.priority,
+    })
+    return true
   }
 
   async deleteProvider(providerId: string): Promise<RouterState> {
