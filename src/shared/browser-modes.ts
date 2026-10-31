@@ -1,5 +1,6 @@
 /**
- * How a web-chat engine (Gemini Web today) drives ND's visible browser pane.
+ * How a web-chat engine (ChatGPT Web, Gemini Web, DeepSeek Web) drives ND's
+ * visible browser pane.
  * Every mode acts on the same embedded WebContentsView; none launches another
  * browser or changes the signed-in profile.
  */

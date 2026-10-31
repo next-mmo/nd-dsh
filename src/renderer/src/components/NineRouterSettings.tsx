@@ -17,11 +17,11 @@ import {
 } from './settings-primitives'
 import { Input } from './ui/input'
 
-interface Props { onError(message: string): void; onConnected?(): void }
+interface Props { onError(message: string): void; onConnected?(): void; onNavigateToExtensions?(): void }
 
 const DEFAULT_BASE_URL = 'http://127.0.0.1:20128/v1'
 
-export function NineRouterSettings({ onError, onConnected }: Props) {
+export function NineRouterSettings({ onError, onConnected, onNavigateToExtensions }: Props) {
   const [state, setState] = useState<NineRouterState | null>(null)
   const [routerState, setRouterState] = useState<RouterState | null>(null)
   const [baseUrl, setBaseUrl] = useState(DEFAULT_BASE_URL)
@@ -35,6 +35,14 @@ export function NineRouterSettings({ onError, onConnected }: Props) {
   const [success, setSuccess] = useState('')
   const surface = useRef<HTMLDivElement>(null)
   const baseUrlTouchedRef = useRef(false)
+
+  const navigateToExtensions = () => {
+    if (onNavigateToExtensions) {
+      onNavigateToExtensions()
+    } else {
+      window.location.hash = '#/settings?tab=extensions'
+    }
+  }
 
   const refresh = useCallback(async () => {
     const [next, router] = await Promise.all([
@@ -153,9 +161,8 @@ export function NineRouterSettings({ onError, onConnected }: Props) {
                     dashboard.
                   </GuideStep>
                   <GuideStep index={2}>
-                    <strong>ND-managed runtime</strong> — ND Security verifies an ND-signed release before install and again
-                    before launch. Until a signing key is provisioned, use <strong>Import local (unverified)</strong> for a build
-                    you trust: ND pins its file hashes and refuses it if they change, but makes no publisher claim.
+                    <strong>ND-managed runtime</strong> — install the <strong>9Router</strong> extension on demand from the
+                    <strong>Extensions</strong> page. Once installed, start and stop the runtime here or from the launcher.
                   </GuideStep>
                   <GuideStep index={3}>
                     For an existing gateway, enter its loopback URL (usually <code className="font-mono text-[10px]">{DEFAULT_BASE_URL}</code>)
@@ -188,9 +195,6 @@ export function NineRouterSettings({ onError, onConnected }: Props) {
                   {state?.running ? 'Running' : state?.installed ? 'Installed, stopped' : 'Not installed'}
                 </StatusChip>
                 {state?.version ? <StatusChip neutral>v{state.version}</StatusChip> : null}
-                <StatusChip good={state?.signingKeyConfigured} warn={!state?.signingKeyConfigured}>
-                  {state?.signingKeyConfigured ? 'ND Security verifier ready' : 'ND Security: signing key not provisioned'}
-                </StatusChip>
                 {state?.installed && unverified ? (
                   <>
                     <StatusChip warn>Unverified local import</StatusChip>
@@ -206,18 +210,18 @@ export function NineRouterSettings({ onError, onConnected }: Props) {
                 ) : null}
               </div>
               <span className={rowDesc}>
-                Signed releases are verified before install and launch. Unverified imports are hash-pinned instead; ND makes
-                no publisher claim and refuses changed files.
+                {state?.installed
+                  ? 'Manage the local 9Router runtime. Start or stop the gateway and connect its models to ND Router.'
+                  : '9Router is available as an on-demand ND extension. Set it up from the Extensions page, then start or stop the runtime here.'}
               </span>
               {state?.lastError ? <span className={rowPathText}>{state.lastError}</span> : null}
               <div className="flex flex-wrap gap-1">
-                <SettingsButton disabled={busy || !state?.signingKeyConfigured} onClick={() => run(() => window.ndDshRouter.nineRouterInstall(), 'Signed release verified and installed')}>
-                  Install signed 9Router
-                </SettingsButton>
-                <SettingsButton disabled={busy || Boolean(state?.running)} onClick={() => run(() => window.ndDshRouter.nineRouterImportUnverified(), 'Unverified 9Router imported and hash-pinned')}>
-                  Import local (unverified)
-                </SettingsButton>
-                <SettingsButton disabled={busy || !startReady} onClick={() => run(async () => {
+                {!state?.installed ? (
+                  <SettingsButton onClick={navigateToExtensions}>
+                    Set up in Extensions
+                  </SettingsButton>
+                ) : null}
+                <SettingsButton disabled={busy || !startReady || Boolean(state?.running)} onClick={() => run(async () => {
                   const next = await window.ndDshRouter.nineRouterStart()
                   if (next.endpoint) {
                     baseUrlTouchedRef.current = false
@@ -229,43 +233,11 @@ export function NineRouterSettings({ onError, onConnected }: Props) {
                 }, 'Managed runtime started')}>
                   Start
                 </SettingsButton>
-                <SettingsButton disabled={busy || !state?.installed} onClick={() => run(() => window.ndDshRouter.nineRouterStop(), 'Managed runtime stopped')}>
+                <SettingsButton disabled={busy || !state?.running} onClick={() => run(() => window.ndDshRouter.nineRouterStop(), 'Managed runtime stopped')}>
                   Stop
                 </SettingsButton>
                 <SettingsButton disabled={busy} onClick={() => run(refresh)}>Refresh status</SettingsButton>
               </div>
-              {state?.installed && !state?.running && !unverified ? (
-                <div className="flex flex-wrap gap-2">
-                  <Input
-                    type="password"
-                    autoComplete="new-password"
-                    aria-label="Initial 9Router dashboard password"
-                    placeholder="Initial dashboard password (12+ characters)"
-                    value={password}
-                    onChange={event => setPassword(event.target.value)}
-                    className="min-w-[240px] max-w-[360px]"
-                  />
-                  <SettingsButton disabled={busy || password.length < 12} onClick={() => run(async () => {
-                    await window.ndDshRouter.nineRouterPrepare(password)
-                    setPassword('')
-                  }, 'Encrypted initial dashboard password saved')}>Set initial password</SettingsButton>
-                </div>
-              ) : null}
-              {!state?.signingKeyConfigured ? (
-                <p className="text-[10px] text-faint">
-                  Signed install is unavailable until ND provisions a signed 9Router release and publisher key. Import a local
-                  folder you trust as unverified, or connect an existing local 9Router below.
-                </p>
-              ) : null}
-              {unverified ? (
-                <p className="text-[10px] text-faint">
-                  Unverified import: ND did not verify a publisher signature. The files are hash-pinned and re-checked before
-                  every start; any change blocks launch. This build keeps its own dashboard account and does not receive
-                  ND-managed secrets.{integrityChanged
-                    ? ' The files changed after import — import the folder again to accept the new contents.'
-                    : ''}
-                </p>
-              ) : null}
             </div>
           </SettingsRow>
 

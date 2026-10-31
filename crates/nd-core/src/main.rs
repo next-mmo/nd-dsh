@@ -702,6 +702,7 @@ fn dispatch(
             let options = nd_router::state::RouterOptions {
                 external_key: params.external_key,
                 web_bridge: params.web_bridge,
+                safe_mode: params.safe_mode,
                 preferred_port: params.preferred_port,
             };
             let router_state = nd_router::RouterState::with_options(std::path::PathBuf::from(params.data_dir), options)
@@ -722,6 +723,10 @@ fn dispatch(
             let input = from_params::<nd_router::types::SetExternalKeyInput>(params)?;
             router_state(&state)?.set_external_key(&input.external_key)?;
             Ok(json!({"updated": true}))
+        }
+        "router.setSafeMode" => {
+            let input = from_params::<nd_router::types::SetSafeModeInput>(params)?;
+            Ok(router_state(&state)?.set_safe_mode(input.enabled))
         }
         "router.stop" => {
             if let Some(mut server) = state.router.lock().unwrap_or_else(|error| error.into_inner()).take() {
@@ -778,6 +783,8 @@ struct RouterInitParams {
     external_key: Option<String>,
     #[serde(default)]
     web_bridge: Option<nd_router::types::WebBridgeConfig>,
+    #[serde(default)]
+    safe_mode: bool,
     #[serde(default)]
     preferred_port: Option<u16>,
 }

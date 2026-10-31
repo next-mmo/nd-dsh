@@ -1,0 +1,6 @@
+{
+  "name": "9router",
+  "version": "1.0.0",
+  "description": "9Router local AI gateway and proxy runtime",
+  "main": "app/server.js"
+}

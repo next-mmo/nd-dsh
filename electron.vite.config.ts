@@ -53,6 +53,7 @@ export default defineConfig({
           index: resolve('src/preload/index.ts'),
           'nd-pencil': resolve('src/preload/nd-pencil.ts'),
           'extension-runtime': resolve('src/preload/extension-runtime.ts'),
+          'browser-safe-mode': resolve('src/preload/browser-safe-mode.ts'),
           'vault-prompt': resolve('src/preload/vault-prompt.ts'),
         },
         // The product renderer, the isolated ND Pencil host, and browser

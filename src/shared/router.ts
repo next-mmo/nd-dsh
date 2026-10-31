@@ -7,17 +7,19 @@ export type RouterProviderKind =
   | 'qoder'
   | 'chatgpt-web'
   | 'gemini-web'
-export type RouterWebProviderKind = 'chatgpt-web' | 'gemini-web'
+  | 'deepseek-web'
+export type RouterWebProviderKind = 'chatgpt-web' | 'gemini-web' | 'deepseek-web'
 export type RouterComboStrategy = 'priority' | 'round-robin'
 
 /** Seed models for web lanes; Gemini's live picker can replace these later. */
 export const ROUTER_WEB_LANE_MODELS: Record<RouterWebProviderKind, string[]> = {
   'chatgpt-web': ['default'],
   'gemini-web': ['3.5 Flash-Lite', '3.8 Flash', '3.1 Pro', '4 Argon'],
+  'deepseek-web': ['default', 'deep-think'],
 }
 
 export function isRouterWebProviderKind(kind: string): kind is RouterWebProviderKind {
-  return kind === 'chatgpt-web' || kind === 'gemini-web'
+  return kind === 'chatgpt-web' || kind === 'gemini-web' || kind === 'deepseek-web'
 }
 
 export const ROUTER_HEADERS = {
@@ -85,6 +87,8 @@ export interface RouterState {
   providers: RouterProviderView[]
   combos: RouterComboView[]
   counters: RouterCounters
+  /** Experimental network lockdown; absent only from older sidecar builds. */
+  safeMode?: boolean
 }
 
 export interface RouterUsageSummary {
@@ -155,6 +159,8 @@ export interface RouterExternalApiState {
   hasKey: boolean
   /** False when OS-backed secure storage is unavailable and the key is per-launch. */
   persisted: boolean
+  /** True while Safe Mode rejects this credential for external apps. */
+  safeMode: boolean
 }
 
 export interface RouterExternalKey extends RouterExternalApiState {
@@ -209,6 +215,7 @@ export const ROUTER_IPC = {
   externalKeyState: 'router:external-key-state',
   revealExternalKey: 'router:reveal-external-key',
   rotateExternalKey: 'router:rotate-external-key',
+  setSafeMode: 'router:set-safe-mode',
   playgroundStart: 'router:playground-start',
   playgroundStop: 'router:playground-stop',
   playgroundEvent: 'router:playground-event',
@@ -230,6 +237,7 @@ export interface RouterDesktopApi extends NineRouterDesktopApi {
   externalKeyState(): Promise<RouterExternalApiState>
   revealExternalKey(): Promise<RouterExternalKey>
   rotateExternalKey(): Promise<RouterExternalKey>
+  setSafeMode(enabled: boolean): Promise<RouterState>
   playgroundStart(input: RouterPlaygroundInput): Promise<void>
   playgroundStop(requestId: string): Promise<void>
   onPlaygroundEvent(listener: (event: RouterPlaygroundEvent) => void): () => void

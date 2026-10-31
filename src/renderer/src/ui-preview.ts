@@ -230,6 +230,7 @@ let browserPlatform: BrowserPlatformState = {
     },
   ],
   browserUseEnabled: true,
+  safeModeEnabled: false,
   developerMode: false,
   credentials: [],
   sitePermissions: [],
@@ -850,6 +851,11 @@ const desktopApi: DesktopApi = {
       browserPlatformEvents.emit(browserPlatform)
       return browserPlatform
     },
+    setSafeModeEnabled: async (enabled) => {
+      browserPlatform = { ...browserPlatform, safeModeEnabled: enabled }
+      browserPlatformEvents.emit(browserPlatform)
+      return browserPlatform
+    },
     installCatalogExtension: async () => null,
     openCatalogExtension: async (catalogId) => {
       const item = browserPlatform.extensionCatalog.find((candidate) => candidate.id === catalogId)
@@ -1021,6 +1027,10 @@ const desktopApi: DesktopApi = {
       updatedAt: Date.now(),
     }),
     clearGemBinding: async () => undefined,
+    getModeSettings: async () => ({ mode: 'auto', agentFallback: false, visualRecovery: true }),
+    setModeSettings: async (settings) => ({ mode: 'auto', agentFallback: false, visualRecovery: true, ...settings }),
+  },
+  deepseekWeb: {
     getModeSettings: async () => ({ mode: 'auto', agentFallback: false, visualRecovery: true }),
     setModeSettings: async (settings) => ({ mode: 'auto', agentFallback: false, visualRecovery: true, ...settings }),
   },

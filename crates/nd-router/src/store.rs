@@ -191,6 +191,7 @@ fn default_name(kind: &str) -> String {
         catalog::KIND_QODER => "Qoder CLI".to_owned(),
         catalog::KIND_CHATGPT_WEB => "ChatGPT Web".to_owned(),
         catalog::KIND_GEMINI_WEB => "Gemini Web".to_owned(),
+        catalog::KIND_DEEPSEEK_WEB => "DeepSeek Web".to_owned(),
         _ => "OpenAI-compatible".to_owned(),
     }
 }
@@ -204,6 +205,7 @@ fn default_models(kind: &str) -> Vec<String> {
             "3.1 Pro".to_owned(),
             "4 Argon".to_owned(),
         ],
+        catalog::KIND_DEEPSEEK_WEB => vec!["default".to_owned(), "deep-think".to_owned()],
         _ => Vec::new(),
     }
 }

@@ -295,7 +295,7 @@ pub struct ComboIdInput {
 }
 
 /// Loopback bridge hosted by trusted Electron main that drives the visible
-/// ChatGPT Web / Gemini Web tabs for the router's web lanes.
+/// ChatGPT Web / Gemini Web / DeepSeek Web tabs for the router's web lanes.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WebBridgeConfig {
@@ -307,4 +307,10 @@ pub struct WebBridgeConfig {
 #[serde(rename_all = "camelCase")]
 pub struct SetExternalKeyInput {
     pub external_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetSafeModeInput {
+    pub enabled: bool,
 }

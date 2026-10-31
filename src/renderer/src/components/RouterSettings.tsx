@@ -8,7 +8,7 @@ import {
   type RouterTestResult,
   type RouterUsageSummary,
 } from '../../../shared/router'
-import { routerSubTabFromLocation, type RouterSubTab } from '../lib/settings-route'
+import { routerSubTabFromLocation, type RouterSubTab, type SettingsTab } from '../lib/settings-route'
 import { cn } from '../lib/utils'
 import { NineRouterSettings } from './NineRouterSettings'
 import { RouterExternalApi } from './RouterExternalApi'
@@ -32,6 +32,7 @@ interface RouterSettingsProps {
   onError(message: string): void
   subTab?: RouterSubTab
   onSelectSubTab?: (subTab: RouterSubTab) => void
+  onSelectTab?: (tab: SettingsTab) => void
 }
 
 interface ComboDraftEntry {
@@ -39,7 +40,7 @@ interface ComboDraftEntry {
   model: string
 }
 
-type ProviderKindChoice = 'openai-compatible' | 'antigravity' | 'qoder' | 'chatgpt-web' | 'gemini-web'
+type ProviderKindChoice = 'openai-compatible' | 'antigravity' | 'qoder' | 'chatgpt-web' | 'gemini-web' | 'deepseek-web'
 
 const ROUTER_SUB_TABS: { id: RouterSubTab; label: string }[] = [
   { id: 'overview', label: 'Overview' },
@@ -53,7 +54,7 @@ const ROUTER_SUB_TABS: { id: RouterSubTab; label: string }[] = [
 
 const NO_COUNTERS = { requests: 0, ok: 0, failed: 0, lastError: null as string | null }
 
-export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab }: RouterSettingsProps) {
+export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, onSelectTab }: RouterSettingsProps) {
   const [state, setState] = useState<RouterState | null>(null)
   const [usage, setUsage] = useState<RouterUsageSummary | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
@@ -61,6 +62,7 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab }: 
   const [internalSubTab, setInternalSubTab] = useState<RouterSubTab>(routerSubTabFromLocation)
   const [showProviderForm, setShowProviderForm] = useState(false)
   const [showRouteForm, setShowRouteForm] = useState(false)
+  const [safeModeBusy, setSafeModeBusy] = useState(false)
 
   const [providerKind, setProviderKind] = useState<ProviderKindChoice>('openai-compatible')
   const [providerName, setProviderName] = useState('')
@@ -282,6 +284,36 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab }: 
                 </SettingsRow>
                 <SettingsRow>
                   <div className={rowStack}>
+                    <span className="flex items-center gap-2">
+                      <strong className={rowTitle}>Safe Mode</strong>
+                      <StatusChip warn={state?.safeMode === true} neutral>
+                        {state?.safeMode ? 'On' : 'Off'}
+                      </StatusChip>
+                      <StatusChip neutral>Experimental</StatusChip>
+                    </span>
+                    <span className={rowDesc}>
+                      Closes the external API credential, disables ChatGPT/Gemini/DeepSeek web lanes, and blocks unverified
+                      9Router imports. ND's internal loopback routes and signed/API providers keep working. Off by default.
+                    </span>
+                  </div>
+                  <Switch
+                    aria-label="ND Router Safe Mode"
+                    checked={state?.safeMode ?? false}
+                    disabled={safeModeBusy}
+                    onCheckedChange={(enabled) => {
+                      setSafeModeBusy(true)
+                      void window.ndDshRouter.setSafeMode(enabled)
+                        .then(async (next) => {
+                          setState(next)
+                          setUsage(await window.ndDshRouter.usage())
+                        })
+                        .catch((cause) => onError(message(cause)))
+                        .finally(() => setSafeModeBusy(false))
+                    }}
+                  />
+                </SettingsRow>
+                <SettingsRow>
+                  <div className={rowStack}>
                     <strong className={rowTitle}>Quick actions</strong>
                     <span className={rowDesc}>Test a route, add a lane, or hand the endpoint to a local app.</span>
                   </div>
@@ -335,8 +367,8 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab }: 
                       <StatusChip neutral>{webProviders > 0 ? `${webProviders} configured` : 'None'}</StatusChip>
                     </span>
                     <span className={rowDesc}>
-                      ChatGPT Web and Gemini Web drive the embedded browser's signed-in session. Each request starts a fresh
-                      conversation; routes stay private unless you opt them into personal chat.
+                      ChatGPT Web, Gemini Web, and DeepSeek Web drive the embedded browser's signed-in session. Each request
+                      starts a fresh conversation; routes stay private unless you opt them into personal chat.
                     </span>
                   </div>
                   <SettingsButton onClick={() => { if (webProviders === 0) setShowProviderForm(true); selectSubTab('providers') }}>
@@ -348,7 +380,7 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab }: 
 
             <SettingsNote>
               Free lanes first: point an OpenAI-compatible provider at a local plugin gateway (for example dsh-our-free-model),
-              or add Antigravity, Qoder CLI, ChatGPT Web, or Gemini Web. Prompt Shield still runs before anything leaves ND.
+              or add Antigravity, Qoder CLI, ChatGPT Web, Gemini Web, or DeepSeek Web. Prompt Shield still runs before anything leaves ND.
             </SettingsNote>
           </>
         )}
@@ -414,7 +446,7 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab }: 
                 ))}
 
                 {providers.length === 0 ? (
-                  <SettingsNote>No providers yet. Add an OpenAI-compatible endpoint, Antigravity, Qoder CLI, ChatGPT Web, or Gemini Web below.</SettingsNote>
+                  <SettingsNote>No providers yet. Add an OpenAI-compatible endpoint, Antigravity, Qoder CLI, ChatGPT Web, Gemini Web, or DeepSeek Web below.</SettingsNote>
                 ) : null}
 
                 {providerFormOpen ? (
@@ -434,6 +466,7 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab }: 
                           <option value="qoder">Qoder CLI</option>
                           <option value="chatgpt-web">ChatGPT Web</option>
                           <option value="gemini-web">Gemini Web</option>
+                          <option value="deepseek-web">DeepSeek Web</option>
                         </select>
                         <span className={rowDesc}>Web lanes use the embedded browser; no key is stored.</span>
                       </div>
@@ -446,7 +479,7 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab }: 
                       <div className="flex min-w-0 gap-2">
                         <Input
                           aria-label="Provider models"
-                          placeholder={providerKind === 'antigravity' ? 'Models, e.g. gemini-3.8-flash-medium, claude-sonnet-5-5-medium (from `agy models`)' : providerKind === 'qoder' ? 'Models, e.g. auto, lite, performance (from `qoder --list-models`)' : providerKind === 'chatgpt-web' ? 'Model id (default: default)' : providerKind === 'gemini-web' ? 'Gemini modes, e.g. 3.5 Flash-Lite, 3.8 Flash, 3.1 Pro' : 'Models (comma separated, optional)'}
+                          placeholder={providerKind === 'antigravity' ? 'Models, e.g. gemini-3.8-flash-medium, claude-sonnet-5-5-medium (from `agy models`)' : providerKind === 'qoder' ? 'Models, e.g. auto, lite, performance (from `qoder --list-models`)' : providerKind === 'chatgpt-web' ? 'Model id (default: default)' : providerKind === 'gemini-web' ? 'Gemini modes, e.g. 3.5 Flash-Lite, 3.8 Flash, 3.1 Pro' : providerKind === 'deepseek-web' ? 'Modes, e.g. default, deep-think' : 'Models (comma separated, optional)'}
                           value={providerModels}
                           disabled={disabled}
                           onChange={(event) => setProviderModels(event.target.value)}
@@ -468,7 +501,7 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab }: 
                         </span>
                       ) : isRouterWebProviderKind(providerKind) ? (
                         <span className={rowDesc}>
-                          Drives the embedded browser's signed-in {providerKind === 'chatgpt-web' ? 'ChatGPT' : 'Gemini'} session.
+                          Drives the embedded browser's signed-in {providerKind === 'chatgpt-web' ? 'ChatGPT' : providerKind === 'deepseek-web' ? 'DeepSeek' : 'Gemini'} session.
                           Every router request starts a fresh conversation.
                         </span>
                       ) : null}
@@ -634,7 +667,14 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab }: 
         )}
 
         {activeSubTab === 'nine-router' && (
-          <NineRouterSettings onError={onError} onConnected={refreshRouterState} />
+          <NineRouterSettings
+            onError={onError}
+            onConnected={refreshRouterState}
+            onNavigateToExtensions={() => {
+              if (onSelectTab) onSelectTab('extensions')
+              else window.location.hash = '#/settings?tab=extensions'
+            }}
+          />
         )}
 
         {activeSubTab === 'usage' && (
@@ -876,6 +916,7 @@ function kindLabel(kind: string): string {
   switch (kind) {
     case 'chatgpt-web': return 'ChatGPT Web'
     case 'gemini-web': return 'Gemini Web'
+    case 'deepseek-web': return 'DeepSeek Web'
     case 'openai-compatible': return 'OpenAI-compatible'
     case 'antigravity': return 'Antigravity'
     case 'qoder': return 'Qoder CLI'

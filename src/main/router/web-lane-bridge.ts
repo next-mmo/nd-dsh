@@ -11,7 +11,7 @@ const TURN_DEADLINE_MS = 615_000
 const MAX_PENDING_PER_ENGINE = 2
 const MAX_PENDING_TOTAL = 4
 
-export type WebLaneEngine = 'chatgpt-web' | 'gemini-web'
+export type WebLaneEngine = 'chatgpt-web' | 'gemini-web' | 'deepseek-web'
 
 export interface WebLaneBridgeDescriptor {
   url: string
@@ -147,6 +147,17 @@ export class WebLaneBridge {
     }
   }
 
+  /** Cut off every in-flight/queued lane when Safe Mode is engaged. */
+  cancelAll(): void {
+    for (const job of [...this.queue]) this.rejectJob(job, new WebLaneCancelledError())
+    this.queue.length = 0
+    const active = this.active
+    if (active) {
+      active.controller.abort()
+      this.rejectJob(active, new WebLaneCancelledError())
+    }
+  }
+
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     if (request.method === 'GET' && request.url === '/health') {
       if (!authorized(request, this.token)) return sendJson(response, 401, { ok: false, error: 'Invalid bridge credential', code: 'unauthorized' })
@@ -187,8 +198,14 @@ export class WebLaneBridge {
   private createJob(body: unknown): WebLaneJob {
     if (!body || typeof body !== 'object') throw new BadBridgeRequest('Request body must be a JSON object')
     const record = body as Record<string, unknown>
-    const engine = record.engine === 'gemini-web' ? 'gemini-web' : record.engine === 'chatgpt-web' ? 'chatgpt-web' : undefined
-    if (!engine) throw new BadBridgeRequest('engine must be chatgpt-web or gemini-web')
+    const engine = record.engine === 'gemini-web'
+      ? 'gemini-web'
+      : record.engine === 'deepseek-web'
+        ? 'deepseek-web'
+        : record.engine === 'chatgpt-web'
+          ? 'chatgpt-web'
+          : undefined
+    if (!engine) throw new BadBridgeRequest('engine must be chatgpt-web, gemini-web, or deepseek-web')
     const prompt = typeof record.prompt === 'string' ? record.prompt : ''
     if (!prompt.trim()) throw new BadBridgeRequest('prompt is required')
     if (prompt.length > 100_000) throw new BadBridgeRequest('prompt exceeds the 100,000 character limit')

@@ -208,6 +208,7 @@ async fn routes_web_lanes_through_the_bridge_and_keeps_web_combos_private() {
         RouterOptions {
             external_key: Some("ndr_ext_test_external_key_1234".to_owned()),
             web_bridge: Some(WebBridgeConfig { url: bridge_url, token: bridge_token }),
+            safe_mode: false,
             preferred_port: None,
         },
     )
@@ -247,6 +248,127 @@ async fn routes_web_lanes_through_the_bridge_and_keeps_web_combos_private() {
     assert_eq!(calls[0].0.as_deref(), Some("req-web-1"));
     assert_eq!(calls[0].1["engine"], "chatgpt-web");
     assert_eq!(calls[0].1["prompt"], "hello web");
+}
+
+#[tokio::test]
+async fn routes_deepseek_web_with_seeded_modes_through_the_bridge() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let (bridge_url, bridge_token, calls) = mock_web_bridge().await;
+    let state = RouterState::with_options(
+        temp.path().to_path_buf(),
+        RouterOptions {
+            external_key: Some("ndr_ext_test_external_key_1234".to_owned()),
+            web_bridge: Some(WebBridgeConfig { url: bridge_url, token: bridge_token }),
+            safe_mode: false,
+            preferred_port: None,
+        },
+    )
+    .expect("state");
+    let saved = state
+        .save_provider(SaveProviderInput {
+            id: Some("deepseek-web".to_owned()),
+            kind: Some("deepseek".to_owned()),
+            name: None,
+            base_url: None,
+            models: None,
+            is_active: Some(true),
+            priority: Some(0),
+            api_key: None,
+            clear_secret: false,
+        })
+        .expect("deepseek provider");
+    assert_eq!(saved["name"], "DeepSeek Web");
+    assert_eq!(saved["kind"], "deepseek-web");
+    assert_eq!(saved["models"], json!(["default", "deep-think"]));
+
+    state
+        .save_combo(combo_input("deepseek", "priority", vec![combo_entry("deepseek-web", "deep-think")]))
+        .expect("deepseek combo");
+    let response = state
+        .chat_with_request(
+            json!({"model": "deepseek", "messages": [{"role": "user", "content": "hello deepseek"}]}),
+            None,
+            "/v1/chat/completions",
+            Some("req-deepseek-1"),
+        )
+        .await
+        .expect("deepseek chat");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers().get("x-nd-router-provider").and_then(|value| value.to_str().ok()), Some("deepseek-web"));
+    assert_eq!(response.headers().get("x-nd-router-model").and_then(|value| value.to_str().ok()), Some("deep-think"));
+
+    let direct = state
+        .chat_with_request(
+            json!({"model": "deepseek-web/default", "messages": [{"role": "user", "content": "direct route"}]}),
+            None,
+            "/v1/chat/completions",
+            Some("req-deepseek-2"),
+        )
+        .await
+        .expect("direct deepseek chat");
+    assert_eq!(direct.headers().get("x-nd-router-provider").and_then(|value| value.to_str().ok()), Some("deepseek-web"));
+    assert_eq!(direct.headers().get("x-nd-router-combo").and_then(|value| value.to_str().ok()), Some("direct"));
+
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0].1["engine"], "deepseek-web");
+    assert_eq!(calls[0].1["model"], "deep-think");
+    assert_eq!(calls[0].1["prompt"], "hello deepseek");
+    assert_eq!(calls[1].1["engine"], "deepseek-web");
+    assert_eq!(calls[1].1["model"], "default");
+    assert_eq!(calls[1].1["prompt"], "direct route");
+}
+
+#[tokio::test]
+async fn safe_mode_locks_external_auth_and_web_lanes_but_keeps_internal_routing() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let (bridge_url, bridge_token, calls) = mock_web_bridge().await;
+    let state = RouterState::with_options(
+        temp.path().to_path_buf(),
+        RouterOptions {
+            external_key: Some("ndr_ext_test_external_key_1234".to_owned()),
+            web_bridge: Some(WebBridgeConfig { url: bridge_url, token: bridge_token }),
+            safe_mode: false,
+            preferred_port: None,
+        },
+    )
+    .expect("state");
+    state.save_provider(web_provider_input("chatgpt-web", "chatgpt-web", &["default"])).expect("web provider");
+    state.save_provider(provider_input("api", "http://127.0.0.1:9", &["model"])).expect("api provider");
+    state
+        .save_combo(combo_input("mixed", "priority", vec![
+            combo_entry("chatgpt-web", "default"),
+            combo_entry("api", "model"),
+        ]))
+        .expect("combo");
+    assert!(state.accepts_key("ndr_ext_test_external_key_1234"));
+    assert_eq!(state.safe_mode_enabled(), false);
+
+    state.set_safe_mode(true);
+    assert!(state.accepts_key(&state.key().to_owned()));
+    assert!(!state.accepts_key("ndr_ext_test_external_key_1234"));
+    assert_eq!(state.snapshot()["safeMode"].as_bool(), Some(true));
+
+    let web_only = state
+        .chat_with_request(
+            json!({"model": "chatgpt-web/default", "messages": [{"role": "user", "content": "blocked"}]}),
+            None,
+            "/v1/chat/completions",
+            Some("req-safe-web"),
+        )
+        .await
+        .expect_err("web lane must be blocked");
+    assert_eq!(web_only.status, StatusCode::FORBIDDEN);
+    assert_eq!(calls.lock().unwrap().len(), 0);
+
+    let test = state.test_provider("chatgpt-web").await.expect("provider test");
+    assert_eq!(test["ok"], false);
+    assert_eq!(test["statusCode"], 403);
+    assert!(test["error"].as_str().unwrap_or_default().contains("Safe Mode"));
+
+    state.set_safe_mode(false);
+    assert!(state.accepts_key("ndr_ext_test_external_key_1234"));
+    assert_eq!(state.snapshot()["safeMode"].as_bool(), Some(false));
 }
 
 #[tokio::test]

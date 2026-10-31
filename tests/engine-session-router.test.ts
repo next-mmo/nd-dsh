@@ -78,6 +78,30 @@ describe('session-scoped cancellation', () => {
   })
 })
 
+describe('mid-turn steering', () => {
+  it('forwards a steer to the Harness with mode steer', async () => {
+    const { router, harness } = fixture()
+    await router.run('hold on, check the failing test first', { sessionId: 'harness-session', mode: 'steer' })
+    expect(harness.run).toHaveBeenCalledExactlyOnceWith(
+      'hold on, check the failing test first',
+      expect.objectContaining({ sessionId: 'harness-session', mode: 'steer' }),
+    )
+  })
+
+  it('rejects steering on engines that cannot be interrupted', async () => {
+    const { router, direct } = fixture()
+    await expect(router.run('steer me', { sessionId: 'session-1', mode: 'steer' }))
+      .rejects.toThrow(/ND Harness chats only/)
+    expect(direct.run).not.toHaveBeenCalled()
+  })
+
+  it('rejects a steer without a running session', async () => {
+    const { router } = fixture()
+    await expect(router.run('steer me', { mode: 'steer' }))
+      .rejects.toThrow(/running chat session/)
+  })
+})
+
 describe('engine route admission', () => {
   it('fails closed instead of silently routing an unknown engine through Harness', async () => {
     const { router, harness } = fixture()

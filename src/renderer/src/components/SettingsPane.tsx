@@ -217,6 +217,7 @@ export function SettingsPane({
         ) : tab === 'router' ? (
           <RouterSettings
             onError={onError}
+            onSelectTab={onSelectTab}
             {...(routerSubTab !== undefined ? { subTab: routerSubTab } : {})}
             {...(onSelectRouterSubTab !== undefined ? { onSelectSubTab: onSelectRouterSubTab } : {})}
           />

@@ -80,6 +80,7 @@ export function registerBrowserPlatformIpc(
   handle(BROWSER_PLATFORM_IPC.reloadExtensions, () => service.reloadExtensions())
   handle(BROWSER_PLATFORM_IPC.developerMode, (enabled) => service.setDeveloperMode(Boolean(enabled)))
   handle(BROWSER_PLATFORM_IPC.browserUseEnabled, (enabled) => service.setBrowserUseEnabled(Boolean(enabled)))
+  handle(BROWSER_PLATFORM_IPC.safeModeEnabled, (enabled) => service.setSafeModeEnabled(Boolean(enabled)))
   handle(BROWSER_PLATFORM_IPC.installCatalogExtension, async (catalogId) => {
     const id = asString(catalogId, 'Browser extension catalog id', 512)
     const item = (await service.state()).extensionCatalog.find((candidate) => candidate.id === id)

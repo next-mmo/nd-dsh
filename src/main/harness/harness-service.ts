@@ -245,16 +245,24 @@ export class HarnessService {
     if (cleaned.length > 100_000) throw new Error('Prompt exceeds the 100,000 character limit')
     this.workspace.assertUsable()
 
+    // Steering must reach the live runtime: a restart would kill the very turn
+    // it is meant to interject into, so launch-policy edits wait for the next
+    // queued prompt.
+    const mode = options?.mode === 'steer' ? 'steer' : 'queue'
     // Provider and Token Saver policy edits are staged in ND settings and take
     // effect on the next prompt/session. Durable Harness sessions survive the
     // transparent runtime restart.
-    const gateway = await this.ensureStarted(true)
-    const sessionId = options?.sessionId?.trim() || this.activeSessionId || await this.createSession(options?.workspaceCwd)
+    const gateway = await this.ensureStarted(mode !== 'steer')
+    const requestedSessionId = options?.sessionId?.trim()
+    if (mode === 'steer' && !requestedSessionId) throw new Error('Steering needs the running chat session')
+    const sessionId = requestedSessionId || this.activeSessionId || await this.createSession(options?.workspaceCwd)
     const requestedCwd = options?.workspaceCwd?.trim()
     if (requestedCwd) this.bindSessionCwd(sessionId, requestedCwd)
     const sessionCwd = requestedCwd ?? this.sessionCwdById.get(sessionId) ?? this.workspace.state().root
     this.activeSessionId = sessionId
-    this.canceledSessions.delete(sessionId)
+    // A steered prompt joins a turn that is already live; it must not clear a
+    // pending cancellation or retarget the running turn's model route.
+    if (mode !== 'steer') this.canceledSessions.delete(sessionId)
     // Adopt the session's live journal before admitting the turn, so every
     // event of this prompt streams instead of landing inside a snapshot that
     // is adopted silently. Degraded to a warning: the turn still runs and
@@ -266,7 +274,7 @@ export class HarnessService {
     const activeGateway = this.gateway ?? gateway
     const targetProvider = options?.provider ?? this.statusValue.provider
     const targetModel = options?.model ?? this.statusValue.model
-    if (targetProvider && targetModel) {
+    if (mode !== 'steer' && targetProvider && targetModel) {
       await this.rpcWithRecovery(activeGateway, 'session.selectModel', {
         sessionId,
         provider: targetProvider,
@@ -287,10 +295,14 @@ export class HarnessService {
     // Each staged pick may carry a cropped element screenshot; both the text
     // context block and those images join the turn's content.
     const stagedElements = this.externalElements.consumeAll()
-    const workspacePrompt = appendWorkspaceContext(cleaned, this.workspace.state(), sessionCwd)
+    // A steer rides inside the running turn, which already carries the
+    // workspace context; re-appending it would bury the interjection.
+    const basePrompt = mode === 'steer'
+      ? cleaned
+      : appendWorkspaceContext(cleaned, this.workspace.state(), sessionCwd)
     const browserPrompt = selectedUiTarget || selectedAnnotation
-      ? attachUiContext(workspacePrompt, selectedUiTarget, selectedAnnotation)
-      : workspacePrompt
+      ? attachUiContext(basePrompt, selectedUiTarget, selectedAnnotation)
+      : basePrompt
     const runtimePrompt = stagedElements.length > 0
       ? `${browserPrompt}\n\n${stagedElements.map((item) => formatExternalElementContext(item.pick, item.screenshot)).join('\n\n')}`
       : browserPrompt
@@ -315,7 +327,7 @@ export class HarnessService {
     const promptRpc = await this.rpcWithRecovery(this.gateway ?? gateway, 'session.prompt', {
       requestId: randomUUID(),
       sessionId,
-      mode: 'queue',
+      mode,
       content,
     })
     let result = promptRpc.result
@@ -326,7 +338,7 @@ export class HarnessService {
       result = (await this.rpcWithRecovery(promptRpc.gateway, 'session.prompt', {
         requestId: randomUUID(),
         sessionId,
-        mode: 'queue',
+        mode,
         content: textContent,
       })).result
     }

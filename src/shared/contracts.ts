@@ -273,6 +273,12 @@ export interface HarnessRunOptions {
   engineId?: string
   provider?: string
   model?: string
+  /**
+   * Delivery for a prompt sent while the chat is already working. `queue`
+   * appends it after the running turn; `steer` injects it into that turn.
+   * Only ND Harness sessions accept `steer`; other engines stay queue-only.
+   */
+  mode?: 'queue' | 'steer'
   image?: HarnessRunImage
   /** User-pasted images riding with this prompt (base64 payloads, no data URL prefix). */
   images?: HarnessRunImage[]
@@ -864,6 +870,10 @@ export interface DesktopApi {
     getModeSettings(): Promise<WebBrowserModeSettings>
     setModeSettings(settings: Partial<WebBrowserModeSettings>): Promise<WebBrowserModeSettings>
   }
+  deepseekWeb: {
+    getModeSettings(): Promise<WebBrowserModeSettings>
+    setModeSettings(settings: Partial<WebBrowserModeSettings>): Promise<WebBrowserModeSettings>
+  }
   /** OS-style media transport over whatever the embedded browser is playing. */
   media?: {
     state(): Promise<NdMediaSessionState | null>
@@ -1054,4 +1064,6 @@ export const IPC = {
   geminiWebGemClear: 'gemini-web:gem-clear',
   geminiWebModeGet: 'gemini-web:mode-get',
   geminiWebModeSet: 'gemini-web:mode-set',
+  deepseekWebModeGet: 'deepseek-web:mode-get',
+  deepseekWebModeSet: 'deepseek-web:mode-set',
 } as const

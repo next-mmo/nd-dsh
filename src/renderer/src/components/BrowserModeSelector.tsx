@@ -5,7 +5,7 @@ import {
   type WebBrowserMode,
 } from '../../../shared/browser-modes'
 
-export function BrowserModeSelector({ mode, onSelect }: { mode: WebBrowserMode; onSelect: (mode: WebBrowserMode) => void }) {
+export function BrowserModeSelector({ mode, onSelect, modes = WEB_BROWSER_MODES }: { mode: WebBrowserMode; onSelect: (mode: WebBrowserMode) => void; modes?: readonly WebBrowserMode[] }) {
   return (
     <div className="flex items-center justify-between gap-2 rounded-[7px] border border-border-soft bg-surface-1 px-2.5 py-1 text-[10px]">
       <div className="flex items-center gap-1.5 text-soft">
@@ -15,7 +15,7 @@ export function BrowserModeSelector({ mode, onSelect }: { mode: WebBrowserMode; 
         </span>
       </div>
       <div className="flex shrink-0 items-center gap-1 rounded bg-accent/60 p-0.5">
-        {WEB_BROWSER_MODES.map((candidate) => (
+        {modes.map((candidate) => (
           <button
             key={candidate}
             type="button"

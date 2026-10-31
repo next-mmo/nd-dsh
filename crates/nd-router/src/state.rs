@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -25,8 +26,10 @@ use std::time::{Duration, Instant};
 pub struct RouterOptions {
     /// Stable credential for local external apps; the per-launch key stays internal.
     pub external_key: Option<String>,
-    /// Loopback bridge that drives the visible ChatGPT Web / Gemini Web tabs.
+    /// Loopback bridge that drives the visible ChatGPT Web / Gemini Web / DeepSeek Web tabs.
     pub web_bridge: Option<WebBridgeConfig>,
+    /// Experimental network lockdown. Off by default until the mode is stable.
+    pub safe_mode: bool,
     pub preferred_port: Option<u16>,
 }
 
@@ -39,6 +42,7 @@ pub struct RouterState {
     client: reqwest::Client,
     key: String,
     external_key: Mutex<Option<String>>,
+    safe_mode: AtomicBool,
     web_bridge: Option<WebBridgeConfig>,
     preferred_port: u16,
     counters: Mutex<Counters>,
@@ -81,6 +85,7 @@ impl RouterState {
             client,
             key,
             external_key: Mutex::new(options.external_key),
+            safe_mode: AtomicBool::new(options.safe_mode),
             web_bridge: options.web_bridge,
             preferred_port: options.preferred_port.unwrap_or(3130),
             counters: Mutex::new(Counters::default()),
@@ -102,11 +107,25 @@ impl RouterState {
         if constant_time_eq(token.as_bytes(), self.key.as_bytes()) {
             return true;
         }
+        // Safe Mode keeps ND's internal per-launch credential working but
+        // rejects the stable external-app credential.
+        if self.safe_mode.load(Ordering::Acquire) {
+            return false;
+        }
         let external = self.external_key.lock().unwrap_or_else(|error| error.into_inner()).clone();
         external
             .as_deref()
             .map(|key| constant_time_eq(token.as_bytes(), key.as_bytes()))
             .unwrap_or(false)
+    }
+
+    pub fn safe_mode_enabled(&self) -> bool {
+        self.safe_mode.load(Ordering::Acquire)
+    }
+
+    pub fn set_safe_mode(&self, enabled: bool) -> Value {
+        self.safe_mode.store(enabled, Ordering::Release);
+        self.snapshot()
     }
 
     pub fn set_external_key(&self, key: &str) -> Result<(), RouterError> {
@@ -134,6 +153,7 @@ impl RouterState {
                 "failed": counters.failed,
                 "lastError": counters.last_error,
             },
+            "safeMode": self.safe_mode_enabled(),
         })
     }
 
@@ -333,7 +353,7 @@ impl RouterState {
             .cloned();
         let mut entries = combo.as_ref().map(|combo| combo.models.clone()).unwrap_or_default();
         let strategy = combo.as_ref().map(|combo| combo.strategy.as_str()).unwrap_or(catalog::STRATEGY_PRIORITY);
-        let combo_name = combo.as_ref().map(|combo| combo.name.clone()).unwrap_or_else(|| "default".to_owned());
+        let mut combo_name = combo.as_ref().map(|combo| combo.name.clone()).unwrap_or_else(|| "default".to_owned());
 
         if entries.is_empty() {
             entries = guard
@@ -359,6 +379,10 @@ impl RouterState {
                     weight: None,
                     account_id: None,
                 }];
+                // An explicit provider/model pick is a direct route. Without
+                // this, the first saved combo's name leaked into the response
+                // headers and the playground reported a route it never used.
+                combo_name = "direct".to_owned();
             }
         }
 
@@ -428,6 +452,13 @@ impl RouterState {
         for entry in entries {
             let lane = entry.provider.kind.as_str();
             if catalog::is_web_kind(lane) {
+                if self.safe_mode_enabled() {
+                    last = Some((
+                        403,
+                        "ND Router Safe Mode is on: web lanes are disabled".to_owned(),
+                    ));
+                    continue;
+                }
                 let messages = body.get("messages").and_then(Value::as_array);
                 let prompt = crate::cli::prompt_from_messages(messages.map(Vec::as_slice).unwrap_or(&[]));
                 if prompt.trim().is_empty() {
@@ -621,6 +652,9 @@ impl RouterState {
         request_id: Option<&str>,
         timeout_secs: u64,
     ) -> Result<String, (u16, String)> {
+        if self.safe_mode_enabled() {
+            return Err((403, "ND Router Safe Mode is on: web lanes are disabled".to_owned()));
+        }
         let Some(bridge) = self.web_bridge.as_ref() else {
             return Err((
                 503,

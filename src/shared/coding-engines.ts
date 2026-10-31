@@ -4,6 +4,7 @@ export const ND_HARNESS_ENGINE_ID = 'nd-harness'
 export const ND_NATIVE_ENGINE_ID = 'nd-native'
 export const CHATGPT_WEB_ENGINE_ID = 'chatgpt-web'
 export const GEMINI_WEB_ENGINE_ID = 'gemini-web'
+export const DEEPSEEK_WEB_ENGINE_ID = 'deepseek-web'
 export const CODEX_ENGINE_ID = 'codex'
 export const CODEX_CLI_ENGINE_ID = 'codex-cli'
 export const ANTIGRAVITY_ENGINE_ID = 'antigravity'
@@ -67,6 +68,29 @@ export function geminiWebEngineDescriptor(): CodingEngineDescriptor {
       persistentSessions: true,
     },
     workerInstructions: '\nExecution engine: Gemini Web. Conversation transport is the signed-in Gemini website in ND\'s visible browser. No local code transport is assumed: Gemini has no connected Git or filesystem tools, so use conversation text only and never claim code was pushed or committed.\n',
+  }
+}
+
+export function deepSeekWebEngineDescriptor(): CodingEngineDescriptor {
+  return {
+    id: DEEPSEEK_WEB_ENGINE_ID,
+    name: 'DeepSeek Web',
+    integration: 'primary',
+    available: true,
+    description: 'Chat through the signed-in DeepSeek website in ND\'s visible browser. Each chat keeps its conversation on chat.deepseek.com; DeepThink can be selected per chat, and no Git or filesystem transport is assumed.',
+    capabilities: {
+      workspace: false,
+      filesystem: false,
+      shell: false,
+      browser: true,
+      skills: false,
+      mcp: false,
+      modelProviderRouting: false,
+      humanApprovals: false,
+      streaming: false,
+      persistentSessions: true,
+    },
+    workerInstructions: '\nExecution engine: DeepSeek Web. Conversation transport is the signed-in DeepSeek website in ND\'s visible browser. Do not assume direct ND filesystem or shell tools exist inside DeepSeek.\n',
   }
 }
 

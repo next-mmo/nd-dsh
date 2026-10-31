@@ -114,6 +114,7 @@ export function registerRouterIpc(window: BrowserWindow, service: RouterService,
   handle(ROUTER_IPC.externalKeyState, () => service.externalKeyState())
   handle(ROUTER_IPC.revealExternalKey, () => service.revealExternalKey())
   handle(ROUTER_IPC.rotateExternalKey, () => service.rotateExternalKey())
+  handle(ROUTER_IPC.setSafeMode, (_event, enabled) => service.setSafeMode(Boolean(enabled)))
   handle(ROUTER_IPC.playgroundStart, (_event, input) => {
     service.playgroundStart(input as RouterPlaygroundInput, (event) => {
       if (!window.isDestroyed()) window.webContents.send(ROUTER_IPC.playgroundEvent, event)
@@ -139,6 +140,9 @@ export function registerRouterIpc(window: BrowserWindow, service: RouterService,
   })
   handle(NINE_ROUTER_IPC.importUnverified, async () => {
     if (!managed) throw new Error('Managed 9Router unavailable')
+    if (service.safeModeEnabled()) {
+      throw new Error('ND Router Safe Mode is on: unverified 9Router imports are disabled.')
+    }
     // Dev/QA seam: the folder still goes through detection, bounds, symlink
     // checks, copying, and hash pinning; only the publisher signature is absent.
     const automatedSource = !app.isPackaged ? process.env.ND_9ROUTER_IMPORT_DIR?.trim() : undefined

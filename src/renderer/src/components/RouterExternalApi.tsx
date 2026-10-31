@@ -32,6 +32,11 @@ export function RouterExternalApi({ state, onError, embedded = false }: RouterEx
     return () => { mounted = false }
   }, [onError])
 
+  const safeMode = info?.safeMode ?? state?.safeMode ?? false
+  useEffect(() => {
+    if (safeMode) setKey(null)
+  }, [safeMode])
+
   const endpoint = info?.endpoint || state?.endpoint || ''
   const sampleCombo = state?.combos[0]?.name ?? 'my-route'
   const curl = endpoint
@@ -94,19 +99,21 @@ export function RouterExternalApi({ state, onError, embedded = false }: RouterEx
           <div className={rowStack}>
             <span className="flex items-center gap-2">
               <strong className={rowTitle}>External API key</strong>
-              {info ? <StatusChip warn={!info.persisted}>{info.persisted ? 'Saved' : 'This session only'}</StatusChip> : null}
+              {safeMode ? <StatusChip warn>Closed by Safe Mode</StatusChip> : null}
+              {info && !safeMode ? <StatusChip warn={!info.persisted}>{info.persisted ? 'Saved' : 'This session only'}</StatusChip> : null}
             </span>
-            <span className={rowPathText}>{key ?? 'ndr_ext_••••••••••••'}</span>
-            {info && !info.persisted ? (
+            <span className={rowPathText}>{safeMode ? 'External credential is rejected' : key ?? 'ndr_ext_••••••••••••'}</span>
+            {info && !info.persisted && !safeMode ? (
               <span className={rowDesc}>OS-backed secure storage is unavailable, so this key changes when ND restarts.</span>
             ) : null}
             <span className={rowDesc}>
-              Hidden web combos are still callable by name. Every web request opens a fresh ChatGPT/Gemini conversation; old
-              conversations remain in that account.
+              {safeMode
+                ? 'Turn Safe Mode off in the Router Overview to hand this credential to local apps. Web lanes are also closed while Safe Mode is on.'
+                : 'Hidden web combos are still callable by name. Every web request opens a fresh ChatGPT/Gemini/DeepSeek conversation; old conversations remain in that account.'}
             </span>
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            <SettingsButton disabled={!endpoint || busy !== null} onClick={() => {
+            <SettingsButton disabled={!endpoint || busy !== null || safeMode} onClick={() => {
               if (key) {
                 setKey(null)
                 return
@@ -114,7 +121,7 @@ export function RouterExternalApi({ state, onError, embedded = false }: RouterEx
               reveal()
             }}>{busy === 'reveal' ? 'Loading…' : key ? 'Hide' : 'Reveal'}</SettingsButton>
             <SettingsButton
-              disabled={!endpoint || busy !== null}
+              disabled={!endpoint || busy !== null || safeMode}
               onClick={() => {
                 if (key) return copy(key, 'key')
                 setBusy('copy')
@@ -130,7 +137,7 @@ export function RouterExternalApi({ state, onError, embedded = false }: RouterEx
             >
               {copied === 'key' ? 'Copied' : 'Copy key'}
             </SettingsButton>
-            <SettingsButton disabled={!endpoint || busy !== null} onClick={rotate}>{busy === 'rotate' ? 'Rotating…' : 'Rotate'}</SettingsButton>
+            <SettingsButton disabled={!endpoint || busy !== null || safeMode} onClick={rotate}>{busy === 'rotate' ? 'Rotating…' : 'Rotate'}</SettingsButton>
           </div>
         </SettingsRow>
 

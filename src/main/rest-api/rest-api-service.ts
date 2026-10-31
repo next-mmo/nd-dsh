@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { promises as fsPromises, existsSync, writeFileSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
-import { CHATGPT_WEB_ENGINE_ID, GEMINI_WEB_ENGINE_ID } from '../../shared/coding-engines.js'
+import { CHATGPT_WEB_ENGINE_ID, DEEPSEEK_WEB_ENGINE_ID, GEMINI_WEB_ENGINE_ID } from '../../shared/coding-engines.js'
 import { parsePromptShieldBlockedError } from '../../shared/prompt-shield.js'
 import type {
   RestApiRunRequest,
@@ -60,7 +60,7 @@ export class NdRestApiService {
       port: this.activePort ?? 0,
       endpoint: this.endpoint() ?? '',
       defaultEngine: CHATGPT_WEB_ENGINE_ID,
-      availableEngines: [CHATGPT_WEB_ENGINE_ID, GEMINI_WEB_ENGINE_ID],
+      availableEngines: [CHATGPT_WEB_ENGINE_ID, GEMINI_WEB_ENGINE_ID, DEEPSEEK_WEB_ENGINE_ID],
       workspace: this.options.workspace.state().root,
     }
   }
@@ -430,6 +430,7 @@ function normalizeEngineId(engine?: string): string {
   const lower = engine.toLowerCase().trim()
   if (lower === 'gpt-web' || lower === 'chatgpt' || lower === 'chatgpt-web') return CHATGPT_WEB_ENGINE_ID
   if (lower === 'gemini-web' || lower === 'gemini') return GEMINI_WEB_ENGINE_ID
+  if (lower === 'deepseek-web' || lower === 'deepseek') return DEEPSEEK_WEB_ENGINE_ID
   return engine
 }
 

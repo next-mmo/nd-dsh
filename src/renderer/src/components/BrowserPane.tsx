@@ -645,6 +645,11 @@ export function BrowserPane({ active, state, onSnapshot, onError, onOpenSettings
             Site tools: {siteToolCount}
           </BridgePill>
         ) : null}
+        {platform?.safeModeEnabled ? (
+          <BridgePill state="binding" title="Privacy, anti-detect, and agent-control lockdown are active">
+            Safe Mode
+          </BridgePill>
+        ) : null}
         <BridgePill state={state?.agentBrowser ?? 'binding'} title={state?.agentBrowserError}>
           {state?.agentBrowser === 'ready' ? 'Agent linked' : state?.agentBrowser === 'unavailable' ? 'Agent offline' : 'Linking'}
         </BridgePill>

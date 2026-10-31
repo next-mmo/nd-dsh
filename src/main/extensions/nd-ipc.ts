@@ -72,6 +72,7 @@ import type { NativeHostRegistry, NdHostCallContext } from './native-host.js'
 import { NdTranslateService, type TranslateBrowserPort } from './translate-service.js'
 import { translateWithLlm } from './translate-llm.js'
 import { TranslateHistoryStore } from './translate-history-store.js'
+import type { NineRouterManagedRuntime } from '../router/nine-router-managed.js'
 import {
   attachClipboardHistory,
   capsFromSettings,
@@ -144,6 +145,7 @@ export interface NdIpcDependencies {
   coreApiHttp?: CoreApiHttp
   /** Notified after ND Home records change, so other services can re-derive views. */
   onHomeChanged?: () => void
+  nineRouterManaged?: NineRouterManagedRuntime
 }
 
 const NOTE_TITLE_MAX = 80
@@ -158,6 +160,7 @@ const PAY_GUARD_ID = 'nd.pay-guard'
 const DISK_CLEANER_ID = 'nd.disk-cleaner'
 const API_STUDIO_ID = 'nd.api-studio'
 const COMPUTER_USE_ID = 'nd.computer-use'
+export const NINE_ROUTER_ID = 'nd.9router'
 
 /**
  * Development package sources. Release Discover uses separately published metadata.
@@ -185,6 +188,7 @@ const AVAILABLE_PACKAGES: readonly { id: string; path: () => string }[] = app.is
     { id: DISK_CLEANER_ID, path: diskCleanerPackagePath },
     { id: API_STUDIO_ID, path: apiStudioPackagePath },
     { id: COMPUTER_USE_ID, path: computerUsePackagePath },
+    { id: NINE_ROUTER_ID, path: nineRouterPackagePath },
   ]),
 ]
 
@@ -212,6 +216,12 @@ function readPlaySources(settings: Record<string, unknown> | undefined): string[
   const raw = settings?.playSources
   if (!Array.isArray(raw)) return []
   return raw.filter((value): value is string => typeof value === 'string' && /^(folder|collection):/.test(value))
+}
+
+function nineRouterPackagePath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'nd-extensions', '9router')
+    : join(app.getAppPath(), 'extensions', '9router')
 }
 
 function quitProcessPackagePath(): string {
@@ -408,6 +418,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
           diskCleanerCatalogView(state),
           apiStudioCatalogView(state),
           computerUseCatalogView(state),
+          nineRouterCatalogView(state),
         ]),
       ]),
     }
@@ -728,6 +739,30 @@ export function registerNativeHostHandlers(
   computerUse?: ComputerUseService | null,
 ): { dispose: () => void } {
   const { host, providers } = deps
+  host.register('ninerouter.status', async () => {
+    const state = await deps.nineRouterManaged?.state()
+    return {
+      title: state?.running
+        ? `9Router running (${state.endpoint})`
+        : state?.installed
+          ? '9Router installed (stopped)'
+          : '9Router not installed',
+      detail: state?.running
+        ? `Gateway is ready at ${state.endpoint}. Models can be discovered and connected in ND Router.`
+        : state?.installed
+          ? 'Runtime is ready to start from ND Router or launcher.'
+          : 'Install the 9Router extension from Extensions, or configure in ND Router.',
+      state: state ?? null,
+    }
+  })
+  host.register('ninerouter.start', async () => {
+    if (!deps.nineRouterManaged) throw new Error('Managed 9Router runtime unavailable')
+    return deps.nineRouterManaged.start()
+  })
+  host.register('ninerouter.stop', async () => {
+    if (!deps.nineRouterManaged) throw new Error('Managed 9Router runtime unavailable')
+    return deps.nineRouterManaged.stop()
+  })
   host.register('security.status', async () => ({
     title: 'ND Security',
     detail: 'ND Security cannot be disabled. Signed managed-release verification is available; other installer-family gates and a signed remote catalog remain under development.',
@@ -2767,6 +2802,14 @@ async function computerUseCatalogView(state: NdExtensionsStateView): Promise<NdA
     name: 'ND Computer Use',
     description: 'Read a running app window as a screenshot plus an indexed accessibility tree. Read-only: it cannot click, type, launch, or activate anything.',
     permissions: ['computer.read'],
+  })
+}
+
+async function nineRouterCatalogView(state: NdExtensionsStateView): Promise<NdAvailablePackageView> {
+  return packageCatalogView(state, NINE_ROUTER_ID, nineRouterPackagePath(), {
+    name: '9Router',
+    description: 'Local AI model gateway and proxy runtime. Aggregate models, manage providers, and connect local routes directly to ND Router.',
+    permissions: ['ninerouter.read', 'ninerouter.write'],
   })
 }
 

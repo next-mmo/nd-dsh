@@ -295,6 +295,10 @@ const api: DesktopApi = {
     getModeSettings: () => ipcRenderer.invoke(IPC.geminiWebModeGet),
     setModeSettings: (settings) => ipcRenderer.invoke(IPC.geminiWebModeSet, settings),
   },
+  deepseekWeb: {
+    getModeSettings: () => ipcRenderer.invoke(IPC.deepseekWebModeGet),
+    setModeSettings: (settings) => ipcRenderer.invoke(IPC.deepseekWebModeSet, settings),
+  },
   browserCompanion: {
     state: () => ipcRenderer.invoke(BROWSER_COMPANION_IPC.state) as Promise<BrowserCompanionState>,    acquireLease: (connectionId: string, tabId: number, ownerId: string, scope?: BrowserCompanionLeaseScope) =>
       ipcRenderer.invoke(BROWSER_COMPANION_IPC.acquireLease, connectionId, tabId, ownerId, scope) as Promise<BrowserTabLease>,
@@ -333,6 +337,7 @@ const api: DesktopApi = {
     reloadExtensions: () => ipcRenderer.invoke(BROWSER_PLATFORM_IPC.reloadExtensions) as Promise<BrowserExtensionRecord[]>,
     setDeveloperMode: (enabled: boolean) => ipcRenderer.invoke(BROWSER_PLATFORM_IPC.developerMode, enabled) as Promise<BrowserPlatformState>,
     setBrowserUseEnabled: (enabled: boolean) => ipcRenderer.invoke(BROWSER_PLATFORM_IPC.browserUseEnabled, enabled) as Promise<BrowserPlatformState>,
+    setSafeModeEnabled: (enabled: boolean) => ipcRenderer.invoke(BROWSER_PLATFORM_IPC.safeModeEnabled, enabled) as Promise<BrowserPlatformState>,
     installCatalogExtension: (catalogId: string) => ipcRenderer.invoke(BROWSER_PLATFORM_IPC.installCatalogExtension, catalogId) as Promise<BrowserExtensionRecord | null>,
     openCatalogExtension: (catalogId: string) => ipcRenderer.invoke(BROWSER_PLATFORM_IPC.openCatalogExtension, catalogId) as Promise<BrowserTabDescriptor>,
     showExtensionPopup: (extensionId: string) => ipcRenderer.invoke(BROWSER_PLATFORM_IPC.showExtensionPopup, extensionId) as Promise<BrowserPlatformState>,

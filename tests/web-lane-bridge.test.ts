@@ -62,6 +62,19 @@ describe('WebLaneBridge', () => {
     expect(runWebLane).toHaveBeenCalledWith(expect.objectContaining({ engineId: 'gemini-web', prompt: 'hello', model: '3.5 Flash-Lite' }))
   })
 
+  it('accepts a deepseek-web lane with its mode hint', async () => {
+    const { descriptor, runWebLane } = await startBridge(async (input) => ({
+      text: 'deepseek answer',
+      engineId: input.engineId,
+      model: input.model ?? 'default',
+      latencyMs: 12,
+    }))
+    const response = await post(descriptor, { requestId: 'ds1', engine: 'deepseek-web', model: 'deep-think', prompt: 'hello' })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ ok: true, engineId: 'deepseek-web', model: 'deep-think' })
+    expect(runWebLane).toHaveBeenCalledWith(expect.objectContaining({ engineId: 'deepseek-web', prompt: 'hello', model: 'deep-think' }))
+  })
+
   it('maps sign-in and busy failures to stable codes', async () => {
     let code: 'login-required' | 'page-busy' = 'login-required'
     const { descriptor } = await startBridge(async () => {

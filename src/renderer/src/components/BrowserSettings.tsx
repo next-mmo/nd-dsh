@@ -38,6 +38,7 @@ export function BrowserSettings({ browser, onError, onOpenBrowser }: BrowserSett
   const [permissionOrigin, setPermissionOrigin] = useState('')
   const [permissionName, setPermissionName] = useState('notifications')
   const [extensionsOpen, setExtensionsOpen] = useState(false)
+  const [safeModeBusy, setSafeModeBusy] = useState(false)
   const [profileDialog, setProfileDialog] = useState<
     { mode: 'create' } | { mode: 'edit'; profile: BrowserProfileSummary } | null
   >(null)
@@ -173,6 +174,34 @@ export function BrowserSettings({ browser, onError, onOpenBrowser }: BrowserSett
 
       <SettingsSection title="Browser" className="mt-3.5">
         <div className="space-y-1.5">
+          <SettingsRow>
+            <div className={rowStack}>
+              <span className="flex items-center gap-2">
+                <strong className={rowTitle}>Safe Mode</strong>
+                <StatusChip warn={browserPlatform?.safeModeEnabled === true} neutral>
+                  {browserPlatform?.safeModeEnabled ? 'On' : 'Off'}
+                </StatusChip>
+                <StatusChip neutral>Experimental</StatusChip>
+              </span>
+              <span className={rowDesc}>
+                Blocks third-party cookies and known trackers, strips cross-site referrers, sends GPC/DNT, adds stable
+                per-profile canvas/WebGL/audio noise, hides common automation markers, and pauses ND agent control of the
+                built-in browser. Open pages reload when this changes.
+              </span>
+            </div>
+            <SettingsSwitch
+              label="Browser Safe Mode"
+              checked={browserPlatform?.safeModeEnabled ?? false}
+              disabled={browserPlatform === null || safeModeBusy}
+              onCheckedChange={(enabled) => {
+                setSafeModeBusy(true)
+                void window.ndDsh.browserPlatform.setSafeModeEnabled(enabled)
+                  .then((next) => setBrowserPlatform(next))
+                  .catch((cause) => onError(errorMessage(cause)))
+                  .finally(() => setSafeModeBusy(false))
+              }}
+            />
+          </SettingsRow>
           <SettingsRow>
             <div className={rowStack}>
               <strong className={rowTitle}>Agent browser control</strong>

@@ -1776,7 +1776,10 @@ export default function App() {
         className={cn(
           // Context controls and running views own a full-width second row.
           // The top row reserves room for navigation and desktop controls.
-          'app-drag grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-[18px] border-b border-border-soft bg-titlebar pr-[148px] pl-3',
+          // Equal side tracks keep the main menu pill centred in the usable
+          // titlebar (the pr band belongs to the native window buttons); the
+          // brand column truncates before the pill can collide with anything.
+          'app-drag grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-[18px] border-b border-border-soft bg-titlebar pr-[148px] pl-3',
           headerKeepAlive && 'pointer-events-auto relative z-[60]',
         )}
       >

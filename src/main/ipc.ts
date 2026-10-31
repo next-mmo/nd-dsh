@@ -43,6 +43,7 @@ import { InvocationStateStore } from './extensions/invocation-state.js'
 import { NativeHostRegistry } from './extensions/native-host.js'
 import { InvocationBroker } from './extensions/invocation-broker.js'
 import { registerNdExtensionIpc } from './extensions/nd-ipc.js'
+import type { NineRouterManagedRuntime } from './router/nine-router-managed.js'
 import { HomeStore } from './home/home-store.js'
 import type { GitService } from './git/git-service.js'
 import type { GitExecRunner } from './git/git-cli.js'
@@ -116,6 +117,7 @@ interface IpcDependencies {
   sessionArchive: SessionArchiveStore
   /** ND's durable token accounting, captured from the runtime event stream. */
   usageLedger: UsageLedger
+  nineRouterManaged?: NineRouterManagedRuntime
   /** Organization state and mutations: ND extension notes and org policy checks run against the same store the UI uses. */
   organizationStore: {
     state(): Promise<OrganizationSnapshot>
@@ -272,6 +274,7 @@ export function registerIpc(deps: IpcDependencies): () => void {
   const userDataRoot = app.getPath('userData')
   const homeStore = new HomeStore(join(userDataRoot, 'nd-home'))
   const packageStore = new ExtensionPackageStore(join(userDataRoot, 'nd-extensions'), deps.coreGit, deps.corePackageSnapshot)
+  deps.nineRouterManaged?.setPackageStore(packageStore)
   const invocationState = new InvocationStateStore(userDataRoot)
   const nativeHost = new NativeHostRegistry()
   const invocationBroker = new InvocationBroker({
@@ -347,6 +350,7 @@ export function registerIpc(deps: IpcDependencies): () => void {
     ...(deps.coreDisk ? { coreDisk: deps.coreDisk } : {}),
     ...(deps.coreComputer ? { coreComputer: deps.coreComputer } : {}),
     ...(deps.coreApiHttp ? { coreApiHttp: deps.coreApiHttp } : {}),
+    ...(deps.nineRouterManaged ? { nineRouterManaged: deps.nineRouterManaged } : {}),
     onHomeChanged: () => { void syncHomeSessions() },
   })
   // Personal chats run outside the active workspace but must stay listed in the
@@ -916,6 +920,14 @@ export function registerIpc(deps: IpcDependencies): () => void {
     if (!engine) throw new Error('Gemini Web is unavailable')
     return engine.setModeSettings(input as Partial<WebBrowserModeSettings>)
   })
+  handle(IPC.deepseekWebModeGet, () => {
+    return deps.engineRouter.getDeepSeekWeb()?.getModeSettings() ?? DEFAULT_WEB_BROWSER_MODE_SETTINGS
+  })
+  handle(IPC.deepseekWebModeSet, (_event, input) => {
+    const engine = deps.engineRouter.getDeepSeekWeb()
+    if (!engine) throw new Error('DeepSeek Web is unavailable')
+    return engine.setModeSettings(input as Partial<WebBrowserModeSettings>)
+  })
   handle(IPC.harnessPermissionGet, () => deps.theme.permissionMode())
   handle(IPC.harnessPermissionSet, async (_event, value) => {
     const mode = deps.theme.setPermissionMode(asPermissionMode(value))
@@ -1230,6 +1242,8 @@ function asRunOptions(value: unknown): HarnessRunOptions {
   if (provider !== undefined && (typeof provider !== 'string' || !provider.trim() || provider.length > 256)) throw new Error('provider must be a short non-empty string')
   const model = record.model
   if (model !== undefined && (typeof model !== 'string' || !model.trim() || model.length > 256)) throw new Error('model must be a short non-empty string')
+  const mode = record.mode
+  if (mode !== undefined && mode !== 'queue' && mode !== 'steer') throw new Error('mode must be queue or steer')
   const permissionMode = record.permissionMode === undefined ? undefined : asPermissionMode(record.permissionMode)
   const promptShieldOverride = record.promptShieldOverride
   if (promptShieldOverride !== undefined && promptShieldOverride !== 'mask' && promptShieldOverride !== 'allow') {
@@ -1249,6 +1263,7 @@ function asRunOptions(value: unknown): HarnessRunOptions {
     ...(typeof engineId === 'string' ? { engineId: engineId.trim() } : {}),
     ...(typeof provider === 'string' ? { provider: provider.trim() } : {}),
     ...(typeof model === 'string' ? { model: model.trim() } : {}),
+    ...(mode !== undefined ? { mode } : {}),
     ...(permissionMode !== undefined ? { permissionMode } : {}),
     ...(promptShieldOverride !== undefined ? { promptShieldOverride } : {}),
     ...(typeof workspaceCwd === 'string' ? { workspaceCwd: workspaceCwd.trim() } : {}),

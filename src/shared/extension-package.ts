@@ -56,6 +56,8 @@ export const ND_EXTENSION_PERMISSIONS = [
   'chat.start',
   'workflow.read',
   'computer.read',
+  'ninerouter.read',
+  'ninerouter.write',
 ] as const
 
 export type NdExtensionPermission = (typeof ND_EXTENSION_PERMISSIONS)[number]
@@ -188,6 +190,9 @@ export const ND_HOST_METHODS = [
   { id: 'workflow.refresh', title: 'Refresh repository tasks', permission: 'workflow.read', contexts: ['project'], sensitive: false },
   { id: 'computer.apps.list', title: 'List running apps and windows', permission: 'computer.read', contexts: ['personal'], sensitive: false },
   { id: 'computer.app.state', title: 'Read a window screenshot and accessibility tree', permission: 'computer.read', contexts: ['personal'], sensitive: true },
+  { id: 'ninerouter.status', title: 'View 9Router runtime status', permission: 'ninerouter.read', contexts: ['personal', 'company', 'project'], sensitive: false },
+  { id: 'ninerouter.start', title: 'Start 9Router runtime', permission: 'ninerouter.write', contexts: ['personal', 'company', 'project'], sensitive: false },
+  { id: 'ninerouter.stop', title: 'Stop 9Router runtime', permission: 'ninerouter.write', contexts: ['personal', 'company', 'project'], sensitive: false },
 ] as const satisfies readonly NdHostMethodDescriptor[]
 
 export type NdHostMethod = (typeof ND_HOST_METHODS)[number]['id']

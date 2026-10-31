@@ -2,6 +2,7 @@ import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ModelProvider } from '../../shared/contracts.js'
 import {
+  isRouterWebProviderKind,
   MANAGED_ROUTER_PROVIDER_ID,
   ROUTER_HEADERS,
   type RouterAccountInput,
@@ -19,6 +20,7 @@ import type { CoreClient } from '../core/core-client.js'
 import type { ProviderStore } from '../providers.js'
 import { NINE_ROUTER_EXTERNAL_PROVIDER_ID } from '../../shared/nine-router.js'
 import { RouterExternalKeyStore } from './external-key-store.js'
+import { RouterSafeModeStore } from './router-safe-mode-store.js'
 import type { WebLaneBridgeDescriptor } from './web-lane-bridge.js'
 
 interface InitializeResult {
@@ -28,7 +30,11 @@ interface InitializeResult {
   state: RouterState
 }
 
-type WebLaneCanceller = { cancel(requestId: string): void }
+type WebLaneCanceller = {
+  cancel(requestId: string): void
+  /** Safe Mode cuts off every queued lane immediately, not just one request. */
+  cancelAll?(): void
+}
 
 const DEFAULT_PREFERRED_PORT = 3130
 
@@ -45,6 +51,7 @@ export class RouterService {
   private key: string | undefined
   private appliedKey: string | undefined
   private readonly externalKeys: RouterExternalKeyStore
+  private readonly safeMode: RouterSafeModeStore
   private webLaneBridge: WebLaneCanceller | undefined
   private readonly playground = new Map<string, AbortController>()
 
@@ -55,6 +62,7 @@ export class RouterService {
     private readonly log: (message: string) => void = (message) => console.warn(message),
   ) {
     this.externalKeys = new RouterExternalKeyStore(join(dataDir, 'external-key.json'), undefined, log)
+    this.safeMode = new RouterSafeModeStore(join(dataDir, 'router-safe-mode.json'), log)
   }
 
   async initialize(webLaneBridge?: WebLaneBridgeDescriptor): Promise<void> {
@@ -64,6 +72,7 @@ export class RouterService {
       const result = await this.core.request<InitializeResult>('router.initialize', {
         dataDir: this.dataDir,
         externalKey: external.key,
+        safeMode: this.safeMode.enabled(),
         preferredPort: preferredPort(),
         ...(webLaneBridge ? { webBridge: webLaneBridge } : {}),
       }, 30_000)
@@ -82,9 +91,13 @@ export class RouterService {
     this.webLaneBridge = bridge
   }
 
+  safeModeEnabled(): boolean {
+    return this.safeMode.enabled()
+  }
+
   async state(): Promise<RouterState> {
     const state = await this.core.request<RouterState>('router.state', {})
-    return this.withEndpoint(state)
+    return this.withEndpoint({ ...state, safeMode: state.safeMode === true })
   }
 
   async saveProvider(input: RouterProviderInput): Promise<RouterState> {
@@ -147,7 +160,7 @@ export class RouterService {
     return this.state()
       .then((state) => {
         const provider = state.providers.find((candidate) => candidate.id === providerId)
-        const timeout = provider?.kind === 'chatgpt-web' || provider?.kind === 'gemini-web' ? 310_000 : 150_000
+        const timeout = provider && isRouterWebProviderKind(provider.kind) ? 310_000 : 150_000
         return this.core.request<RouterTestResult>('router.testProvider', { providerId }, timeout)
       })
       .catch(() => this.core.request<RouterTestResult>('router.testProvider', { providerId }, 150_000))
@@ -168,24 +181,41 @@ export class RouterService {
       ...(this.endpoint ? { endpoint: this.endpoint } : {}),
       hasKey: true,
       persisted: value.persisted,
+      safeMode: this.safeMode.enabled(),
     }
   }
 
   revealExternalKey(): RouterExternalKey {
+    this.assertExternalApiAvailable()
     const value = this.externalKeys.loadOrCreate()
     return {
       endpoint: this.endpoint ?? '',
       key: value.key,
       hasKey: true,
       persisted: value.persisted,
+      safeMode: this.safeMode.enabled(),
+    }
+  }
+
+  async setSafeMode(enabled: boolean): Promise<RouterState> {
+    this.safeMode.setEnabled(enabled)
+    if (enabled) this.stopAllLocalLanes()
+    try {
+      const state = await this.core.request<RouterState>('router.setSafeMode', { enabled }, 10_000)
+      return this.withEndpoint({ ...state, safeMode: enabled })
+    } catch (error) {
+      // The preference is still durable. If an older sidecar is running, the
+      // next ND start receives the flag through router.initialize.
+      this.log(`ND Router safe mode could not be applied immediately: ${message(error)}`)
+      return this.state()
     }
   }
 
   async rotateExternalKey(): Promise<RouterExternalKey> {
-    if (!this.endpoint) throw new Error('ND Router is not initialized')
+    this.assertExternalApiAvailable()
     const next = this.externalKeys.rotate()
     await this.core.request('router.setExternalKey', { externalKey: next.key }, 10_000)
-    return { endpoint: this.endpoint, key: next.key, hasKey: true, persisted: next.persisted }
+    return { endpoint: this.endpoint ?? '', key: next.key, hasKey: true, persisted: next.persisted, safeMode: false }
   }
 
   /** Kick off one playground turn; progress arrives through the event callback. */
@@ -197,6 +227,17 @@ export class RouterService {
     this.webLaneBridge?.cancel(requestId)
     this.playground.get(requestId)?.abort()
     this.playground.delete(requestId)
+  }
+
+  private stopAllLocalLanes(): void {
+    this.webLaneBridge?.cancelAll?.()
+    for (const controller of this.playground.values()) controller.abort()
+    this.playground.clear()
+  }
+
+  private assertExternalApiAvailable(): void {
+    if (!this.endpoint) throw new Error('ND Router is not initialized')
+    if (this.safeMode.enabled()) throw new Error('ND Router Safe Mode is on: the external API key is closed.')
   }
 
   private async runPlayground(input: RouterPlaygroundInput, onEvent: (event: RouterPlaygroundEvent) => void): Promise<void> {

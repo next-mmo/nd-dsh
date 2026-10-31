@@ -87,6 +87,7 @@ const routerApi: RouterDesktopApi = {
   externalKeyState: () => ipcRenderer.invoke(ROUTER_IPC.externalKeyState),
   revealExternalKey: () => ipcRenderer.invoke(ROUTER_IPC.revealExternalKey),
   rotateExternalKey: () => ipcRenderer.invoke(ROUTER_IPC.rotateExternalKey),
+  setSafeMode: (enabled) => ipcRenderer.invoke(ROUTER_IPC.setSafeMode, enabled),
   playgroundStart: (input) => ipcRenderer.invoke(ROUTER_IPC.playgroundStart, input),
   playgroundStop: (requestId) => ipcRenderer.invoke(ROUTER_IPC.playgroundStop, requestId),
   onPlaygroundEvent: (listener) => {

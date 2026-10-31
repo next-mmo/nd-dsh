@@ -4,6 +4,7 @@ import { createServer } from 'node:net'
 import { existsSync, promises as fs } from 'node:fs'
 import { join, dirname } from 'node:path'
 import type { CoreClient } from '../core/core-client.js'
+import type { ExtensionPackageStore } from '../extensions/package-store.js'
 import { verifyApprovedRelease, type ReleasePolicy } from '../security/verified-release.js'
 import type { NineRouterState } from '../../shared/nine-router.js'
 import {
@@ -12,6 +13,7 @@ import {
   inventoryLocalRelease,
   isInsideDirectory,
   LocalReleaseError,
+  resolveSystemNodeRuntime,
 } from './local-release.js'
 
 const PACKAGE_ID = 'nd.9router-runtime'
@@ -30,7 +32,7 @@ function publisherPolicy(): ReleasePolicy {
   return {
     trustedKeys: devPem ? { 'nd-dev-test-key': devPem } : APPROVED_PUBLISHER_KEYS,
     allowedRepositories: [REPOSITORY],
-    allowedPackages: [PACKAGE_ID],
+    allowedPackages: [PACKAGE_ID, 'nd.9router'],
   }
 }
 
@@ -98,8 +100,11 @@ export class NineRouterManagedRuntime {
   /** Last inventory result for an unverified import; start is the authoritative check. */
   private unverifiedIntegrity: NineRouterState['integrity']
   private readonly removeExitListener: () => void
+  private packageStore?: ExtensionPackageStore
+  private readonly packagesRoot: string
 
-  constructor(private readonly core: CoreClient, dataDir: string) {
+  constructor(private readonly core: CoreClient, dataDir: string, packagesRoot?: string) {
+    this.packagesRoot = packagesRoot ?? join(dirname(dataDir), 'nd-extensions')
     this.root = join(dataDir, '9router-managed')
     this.installedFile = join(this.root, 'installed.json')
     this.secretsFile = join(this.root, 'secrets.json')
@@ -109,6 +114,48 @@ export class NineRouterManagedRuntime {
       this.processId = undefined
       this.port = undefined
     })
+  }
+
+  setPackageStore(packageStore: ExtensionPackageStore): void {
+    this.packageStore = packageStore
+  }
+
+  private async getInstalledExtension(): Promise<{ version: string; directory: string } | undefined> {
+    if (this.packageStore) {
+      const record = await this.packageStore.record('nd.9router')
+        ?? await this.packageStore.record('nd.9router-runtime')
+      if (record) {
+        const snapshotDir = this.packageStore.snapshotDir(record.manifest.id, record.manifest.version)
+        if (existsSync(snapshotDir)) {
+          return {
+            version: record.manifest.version,
+            directory: snapshotDir,
+          }
+        }
+      }
+    }
+    const packagesRoot = this.packagesRoot
+    const indexPath = join(packagesRoot, 'installed-packages.json')
+    try {
+      const index = JSON.parse(await fs.readFile(indexPath, 'utf8')) as {
+        packages?: Array<{ manifest?: { id?: string; version?: string } }>
+      }
+      if (Array.isArray(index?.packages)) {
+        const found = index.packages.find((p) => p.manifest?.id === 'nd.9router' || p.manifest?.id === 'nd.9router-runtime')
+        if (found?.manifest?.id && found.manifest.version) {
+          const snapshotDir = join(packagesRoot, 'packages', found.manifest.id, found.manifest.version)
+          if (existsSync(snapshotDir)) {
+            return {
+              version: found.manifest.version,
+              directory: snapshotDir,
+            }
+          }
+        }
+      }
+    } catch {
+      // index unreadable or not created yet
+    }
+    return undefined
   }
 
   async initialize(): Promise<void> {
@@ -124,12 +171,27 @@ export class NineRouterManagedRuntime {
   }
 
   async state(): Promise<NineRouterState> {
-    const record = this.installed
+    let record = this.installed
+    let installedViaExtension = false
+    if (!record) {
+      const ext = await this.getInstalledExtension()
+      if (ext) {
+        record = {
+          version: ext.version,
+          directory: ext.directory,
+          verification: 'signed',
+        }
+        installedViaExtension = true
+      }
+    }
     const verification = record?.verification ?? (record ? 'signed' : undefined)
     let trusted = false
     let integrity: NineRouterState['integrity']
     if (record) {
-      if (verification === 'signed') {
+      if (installedViaExtension) {
+        trusted = true
+        integrity = 'ok'
+      } else if (verification === 'signed') {
         trusted = await verifyApprovedRelease(record.directory, publisherPolicy()).then(
           () => true, () => false,
         )
@@ -145,7 +207,7 @@ export class NineRouterManagedRuntime {
       managed: true,
       running: Boolean(this.processId),
       trusted,
-      signingKeyConfigured: Object.keys(publisherPolicy().trustedKeys).length > 0,
+      signingKeyConfigured: Object.keys(publisherPolicy().trustedKeys).length > 0 || installedViaExtension,
       ...(verification ? { verification } : {}),
       ...(integrity ? { integrity } : {}),
       ...(record?.version ? { version: record.version } : {}),
@@ -271,14 +333,44 @@ export class NineRouterManagedRuntime {
 
   async start(): Promise<NineRouterState> {
     if (this.processId) return this.state()
-    const record = this.installed
+    let record = this.installed
+    let installedViaExtension = false
+    if (!record) {
+      const ext = await this.getInstalledExtension()
+      if (ext) {
+        record = {
+          version: ext.version,
+          directory: ext.directory,
+          verification: 'signed',
+        }
+        installedViaExtension = true
+      }
+    }
     if (!record) throw new Error('No 9Router build is installed')
     const verification = record.verification ?? 'signed'
     let runtime: string
     let server: string
     let workingDirectory: string
     let secrets: RuntimeSecrets | undefined
-    if (verification === 'signed') {
+    if (installedViaExtension) {
+      const releaseManifestPath = join(record.directory, 'release-manifest.json')
+      if (existsSync(releaseManifestPath)) {
+        const manifest = await jsonFile<ReleaseManifest>(releaseManifestPath)
+        if (!manifest?.runtimeEntry || !manifest?.serverEntry) throw new Error('Invalid 9Router extension release')
+        runtime = join(record.directory, ...manifest.runtimeEntry.split('/'))
+        server = join(record.directory, ...manifest.serverEntry.split('/'))
+        workingDirectory = record.directory
+      } else {
+        const entries = await detectLocalReleaseEntries(record.directory)
+        if (entries.runtimeMode === 'system-node') {
+          runtime = entries.nodePath ?? resolveSystemNodeRuntime() ?? process.execPath
+        } else {
+          runtime = join(record.directory, ...(entries.runtimeEntry ?? 'node').split('/'))
+        }
+        server = join(record.directory, ...entries.serverEntry.split('/'))
+        workingDirectory = join(record.directory, ...(entries.workingDirectory ?? '.').split('/'))
+      }
+    } else if (verification === 'signed') {
       await verifyApprovedRelease(record.directory, publisherPolicy())
       secrets = await this.loadSecrets()
       const manifest = (await jsonFile<ReleaseManifest>(join(record.directory, 'release-manifest.json')))

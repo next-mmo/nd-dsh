@@ -296,7 +296,7 @@ export class ExtensionPackageStore {
     } catch { return null }
   }
 
-  private snapshotDir(extensionId: string, version: string): string {
+  snapshotDir(extensionId: string, version: string): string {
     return join(this.rootDir, 'packages', extensionId, version)
   }
 

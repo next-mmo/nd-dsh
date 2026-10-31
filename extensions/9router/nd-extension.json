@@ -1,0 +1,60 @@
+{
+  "protocol": "nd.extension/1",
+  "id": "nd.9router",
+  "name": "9Router",
+  "description": "Local AI model gateway and proxy runtime. Aggregate models, manage providers, and connect local routes directly to ND Router.",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "contexts": ["personal", "company", "project"],
+  "permissions": ["ninerouter.read", "ninerouter.write"],
+  "settings": [],
+  "contributions": {
+    "tools": [],
+    "skills": [],
+    "commands": [
+      {
+        "id": "open-9router",
+        "title": "9Router Status",
+        "description": "View 9Router runtime status and manage local gateway routes.",
+        "keywords": ["9router", "gateway", "router", "proxy", "models"],
+        "host": "ninerouter.status",
+        "openViewId": "overview",
+        "contexts": ["personal", "company", "project"]
+      },
+      {
+        "id": "start-9router",
+        "title": "Start 9Router",
+        "description": "Start the 9Router managed runtime gateway.",
+        "keywords": ["9router", "start", "gateway", "run", "proxy"],
+        "host": "ninerouter.start",
+        "contexts": ["personal", "company", "project"]
+      },
+      {
+        "id": "stop-9router",
+        "title": "Stop 9Router",
+        "description": "Stop the 9Router managed runtime gateway.",
+        "keywords": ["9router", "stop", "gateway", "kill", "proxy"],
+        "host": "ninerouter.stop",
+        "contexts": ["personal", "company", "project"]
+      }
+    ],
+    "views": [
+      {
+        "id": "overview",
+        "title": "9Router",
+        "description": "9Router local gateway runtime status and routes.",
+        "kind": "detail",
+        "host": "ninerouter.status",
+        "itemTitleKey": "title",
+        "itemBodyKey": "detail",
+        "contexts": ["personal", "company", "project"],
+        "actions": [
+          { "id": "start", "title": "Start runtime", "host": "ninerouter.start" },
+          { "id": "stop", "title": "Stop runtime", "host": "ninerouter.stop" },
+          { "id": "refresh", "title": "Refresh status", "host": "ninerouter.status" }
+        ]
+      }
+    ],
+    "workflows": []
+  }
+}

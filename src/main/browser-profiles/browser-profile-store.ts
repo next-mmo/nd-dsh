@@ -37,7 +37,7 @@ interface Snapshot {
  * Chrome-style browser identities for ND's embedded browser.
  *
  * The seeded `default` profile keeps the historical `persist:nd-dsh-browser`
- * partition, so existing cookies and signed-in ChatGPT/Gemini Web sessions
+ * partition, so existing cookies and signed-in ChatGPT/Gemini/DeepSeek Web sessions
  * survive the upgrade. Every other profile gets its own Chromium partition,
  * meaning its own cookies, localStorage, IndexedDB and cache.
  */

@@ -4,6 +4,7 @@ pub const KIND_GEMINI_CLI: &str = "gemini-cli";
 pub const KIND_QODER: &str = "qoder";
 pub const KIND_CHATGPT_WEB: &str = "chatgpt-web";
 pub const KIND_GEMINI_WEB: &str = "gemini-web";
+pub const KIND_DEEPSEEK_WEB: &str = "deepseek-web";
 
 pub const STRATEGY_PRIORITY: &str = "priority";
 pub const STRATEGY_ROUND_ROBIN: &str = "round-robin";
@@ -17,12 +18,13 @@ pub fn normalize_kind(value: &str) -> Result<String, String> {
         "qoder" | "qoder-cli" => Ok(KIND_QODER.to_owned()),
         "chatgpt-web" | "chatgpt" | "gpt-web" => Ok(KIND_CHATGPT_WEB.to_owned()),
         "gemini-web" => Ok(KIND_GEMINI_WEB.to_owned()),
+        "deepseek-web" | "deepseek" | "deepseek-chat-web" => Ok(KIND_DEEPSEEK_WEB.to_owned()),
         other => Err(format!("provider kind is not supported: {other}")),
     }
 }
 
 pub fn is_web_kind(kind: &str) -> bool {
-    kind == KIND_CHATGPT_WEB || kind == KIND_GEMINI_WEB
+    kind == KIND_CHATGPT_WEB || kind == KIND_GEMINI_WEB || kind == KIND_DEEPSEEK_WEB
 }
 
 pub fn normalize_strategy(value: Option<&str>) -> String {

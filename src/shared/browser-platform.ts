@@ -4,6 +4,19 @@ export type BrowserSelectionMode = 'auto' | 'target' | 'tab'
 /** Record id of the seeded Chrome-style profile that owns ND's historical partition. */
 export const DEFAULT_BROWSER_PROFILE_ID = 'default'
 
+/**
+ * Renderer-free settings handed to the built-in browser's frame preload.
+ * The seed is stable for one Chrome-style profile, so fingerprint noise does
+ * not change between page loads inside that profile but differs between
+ * profiles.
+ */
+export interface BrowserSafeModeConfig {
+  enabled: boolean
+  seed: number
+  gpuVendor: string
+  gpuRenderer: string
+}
+
 /** Chrome-like identity colors offered by the profile manager. */
 export const BROWSER_PROFILE_COLORS = [
   '#4f7cff',
@@ -276,6 +289,7 @@ export interface BrowserPlatformState {
   extensionCatalog: BrowserExtensionCatalogItem[]
   extensionPopupId?: string | undefined
   browserUseEnabled: boolean
+  safeModeEnabled: boolean
   developerMode: boolean
   credentials: BrowserCredentialSummary[]
   sitePermissions: BrowserSitePermission[]
@@ -309,6 +323,8 @@ export interface BrowserPlatformDesktopApi {
   reloadExtensions(): Promise<BrowserExtensionRecord[]>
   setDeveloperMode(enabled: boolean): Promise<BrowserPlatformState>
   setBrowserUseEnabled(enabled: boolean): Promise<BrowserPlatformState>
+  /** Experimental privacy + anti-detect mode; off by default until validated. */
+  setSafeModeEnabled(enabled: boolean): Promise<BrowserPlatformState>
   installCatalogExtension(catalogId: string): Promise<BrowserExtensionRecord | null>
   openCatalogExtension(catalogId: string): Promise<BrowserTabDescriptor>
   showExtensionPopup(extensionId: string): Promise<BrowserPlatformState>
@@ -345,6 +361,7 @@ export const BROWSER_PLATFORM_IPC = {
   reloadExtensions: 'browser-platform:reload-extensions',
   developerMode: 'browser-platform:developer-mode',
   browserUseEnabled: 'browser-platform:browser-use-enabled',
+  safeModeEnabled: 'browser-platform:safe-mode-enabled',
   installCatalogExtension: 'browser-platform:install-catalog-extension',
   openCatalogExtension: 'browser-platform:open-catalog-extension',
   showExtensionPopup: 'browser-platform:show-extension-popup',
@@ -369,4 +386,10 @@ export interface BrowserExtensionPopupContext {
 
 export const BROWSER_EXTENSION_POPUP_IPC = {
   context: 'browser-extension-popup:context',
+} as const
+
+/** Sync-only frame-preload channel. The value is duplicated in the preload
+ * because sandboxed preloads cannot require the shared module. */
+export const BROWSER_SAFE_MODE_IPC = {
+  config: 'browser-safe-mode:config',
 } as const

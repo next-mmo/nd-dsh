@@ -1,4 +1,4 @@
-import { foldEvent, foldHistory, type HistoryEventEnvelope } from '../../../shared/chat-events'
+import { foldEvent, foldHistory, messageText, type HistoryEventEnvelope } from '../../../shared/chat-events'
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type CSSProperties, type DragEvent, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react'
 import type {
   CodingEngineDescriptor,
@@ -7,6 +7,7 @@ import type {
   EngineSessionSummary,
   ExternalElementAttachmentView,
   HarnessRunFile,
+  HarnessRunImage,
   HarnessRunOptions,
   HarnessStatus,
   ChatGptProjectBinding,
@@ -18,7 +19,7 @@ import type {
   SessionSummary,
   WorkspaceSuggestion,
 } from '../../../shared/contracts'
-import { ANTIGRAVITY_ENGINE_ID, CHATGPT_WEB_ENGINE_ID, CODEX_CLI_ENGINE_ID, GEMINI_WEB_ENGINE_ID, ND_HARNESS_ENGINE_ID, ND_NATIVE_ENGINE_ID, PI_CODING_ENGINE_ID, ZCODE_CLI_ENGINE_ID } from '../../../shared/coding-engines'
+import { ANTIGRAVITY_ENGINE_ID, CHATGPT_WEB_ENGINE_ID, CODEX_CLI_ENGINE_ID, DEEPSEEK_WEB_ENGINE_ID, GEMINI_WEB_ENGINE_ID, ND_HARNESS_ENGINE_ID, ND_NATIVE_ENGINE_ID, PI_CODING_ENGINE_ID, ZCODE_CLI_ENGINE_ID } from '../../../shared/coding-engines'
 import { OPENCODE_CLI_ENGINE_ID } from '../../../shared/extra-coding-engines'
 import { DisplayGroup, groupEntries, parseFileChanges, toolPreview, type ContextBlock } from '../../../shared/chat-grouping'
 import { filterSessionsInProjectScope, isSessionInProjectScope, PERSONAL_PROJECT_ID } from '../../../shared/session-project-scope'
@@ -59,6 +60,8 @@ import {
   CloseIcon,
   ContextIcon,
   CopyIcon,
+  CornerDownLeftIcon,
+  CornerDownRightIcon,
   CrosshairIcon,
   FileIcon,
   FolderIcon,
@@ -72,6 +75,7 @@ import {
   SpinnerIcon,
   StopIcon,
   TerminalIcon,
+  TrashIcon,
 } from './Icons'
 import { cn } from '../lib/utils'
 import { TerminalDock } from './TerminalDock'
@@ -238,6 +242,31 @@ function persistProjectExpanded(next: Record<string, boolean>): void {
 type PingEntry = { testing: true } | ProviderPingResult
 type ModelMenuPane = 'root' | 'model' | 'effort'
 
+/** Something the user sent while the session was already working. */
+interface OutboundChatMessage {
+  id: string
+  text: string
+  images: HarnessRunImage[]
+  files: HarnessRunFile[]
+  skillScope?: string
+  skillSelectionId?: string
+  /** Accepted by the runtime, waiting for the next step boundary to land. */
+  steering?: boolean
+}
+
+type QueuedChatMessage = OutboundChatMessage
+
+function toRunImages(dataUrls: readonly string[]): HarnessRunImage[] {
+  return dataUrls.map((dataUrl, index) => {
+    const mediaType = imageMediaType(dataUrl) ?? 'image/png'
+    return {
+      data: dataUrl.slice(dataUrl.indexOf(',') + 1),
+      mediaType,
+      name: `pasted-${index + 1}.${mediaType.slice('image/'.length)}`,
+    }
+  })
+}
+
 function fileMentionTag(relativePath: string): string {
   const extension = fileExtensionOf(relativePath)
   return extension ? extension.toUpperCase().slice(0, 5) : 'FILE'
@@ -351,6 +380,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   } | null>(null)
   const [geminiModeSettings, setGeminiModeSettings] = useState<WebBrowserModeSettings>({ mode: 'auto', agentFallback: false, visualRecovery: true })
   const [chatGptModeSettings, setChatGptModeSettings] = useState<WebBrowserModeSettings>({ mode: 'auto', agentFallback: false, visualRecovery: true })
+  const [deepSeekModeSettings, setDeepSeekModeSettings] = useState<WebBrowserModeSettings>({ mode: 'auto', agentFallback: false, visualRecovery: true })
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -398,6 +428,28 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   const entries = useMemo(() => threads[activeSessionId ?? ''] ?? [], [threads, activeSessionId])
   const threadContext = useMemo(() => collectThreadContext(entries), [entries])
   const busy = busySessions.has(activeSessionId ?? '') || Boolean(activeSession?.running) || Boolean(engineSessions.find((session) => session.sessionId === activeSessionId)?.running)
+  // Messages sent while this session is working wait here and go out when the
+  // turn ends; Harness chats can also steer one into the running turn.
+  const [queuedMessages, setQueuedMessages] = useState<Record<string, QueuedChatMessage[]>>({})
+  const [steeringIds, setSteeringIds] = useState<ReadonlySet<string>>(() => new Set())
+  const steeringRef = useRef<Set<string>>(new Set())
+  // A manual Stop holds the queue instead of auto-running it: the user asked
+  // for silence, so the next turn waits for an explicit Send.
+  const heldSessionsRef = useRef<Set<string>>(new Set())
+  // One drain per observed turn end. Consuming the request before the send
+  // keeps a just-started turn from also draining the item after it.
+  const drainRequestsRef = useRef<Set<string>>(new Set())
+  const queuedForActive = activeSessionId ? queuedMessages[activeSessionId] ?? [] : []
+  const dropQueued = useCallback((sessionId: string): void => {
+    heldSessionsRef.current.delete(sessionId)
+    drainRequestsRef.current.delete(sessionId)
+    setQueuedMessages((current) => {
+      if (!(sessionId in current)) return current
+      const next = { ...current }
+      delete next[sessionId]
+      return next
+    })
+  }, [])
   useEffect(() => {
     const loaded = activeSessionId === null || threads[activeSessionId] !== undefined
     onGitEditableChange?.(loaded && !submitting && busySessions.size === 0 && !entries.some((entry) => entry.kind === 'user' || entry.kind === 'assistant'))
@@ -426,11 +478,14 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
       ? draftEngineId
       : ND_HARNESS_ENGINE_ID
   const onHarnessThread = activeEngineId === ND_HARNESS_ENGINE_ID
-  const supportsEngineModels = activeEngineId === ANTIGRAVITY_ENGINE_ID || activeEngineId === CODEX_CLI_ENGINE_ID || activeEngineId === ZCODE_CLI_ENGINE_ID || activeEngineId === ND_NATIVE_ENGINE_ID || activeEngineId === PI_CODING_ENGINE_ID || activeEngineId === OPENCODE_CLI_ENGINE_ID || activeEngineId === GEMINI_WEB_ENGINE_ID
+  // Only the Harness runtime admits a prompt into a running turn; vendor CLIs
+  // and web engines stay queue-only.
+  const canSteer = onHarnessThread && activeSessionId !== null
+  const supportsEngineModels = activeEngineId === ANTIGRAVITY_ENGINE_ID || activeEngineId === CODEX_CLI_ENGINE_ID || activeEngineId === ZCODE_CLI_ENGINE_ID || activeEngineId === ND_NATIVE_ENGINE_ID || activeEngineId === PI_CODING_ENGINE_ID || activeEngineId === OPENCODE_CLI_ENGINE_ID || activeEngineId === GEMINI_WEB_ENGINE_ID || activeEngineId === DEEPSEEK_WEB_ENGINE_ID
   const engineModel = engineModelSelections[activeEngineId] ?? null
-  const engineModelDefaultLabel = activeEngineId === GEMINI_WEB_ENGINE_ID ? 'Gemini default' : 'Native default'
-  const engineModelDefaultHint = activeEngineId === GEMINI_WEB_ENGINE_ID ? 'whatever the Gemini chat is set to' : 'whatever the CLI is configured with'
-  const engineModelIdleLabel = activeEngineId === GEMINI_WEB_ENGINE_ID ? 'Gemini default' : 'Native model'
+  const engineModelDefaultLabel = activeEngineId === GEMINI_WEB_ENGINE_ID ? 'Gemini default' : activeEngineId === DEEPSEEK_WEB_ENGINE_ID ? 'DeepSeek default' : 'Native default'
+  const engineModelDefaultHint = activeEngineId === GEMINI_WEB_ENGINE_ID ? 'whatever the Gemini chat is set to' : activeEngineId === DEEPSEEK_WEB_ENGINE_ID ? 'whatever DeepSeek has selected' : 'whatever the CLI is configured with'
+  const engineModelIdleLabel = activeEngineId === GEMINI_WEB_ENGINE_ID ? 'Gemini default' : activeEngineId === DEEPSEEK_WEB_ENGINE_ID ? 'DeepSeek default' : 'Native model'
   const setEngineModel = (model: string | null): void => {
     setEngineModelSelections((current) => ({ ...current, [activeEngineId]: model }))
   }
@@ -491,6 +546,21 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
     try {
       const updated = await window.ndDsh?.chatGptWeb?.setModeSettings?.({ mode })
       if (updated) setChatGptModeSettings(updated)
+    } catch {
+      // ignore
+    }
+  }, [])
+  useEffect(() => {
+    if (activeEngineId === DEEPSEEK_WEB_ENGINE_ID) {
+      void window.ndDsh?.deepseekWeb?.getModeSettings?.().then((settings) => {
+        if (settings) setDeepSeekModeSettings(settings)
+      })
+    }
+  }, [activeEngineId])
+  const handleSelectDeepSeekMode = useCallback(async (mode: WebBrowserMode) => {
+    try {
+      const updated = await window.ndDsh?.deepseekWeb?.setModeSettings?.({ mode })
+      if (updated) setDeepSeekModeSettings(updated)
     } catch {
       // ignore
     }
@@ -719,7 +789,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   const selectEngineSession = useCallback((summary: EngineSessionSummary): void => {
     setDraftEngineId(null)
     setActiveSessionId(summary.sessionId)
-    if (summary.engineId === 'chatgpt-web' || summary.engineId === 'gemini-web') {
+    if (summary.engineId === CHATGPT_WEB_ENGINE_ID || summary.engineId === GEMINI_WEB_ENGINE_ID || summary.engineId === DEEPSEEK_WEB_ENGINE_ID) {
       // The engine owns (and persists) the tab mapping; it recreates the tab
       // when the user closed it or the app restarted.
       void window.ndDsh.engines.browserTab(summary.sessionId)
@@ -736,6 +806,11 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
     setSessions((current) => current.map((s) => (s.sessionId === sessionId ? { ...s, archived } : s)))
     setEngineSessions((current) => current.map((s) => (s.sessionId === sessionId ? { ...s, archived } : s)))
 
+    if (archived) {
+      // An archived chat keeps no pending sends: restoring it later must not
+      // fire a message the user queued before they put it away.
+      dropQueued(sessionId)
+    }
     if (archived && !showArchived && activeSessionId === sessionId) {
       const nextId = nextSessionAfterArchive(sessionId, [sessionId], sessions, engineSessions)
       setActiveSessionId(nextId)
@@ -764,6 +839,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
     if (!showArchived && activeSessionId && idSet.has(activeSessionId)) {
       setActiveSessionId(nextSessionAfterArchive(activeSessionId, ids, sessions, engineSessions))
     }
+    for (const id of ids) dropQueued(id)
     setArchiveAllIds(null)
 
     try {
@@ -1209,6 +1285,16 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
     const sessionId = frame.sessionId
     if (sessionId) {
       if (frame.kind === 'session-status') {
+        if (frame.running) {
+          // A live turn releases a held queue; its own end re-arms the drain.
+          heldSessionsRef.current.delete(sessionId)
+          drainRequestsRef.current.delete(sessionId)
+        } else {
+          // A steer left pending at turn end becomes an ordinary queued
+          // message; if it did land, settleSteering already removed the row.
+          releaseSteering(sessionId)
+          drainRequestsRef.current.add(sessionId)
+        }
         setBusySessions((current) => {
           const next = new Set(current)
           if (frame.running) next.add(sessionId)
@@ -1234,6 +1320,11 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
           void refreshSessions()
           return
         }
+        if (envelope.type === 'user/message') {
+          const data = (envelope.data ?? {}) as Record<string, unknown>
+          const steeredText = messageText(data.message) ?? messageText(envelope.data)
+          if (steeredText) settleSteering(sessionId, steeredText)
+        }
         setThreads((current) => {
           const previous = current[sessionId] ?? []
           const next = foldEvent(previous, envelope)
@@ -1248,6 +1339,9 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
       const targetSessionId = sessionId ?? activeSessionId ?? undefined
       if (targetSessionId) {
         markSessionNotBusy(targetSessionId)
+        // A terminal agent error can end a turn without a status flip; let the
+        // queue advance just as it would after a clean turn end.
+        if (!heldSessionsRef.current.has(targetSessionId)) drainRequestsRef.current.add(targetSessionId)
       }
       // A draft engine chat receives its session id from the engine before the
       // failed turn rejects, but the composer still renders the draft thread.
@@ -1444,50 +1538,124 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
     addFiles(files)
   }
 
-  const run = async (): Promise<void> => {
-    const input = prompt
-    const attachmentCount = pendingImages.length + pendingFiles.length
-    if ((!input.trim() && attachmentCount === 0) || busy || submitting) return
+  const enqueueQueued = (sessionId: string, message: QueuedChatMessage): void => {
+    setQueuedMessages((current) => ({
+      ...current,
+      [sessionId]: [...(current[sessionId] ?? []), message],
+    }))
+  }
+
+  const removeQueued = (sessionId: string, id: string): void => {
+    setQueuedMessages((current) => {
+      const items = current[sessionId]
+      if (!items) return current
+      return { ...current, [sessionId]: items.filter((item) => item.id !== id) }
+    })
+  }
+
+  const markSteering = (sessionId: string, id: string): void => {
+    setQueuedMessages((current) => {
+      const items = current[sessionId]
+      if (!items?.some((item) => item.id === id)) return current
+      return { ...current, [sessionId]: items.map((item) => (item.id === id ? { ...item, steering: true } : item)) }
+    })
+  }
+
+  /**
+   * The runtime logs a steered prompt as a durable user message only when the
+   * running turn reaches its next step boundary. Its arrival retires the
+   * pending row; the exact text is the identity both sides share.
+   */
+  const settleSteering = (sessionId: string, text: string): void => {
+    const landed = text.trim()
+    if (!landed) return
+    setQueuedMessages((current) => {
+      const items = current[sessionId]
+      if (!items?.some((item) => item.steering)) return current
+      // Steering may append ND's attachment or element blocks after the
+      // user's text; the typed text still identifies the item.
+      const matches = (item: QueuedChatMessage): boolean => {
+        if (!item.steering) return false
+        const needle = item.text.trim()
+        return landed === needle || landed.startsWith(`${needle}\n\n`)
+      }
+      const matched = items.findIndex(matches)
+      if (matched === -1) return current
+      return { ...current, [sessionId]: items.filter((_, index) => index !== matched) }
+    })
+  }
+
+  /** A turn that ended without landing a steer leaves it as a queued message. */
+  const releaseSteering = (sessionId: string): void => {
+    setQueuedMessages((current) => {
+      const items = current[sessionId]
+      if (!items?.some((item) => item.steering)) return current
+      return { ...current, [sessionId]: items.map((item) => (item.steering ? { ...item, steering: false } : item)) }
+    })
+  }
+
+  /**
+   * The single send path for the composer, a drained queue item, and a steer.
+   * Composer failures return the text and attachments to the editor; queue
+   * failures keep their row and hold the session so nothing retries silently.
+   */
+  const submitChatMessage = async (
+    message: OutboundChatMessage,
+    source: 'composer' | 'queue' | 'steer',
+    sessionId?: string | null,
+  ): Promise<boolean> => {
+    const input = message.text
     const outbound = input.trim() ? input : 'Please review the attached file(s) and continue.'
-    const selection = /^\s*\//.test(input) ? selectedSkillScope.current : null
-    let selectedScope: string | undefined
-    try { selectedScope = skillSelectionScope(selection, skillsScope) } catch (cause) {
-      onError(cause instanceof Error ? cause.message : String(cause))
-      return
-    }
-    const images = pendingImages
-    const files = pendingFiles
-    const imageOption = images.length > 0
-      ? { images: images.map((dataUrl, index) => {
-          const mediaType = imageMediaType(dataUrl) ?? 'image/png'
-          return { data: dataUrl.slice(dataUrl.indexOf(',') + 1), mediaType, name: `pasted-${index + 1}.${mediaType.slice('image/'.length)}` }
-        }) }
-      : {}
-    const fileOption = files.length > 0 ? { files } : {}
-    setSubmitting(true)
-    setPrompt('')
-    setPendingImages([])
-    setPendingFiles([])
-    setMentionCaret(0)
-    setMentionDismissed(null)
+    const targetSessionId = sessionId ?? activeSessionId
     // A drafted engine chat has no session yet: the first send creates it on
     // that engine (router-side); harness sends stay exactly as before.
-    const draftEngine = activeSessionId === null ? draftEngineId : null
-    // Direct engines receive only their own selected model slug.
-    const engineModelOption = supportsEngineModels && engineModel !== null
+    const draftEngine = source === 'composer' && activeSessionId === null ? draftEngineId : null
+    // Direct engines receive only their own selected model slug. A steered
+    // message must not retarget the model route of the live turn.
+    const engineModelOption = source !== 'steer' && supportsEngineModels && engineModel !== null
       ? { model: engineModel }
       : {}
-    const options = activeSessionId !== null
-      ? { sessionId: activeSessionId, permissionMode, ...engineModelOption }
+    const options = targetSessionId !== null
+      ? { sessionId: targetSessionId, permissionMode, ...engineModelOption }
       : draftEngine !== null
         ? { engineId: draftEngine, permissionMode, ...engineModelOption }
         : { permissionMode }
-    let runOptions: HarnessRunOptions = { ...options, ...imageOption, ...fileOption }
+    const imageOption = message.images.length > 0 ? { images: message.images } : {}
+    const fileOption = message.files.length > 0 ? { files: message.files } : {}
+    let runOptions: HarnessRunOptions = {
+      ...options,
+      ...(source === 'steer' ? { mode: 'steer' as const } : {}),
+      ...imageOption,
+      ...fileOption,
+      ...(message.skillScope ? { skillScope: message.skillScope } : {}),
+      ...(message.skillSelectionId ? { skillSelectionId: message.skillSelectionId } : {}),
+    }
+    if (source !== 'steer') setSubmitting(true)
     try {
-      const catalog = /^\s*\//.test(input) ? await window.ndDsh.skills.catalog(activeProjectId ?? null) : undefined
-      if (catalog) runOptions = { ...runOptions, skillScope: selectedScope ?? catalog.scope, ...(selection?.selectionId ? { skillSelectionId: selection.selectionId } : {}) }
+      // A manually typed /skill still resolves its catalog scope at send time,
+      // exactly like the composer did before queueing existed.
+      if (source !== 'steer' && /^\s*\//.test(input)) {
+        const catalog = await window.ndDsh.skills.catalog(activeProjectId ?? null)
+        runOptions = {
+          ...runOptions,
+          skillScope: message.skillScope ?? catalog.scope,
+          ...(message.skillSelectionId ? { skillSelectionId: message.skillSelectionId } : {}),
+        }
+      }
       const result = await window.ndDsh.harness.run(outbound, runOptions)
-      selectedSkillScope.current = null
+      if (source === 'composer') {
+        selectedSkillScope.current = null
+        setPrompt('')
+        setPendingImages([])
+        setPendingFiles([])
+        setMentionCaret(0)
+        setMentionDismissed(null)
+      } else if (targetSessionId) {
+        // A steer is only consumed at the runtime's next step boundary; keep
+        // the row visible as "Steering…" until its user message lands.
+        if (source === 'steer') markSteering(targetSessionId, message.id)
+        else removeQueued(targetSessionId, message.id)
+      }
       storeSessionProject(result.sessionId, activeProjectId ?? PERSONAL_PROJECT_ID)
       setActiveSessionId(result.sessionId)
       if (draftEngine !== null) setDraftEngineId(null)
@@ -1497,25 +1665,118 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
       void refreshElementChips()
       // User messages arrive through session events, including on retry.
       if (!sessions.some((s) => s.sessionId === result.sessionId)) void refreshSessions()
+      return true
     } catch (cause) {
-      if (activeSessionId) markSessionNotBusy(activeSessionId)
-      // A rejected turn did not consume the attachments; put them back so the
-      // user can fix the route and retry.
-      if (images.length > 0) setPendingImages(images)
-      if (files.length > 0) setPendingFiles(files)
       const failure = cause instanceof Error ? cause.message : String(cause)
       const blocked = parsePromptShieldBlockedError(failure)
-      if (blocked) {
-        // Keep the user's text editable behind the review dialog; the masked or
-        // allowed resend uses the captured run options, not the composer.
+      if (source === 'composer') {
+        if (activeSessionId) markSessionNotBusy(activeSessionId)
+        // A rejected turn did not consume the text or attachments; put them
+        // back so the user can fix the route and retry.
         setPrompt(input)
-        setShieldReview({ payload: blocked, prompt: outbound, options: runOptions, draftEngine })
-        return
+        if (message.images.length > 0) {
+          setPendingImages(message.images.map((image) => `data:${image.mediaType};base64,${image.data}`))
+        }
+        if (message.files.length > 0) setPendingFiles(message.files)
+        if (blocked) {
+          // Keep the user's text editable behind the review dialog; the masked
+          // or allowed resend uses the captured run options, not the composer.
+          setShieldReview({ payload: blocked, prompt: outbound, options: runOptions, draftEngine })
+          return false
+        }
+        onError(ipcFailureMessage(failure))
+        return false
       }
-      onError(ipcFailureMessage(failure))
+      // Queue and steer rows stay above the composer; the notice explains the
+      // failure in the thread, and a queue failure stops auto-retry.
+      if (source === 'queue' && targetSessionId) {
+        heldSessionsRef.current.add(targetSessionId)
+        markSessionNotBusy(targetSessionId)
+      }
+      appendNotice(
+        targetSessionId ?? undefined,
+        blocked
+          ? 'Prompt Shield blocked this queued message. Discard it and rewrite the prompt.'
+          : ipcFailureMessage(failure),
+        'error',
+      )
+      return false
     } finally {
-      setSubmitting(false)
+      if (source !== 'steer') setSubmitting(false)
     }
+  }
+
+  // A turn that just ended advances its queue. The session-status event armed
+  // the request, so a send that starts the next turn cannot also drain the
+  // item behind it.
+  useEffect(() => {
+    if (submitting || busy) return
+    const sessionId = activeSessionId
+    if (!sessionId || !drainRequestsRef.current.has(sessionId)) return
+    if (heldSessionsRef.current.has(sessionId)) {
+      drainRequestsRef.current.delete(sessionId)
+      return
+    }
+    // A steer waiting for its step boundary is not a queued turn.
+    const next = queuedMessages[sessionId]?.find((item) => !item.steering)
+    if (!next) {
+      drainRequestsRef.current.delete(sessionId)
+      return
+    }
+    drainRequestsRef.current.delete(sessionId)
+    void submitChatMessage(next, 'queue', sessionId)
+  })
+
+  const sendQueuedNow = async (item: QueuedChatMessage): Promise<void> => {
+    if (!activeSessionId || busy || submitting || item.steering) return
+    await submitChatMessage(item, 'queue', activeSessionId)
+  }
+
+  const steerQueued = async (item: QueuedChatMessage): Promise<void> => {
+    const sessionId = activeSessionId
+    if (!sessionId || !canSteer || !busy || item.steering || steeringRef.current.has(item.id)) return
+    steeringRef.current.add(item.id)
+    setSteeringIds(new Set(steeringRef.current))
+    try {
+      await submitChatMessage(item, 'steer', sessionId)
+    } finally {
+      steeringRef.current.delete(item.id)
+      setSteeringIds(new Set(steeringRef.current))
+    }
+  }
+
+  const run = async (): Promise<void> => {
+    const input = prompt
+    const attachmentCount = pendingImages.length + pendingFiles.length
+    if ((!input.trim() && attachmentCount === 0) || submitting) return
+    const selection = /^\s*\//.test(input) ? selectedSkillScope.current : null
+    let selectedScope: string | undefined
+    try { selectedScope = skillSelectionScope(selection, skillsScope) } catch (cause) {
+      onError(cause instanceof Error ? cause.message : String(cause))
+      return
+    }
+    const message: OutboundChatMessage = {
+      id: crypto.randomUUID(),
+      text: input,
+      images: toRunImages(pendingImages),
+      files: pendingFiles,
+      ...(selectedScope ? { skillScope: selectedScope } : {}),
+      ...(selection?.selectionId ? { skillSelectionId: selection.selectionId } : {}),
+    }
+    if (busy) {
+      // The agent is working: park the message above the composer. It drains
+      // when the turn ends, or steers in while that turn is still live.
+      if (!activeSessionId) return
+      enqueueQueued(activeSessionId, message)
+      selectedSkillScope.current = null
+      setPrompt('')
+      setPendingImages([])
+      setPendingFiles([])
+      setMentionCaret(0)
+      setMentionDismissed(null)
+      return
+    }
+    await submitChatMessage(message, 'composer')
   }
 
   const resolveShieldReview = async (override: 'mask' | 'allow'): Promise<void> => {
@@ -1551,6 +1812,11 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   const stop = async (): Promise<void> => {
     const targetSessionId = activeSessionId
     if (targetSessionId) {
+      // Stop asks for silence: keep queued rows visible but do not start the
+      // next one until the user sends it explicitly.
+      heldSessionsRef.current.add(targetSessionId)
+      drainRequestsRef.current.delete(targetSessionId)
+      releaseSteering(targetSessionId)
       markSessionNotBusy(targetSessionId)
     }
     try {
@@ -2376,6 +2642,29 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
           </div>
         ) : null}
 
+        {activeEngineId === DEEPSEEK_WEB_ENGINE_ID ? (
+          <div className="mx-3 mt-2.5 space-y-1.5">
+            <div className="flex items-center justify-between gap-2 rounded-[7px] border border-border-soft bg-surface-1 px-2.5 py-1.5 text-[10px]">
+              <span className="min-w-0 truncate text-soft">
+                DeepSeek Web · signed-in chat.deepseek.com · DeepThink selectable per chat
+              </span>
+              <button
+                type="button"
+                className="shrink-0 rounded border border-border-soft px-1.5 py-0.5 text-[9px] text-faint hover:bg-accent hover:text-foreground"
+                onClick={() => onOpenLink?.('https://chat.deepseek.com/')}
+                title="Open DeepSeek in browser"
+              >
+                Open DeepSeek
+              </button>
+            </div>
+            <BrowserModeSelector
+              mode={deepSeekModeSettings.mode}
+              onSelect={(mode) => void handleSelectDeepSeekMode(mode)}
+              modes={['auto', 'extension', 'cdp']}
+            />
+          </div>
+        ) : null}
+
         {changedFiles.length > 0 ? (
           <ChangedFilesCard files={changedFiles} {...(onOpenFile ? { onOpenFile } : {})} onError={onError} />
         ) : null}
@@ -2479,6 +2768,69 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
           }}
           onDrop={handleComposerDrop}
         >
+          {queuedForActive.length > 0 ? (
+            <div
+              className="mb-[7px] flex max-h-[120px] flex-col gap-0.5 overflow-y-auto border-b border-border-soft pb-1.5 pr-0.5"
+              aria-label="Queued messages"
+              aria-live="polite"
+            >
+              {queuedForActive.map((item) => {
+                const attachmentCount = item.images.length + item.files.length
+                const label = item.text.trim()
+                const steeringInFlight = steeringIds.has(item.id)
+                const steeringPending = Boolean(item.steering)
+                return (
+                  <div
+                    key={item.id}
+                    className="flex min-h-[24px] items-center gap-1.5 rounded-md px-1 text-[11px]"
+                    title={label || 'Attachment message'}
+                  >
+                    {steeringInFlight || steeringPending
+                      ? <SpinnerIcon className="size-3 shrink-0 text-faint" />
+                      : <CornerDownRightIcon className="size-3 shrink-0 text-faint" />}
+                    <span className="min-w-0 flex-1 truncate text-soft">{label || 'Attachment message'}</span>
+                    {attachmentCount > 0 ? (
+                      <span className="shrink-0 text-faint">+{attachmentCount} file{attachmentCount === 1 ? '' : 's'}</span>
+                    ) : null}
+                    {steeringPending ? (
+                      <span className="shrink-0 text-[10px] text-faint">Steering…</span>
+                    ) : busy && canSteer ? (
+                      <button
+                        type="button"
+                        className="flex shrink-0 items-center gap-1 rounded px-1.5 py-[2px] text-[10px] font-medium text-soft transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40 [&_svg]:size-3"
+                        disabled={steeringInFlight}
+                        title="Interrupt the running turn with this message"
+                        onClick={() => void steerQueued(item)}
+                      >
+                        {steeringInFlight ? <SpinnerIcon /> : <CornerDownLeftIcon />}
+                        Steer
+                      </button>
+                    ) : !busy && !submitting ? (
+                      <button
+                        type="button"
+                        className="flex shrink-0 items-center gap-1 rounded px-1.5 py-[2px] text-[10px] font-medium text-soft transition-colors hover:bg-accent hover:text-foreground [&_svg]:size-3"
+                        title="Send this queued message now"
+                        onClick={() => void sendQueuedNow(item)}
+                      >
+                        <ArrowUpIcon />
+                        Send
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="grid size-5 shrink-0 place-items-center rounded text-faint transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-35 [&_svg]:size-3"
+                      disabled={steeringInFlight || steeringPending}
+                      aria-label={`Discard queued message: ${label || 'Attachment message'}`}
+                      title="Discard this queued message"
+                      onClick={() => { if (activeSessionId) removeQueued(activeSessionId, item.id) }}
+                    >
+                      <TrashIcon />
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+          ) : null}
           {elementChips.length > 0 ? (
             <div className="mb-[7px] flex flex-wrap gap-[5px]" aria-label="Staged UI elements">
               {elementChips.map((chip) => (
@@ -3011,15 +3363,28 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
               ) : null}
 
               {busy ? (
-                <button
-                  className="grid size-[25px] shrink-0 place-items-center rounded-[7px] bg-primary text-primary-foreground transition-[filter] enabled:hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-35 [&_svg]:size-3.5"
-                  onClick={() => void stop()}
-                  disabled={!activeSessionId}
-                  aria-label="Cancel response"
-                  title="Cancel this session's response only. Project servers and other sessions keep running."
-                >
-                  <StopIcon />
-                </button>
+                <>
+                  <button
+                    className="grid size-[25px] shrink-0 place-items-center rounded-[7px] bg-primary text-primary-foreground transition-[filter] enabled:hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-35 [&_svg]:size-3.5"
+                    onClick={() => void stop()}
+                    disabled={!activeSessionId}
+                    aria-label="Cancel response"
+                    title="Cancel this session's response only. Project servers and other sessions keep running."
+                  >
+                    <StopIcon />
+                  </button>
+                  <button
+                    className="grid size-[25px] shrink-0 place-items-center rounded-[7px] border border-border-soft text-soft transition-colors enabled:hover:bg-accent enabled:hover:text-foreground disabled:cursor-not-allowed disabled:opacity-35 [&_svg]:size-3.5"
+                    disabled={!prompt.trim() && pendingImages.length === 0 && pendingFiles.length === 0}
+                    onClick={() => void run()}
+                    aria-label="Queue message"
+                    title={canSteer
+                      ? 'Queue this message after the current turn — or Steer it into the turn from the queued row'
+                      : 'Queue this message after the current turn'}
+                  >
+                    <ArrowUpIcon />
+                  </button>
+                </>
               ) : (
                 <button
                   className="grid size-[25px] shrink-0 place-items-center rounded-[7px] bg-primary text-primary-foreground transition-[filter] enabled:hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-35 [&_svg]:size-3.5"

@@ -13,9 +13,11 @@ import {
 import { join } from 'node:path'
 import {
   BROWSER_EXTENSION_POPUP_IPC,
+  BROWSER_SAFE_MODE_IPC,
   DEFAULT_BROWSER_PROFILE_ID,
   type BrowserDownloadRecord,
   type BrowserExtensionPopupContext,
+  type BrowserSafeModeConfig,
   type BrowserSiteToolDescriptor,
   type BrowserTabDescriptor,
 } from '../../shared/browser-platform.js'
@@ -24,6 +26,7 @@ import type { NdMediaSessionState } from '../../shared/media-session.js'
 import { AgentBrowserClient } from './agent-browser-client.js'
 import { refreshAdBlockPage } from './ad-block-page-refresh.js'
 import { BrowserDownloadManager, type BrowserDownloadAuthorizationRequest } from './browser-download-manager.js'
+import { privacyRequestHeaders, shouldBlockTrackerRequest } from './browser-safe-mode.js'
 import { BrowserHistoryStore } from './browser-history-store.js'
 import { BrowserPermissionStore } from './browser-permission-store.js'
 import { DEFAULT_BROWSER_URL, isAllowedBrowserUrl, normalizeBrowserUrl, sanitizeBrowserUserAgent } from './browser-url.js'
@@ -39,6 +42,8 @@ export interface BrowserControllerOptions {
   reservedOrigin?: () => string | undefined
   dataPath?: string
   extensionRuntimePreload?: string
+  /** Frame preload that applies experimental Browser Safe Mode. */
+  browserSafeModePreload?: string
   /** Now-playing changes across tabs, for the quick launcher transport row. */
   onMediaState?: (state: NdMediaSessionState | null) => void
   /** Chrome-style profile record the browser opens with. */
@@ -54,6 +59,13 @@ export interface BrowserControllerOptions {
 }
 
 const EXTENSION_RUNTIME_PRELOAD_ID = 'nd-extension-runtime'
+const BROWSER_SAFE_MODE_PRELOAD_ID = 'nd-browser-safe-mode'
+const DISABLED_SAFE_MODE_CONFIG: BrowserSafeModeConfig = {
+  enabled: false,
+  seed: 0,
+  gpuVendor: '',
+  gpuRenderer: '',
+}
 
 interface BrowserExtensionPopupRuntime {
   extensionId: string
@@ -70,6 +82,17 @@ interface BrowserExtensionPopupRuntime {
 // re-created on activate) takes ownership while the old one tears down.
 let extensionPopupContextOwner: BrowserController | undefined
 let extensionPopupContextRegistered = false
+let safeModeConfigOwner: BrowserController | undefined
+let safeModeConfigRegistered = false
+
+function claimSafeModeConfig(controller: BrowserController): void {
+  safeModeConfigOwner = controller
+  if (safeModeConfigRegistered) return
+  safeModeConfigRegistered = true
+  ipcMain.on(BROWSER_SAFE_MODE_IPC.config, (event) => {
+    event.returnValue = safeModeConfigOwner?.safeModeConfigForSession(event.sender.session) ?? DISABLED_SAFE_MODE_CONFIG
+  })
+}
 
 function claimExtensionPopupContext(controller: BrowserController): void {
   extensionPopupContextOwner = controller
@@ -115,6 +138,12 @@ export class BrowserController {
   private readonly mediaTracker: BrowserMediaTracker
   private readonly reservedOrigin: (() => string | undefined) | undefined
   private readonly extensionRuntimePreload: string | undefined
+  private readonly browserSafeModePreload: string | undefined
+  private safeModeProvider: {
+    enabled(): boolean
+    setEnabled(enabled: boolean): void
+    configForProfile(profileId: string): BrowserSafeModeConfig
+  } | undefined
   private readonly partitionForProfile: (profileId: string) => string
   private readonly profileLabelFor: (profileId: string) => string
   private readonly profileExistsFor: (profileId: string) => boolean
@@ -134,6 +163,7 @@ export class BrowserController {
   private destroying = false
   private readonly backgroundAttached = new Set<string>()
   private readonly routerHeadless = new Set<string>()
+  private readonly safeModeWebRequest = new WeakSet<Session>()
 
   constructor(
     private readonly window: BrowserWindow,
@@ -143,6 +173,7 @@ export class BrowserController {
   ) {
     this.reservedOrigin = options.reservedOrigin
     this.extensionRuntimePreload = options.extensionRuntimePreload
+    this.browserSafeModePreload = options.browserSafeModePreload
     this.partitionForProfile = options.partitionForProfile ?? (() => BROWSER_PARTITION)
     this.profileLabelFor = options.profileLabel ?? (() => 'ND Browser')
     this.profileExistsFor = options.profileExists ?? (() => true)
@@ -150,6 +181,7 @@ export class BrowserController {
     this.activeProfileValue = options.initialProfileId ?? DEFAULT_BROWSER_PROFILE_ID
     this.mediaTracker = new BrowserMediaTracker(options.onMediaState ?? (() => undefined))
     claimExtensionPopupContext(this)
+    claimSafeModeConfig(this)
 
     this.agentBrowser = new AgentBrowserClient(cdpPort, projectRoot)
     const dataPath = options.dataPath ?? app.getPath('userData')
@@ -173,6 +205,53 @@ export class BrowserController {
   /** Notified when a profile's session is first created, so extensions attach. */
   setSessionCreatedListener(listener: ((profileId: string, session: Session) => void) | undefined): void {
     this.sessionCreatedListener = listener
+  }
+
+  /** Supplies the durable Safe Mode setting and per-profile fingerprint seed. */
+  setSafeModeProvider(provider: {
+    enabled(): boolean
+    setEnabled(enabled: boolean): void
+    configForProfile(profileId: string): BrowserSafeModeConfig
+  } | undefined): void {
+    this.safeModeProvider = provider
+    if (provider) {
+      safeModeConfigOwner = this
+      this.applySafeModeToSessions(provider.enabled())
+    }
+  }
+
+  safeModeEnabled(): boolean {
+    return this.safeModeProvider?.enabled() ?? false
+  }
+
+  setSafeModeEnabled(enabled: boolean): void {
+    this.safeModeProvider?.setEnabled(enabled)
+    this.applySafeModeToSessions(enabled)
+  }
+
+  safeModeConfigForSession(target: Session): BrowserSafeModeConfig {
+    if (!this.safeModeProvider?.enabled()) return DISABLED_SAFE_MODE_CONFIG
+    for (const [profileId, profileSession] of this.sessionsByProfile) {
+      if (profileSession === target) return this.safeModeProvider.configForProfile(profileId)
+    }
+    return DISABLED_SAFE_MODE_CONFIG
+  }
+
+  /** Reload real pages so the frame preload's patches start or stop applying. */
+  reloadPagesForSafeMode(): void {
+    for (const tab of this.tabs.values()) {
+      const contents = tab.view.webContents
+      if (contents.isDestroyed()) continue
+      if (!/^https?:/i.test(tab.state.url)) continue
+      contents.reload()
+    }
+  }
+
+  private applySafeModeToSessions(enabled: boolean): void {
+    for (const profileSession of this.sessionsByProfile.values()) {
+      if (enabled) this.installSafeModeWebRequest(profileSession)
+      else this.removeSafeModeWebRequest(profileSession)
+    }
   }
 
   async refreshAdBlockPages(): Promise<void> {
@@ -988,6 +1067,7 @@ export class BrowserController {
     this.destroying = true
     this.closeExtensionPopup()
     if (extensionPopupContextOwner === this) extensionPopupContextOwner = undefined
+    if (safeModeConfigOwner === this) safeModeConfigOwner = undefined
     this.onStateChanged = undefined
     this.onTabClosed = undefined
     // Chromium writes cookies and site storage lazily. Quit is the only chance
@@ -1036,6 +1116,15 @@ export class BrowserController {
         filePath: this.extensionRuntimePreload,
       })
     }
+    if (this.browserSafeModePreload
+      && !profileSession.getPreloadScripts().some((script) => script.id === BROWSER_SAFE_MODE_PRELOAD_ID)) {
+      profileSession.registerPreloadScript({
+        id: BROWSER_SAFE_MODE_PRELOAD_ID,
+        type: 'frame',
+        filePath: this.browserSafeModePreload,
+      })
+    }
+    if (this.safeModeEnabled()) this.installSafeModeWebRequest(profileSession)
     profileSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
       const pageOrigin = permissionOrigin(details.requestingUrl || webContents.getURL())
       callback(Boolean(pageOrigin && this.permissionStore.effect(pageOrigin, permission, profileId) === 'allow'))
@@ -1225,6 +1314,58 @@ export class BrowserController {
       title: tab.state.title,
       profileId: tab.profileId,
     }).catch(() => undefined)
+  }
+
+  /**
+   * Safe Mode is opt-in. The listeners are attached only while enabled so a
+   * normal ND session pays no webRequest interception cost.
+   */
+  private installSafeModeWebRequest(profileSession: Session): void {
+    if (this.safeModeWebRequest.has(profileSession)) return
+    this.safeModeWebRequest.add(profileSession)
+    const filter = { urls: ['<all_urls>'] }
+    profileSession.webRequest.onBeforeRequest(filter, (details, callback) => {
+      if (!this.safeModeEnabled()) return callback({})
+      const initiatorUrl = details.frame?.url || details.referrer || this.urlForWebContents(details.webContentsId)
+      if (shouldBlockTrackerRequest({
+        url: details.url,
+        ...(initiatorUrl ? { initiatorUrl } : {}),
+        resourceType: details.resourceType,
+      })) {
+        callback({ cancel: true })
+        return
+      }
+      callback({})
+    })
+    profileSession.webRequest.onBeforeSendHeaders(filter, (details, callback) => {
+      if (!this.safeModeEnabled()) {
+        callback({ requestHeaders: details.requestHeaders })
+        return
+      }
+      const initiatorUrl = details.frame?.url || details.referrer || this.urlForWebContents(details.webContentsId)
+      callback({
+        requestHeaders: privacyRequestHeaders({
+          requestHeaders: details.requestHeaders,
+          targetUrl: details.url,
+          ...(initiatorUrl ? { initiatorUrl } : {}),
+        }),
+      })
+    })
+  }
+
+  private removeSafeModeWebRequest(profileSession: Session): void {
+    if (!this.safeModeWebRequest.has(profileSession)) return
+    this.safeModeWebRequest.delete(profileSession)
+    profileSession.webRequest.onBeforeRequest(null)
+    profileSession.webRequest.onBeforeSendHeaders(null)
+  }
+
+  private urlForWebContents(webContentsId?: number): string | undefined {
+    if (webContentsId === undefined) return undefined
+    for (const tab of this.tabs.values()) {
+      if (tab.view.webContents.id === webContentsId) return tab.state.url
+    }
+    return undefined
   }
 
   private describeTab(tab: BrowserTabRuntime): BrowserTabDescriptor {

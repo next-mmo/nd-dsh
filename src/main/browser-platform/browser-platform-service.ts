@@ -15,6 +15,7 @@ import type { BrowserController } from '../browser/browser-controller.js'
 import { BUILTIN_BROWSER_TARGET_ID } from '../browser/browser-controller.js'
 import { BrowserCredentialVault } from '../browser/browser-credential-vault.js'
 import { BrowserExtensionManager } from '../browser/browser-extension-manager.js'
+import { BrowserSafeModeStore } from '../browser/browser-safe-mode.js'
 import type { BrowserProfileStore } from '../browser-profiles/browser-profile-store.js'
 import type { OrganizationStore } from '../organization/store.js'
 import { BrowserAccessTokenStore } from './browser-access-tokens.js'
@@ -27,6 +28,7 @@ export class BrowserPlatformService {
   private readonly accessTokens = new BrowserAccessTokenStore()
   private readonly credentials: BrowserCredentialVault
   private readonly extensions: BrowserExtensionManager
+  private readonly safeMode: BrowserSafeModeStore
   private readonly policy: BrowserPolicyService
   private readonly router: BrowserTargetRouter
   private onChanged: ((state: BrowserPlatformState) => void) | undefined
@@ -41,6 +43,7 @@ export class BrowserPlatformService {
     private readonly profiles: BrowserProfileStore,
   ) {
     this.credentials = new BrowserCredentialVault(join(dataPath, 'browser-credentials.json'))
+    this.safeMode = new BrowserSafeModeStore(join(dataPath, 'browser-safe-mode.json'))
     this.extensions = new BrowserExtensionManager(
       browser.browserSession(),
       join(dataPath, 'browser-extensions.json'),
@@ -51,6 +54,7 @@ export class BrowserPlatformService {
     browser.setSessionCreatedListener((_profileId, session) => {
       void this.extensions.attachSession(session)
     })
+    browser.setSafeModeProvider(this.safeMode)
     this.policy = new BrowserPolicyService(organizationStore, join(dataPath, 'browser-action-receipts.json'))
     this.router = new BrowserTargetRouter(
       browser,
@@ -101,6 +105,7 @@ export class BrowserPlatformService {
     this.browser.setDownloadAuthorizationHandler(undefined)
     this.browser.setTabClosedListener(undefined)
     this.browser.setSessionCreatedListener(undefined)
+    this.browser.setSafeModeProvider(undefined)
     this.policy.setOnChanged(undefined)
     this.router.setOnChanged(undefined)
     this.accessTokens.clear()
@@ -140,17 +145,26 @@ export class BrowserPlatformService {
   }
 
   async callAgent(method: string, params: Record<string, unknown>): Promise<unknown> {
+    const explicitTarget = typeof params.targetId === 'string' ? params.targetId : undefined
+    const selected = this.router.selection()
+    const selectedTarget = selected.mode === 'target' || selected.mode === 'tab'
+      ? selected.targetId
+      : undefined
+    const companionOnly = explicitTarget?.startsWith('companion:') === true
+      || (!explicitTarget && selectedTarget?.startsWith('companion:') === true)
+    // Safe Mode is a promise about ND's built-in browser identity. Allowing the
+    // agent to drive that tab while it is on would make the fingerprint and
+    // cookie guarantees meaningless.
+    if (this.safeMode.enabled() && !companionOnly
+      && method !== 'browser.targets'
+      && method !== 'browser.connections'
+      && method !== 'browser.selection') {
+      throw new Error('ND Browser Safe Mode is on. Turn it off in Settings > Browser to let the agent control the built-in browser.')
+    }
     if (!this.extensions.browserUseEnabled()
       && method !== 'browser.targets'
       && method !== 'browser.connections'
       && method !== 'browser.selection') {
-      const explicitTarget = typeof params.targetId === 'string' ? params.targetId : undefined
-      const selected = this.router.selection()
-      const selectedTarget = selected.mode === 'target' || selected.mode === 'tab'
-        ? selected.targetId
-        : undefined
-      const companionOnly = explicitTarget?.startsWith('companion:') === true
-        || (!explicitTarget && selectedTarget?.startsWith('companion:') === true)
       if (!companionOnly) {
         throw new Error('Built-in browser agent control is disabled in Settings > Browser')
       }
@@ -176,6 +190,7 @@ export class BrowserPlatformService {
       extensionCatalog: this.extensions.catalog(),
       ...(this.browser.extensionPopupId() ? { extensionPopupId: this.browser.extensionPopupId() } : {}),
       browserUseEnabled: this.extensions.browserUseEnabled(),
+      safeModeEnabled: this.browser.safeModeEnabled(),
       developerMode: this.extensions.developerMode(),
       credentials,
       sitePermissions: this.browser.sitePermissions(),
@@ -253,7 +268,7 @@ export class BrowserPlatformService {
     const activity = this.browser.externalActivity()
     if (!activity) return
     throw new Error(activity === 'router-turn'
-      ? 'Finish the active ChatGPT Web / Gemini Web turn before switching browser profiles'
+      ? 'Finish the active ChatGPT Web / Gemini Web / DeepSeek Web turn before switching browser profiles'
       : 'Finish the active background browser run before switching browser profiles')
   }
 
@@ -385,6 +400,15 @@ export class BrowserPlatformService {
 
   async setDeveloperMode(enabled: boolean): Promise<BrowserPlatformState> {
     await this.extensions.setDeveloperMode(enabled)
+    await this.emit()
+    return this.state()
+  }
+
+  async setSafeModeEnabled(enabled: boolean): Promise<BrowserPlatformState> {
+    this.browser.setSafeModeEnabled(enabled)
+    // The frame preload reads its config at document start, so existing pages
+    // must reload before their fingerprint patches begin or stop applying.
+    this.browser.reloadPagesForSafeMode()
     await this.emit()
     return this.state()
   }

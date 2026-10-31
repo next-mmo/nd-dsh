@@ -90,6 +90,8 @@ export const ShieldIcon = (props: IconProps) => <IconBase {...props}><path d="M1
 export const BrainIcon = (props: IconProps) => <IconBase {...props}><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" /><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z" /></IconBase>
 export const ContextIcon = (props: IconProps) => <IconBase {...props}><path d="M12 3.25 21 8l-9 4.75L3 8z" /><path d="m4.6 12.2 7.4 3.9 7.4-3.9" /><path d="m4.6 16.1 7.4 3.9 7.4-3.9" /></IconBase>
 export const ArrowUpIcon = (props: IconProps) => <IconBase {...props}><path d="m5 12 7-7 7 7M12 19V5" /></IconBase>
+export const CornerDownRightIcon = (props: IconProps) => <IconBase {...props}><path d="M5 4v6a4 4 0 0 0 4 4h10" /><path d="m15 10 4 4-4 4" /></IconBase>
+export const CornerDownLeftIcon = (props: IconProps) => <IconBase {...props}><path d="M19 4v6a4 4 0 0 1-4 4H5" /><path d="m9 10-4 4 4 4" /></IconBase>
 export const CheckIcon = (props: IconProps) => <IconBase {...props}><path d="m20 6-11 11-5-5" /></IconBase>
 export const QualityIcon = (props: IconProps) => <IconBase {...props}><circle cx="12" cy="12" r="9" /><path d="m8 12 2.6 2.6L16.5 9" /></IconBase>
 export const SpinnerIcon = (props: IconProps) => <IconBase {...props} className={`animate-spin ${props.className || ''}`}><path d="M21 12a9 9 0 1 1-6.219-8.56" /></IconBase>

@@ -255,7 +255,7 @@ async function createWindow(cdpPort: number): Promise<void> {
   // ND Router lives in the Rust sidecar. Initialization is best-effort: a stale
   // sidecar build must not block startup, and the managed provider only appears
   // once the router answers with combos. It waits until the engine router and
-  // web bridge exist so ChatGPT Web / Gemini Web lanes can be registered.
+  // web bridge exist so ChatGPT Web / Gemini Web / DeepSeek Web lanes can be registered.
   const routerService = new RouterService(core, providers, join(userData, 'nd-router'))
   const nineRouterManaged = new NineRouterManagedRuntime(core, join(userData, 'nd-router'))
   await nineRouterManaged.initialize()
@@ -326,6 +326,7 @@ async function createWindow(cdpPort: number): Promise<void> {
     reservedOrigin,
     dataPath: userData,
     extensionRuntimePreload: join(currentDirectory, '../preload/extension-runtime.cjs'),
+    browserSafeModePreload: join(currentDirectory, '../preload/browser-safe-mode.cjs'),
     initialProfileId: browserProfiles.activeProfileId(),
     partitionForProfile: browserProfilePartition,
     profileLabel: (profileId) => browserProfiles.profileName(profileId),
@@ -445,13 +446,17 @@ async function createWindow(cdpPort: number): Promise<void> {
     browser,
     storePath: join(userData, 'gemini-web-sessions.json'),
     log: (line) => console.warn(line),
-  }, zcodeEngine, piEngine, cursorEngine, claudeEngine, engineSpawn, directEngineJournal, nativeAgent)
+  }, zcodeEngine, piEngine, cursorEngine, claudeEngine, engineSpawn, directEngineJournal, nativeAgent, {
+    browser,
+    storePath: join(userData, 'deepseek-web-sessions.json'),
+    log: (line) => console.warn(line),
+  })
   activeEngineRouter = engineRouter
   engineRouter.setBrowserAccessProvider(browserPlatform)
   // A web chat or router lane owns the visible browser while its turn runs;
   // switching identities mid-turn would hide the page the engine is driving.
   browserPlatform.setProfileSwitchGuard(() => engineRouter.hasRunningWebTurn()
-    ? 'Finish the active ChatGPT Web / Gemini Web turn before switching browser profiles'
+    ? 'Finish the active ChatGPT Web / Gemini Web / DeepSeek Web turn before switching browser profiles'
     : undefined)
   // The router's web lanes need the engine router; start the private loopback
   // bridge first, then hand its descriptor to the Rust router. API lanes still
@@ -548,7 +553,7 @@ async function createWindow(cdpPort: number): Promise<void> {
   const coreSystemVolume = createCoreSystemVolume(core)
   const coreVault = createCoreVault(core)
   const coreApiHttp = createCoreApiHttp(core)
-  const disposeIpc = registerIpc({ window, preloadPath: preload, launcherPopup, shortcuts: shortcutRegistry, browser, browserPlatform, dshSurface, engines, engineRouter, nativeToolBroker: nativeBroker, ownsWorktree: (cwd) => taskWorktrees?.ownsRoot(cwd) === true, harness, projectWorkspace, workspaces, theme, providers, externalElements, recentPicks, git, corePackageSnapshot: createCorePackageSnapshot(core), coreGit: coreGit.exec.bind(coreGit), coreMedia, coreClipboard, coreMediaKeys, coreSystemVolume, coreVault, coreApiHttp, coreDisk: createCoreDiskScan(core), coreComputer: createCoreComputer(core), qa, sessionArchive, usageLedger, capabilities, organizationStore })
+  const disposeIpc = registerIpc({ window, preloadPath: preload, launcherPopup, shortcuts: shortcutRegistry, browser, browserPlatform, dshSurface, engines, engineRouter, nativeToolBroker: nativeBroker, ownsWorktree: (cwd) => taskWorktrees?.ownsRoot(cwd) === true, harness, projectWorkspace, workspaces, theme, providers, externalElements, recentPicks, git, corePackageSnapshot: createCorePackageSnapshot(core), coreGit: coreGit.exec.bind(coreGit), coreMedia, coreClipboard, coreMediaKeys, coreSystemVolume, coreVault, coreApiHttp, coreDisk: createCoreDiskScan(core), coreComputer: createCoreComputer(core), qa, sessionArchive, usageLedger, capabilities, organizationStore, nineRouterManaged })
   if (nativeAgent.ready()) void nativeAgent.start().catch((error) => {
     console.warn('ND Agent private runtime could not initialize:', error instanceof Error ? error.message : String(error))
   })

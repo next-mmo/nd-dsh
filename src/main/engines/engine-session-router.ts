@@ -19,6 +19,7 @@ import {
   CODEX_ENGINE_ID,
   CODEX_CLI_ENGINE_ID,
   CURSOR_CLI_ENGINE_ID,
+  DEEPSEEK_WEB_ENGINE_ID,
   GEMINI_WEB_ENGINE_ID,
   ND_HARNESS_ENGINE_ID,
   ND_NATIVE_ENGINE_ID,
@@ -47,6 +48,7 @@ import type { ClaudeCodeCliEngine } from './claude/claude-code-cli-engine.js'
 import type { AntigravityEngine } from './antigravity/antigravity-engine.js'
 import type { CursorCliEngine } from './cursor/cursor-cli-engine.js'
 import { ChatGptWebEngine } from './chatgpt-web/chatgpt-web-engine.js'
+import { DeepSeekWebEngine } from './deepseek-web/deepseek-web-engine.js'
 import { GeminiWebEngine } from './gemini-web/gemini-web-engine.js'
 import type { CodexCliEngine } from './codex/codex-cli-engine.js'
 import { createExtraCliEngines } from './agent-cli/extra-cli-engines.js'
@@ -83,6 +85,13 @@ export interface GeminiWebRuntime {
   storePath?: string
   log?: (line: string) => void
   engine?: GeminiWebEngine
+}
+
+export interface DeepSeekWebRuntime {
+  browser: BrowserController
+  storePath?: string
+  log?: (line: string) => void
+  engine?: DeepSeekWebEngine
 }
 
 /**
@@ -145,6 +154,9 @@ export class EngineSessionRouter {
   private readonly geminiWeb: GeminiWebEngine | undefined
   private readonly geminiWebBrowser: BrowserController | undefined
   private readonly geminiWebLog: ((line: string) => void) | undefined
+  private readonly deepSeekWeb: DeepSeekWebEngine | undefined
+  private readonly deepSeekWebBrowser: BrowserController | undefined
+  private readonly deepSeekWebLog: ((line: string) => void) | undefined
   /** Workspace-capable direct engines by catalog id, in catalog order. */
   private readonly directEngines = new Map<string, DirectWorkspaceEngine>()
   /** Direct engines constructed by the router rather than Electron bootstrap. */
@@ -164,6 +176,7 @@ export class EngineSessionRouter {
     directSpawnProcess: typeof spawn = spawn,
     private readonly sessionJournal?: SessionJournalStore,
     nativeAgent?: NdNativeEngine,
+    deepSeekWebRuntime?: DeepSeekWebRuntime,
   ) {
     this.directEngines.set(CODEX_CLI_ENGINE_ID, codex)
     if (antigravity) this.directEngines.set(ANTIGRAVITY_ENGINE_ID, antigravity)
@@ -199,6 +212,16 @@ export class EngineSessionRouter {
         ...(geminiWebRuntime.log ? { log: geminiWebRuntime.log } : {}),
       })
     }
+    if (deepSeekWebRuntime) {
+      this.deepSeekWebBrowser = deepSeekWebRuntime.browser
+      this.deepSeekWebLog = deepSeekWebRuntime.log
+      this.deepSeekWeb = deepSeekWebRuntime.engine ?? new DeepSeekWebEngine({
+        browser: deepSeekWebRuntime.browser,
+        workspace,
+        storePath: deepSeekWebRuntime.storePath!,
+        ...(deepSeekWebRuntime.log ? { log: deepSeekWebRuntime.log } : {}),
+      })
+    }
   }
 
   setExtensionRouter(router: ExtensionRouter): void {
@@ -223,6 +246,7 @@ export class EngineSessionRouter {
     }
     this.chatGptWeb?.setEmitter(routed)
     this.geminiWeb?.setEmitter(routed)
+    this.deepSeekWeb?.setEmitter(routed)
     for (const direct of this.directEngines.values()) direct.setEmitter?.(routed)
   }
 
@@ -235,6 +259,32 @@ export class EngineSessionRouter {
       ? this.engineForSession(options.sessionId)
       : options?.engineId ?? ND_HARNESS_ENGINE_ID
     if (!options?.sessionId) this.assertKnownEngine(requested)
+    // Mid-turn steering is a Harness capability: its runtime accepts a prompt
+    // with mode 'steer' and injects it into the running turn. Vendor CLIs and
+    // web engines cannot be interrupted with new input, so they stay on ND's
+    // renderer queue instead.
+    if (options?.mode === 'steer') {
+      const sessionId = options.sessionId
+      if (!sessionId) throw new Error('Steering needs the running chat session')
+      if (requested !== ND_HARNESS_ENGINE_ID) {
+        throw new Error('Steering is available on ND Harness chats only. This message stays queued for this engine.')
+      }
+      // Steering is a session mutation: keep the same workspace boundary the
+      // ordinary run path enforces instead of trusting the renderer's id.
+      const boundSessionRoot = this.workspaceRootBySession.get(sessionId)
+      if (boundSessionRoot && !this.sessionRootAllowed(boundSessionRoot)) {
+        throw new Error('Steering target belongs to a different project workspace')
+      }
+      const shielded = this.shieldPrompt(prompt, options.promptShieldOverride)
+      const workspaceRoot = this.workspaceRootBySession.get(sessionId) ?? this.workspace.state().root
+      const staged = await stageAttachments(options.files ?? [], [], workspaceRoot)
+      const steered = staged.suffix ? `${shielded}\n\n${staged.suffix}` : shielded
+      try {
+        return await this.harness.run(steered, { ...options, mode: 'steer' })
+      } finally {
+        await staged.cleanup()
+      }
+    }
     if (requested === ND_NATIVE_ENGINE_ID) {
       await (this.directEngines.get(requested) as NdNativeEngine | undefined)?.start()
     }
@@ -264,10 +314,10 @@ export class EngineSessionRouter {
       const created = await this.createSession(requested, defaultCwd)
       options = { ...options, sessionId: created.sessionId }
     }
-    const webChatSkill = requested === CHATGPT_WEB_ENGINE_ID || requested === GEMINI_WEB_ENGINE_ID
+    const webChatSkill = requested === CHATGPT_WEB_ENGINE_ID || requested === GEMINI_WEB_ENGINE_ID || requested === DEEPSEEK_WEB_ENGINE_ID
     const skill = await this.skills?.prepare(prompt, options?.skillScope, options?.skillSelectionId, webChatSkill ? 'chat' : 'agent')
     const targetSessionId = options?.sessionId
-    if (skill && targetSessionId && !directTarget && requested !== CHATGPT_WEB_ENGINE_ID && requested !== GEMINI_WEB_ENGINE_ID) {
+    if (skill && targetSessionId && !directTarget && requested !== CHATGPT_WEB_ENGINE_ID && requested !== GEMINI_WEB_ENGINE_ID && requested !== DEEPSEEK_WEB_ENGINE_ID) {
       const result = await this.harness.gatewayRpc('session.list')
       const items = (result.value as { items?: Array<{ sessionId?: string; cwd?: string }> } | undefined)?.items
       const session = items?.find((item) => item.sessionId === targetSessionId)
@@ -281,13 +331,17 @@ export class EngineSessionRouter {
       const session = this.geminiWeb?.listSessions().find((candidate) => candidate.sessionId === targetSessionId)
       if (session?.cwd && !this.sessionRootAllowed(session.cwd)) throw new Error('Skill session does not belong to the active workspace')
     }
+    if (skill && targetSessionId && requested === DEEPSEEK_WEB_ENGINE_ID) {
+      const session = this.deepSeekWeb?.listSessions().find((candidate) => candidate.sessionId === targetSessionId)
+      if (session?.cwd && !this.sessionRootAllowed(session.cwd)) throw new Error('Skill session does not belong to the active workspace')
+    }
     let routedPrompt = this.extensions
       ? await this.extensions.decoratePrompt(skill?.prompt ?? prompt, requested, providerId)
       : skill?.prompt ?? prompt
     // Prompt Shield runs on the user/skill/extension text before ND appends its
     // own scoped tokens, which must reach the engine untouched.
     routedPrompt = this.shieldPrompt(routedPrompt, options?.promptShieldOverride)
-    if (options?.sessionId && this.browserAccess && requested !== ND_NATIVE_ENGINE_ID && requested !== CHATGPT_WEB_ENGINE_ID && requested !== GEMINI_WEB_ENGINE_ID) {
+    if (options?.sessionId && this.browserAccess && requested !== ND_NATIVE_ENGINE_ID && requested !== CHATGPT_WEB_ENGINE_ID && requested !== GEMINI_WEB_ENGINE_ID && requested !== DEEPSEEK_WEB_ENGINE_ID) {
       const token = this.browserAccess.issueSessionAccess(options.sessionId)
       routedPrompt += `\n\n<nd-browser-access>\nOpaque browser access token for this ND session: ${token}\nPass it unchanged as accessToken on every nd_browser_call. Do not expose it in user-facing output.\n</nd-browser-access>`
     }
@@ -296,7 +350,8 @@ export class EngineSessionRouter {
     if (this.vaultAccess
       && requested !== ND_NATIVE_ENGINE_ID
       && requested !== CHATGPT_WEB_ENGINE_ID
-      && requested !== GEMINI_WEB_ENGINE_ID) {
+      && requested !== GEMINI_WEB_ENGINE_ID
+      && requested !== DEEPSEEK_WEB_ENGINE_ID) {
       const hint = await this.vaultAccess.hint().catch(() => undefined)
       if (hint) routedPrompt += `\n\n${hint}`
     }
@@ -381,6 +436,9 @@ export class EngineSessionRouter {
       if (this.geminiWeb?.listSessions().some((session) => session.running)) {
         throw new Error('ChatGPT Web and Gemini Web share the visible browser. Finish the active Gemini Web turn before starting ChatGPT Web.')
       }
+      if (this.deepSeekWeb?.listSessions().some((session) => session.running)) {
+        throw new Error('ChatGPT Web and DeepSeek Web share the visible browser. Finish the active DeepSeek Web turn before starting ChatGPT Web.')
+      }
       const engine = this.requireChatGptWeb()
       const workspaceRoot = this.workspace.state().root
       if (options?.sessionId) {
@@ -413,6 +471,9 @@ export class EngineSessionRouter {
       if (this.chatGptWeb?.listSessions().some((session) => session.running)) {
         throw new Error('Gemini Web and ChatGPT Web share the visible browser. Finish the active ChatGPT Web turn before starting Gemini Web.')
       }
+      if (this.deepSeekWeb?.listSessions().some((session) => session.running)) {
+        throw new Error('Gemini Web and DeepSeek Web share the visible browser. Finish the active DeepSeek Web turn before starting Gemini Web.')
+      }
       const engine = this.requireGeminiWeb()
       const workspaceRoot = this.workspace.state().root
       if (options?.sessionId) {
@@ -436,7 +497,39 @@ export class EngineSessionRouter {
       await this.restoreBrowserFocus(browser, focus)
       return result
     }
-    if (this.chatGptWeb?.listSessions().some((session) => session.running) || this.geminiWeb?.listSessions().some((session) => session.running)) {
+    if (requested === DEEPSEEK_WEB_ENGINE_ID) {
+      const harnessState = this.harness.status().state
+      if (harnessState === 'running' || harnessState === 'starting') {
+        throw new Error('DeepSeek Web and ND Harness share the visible browser. Finish the active ND Harness turn before starting DeepSeek Web.')
+      }
+      if (this.chatGptWeb?.listSessions().some((session) => session.running)) {
+        throw new Error('DeepSeek Web and ChatGPT Web share the visible browser. Finish the active ChatGPT Web turn before starting DeepSeek Web.')
+      }
+      if (this.geminiWeb?.listSessions().some((session) => session.running)) {
+        throw new Error('DeepSeek Web and Gemini Web share the visible browser. Finish the active Gemini Web turn before starting DeepSeek Web.')
+      }
+      const engine = this.requireDeepSeekWeb()
+      const workspaceRoot = this.workspace.state().root
+      if (options?.sessionId) {
+        const session = engine.listSessions().find((candidate) => candidate.sessionId === options.sessionId)
+        if (session?.cwd && session.cwd !== workspaceRoot) {
+          throw new Error('This DeepSeek Web chat belongs to a different project workspace. Reopen that project before continuing the chat.')
+        }
+      }
+      const browser = this.deepSeekWebBrowser
+      const focus = this.browserFocus(browser)
+      const result = await engine.run(this.shieldPrompt(appendWebTextFiles(optimizedPrompt, options?.files ?? [], 'DeepSeek Web'), options?.promptShieldOverride), {
+        ...(options?.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
+        ...(options?.model !== undefined ? { model: options.model } : {}),
+        cwd: workspaceRoot,
+        ...(options?.images?.length ? { images: options.images } : {}),
+      })
+      await this.restoreBrowserFocus(browser, focus)
+      return result
+    }
+    if (this.chatGptWeb?.listSessions().some((session) => session.running)
+      || this.geminiWeb?.listSessions().some((session) => session.running)
+      || this.deepSeekWeb?.listSessions().some((session) => session.running)) {
       throw new Error('ND Harness and its Web chats share the visible browser. Finish the active web chat turn before starting ND Harness.')
     }
     const harnessCwd = sessionCwd ?? requestedRunCwd
@@ -464,7 +557,9 @@ export class EngineSessionRouter {
       ? CHATGPT_WEB_ENGINE_ID
       : input.engineId === GEMINI_WEB_ENGINE_ID
         ? GEMINI_WEB_ENGINE_ID
-        : undefined
+        : input.engineId === DEEPSEEK_WEB_ENGINE_ID
+          ? DEEPSEEK_WEB_ENGINE_ID
+          : undefined
     if (!engineId) throw new Error(`Router web lane is not supported: ${input.engineId}`)
     if (input.signal?.aborted) throw new WebTurnError({ code: 'cancelled', message: 'Web lane request was cancelled', phase: 'open' })
 
@@ -478,15 +573,24 @@ export class EngineSessionRouter {
         phase: 'open',
       })
     }
-    const otherEngine = engineId === CHATGPT_WEB_ENGINE_ID ? this.geminiWeb : this.chatGptWeb
-    if (otherEngine?.listSessions().some((session) => session.running)) {
+    const otherEngines = [this.chatGptWeb, this.geminiWeb, this.deepSeekWeb].filter((candidate) => {
+      if (!candidate) return false
+      if (engineId === CHATGPT_WEB_ENGINE_ID) return candidate !== this.chatGptWeb
+      if (engineId === GEMINI_WEB_ENGINE_ID) return candidate !== this.geminiWeb
+      return candidate !== this.deepSeekWeb
+    })
+    if (otherEngines.some((candidate) => candidate?.listSessions().some((session) => session.running))) {
       throw new WebTurnError({
         code: 'page-busy',
-        message: 'The other web engine is using the visible browser. Wait for its turn to finish, then retry.',
+        message: 'Another web engine is using the visible browser. Wait for its turn to finish, then retry.',
         phase: 'open',
       })
     }
-    const engine = engineId === CHATGPT_WEB_ENGINE_ID ? this.requireChatGptWeb() : this.requireGeminiWeb()
+    const engine = engineId === CHATGPT_WEB_ENGINE_ID
+      ? this.requireChatGptWeb()
+      : engineId === GEMINI_WEB_ENGINE_ID
+        ? this.requireGeminiWeb()
+        : this.requireDeepSeekWeb()
     if (engine.listSessions().some((session) => session.running)) {
       throw new WebTurnError({
         code: 'page-busy',
@@ -498,7 +602,19 @@ export class EngineSessionRouter {
     // Prompt Shield gates the text before any browser session is opened.
     const prompt = this.shieldPrompt(input.prompt)
     const workspaceRoot = this.workspace.state().root
-    const browser = engineId === CHATGPT_WEB_ENGINE_ID ? this.chatGptWebBrowser : this.geminiWebBrowser
+    const browser = engineId === CHATGPT_WEB_ENGINE_ID
+      ? this.chatGptWebBrowser
+      : engineId === GEMINI_WEB_ENGINE_ID
+        ? this.geminiWebBrowser
+        : this.deepSeekWebBrowser
+    const engineLabel = engineId === CHATGPT_WEB_ENGINE_ID ? 'ChatGPT Web' : engineId === GEMINI_WEB_ENGINE_ID ? 'Gemini Web' : 'DeepSeek Web'
+    if (browser?.safeModeEnabled?.()) {
+      throw new WebTurnError({
+        code: 'page-busy',
+        message: 'ND Browser Safe Mode is on. Turn it off in Settings > Browser to run Router web lanes.',
+        phase: 'open',
+      })
+    }
     const started = Date.now()
     const created = await engine.createSession({
       cwd: workspaceRoot,
@@ -507,7 +623,7 @@ export class EngineSessionRouter {
       // A private lane runs in the identity the user is browsing as, and the
       // session records it so a retry after a restart lands in the same jar.
       ...(browser ? { profileId: browser.activeProfileId() } : {}),
-      title: engineId === CHATGPT_WEB_ENGINE_ID ? 'ND Router · ChatGPT Web' : 'ND Router · Gemini Web',
+      title: `ND Router · ${engineLabel}`,
     })
     const sessionId = created.sessionId
     let keepTab = false
@@ -550,6 +666,14 @@ export class EngineSessionRouter {
           transports: ['cdp'],
           ...(input.model?.trim() ? { model: input.model.trim() } : {}),
         })
+      } else if (engineId === DEEPSEEK_WEB_ENGINE_ID) {
+        await this.requireDeepSeekWeb().run(prompt, {
+          sessionId,
+          cwd: workspaceRoot,
+          isolated: true,
+          transports: ['cdp'],
+          ...(input.model?.trim() ? { model: input.model.trim() } : {}),
+        })
       } else {
         await this.requireChatGptWeb().run(prompt, {
           sessionId,
@@ -563,7 +687,7 @@ export class EngineSessionRouter {
       if (!text) {
         throw new WebTurnError({
           code: 'empty-reply',
-          message: `${engineId === CHATGPT_WEB_ENGINE_ID ? 'ChatGPT Web' : 'Gemini Web'} finished without an assistant reply`,
+          message: `${engineLabel} finished without an assistant reply`,
           phase: 'wait',
         })
       }
@@ -593,11 +717,12 @@ export class EngineSessionRouter {
     }
   }
 
-  /** True while any ChatGPT Web or Gemini Web turn is in flight. */
+  /** True while any ChatGPT Web, Gemini Web, or DeepSeek Web turn is in flight. */
   hasRunningWebTurn(): boolean {
     return Boolean(
       this.chatGptWeb?.listSessions().some((session) => session.running)
-      || this.geminiWeb?.listSessions().some((session) => session.running),
+      || this.geminiWeb?.listSessions().some((session) => session.running)
+      || this.deepSeekWeb?.listSessions().some((session) => session.running),
     )
   }
 
@@ -661,6 +786,11 @@ export class EngineSessionRouter {
       this.logicalEngineBySession.set(sessionId, engineId)
       return { engineId, sessionId }
     }
+    if (engineId === DEEPSEEK_WEB_ENGINE_ID) {
+      const sessionId = (await this.requireDeepSeekWeb().createSession({ cwd: targetCwd })).sessionId
+      this.logicalEngineBySession.set(sessionId, engineId)
+      return { engineId, sessionId }
+    }
     if (cwd === undefined) {
       const sessionId = await this.harness.createSession()
       this.logicalEngineBySession.set(sessionId, engineId)
@@ -711,6 +841,10 @@ export class EngineSessionRouter {
       await this.requireGeminiWeb().stop(sessionId)
       return
     }
+    if (engine === DEEPSEEK_WEB_ENGINE_ID) {
+      await this.requireDeepSeekWeb().stop(sessionId)
+      return
+    }
     const result = await this.harness.gatewayRpc('session.cancel', { sessionId })
     if (!result.ok) throw new Error(result.error?.message ?? 'Harness session.cancel failed')
   }
@@ -719,6 +853,7 @@ export class EngineSessionRouter {
   async stop(): Promise<HarnessStatus> {
     await this.chatGptWeb?.stop()
     await this.geminiWeb?.stop()
+    await this.deepSeekWeb?.stop()
     for (const direct of this.directEngines.values()) await direct.stop()
     return this.harness.stop()
   }
@@ -727,6 +862,7 @@ export class EngineSessionRouter {
   async close(): Promise<void> {
     await this.chatGptWeb?.close()
     await this.geminiWeb?.close()
+    await this.deepSeekWeb?.close()
     await Promise.all([...this.routerOwnedDirectEngines].map(async (direct) => { await direct.close?.() }))
   }
 
@@ -737,6 +873,7 @@ export class EngineSessionRouter {
     }
     if (this.chatGptWeb?.handlesApproval(rpcId)) return this.chatGptWeb.respond(rpcId, value)
     if (this.geminiWeb?.handlesApproval(rpcId)) return this.geminiWeb.respond(rpcId, value)
+    if (this.deepSeekWeb?.handlesApproval(rpcId)) return this.deepSeekWeb.respond(rpcId, value)
     return this.harness.respond(rpcId, value)
   }
 
@@ -745,6 +882,7 @@ export class EngineSessionRouter {
     const workspaceSessions = [
       ...this.chatGptWeb?.listSessions() ?? [],
       ...this.geminiWeb?.listSessions() ?? [],
+      ...this.deepSeekWeb?.listSessions() ?? [],
       ...[...this.directEngines.entries()]
         .filter(([engineId]) => this.isWorkspaceDirectEngine(engineId))
         .flatMap(([, direct]) => direct.listSessions()),
@@ -759,6 +897,7 @@ export class EngineSessionRouter {
   async ensureEngineBrowserTab(sessionId: string): Promise<string | null> {
     if (this.chatGptWeb?.ownsSession(sessionId)) return await this.chatGptWeb.ensureBrowserTab(sessionId)
     if (this.geminiWeb?.ownsSession(sessionId)) return await this.geminiWeb.ensureBrowserTab(sessionId)
+    if (this.deepSeekWeb?.ownsSession(sessionId)) return await this.deepSeekWeb.ensureBrowserTab(sessionId)
     return null
   }
 
@@ -779,13 +918,16 @@ export class EngineSessionRouter {
       // Gemini Web persists its own transcript, same as ChatGPT Web.
       return this.geminiWeb.transcript(sessionId)
     }
+    if (this.deepSeekWeb?.ownsSession(sessionId)) {
+      return this.deepSeekWeb.transcript(sessionId)
+    }
     throw new Error(`No engine owns session: ${sessionId}`)
   }
 
   private captureDirectTranscript(frame: DshEventFrame): void {
     if (!this.sessionJournal || frame.kind !== 'session-event' || !frame.sessionId || !frame.event) return
     const engineId = this.engineForSession(frame.sessionId)
-    if (engineId === CHATGPT_WEB_ENGINE_ID || engineId === GEMINI_WEB_ENGINE_ID) return
+    if (engineId === CHATGPT_WEB_ENGINE_ID || engineId === GEMINI_WEB_ENGINE_ID || engineId === DEEPSEEK_WEB_ENGINE_ID) return
     const structuredChunk = STRUCTURED_TRANSCRIPT_ENGINE_IDS.has(engineId) && frame.event.type === 'assistant/chunk'
     if (!TRANSCRIPT_EVENT_TYPES.has(frame.event.type) && !structuredChunk) return
     void this.sessionJournal.append(frame.sessionId, [{
@@ -826,6 +968,7 @@ export class EngineSessionRouter {
    */
   async models(engineId: string): Promise<EngineModelOption[]> {
     if (engineId === GEMINI_WEB_ENGINE_ID) return await this.geminiWeb?.listModels() ?? []
+    if (engineId === DEEPSEEK_WEB_ENGINE_ID) return await this.deepSeekWeb?.listModels() ?? []
     const direct = this.directEngines.get(engineId)
     if (direct) return direct.listModels()
     return []
@@ -858,6 +1001,7 @@ export class EngineSessionRouter {
       || engineId === CODEX_ENGINE_ID
       || engineId === CHATGPT_WEB_ENGINE_ID
       || engineId === GEMINI_WEB_ENGINE_ID
+      || engineId === DEEPSEEK_WEB_ENGINE_ID
       || this.directEngines.has(engineId)
     ) return
     throw new Error(`Unknown coding engine: ${engineId}`)
@@ -881,6 +1025,7 @@ export class EngineSessionRouter {
     }
     if (this.chatGptWeb?.ownsSession(sessionId)) return CHATGPT_WEB_ENGINE_ID
     if (this.geminiWeb?.ownsSession(sessionId)) return GEMINI_WEB_ENGINE_ID
+    if (this.deepSeekWeb?.ownsSession(sessionId)) return DEEPSEEK_WEB_ENGINE_ID
     return ND_HARNESS_ENGINE_ID
   }
 
@@ -904,6 +1049,17 @@ export class EngineSessionRouter {
       throw new Error('Gemini Web is unavailable because ND did not initialize its visible-browser runtime.')
     }
     return this.geminiWeb
+  }
+
+  getDeepSeekWeb(): DeepSeekWebEngine | undefined {
+    return this.deepSeekWeb
+  }
+
+  private requireDeepSeekWeb(): DeepSeekWebEngine {
+    if (!this.deepSeekWeb) {
+      throw new Error('DeepSeek Web is unavailable because ND did not initialize its visible-browser runtime.')
+    }
+    return this.deepSeekWeb
   }
 
   private shieldPrompt(text: string, override?: 'mask' | 'allow'): string {
