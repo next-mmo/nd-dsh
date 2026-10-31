@@ -139,6 +139,17 @@ export interface RouterTestResult {
   preview?: string
 }
 
+export interface RouterGoogleConnectResult {
+  state: RouterState
+  email: string
+  accountId: string
+}
+
+export interface RouterGoogleExistingAccount {
+  /** Email of the Antigravity account ND already signed in through Token Saver. */
+  email?: string
+}
+
 export interface RouterExternalApiState {
   endpoint?: string
   hasKey: boolean
@@ -188,6 +199,8 @@ export const ROUTER_IPC = {
   deleteProvider: 'router:delete-provider',
   saveAccount: 'router:save-account',
   deleteAccount: 'router:delete-account',
+  googleConnect: 'router:google-connect',
+  googleExisting: 'router:google-existing',
   saveCombo: 'router:save-combo',
   deleteCombo: 'router:delete-combo',
   testProvider: 'router:test-provider',
@@ -207,6 +220,8 @@ export interface RouterDesktopApi extends NineRouterDesktopApi {
   deleteProvider(providerId: string): Promise<RouterState>
   saveAccount(input: RouterAccountInput): Promise<RouterState>
   deleteAccount(providerId: string, accountId: string): Promise<RouterState>
+  googleConnect(providerId: string, mode?: 'browser' | 'existing'): Promise<RouterGoogleConnectResult>
+  googleExistingAccount(): Promise<RouterGoogleExistingAccount>
   saveCombo(input: RouterComboInput): Promise<RouterState>
   deleteCombo(comboId: string): Promise<RouterState>
   testProvider(providerId: string): Promise<RouterTestResult>

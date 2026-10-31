@@ -1,39 +1,24 @@
-import { randomBytes, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { createServer, type Server } from 'node:http'
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import process from 'node:process'
-import { safeStorage, shell } from 'electron'
+import { safeStorage } from 'electron'
 import type { TokenSaverAccountId, TokenSaverAccountState } from '../../shared/token-saver.js'
+import {
+  antigravityClientId,
+  antigravityClientSecret,
+  authorizeAntigravityAccount,
+  googleAuthorizedUserPath,
+  parseGoogleTokens,
+  writeGoogleAuthorizedUserFile,
+  type GoogleTokens,
+} from '../google-oauth.js'
 import { bundledResourceRoot, codexBinPath } from '../app-paths.js'
 import { backgroundProcessEnvironment } from '../core/background-process-environment.js'
 
-const OAUTH_TIMEOUT_MS = 5 * 60_000
 const CODEX_LOGIN_TIMEOUT_MS = 10 * 60_000
-const ANTIGRAVITY_AUTHORIZE_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 const ANTIGRAVITY_TOKEN_URL = 'https://oauth2.googleapis.com/token'
-const ANTIGRAVITY_USERINFO_URL = 'https://www.googleapis.com/oauth2/v1/userinfo'
-const ANTIGRAVITY_SCOPES = [
-  'https://www.googleapis.com/auth/cloud-platform',
-  'https://www.googleapis.com/auth/userinfo.email',
-  'https://www.googleapis.com/auth/userinfo.profile',
-  'https://www.googleapis.com/auth/cclog',
-  'https://www.googleapis.com/auth/experimentsandconfigs',
-]
-
-// Public native-app OAuth client values distributed by Antigravity itself.
-// XOR masking only avoids secret-scanner false positives; it is not encryption.
-const PUBLIC_CRED_MASK = 'nd-dsh-public-oauth-v1'
-const ANTIGRAVITY_CLIENT_ID_BYTES = [95,84,26,85,67,88,27,64,67,82,89,80,82,0,27,12,29,7,27,68,24,3,6,86,28,8,16,26,72,66,70,87,26,29,12,65,0,11,29,64,15,25,70,2,11,20,3,5,3,24,94,94,18,13,3,14,15,72,26,18,16,6,11,66,24,69,11,10,89,74,16,7,64] as const
-const ANTIGRAVITY_CLIENT_SECRET_BYTES = [41,43,110,55,35,48,0,59,64,90,42,62,49,25,87,87,57,16,36,103,71,92,34,38,21,23,43,43,25,10,67,19,40,40,5] as const
-
-interface AntigravityTokens {
-  accessToken: string
-  refreshToken?: string
-  expiresAt: number
-  scope?: string
-}
 
 interface AccountMetadataFile {
   version: 1
@@ -50,13 +35,6 @@ interface AccountSecretsFile {
   antigravity?: string
 }
 
-interface GoogleTokenResponse {
-  access_token?: unknown
-  refresh_token?: unknown
-  expires_in?: unknown
-  scope?: unknown
-}
-
 /**
  * Provider-account boundary for the Token Saver release.
  *
@@ -68,7 +46,7 @@ export class ProviderAccountService {
   private readonly metadataPath: string
   private readonly secretsPath: string
   private metadata: AccountMetadataFile = { version: 1 }
-  private antigravityTokens: AntigravityTokens | undefined
+  private antigravityTokens: GoogleTokens | undefined
   private onChanged: (() => void) | undefined
 
   constructor(rootDir: string) {
@@ -125,6 +103,35 @@ export class ProviderAccountService {
     this.onChanged?.()
   }
 
+  /** Email of the signed-in Antigravity account, when one exists. */
+  antigravityEmail(): string | undefined {
+    return this.metadata.antigravity?.email
+  }
+
+  /** Email only when a refresh token is loaded and can back a router account. */
+  antigravityExportableEmail(): string | undefined {
+    const email = this.metadata.antigravity?.email
+    return email && this.antigravityTokens?.refreshToken ? email : undefined
+  }
+
+  /**
+   * Export the signed-in Antigravity account as a Google authorized_user file
+   * for the Router's antigravity lane. ND's OAuth token never leaves main.
+   */
+  exportAntigravityAuthorizedUser(rootDir: string): { email: string; adcPath: string } | undefined {
+    const tokens = this.antigravityTokens
+    const email = this.metadata.antigravity?.email
+    if (!tokens?.refreshToken || !email) return undefined
+    const adcPath = googleAuthorizedUserPath(rootDir, email)
+    writeGoogleAuthorizedUserFile(adcPath, {
+      clientId: antigravityClientId(),
+      clientSecret: antigravityClientSecret(),
+      refreshToken: tokens.refreshToken,
+      email,
+    })
+    return { email, adcPath }
+  }
+
   async disconnect(id: TokenSaverAccountId): Promise<void> {
     if (id === 'codex') await this.disconnectCodex()
     else this.disconnectAntigravity()
@@ -151,49 +158,16 @@ export class ProviderAccountService {
   }
 
   private async connectAntigravity(): Promise<void> {
-    const redirect = await createOAuthCallback()
-    try {
-      const state = randomBytes(24).toString('base64url')
-      const authUrl = new URL(ANTIGRAVITY_AUTHORIZE_URL)
-      authUrl.searchParams.set('client_id', publicCredential(ANTIGRAVITY_CLIENT_ID_BYTES))
-      authUrl.searchParams.set('response_type', 'code')
-      authUrl.searchParams.set('redirect_uri', redirect.redirectUri)
-      authUrl.searchParams.set('scope', ANTIGRAVITY_SCOPES.join(' '))
-      authUrl.searchParams.set('state', state)
-      authUrl.searchParams.set('access_type', 'offline')
-      authUrl.searchParams.set('prompt', 'consent')
-      // Arm the callback before launching the browser so an already-authenticated
-      // Google session cannot race ahead of our state/code listener.
-      const codePromise = redirect.waitForCode(state)
-      await shell.openExternal(authUrl.toString())
-      const code = await codePromise
-      const tokenResponse = await fetch(ANTIGRAVITY_TOKEN_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
-        body: new URLSearchParams({
-          grant_type: 'authorization_code',
-          client_id: publicCredential(ANTIGRAVITY_CLIENT_ID_BYTES),
-          client_secret: publicCredential(ANTIGRAVITY_CLIENT_SECRET_BYTES),
-          code,
-          redirect_uri: redirect.redirectUri,
-        }),
-      })
-      if (!tokenResponse.ok) throw new Error(`Antigravity token exchange failed (${tokenResponse.status})`)
-      const tokens = parseTokens(await tokenResponse.json(), undefined)
-      const user = await fetch(ANTIGRAVITY_USERINFO_URL, {
-        headers: { Authorization: `Bearer ${tokens.accessToken}` },
-      })
-      const userInfo = user.ok ? await user.json() as Record<string, unknown> : {}
-      this.antigravityTokens = tokens
-      this.metadata.antigravity = {
-        expiresAt: tokens.expiresAt,
-        ...(tokens.scope ? { scope: tokens.scope } : {}),
-        ...(typeof userInfo.email === 'string' && userInfo.email ? { email: userInfo.email } : {}),
-      }
-      this.persist()
-    } finally {
-      redirect.close()
+    const { tokens, email } = await authorizeAntigravityAccount({
+      callbackPath: '/oauth/antigravity/callback',
+    })
+    this.antigravityTokens = tokens
+    this.metadata.antigravity = {
+      expiresAt: tokens.expiresAt,
+      ...(tokens.scope ? { scope: tokens.scope } : {}),
+      ...(email ? { email } : {}),
     }
+    this.persist()
   }
 
   private disconnectAntigravity(): void {
@@ -211,13 +185,13 @@ export class ProviderAccountService {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
       body: new URLSearchParams({
         grant_type: 'refresh_token',
-        client_id: publicCredential(ANTIGRAVITY_CLIENT_ID_BYTES),
-        client_secret: publicCredential(ANTIGRAVITY_CLIENT_SECRET_BYTES),
+        client_id: antigravityClientId(),
+        client_secret: antigravityClientSecret(),
         refresh_token: current.refreshToken,
       }),
     })
     if (!response.ok) throw new Error(`Antigravity token refresh failed (${response.status})`)
-    const next = parseTokens(await response.json(), current.refreshToken)
+    const next = parseGoogleTokens(await response.json(), current.refreshToken)
     this.antigravityTokens = next
     this.metadata.antigravity = {
       ...(this.metadata.antigravity ?? { expiresAt: next.expiresAt }),
@@ -239,7 +213,7 @@ export class ProviderAccountService {
       const parsed = JSON.parse(readFileSync(this.secretsPath, 'utf8')) as AccountSecretsFile
       if (parsed?.version !== 1 || !parsed.antigravity) return
       const plain = safeStorage.decryptString(Buffer.from(parsed.antigravity, 'base64'))
-      const tokens = JSON.parse(plain) as AntigravityTokens
+      const tokens = JSON.parse(plain) as GoogleTokens
       if (tokens?.accessToken && typeof tokens.expiresAt === 'number') this.antigravityTokens = tokens
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') console.warn('Could not load Antigravity OAuth tokens:', error)
@@ -257,94 +231,6 @@ export class ProviderAccountService {
       payload.antigravity = safeStorage.encryptString(JSON.stringify(this.antigravityTokens)).toString('base64')
     }
     writeJsonAtomic(this.secretsPath, payload)
-  }
-}
-
-interface OAuthCallback {
-  redirectUri: string
-  waitForCode(expectedState: string): Promise<string>
-  close(): void
-}
-
-async function createOAuthCallback(): Promise<OAuthCallback> {
-  let server: Server | undefined
-  let pendingResolve: ((code: string) => void) | undefined
-  let pendingReject: ((error: Error) => void) | undefined
-  let expected = ''
-  let settled = false
-
-  const waitForCode = (expectedState: string): Promise<string> => {
-    expected = expectedState
-    return new Promise<string>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        if (settled) return
-        settled = true
-        reject(new Error('Antigravity sign-in timed out'))
-        server?.close()
-      }, OAUTH_TIMEOUT_MS)
-      pendingResolve = (code) => { clearTimeout(timer); resolve(code) }
-      pendingReject = (error) => { clearTimeout(timer); reject(error) }
-    })
-  }
-
-  server = createServer((request, response) => {
-    try {
-      const url = new URL(request.url ?? '/', 'http://127.0.0.1')
-      if (url.pathname !== '/oauth/antigravity/callback') {
-        response.writeHead(404).end('Not found')
-        return
-      }
-      const error = url.searchParams.get('error')
-      const state = url.searchParams.get('state') ?? ''
-      const code = url.searchParams.get('code') ?? ''
-      if (error) throw new Error(`Antigravity sign-in was not completed: ${error}`)
-      if (!expected || state !== expected) throw new Error('Antigravity sign-in state did not match')
-      if (!code) throw new Error('Antigravity sign-in returned no authorization code')
-      response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
-      response.end('<!doctype html><meta charset="utf-8"><title>ND connected</title><body style="font-family:system-ui;padding:40px"><h2>Antigravity connected to ND</h2><p>You can close this tab and return to ND.</p></body>')
-      if (!settled) {
-        settled = true
-        pendingResolve?.(code)
-      }
-    } catch (error) {
-      response.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' })
-      response.end(error instanceof Error ? error.message : String(error))
-      if (!settled) {
-        settled = true
-        pendingReject?.(error instanceof Error ? error : new Error(String(error)))
-      }
-    }
-  })
-
-  await new Promise<void>((resolve, reject) => {
-    server?.once('error', reject)
-    server?.listen(0, '127.0.0.1', () => resolve())
-  })
-  const address = server.address()
-  if (!address || typeof address === 'string') {
-    server.close()
-    throw new Error('Could not start the local Antigravity sign-in callback')
-  }
-  return {
-    redirectUri: `http://127.0.0.1:${address.port}/oauth/antigravity/callback`,
-    waitForCode,
-    close: () => server?.close(),
-  }
-}
-
-function parseTokens(value: unknown, fallbackRefreshToken: string | undefined): AntigravityTokens {
-  const record = value && typeof value === 'object' ? value as GoogleTokenResponse : {}
-  const accessToken = typeof record.access_token === 'string' ? record.access_token : ''
-  if (!accessToken) throw new Error('Antigravity OAuth returned no access token')
-  const expiresIn = typeof record.expires_in === 'number' && Number.isFinite(record.expires_in) ? record.expires_in : 3600
-  const refreshToken = typeof record.refresh_token === 'string' && record.refresh_token
-    ? record.refresh_token
-    : fallbackRefreshToken
-  return {
-    accessToken,
-    ...(refreshToken ? { refreshToken } : {}),
-    expiresAt: Date.now() + Math.max(60, expiresIn) * 1000,
-    ...(typeof record.scope === 'string' && record.scope ? { scope: record.scope } : {}),
   }
 }
 
@@ -398,10 +284,6 @@ function runCodex(bin: string, args: string[]): Promise<void> {
       else reject(new Error(output.trim() || `Codex account command exited with code ${String(code)}`))
     })
   })
-}
-
-function publicCredential(bytes: readonly number[]): string {
-  return bytes.map((value, index) => String.fromCharCode(value ^ PUBLIC_CRED_MASK.charCodeAt(index % PUBLIC_CRED_MASK.length))).join('')
 }
 
 function canPersistSecrets(): boolean {

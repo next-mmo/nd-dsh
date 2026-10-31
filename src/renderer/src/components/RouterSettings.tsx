@@ -396,6 +396,20 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab }: 
                           : { apiKey: input.apiKey }),
                     }))}
                     onRemoveAccount={(accountId) => apply(`account-remove:${provider.id}`, () => window.ndDshRouter.deleteAccount(provider.id, accountId))}
+                    onGoogleConnect={(mode) => new Promise<string>((resolve, reject) => {
+                      setBusy(`google:${provider.id}`)
+                      void window.ndDshRouter.googleConnect(provider.id, mode)
+                        .then(async (result) => {
+                          setState(result.state)
+                          setUsage(await window.ndDshRouter.usage())
+                          resolve(result.email)
+                        })
+                        .catch((cause) => {
+                          onError(message(cause))
+                          reject(cause)
+                        })
+                        .finally(() => setBusy(null))
+                    })}
                   />
                 ))}
 
@@ -699,6 +713,7 @@ function ProviderRow({
   onRemove,
   onAddAccount,
   onRemoveAccount,
+  onGoogleConnect,
 }: {
   provider: RouterProviderView
   disabled: boolean
@@ -709,6 +724,7 @@ function ProviderRow({
   onRemove(): void
   onAddAccount(input: { label: string; apiKey: string; selector: string; configDir: string }): void
   onRemoveAccount(accountId: string): void
+  onGoogleConnect(mode: 'browser' | 'existing'): Promise<string>
 }) {
   const isAgy = provider.kind === 'antigravity'
   const isQoder = provider.kind === 'qoder'
@@ -717,6 +733,24 @@ function ProviderRow({
   const [key, setKey] = useState('')
   const [selector, setSelector] = useState('')
   const [configDir, setConfigDir] = useState('')
+  const [googleNotice, setGoogleNotice] = useState('')
+  const [existingGoogle, setExistingGoogle] = useState('')
+
+  useEffect(() => {
+    if (!isAgy) return
+    let alive = true
+    void window.ndDshRouter.googleExistingAccount()
+      .then((value) => { if (alive) setExistingGoogle(value.email ?? '') })
+      .catch(() => undefined)
+    return () => { alive = false }
+  }, [isAgy, busy])
+
+  const connectGoogle = (mode: 'browser' | 'existing'): void => {
+    setGoogleNotice('')
+    void onGoogleConnect(mode)
+      .then((email) => setGoogleNotice(`Connected ${email}`))
+      .catch(() => undefined)
+  }
   return (
     <div className="rounded-lg border border-border-soft bg-surface-1 px-[13px] py-[11px]">
       <div className="flex min-w-0 items-start justify-between gap-4">
@@ -732,7 +766,7 @@ function ProviderRow({
             </span>
             <span className={rowPathText}>
               {isAgy
-                ? 'agy CLI (signed-in accounts from the Antigravity app)'
+                ? 'agy CLI · Google OAuth accounts or Antigravity app sign-in'
                 : isQoder
                   ? 'qoder CLI (per-account profiles or personal access tokens)'
                   : isWeb
@@ -765,6 +799,7 @@ function ProviderRow({
               <span className="flex min-w-0 items-center gap-2">
                 <span className="text-[10px] font-semibold text-soft">{account.label}</span>
                 <StatusChip neutral>{account.kind}</StatusChip>
+                {account.envDir?.includes('google-oauth') ? <StatusChip neutral>Google OAuth</StatusChip> : null}
                 {account.selector ? <span className={rowPathText}>{account.selector}</span> : null}
                 {account.envDir ? <span className={rowPathText}>{account.envDir}</span> : null}
                 {account.lastStatus ? <span className={rowPathText}>{account.lastStatus}</span> : null}
@@ -772,6 +807,29 @@ function ProviderRow({
               <SettingsButton disabled={disabled} onClick={() => onRemoveAccount(account.id)}>Remove</SettingsButton>
             </div>
           ))}
+        </div>
+      ) : null}
+
+      {isAgy ? (
+        <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border-soft pt-2">
+          <SettingsButton
+            disabled={disabled || busy === `google:${provider.id}`}
+            onClick={() => connectGoogle('browser')}
+          >
+            {busy === `google:${provider.id}` ? 'Waiting for Google…' : 'Connect Google account'}
+          </SettingsButton>
+          {existingGoogle ? (
+            <SettingsButton
+              disabled={disabled || busy === `google:${provider.id}`}
+              onClick={() => connectGoogle('existing')}
+            >
+              Use signed-in Google account ({existingGoogle})
+            </SettingsButton>
+          ) : null}
+          <span className={rowDesc}>
+            Browser sign-in. Repeat to add another Google account; ND writes the credentials file the agy CLI uses.
+          </span>
+          {googleNotice ? <span className={rowDesc}>{googleNotice}</span> : null}
         </div>
       ) : null}
 
