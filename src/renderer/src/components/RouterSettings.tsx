@@ -1,8 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import {
+  ROUTER_FREE_API_BASE_URLS,
+  ROUTER_FREE_API_MODELS,
   ROUTER_WEB_LANE_MODELS,
+  isRouterCliProviderKind,
+  isRouterFreeApiKind,
   isRouterWebProviderKind,
+  ROUTER_CLI_LANE_MODELS,
+  type RouterCliProviderKind,
+  providerAuthMode,
+  providerCategory,
   type RouterComboEntry,
+  type RouterProviderInput,
   type RouterProviderView,
   type RouterState,
   type RouterTestResult,
@@ -40,7 +49,25 @@ interface ComboDraftEntry {
   model: string
 }
 
-type ProviderKindChoice = 'openai-compatible' | 'antigravity' | 'qoder' | 'chatgpt-web' | 'gemini-web' | 'deepseek-web'
+type ProviderKindChoice =
+  | 'openai-compatible'
+  | 'pollinations'
+  | 'ovh-kepler'
+  | 'free-ai'
+  | 'kilo-gateway'
+  | RouterCliProviderKind
+  | 'chatgpt-web'
+  | 'gemini-web'
+  | 'deepseek-web'
+  | 'grok-web'
+  | 'qwen-web'
+  | 'zai-web'
+  | 'mistral-web'
+  | 'perplexity-web'
+  | 'poe-web'
+  | 'arena-web'
+  | 'meta-web'
+  | 'duck-web'
 
 const ROUTER_SUB_TABS: { id: RouterSubTab; label: string }[] = [
   { id: 'overview', label: 'Overview' },
@@ -69,6 +96,11 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
   const [providerBaseUrl, setProviderBaseUrl] = useState('')
   const [providerModels, setProviderModels] = useState('')
   const [providerKey, setProviderKey] = useState('')
+  const [draftPing, setDraftPing] = useState<{
+    testing: boolean
+    result: RouterTestResult | null
+    error: string | null
+  }>({ testing: false, result: null, error: null })
 
   const [comboName, setComboName] = useState('')
   const [comboStrategy, setComboStrategy] = useState<'priority' | 'round-robin'>('priority')
@@ -133,55 +165,105 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
   }
 
   const changeProviderKind = (kind: ProviderKindChoice): void => {
+    setDraftPing({ testing: false, result: null, error: null })
     setProviderKind(kind)
-    if (isRouterWebProviderKind(kind) && !providerModels.trim()) {
+    if (isRouterFreeApiKind(kind)) {
+      setProviderName(kindLabel(kind))
+      setProviderBaseUrl(ROUTER_FREE_API_BASE_URLS[kind] ?? '')
+      setProviderModels(ROUTER_FREE_API_MODELS[kind]?.join(', ') ?? '')
+    } else if (isRouterWebProviderKind(kind)) {
+      setProviderName(kindLabel(kind))
       setProviderModels(ROUTER_WEB_LANE_MODELS[kind].join(', '))
+    } else if (isRouterCliProviderKind(kind)) {
+      setProviderName(kindLabel(kind))
+      setProviderModels((ROUTER_CLI_LANE_MODELS[kind as RouterCliProviderKind] ?? []).join(', '))
     }
   }
 
-  const addProvider = (): void => {
+  const buildCandidateInput = (): RouterProviderInput | null => {
     const models = providerModels.split(/[\n,]/).map((model) => model.trim()).filter(Boolean)
+    if (isRouterFreeApiKind(providerKind)) {
+      const baseUrl = providerBaseUrl.trim() || ROUTER_FREE_API_BASE_URLS[providerKind] || ''
+      const freeModels = models.length > 0 ? models : (ROUTER_FREE_API_MODELS[providerKind] ?? [])
+      return {
+        kind: providerKind,
+        name: providerName.trim() || kindLabel(providerKind),
+        baseUrl,
+        models: freeModels,
+      }
+    }
     if (isRouterWebProviderKind(providerKind)) {
-      apply('provider', () => window.ndDshRouter.saveProvider({
+      return {
         kind: providerKind,
         ...(providerName.trim() ? { name: providerName.trim() } : {}),
         models: models.length > 0 ? models : ROUTER_WEB_LANE_MODELS[providerKind],
-      }))
-      setProviderName('')
-      setProviderModels('')
-      setShowProviderForm(false)
-      return
+      }
     }
     if (!providerName.trim()) {
       onError('Give the provider a name.')
-      return
+      return null
     }
-    if (providerKind === 'antigravity' || providerKind === 'qoder') {
-      apply('provider', () => window.ndDshRouter.saveProvider({
+    if (isRouterCliProviderKind(providerKind)) {
+      return {
         kind: providerKind,
-        name: providerName.trim(),
-        models,
-      }))
-      setProviderName('')
-      setProviderModels('')
-      setShowProviderForm(false)
-      return
+        name: providerName.trim() || kindLabel(providerKind),
+        models: models.length > 0 ? models : (ROUTER_CLI_LANE_MODELS[providerKind as RouterCliProviderKind] ?? ['default']),
+      }
     }
     if (!providerBaseUrl.trim()) {
       onError('Give the provider a base URL.')
-      return
+      return null
     }
-    apply('provider', () => window.ndDshRouter.saveProvider({
+    return {
       kind: 'openai-compatible',
       name: providerName.trim(),
       baseUrl: providerBaseUrl.trim(),
       models,
       ...(providerKey.trim() ? { apiKey: providerKey.trim() } : {}),
-    }))
+    }
+  }
+
+  const runDraftPing = async (candidateInput?: RouterProviderInput): Promise<RouterTestResult | null> => {
+    const candidate = candidateInput ?? buildCandidateInput()
+    if (!candidate) return null
+    setDraftPing({ testing: true, result: null, error: null })
+    try {
+      const result = await window.ndDshRouter.testCandidate(candidate)
+      if (result.ok) {
+        setDraftPing({ testing: false, result, error: null })
+      } else {
+        const errorMsg = result.error ? `${result.error} (status: ${result.statusCode})` : `HTTP ${result.statusCode}`
+        setDraftPing({ testing: false, result, error: errorMsg })
+      }
+      return result
+    } catch (cause) {
+      const err = message(cause)
+      setDraftPing({ testing: false, result: null, error: err })
+      return null
+    }
+  }
+
+  const addProvider = async (): Promise<void> => {
+    const candidate = buildCandidateInput()
+    if (!candidate) return
+
+    let testResult = draftPing.result
+    if (!testResult || !testResult.ok) {
+      testResult = await runDraftPing(candidate)
+    }
+
+    if (!testResult || !testResult.ok) {
+      const errorMsg = testResult?.error || draftPing.error || 'Connection failed'
+      onError(`Ping test failed: ${errorMsg}. Provider cannot be saved until ping test succeeds.`)
+      return
+    }
+
+    apply('provider', () => window.ndDshRouter.saveProvider(candidate))
     setProviderName('')
     setProviderBaseUrl('')
     setProviderModels('')
     setProviderKey('')
+    setDraftPing({ testing: false, result: null, error: null })
     setShowProviderForm(false)
   }
 
@@ -229,7 +311,7 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 items-center gap-3 border-b border-border-soft px-[26px] pb-2.5 pt-3">
+      <div className="flex shrink-0 items-center gap-3 border-b border-border-soft px-4 py-1.5">
         <div className="min-w-0 flex-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <nav
             ref={tabListRef}
@@ -261,7 +343,12 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto px-[26px] pb-[42px] pt-1.5">
+      {activeSubTab === 'playground' ? (
+        <div className="flex min-h-0 flex-1 flex-col p-2.5">
+          <RouterPlayground state={state} onError={onError} embedded />
+        </div>
+      ) : (
+        <div className="min-h-0 flex-1 overflow-auto px-[26px] pb-[42px] pt-1.5">
         {activeSubTab === 'overview' && (
           <>
             <SettingsSection title="Gateway" className="mt-3.5">
@@ -446,7 +533,7 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
                 ))}
 
                 {providers.length === 0 ? (
-                  <SettingsNote>No providers yet. Add an OpenAI-compatible endpoint, Antigravity, Qoder CLI, ChatGPT Web, Gemini Web, or DeepSeek Web below.</SettingsNote>
+                  <SettingsNote>No providers yet. Add an OpenAI-compatible endpoint, Antigravity, Qoder CLI, or any web chat lane (Grok, Qwen, Z.ai, Mistral, Perplexity, Poe, Arena, Meta, Duck, ChatGPT, Gemini, DeepSeek) below.</SettingsNote>
                 ) : null}
 
                 {providerFormOpen ? (
@@ -456,37 +543,112 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
                       <div className="flex min-w-0 items-center gap-2">
                         <select
                           aria-label="Provider kind"
-                          className="h-8 w-[230px] shrink-0 rounded-md border border-border bg-surface-1 px-2 text-[11px] text-soft"
+                          className="h-8 w-[250px] shrink-0 rounded-md border border-border bg-surface-1 px-2 text-[11px] text-soft"
                           value={providerKind}
                           disabled={disabled}
                           onChange={(event) => changeProviderKind(event.target.value as ProviderKindChoice)}
                         >
-                          <option value="openai-compatible">OpenAI-compatible</option>
-                          <option value="antigravity">Antigravity (agy CLI)</option>
-                          <option value="qoder">Qoder CLI</option>
-                          <option value="chatgpt-web">ChatGPT Web</option>
-                          <option value="gemini-web">Gemini Web</option>
-                          <option value="deepseek-web">DeepSeek Web</option>
+                          <optgroup label="Free API (Zero Auth Required)">
+                            <option value="pollinations">Pollinations AI (Fast · No Key)</option>
+                            <option value="ovh-kepler">OVH Kepler Cloud (120B / Qwen 3.6 · No Key)</option>
+                            <option value="free-ai">Free.ai (Coding & Vision · No Key)</option>
+                            <option value="kilo-gateway">Kilo Gateway (Aggregator · No Key)</option>
+                          </optgroup>
+                          <optgroup label="Custom API (API Key Required)">
+                            <option value="openai-compatible">OpenAI-compatible</option>
+                          </optgroup>
+                          <optgroup label="CLI (Command Line Tools)">
+                            <option value="antigravity">Antigravity (agy CLI)</option>
+                            <option value="qoder">Qoder CLI</option>
+                            <option value="claude-code-cli">Claude Code CLI</option>
+                            <option value="codex-cli">Codex CLI</option>
+                            <option value="cursor-cli">Cursor CLI</option>
+                            <option value="opencode-cli">OpenCode CLI</option>
+                            <option value="goose-cli">Goose CLI</option>
+                            <option value="hermes-cli">Hermes CLI</option>
+                            <option value="pi-coding">Pi CLI</option>
+                            <option value="zcode-cli">ZCode CLI</option>
+                            <option value="jcode-cli">JCode CLI</option>
+                            <option value="minimax-cli">MiniMax CLI</option>
+                            <option value="gemini-cli">Gemini CLI</option>
+                          </optgroup>
+                          <optgroup label="Web Chat (Browser Session)">
+                            <option value="chatgpt-web">ChatGPT Web</option>
+                            <option value="gemini-web">Gemini Web</option>
+                            <option value="deepseek-web">DeepSeek Web</option>
+                            <option value="grok-web">Grok Web</option>
+                            <option value="qwen-web">Qwen Web</option>
+                            <option value="zai-web">Z.ai Web</option>
+                            <option value="mistral-web">Mistral Web</option>
+                            <option value="perplexity-web">Perplexity Web</option>
+                            <option value="poe-web">Poe Web</option>
+                            <option value="arena-web">Arena AI Web</option>
+                            <option value="meta-web">Meta AI Web</option>
+                            <option value="duck-web">Duck.ai Web</option>
+                          </optgroup>
                         </select>
-                        <span className={rowDesc}>Web lanes use the embedded browser; no key is stored.</span>
+                        <span className={rowDesc}>
+                          {isRouterFreeApiKind(providerKind)
+                            ? 'Free public API: zero authentication required.'
+                            : isRouterWebProviderKind(providerKind)
+                              ? 'Web chat lane: uses the embedded browser session; no key is stored.'
+                              : providerKind === 'antigravity' || providerKind === 'qoder'
+                                ? 'CLI lane: uses local command-line tools and OS credentials.'
+                                : 'API lane: OpenAI-compatible endpoint with optional API key.'}
+                        </span>
                       </div>
                       <div className="flex min-w-0 gap-2">
-                        <Input aria-label="Provider name" placeholder={isRouterWebProviderKind(providerKind) ? 'Name (optional)' : 'Name, e.g. Free plugin'} value={providerName} disabled={disabled} onChange={(event) => setProviderName(event.target.value)} className="max-w-[180px]" />
-                        {providerKind === 'openai-compatible' ? (
-                          <Input aria-label="Provider base URL" placeholder="http://127.0.0.1:8326" value={providerBaseUrl} disabled={disabled} onChange={(event) => setProviderBaseUrl(event.target.value)} className="min-w-0 flex-1 font-mono text-[11px]" />
+                        <Input
+                          aria-label="Provider name"
+                          placeholder={isRouterWebProviderKind(providerKind) ? 'Name (optional)' : 'Name, e.g. Free plugin'}
+                          value={providerName}
+                          disabled={disabled || draftPing.testing}
+                          onChange={(event) => {
+                            setDraftPing({ testing: false, result: null, error: null })
+                            setProviderName(event.target.value)
+                          }}
+                          className="max-w-[180px]"
+                        />
+                        {(providerKind === 'openai-compatible' || isRouterFreeApiKind(providerKind)) ? (
+                          <Input
+                            aria-label="Provider base URL"
+                            placeholder={isRouterFreeApiKind(providerKind) ? (ROUTER_FREE_API_BASE_URLS[providerKind] || 'https://...') : 'http://127.0.0.1:8326'}
+                            value={providerBaseUrl}
+                            disabled={disabled || draftPing.testing}
+                            onChange={(event) => {
+                              setDraftPing({ testing: false, result: null, error: null })
+                              setProviderBaseUrl(event.target.value)
+                            }}
+                            className="min-w-0 flex-1 font-mono text-[11px]"
+                          />
                         ) : null}
                       </div>
                       <div className="flex min-w-0 gap-2">
                         <Input
                           aria-label="Provider models"
-                          placeholder={providerKind === 'antigravity' ? 'Models, e.g. gemini-3.8-flash-medium, claude-sonnet-5-5-medium (from `agy models`)' : providerKind === 'qoder' ? 'Models, e.g. auto, lite, performance (from `qoder --list-models`)' : providerKind === 'chatgpt-web' ? 'Model id (default: default)' : providerKind === 'gemini-web' ? 'Gemini modes, e.g. 3.5 Flash-Lite, 3.8 Flash, 3.1 Pro' : providerKind === 'deepseek-web' ? 'Modes, e.g. default, deep-think' : 'Models (comma separated, optional)'}
+                          placeholder={providerKind === 'antigravity' ? 'Models, e.g. gemini-3.8-flash-medium, claude-sonnet-5-5-medium (from `agy models`)' : providerKind === 'qoder' ? 'Models, e.g. auto, lite, performance (from `qoder --list-models`)' : isRouterWebProviderKind(providerKind) ? `Modes, e.g. ${ROUTER_WEB_LANE_MODELS[providerKind].join(', ')}` : 'Models (comma separated, optional)'}
                           value={providerModels}
-                          disabled={disabled}
-                          onChange={(event) => setProviderModels(event.target.value)}
+                          disabled={disabled || draftPing.testing}
+                          onChange={(event) => {
+                            setDraftPing({ testing: false, result: null, error: null })
+                            setProviderModels(event.target.value)
+                          }}
                           className="min-w-0 flex-1 font-mono text-[11px]"
                         />
                         {providerKind === 'openai-compatible' ? (
-                          <Input aria-label="Provider API key" type="password" autoComplete="off" placeholder="API key (optional)" value={providerKey} disabled={disabled} onChange={(event) => setProviderKey(event.target.value)} className="max-w-[220px]" />
+                          <Input
+                            aria-label="Provider API key"
+                            type="password"
+                            autoComplete="off"
+                            placeholder="API key (optional)"
+                            value={providerKey}
+                            disabled={disabled || draftPing.testing}
+                            onChange={(event) => {
+                              setDraftPing({ testing: false, result: null, error: null })
+                              setProviderKey(event.target.value)
+                            }}
+                            className="max-w-[220px]"
+                          />
                         ) : null}
                       </div>
                       {providerKind === 'antigravity' ? (
@@ -501,13 +663,59 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
                         </span>
                       ) : isRouterWebProviderKind(providerKind) ? (
                         <span className={rowDesc}>
-                          Drives the embedded browser's signed-in {providerKind === 'chatgpt-web' ? 'ChatGPT' : providerKind === 'deepseek-web' ? 'DeepSeek' : 'Gemini'} session.
+                          Drives the embedded browser's signed-in {kindLabel(providerKind)} session.
                           Every router request starts a fresh conversation.
                         </span>
                       ) : null}
-                      <div className="flex items-center gap-1">
-                        <SettingsButton disabled={disabled} onClick={addProvider}>Add provider</SettingsButton>
-                        {providers.length > 0 ? <SettingsButton disabled={disabled} onClick={() => setShowProviderForm(false)}>Cancel</SettingsButton> : null}
+
+                      {draftPing.testing ? (
+                        <div className="flex items-center gap-2 rounded-md border border-border bg-surface-2 px-2.5 py-1 text-[11px] text-soft">
+                          <span className="inline-block h-3 w-3 animate-spin rounded-full border border-soft border-t-transparent" />
+                          <span>Pinging endpoint with test probe...</span>
+                        </div>
+                      ) : null}
+                      {draftPing.result?.ok ? (
+                        <div className="flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[11px] text-emerald-400">
+                          <span className="font-medium">✓ Ping OK ({draftPing.result.latencyMs}ms)</span>
+                          <span className="text-soft">· Model: {draftPing.result.model}</span>
+                          {draftPing.result.preview ? (
+                            <span className="truncate max-w-[280px] text-soft/80" title={draftPing.result.preview}>
+                              ({draftPing.result.preview})
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      {draftPing.error ? (
+                        <div className="flex items-center gap-2 rounded-md border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-[11px] text-rose-400">
+                          <span className="font-medium">✕ Ping Failed:</span>
+                          <span className="truncate max-w-[360px]" title={draftPing.error}>{draftPing.error}</span>
+                        </div>
+                      ) : null}
+
+                      <div className="flex items-center gap-2 pt-1">
+                        <SettingsButton
+                          disabled={disabled || draftPing.testing}
+                          onClick={() => void runDraftPing()}
+                        >
+                          {draftPing.testing ? 'Pinging...' : 'Test connection'}
+                        </SettingsButton>
+                        <SettingsButton
+                          disabled={disabled || draftPing.testing}
+                          onClick={() => void addProvider()}
+                        >
+                          {draftPing.testing ? 'Testing...' : 'Add provider'}
+                        </SettingsButton>
+                        {providers.length > 0 ? (
+                          <SettingsButton
+                            disabled={disabled || draftPing.testing}
+                            onClick={() => {
+                              setShowProviderForm(false)
+                              setDraftPing({ testing: false, result: null, error: null })
+                            }}
+                          >
+                            Cancel
+                          </SettingsButton>
+                        ) : null}
                       </div>
                     </div>
                   </SettingsRow>
@@ -654,11 +862,6 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
           </>
         )}
 
-        {activeSubTab === 'playground' && (
-          <div className="mt-3.5">
-            <RouterPlayground state={state} onError={onError} embedded />
-          </div>
-        )}
 
         {activeSubTab === 'access' && (
           <div className="mt-3.5">
@@ -723,6 +926,7 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
           </>
         )}
       </div>
+      )}
     </div>
   )
 }
@@ -799,9 +1003,11 @@ function ProviderRow({
             {providerBadge(provider.kind)}
           </span>
           <div className={rowStack}>
-            <span className="flex items-center gap-2">
+            <span className="flex flex-wrap items-center gap-1.5">
               <strong className={rowTitle}>{provider.name}</strong>
               {kindLabel(provider.kind) !== provider.name ? <StatusChip neutral>{kindLabel(provider.kind)}</StatusChip> : null}
+              <StatusChip neutral>{categoryBadge(provider.kind).category}</StatusChip>
+              <StatusChip good={categoryBadge(provider.kind).auth === 'none'}>{categoryBadge(provider.kind).authLabel}</StatusChip>
               {provider.hasSecret ? <StatusChip good>Key saved</StatusChip> : null}
             </span>
             <span className={rowPathText}>
@@ -912,14 +1118,45 @@ function plural(count: number, singular: string): string {
   return `${count} ${singular}${count === 1 ? '' : 's'}`
 }
 
+function categoryBadge(kind: string): { category: string; auth: string; authLabel: string } {
+  const cat = providerCategory(kind)
+  const auth = providerAuthMode(kind)
+  const category = cat === 'cli' ? 'CLI' : cat === 'web' ? 'Web Chat' : 'API'
+  const authLabel = auth === 'none' ? 'No Auth (Free)' : auth === 'browser' ? 'Browser Session' : auth === 'cli' ? 'CLI / OS Sign-in' : 'API Key'
+  return { category, auth, authLabel }
+}
+
 function kindLabel(kind: string): string {
   switch (kind) {
+    case 'pollinations': return 'Pollinations AI (Free)'
+    case 'ovh-kepler': return 'OVH Kepler Cloud (Free)'
+    case 'free-ai': return 'Free.ai (Free)'
+    case 'kilo-gateway': return 'Kilo Gateway (Free)'
     case 'chatgpt-web': return 'ChatGPT Web'
     case 'gemini-web': return 'Gemini Web'
     case 'deepseek-web': return 'DeepSeek Web'
+    case 'grok-web': return 'Grok Web'
+    case 'qwen-web': return 'Qwen Web'
+    case 'zai-web': return 'Z.ai Web'
+    case 'mistral-web': return 'Mistral Web'
+    case 'perplexity-web': return 'Perplexity Web'
+    case 'poe-web': return 'Poe Web'
+    case 'arena-web': return 'Arena AI Web'
+    case 'meta-web': return 'Meta AI Web'
+    case 'duck-web': return 'Duck.ai Web'
     case 'openai-compatible': return 'OpenAI-compatible'
-    case 'antigravity': return 'Antigravity'
+    case 'antigravity': return 'Antigravity (agy CLI)'
     case 'qoder': return 'Qoder CLI'
+    case 'claude-code-cli': return 'Claude Code CLI'
+    case 'codex-cli': return 'Codex CLI'
+    case 'cursor-cli': return 'Cursor CLI'
+    case 'opencode-cli': return 'OpenCode CLI'
+    case 'goose-cli': return 'Goose CLI'
+    case 'hermes-cli': return 'Hermes CLI'
+    case 'pi-coding': return 'Pi CLI'
+    case 'zcode-cli': return 'ZCode CLI'
+    case 'jcode-cli': return 'JCode CLI'
+    case 'minimax-cli': return 'MiniMax CLI'
     case 'gemini-cli': return 'Gemini CLI'
     default: return kind
   }

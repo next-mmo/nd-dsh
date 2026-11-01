@@ -5,6 +5,15 @@ export const ND_NATIVE_ENGINE_ID = 'nd-native'
 export const CHATGPT_WEB_ENGINE_ID = 'chatgpt-web'
 export const GEMINI_WEB_ENGINE_ID = 'gemini-web'
 export const DEEPSEEK_WEB_ENGINE_ID = 'deepseek-web'
+export const GROK_WEB_ENGINE_ID = 'grok-web'
+export const QWEN_WEB_ENGINE_ID = 'qwen-web'
+export const ZAI_WEB_ENGINE_ID = 'zai-web'
+export const MISTRAL_WEB_ENGINE_ID = 'mistral-web'
+export const PERPLEXITY_WEB_ENGINE_ID = 'perplexity-web'
+export const POE_WEB_ENGINE_ID = 'poe-web'
+export const ARENA_WEB_ENGINE_ID = 'arena-web'
+export const META_WEB_ENGINE_ID = 'meta-web'
+export const DUCK_WEB_ENGINE_ID = 'duck-web'
 export const CODEX_ENGINE_ID = 'codex'
 export const CODEX_CLI_ENGINE_ID = 'codex-cli'
 export const ANTIGRAVITY_ENGINE_ID = 'antigravity'
@@ -91,6 +100,217 @@ export function deepSeekWebEngineDescriptor(): CodingEngineDescriptor {
       persistentSessions: true,
     },
     workerInstructions: '\nExecution engine: DeepSeek Web. Conversation transport is the signed-in DeepSeek website in ND\'s visible browser. Do not assume direct ND filesystem or shell tools exist inside DeepSeek.\n',
+  }
+}
+
+export function grokWebEngineDescriptor(): CodingEngineDescriptor {
+  return {
+    id: GROK_WEB_ENGINE_ID,
+    name: 'Grok Web',
+    integration: 'primary',
+    available: true,
+    description: 'Chat through the signed-in Grok website (https://grok.com/) in ND\'s visible browser. Each chat keeps its conversation on grok.com; models like grok-3, grok-2, Think, and DeepSearch can be selected per chat, and no Git or filesystem transport is assumed.',
+    capabilities: {
+      workspace: false,
+      filesystem: false,
+      shell: false,
+      browser: true,
+      skills: false,
+      mcp: false,
+      modelProviderRouting: false,
+      humanApprovals: false,
+      streaming: false,
+      persistentSessions: true,
+    },
+    workerInstructions: '\nExecution engine: Grok Web. Conversation transport is the signed-in Grok website in ND\'s visible browser. Do not assume direct ND filesystem or shell tools exist inside Grok.\n',
+  }
+}
+
+export function qwenWebEngineDescriptor(): CodingEngineDescriptor {
+  return {
+    id: QWEN_WEB_ENGINE_ID,
+    name: 'Qwen Web',
+    integration: 'primary',
+    available: true,
+    description: 'Chat through the signed-in Qwen Web website (https://chat.qwen.ai/) in ND\'s visible browser. Coding, reasoning, and translation with Qwen models.',
+    capabilities: {
+      workspace: false,
+      filesystem: false,
+      shell: false,
+      browser: true,
+      skills: false,
+      mcp: false,
+      modelProviderRouting: false,
+      humanApprovals: false,
+      streaming: false,
+      persistentSessions: true,
+    },
+    workerInstructions: '\nExecution engine: Qwen Web. Conversation transport is the signed-in Qwen Web website in ND\'s visible browser. Do not assume direct ND filesystem or shell tools exist inside Qwen Web.\n',
+  }
+}
+
+export function zaiWebEngineDescriptor(): CodingEngineDescriptor {
+  return {
+    id: ZAI_WEB_ENGINE_ID,
+    name: 'Z.ai Web',
+    integration: 'primary',
+    available: true,
+    description: 'Chat through the signed-in Z.ai Web website (https://chat.z.ai/) in ND\'s visible browser. Coding and technical tasks with GLM models.',
+    capabilities: {
+      workspace: false,
+      filesystem: false,
+      shell: false,
+      browser: true,
+      skills: false,
+      mcp: false,
+      modelProviderRouting: false,
+      humanApprovals: false,
+      streaming: false,
+      persistentSessions: true,
+    },
+    workerInstructions: '\nExecution engine: Z.ai Web. Conversation transport is the signed-in Z.ai Web website in ND\'s visible browser. Do not assume direct ND filesystem or shell tools exist inside Z.ai Web.\n',
+  }
+}
+
+
+
+export function mistralWebEngineDescriptor(): CodingEngineDescriptor {
+  return {
+    id: MISTRAL_WEB_ENGINE_ID,
+    name: 'Mistral Web',
+    integration: 'primary',
+    available: true,
+    description: 'Chat through the signed-in Mistral Web website (https://chat.mistral.ai/) in ND\'s visible browser. Coding, productivity, and chat with Mistral models.',
+    capabilities: {
+      workspace: false,
+      filesystem: false,
+      shell: false,
+      browser: true,
+      skills: false,
+      mcp: false,
+      modelProviderRouting: false,
+      humanApprovals: false,
+      streaming: false,
+      persistentSessions: true,
+    },
+    workerInstructions: '\nExecution engine: Mistral Web. Conversation transport is the signed-in Mistral Web website in ND\'s visible browser. Do not assume direct ND filesystem or shell tools exist inside Mistral Web.\n',
+  }
+}
+
+
+
+export function perplexityWebEngineDescriptor(): CodingEngineDescriptor {
+  return {
+    id: PERPLEXITY_WEB_ENGINE_ID,
+    name: 'Perplexity Web',
+    integration: 'primary',
+    available: true,
+    description: 'Chat through the signed-in Perplexity Web website (https://www.perplexity.ai/) in ND\'s visible browser. Deep research and cited answers with Perplexity models.',
+    capabilities: {
+      workspace: false,
+      filesystem: false,
+      shell: false,
+      browser: true,
+      skills: false,
+      mcp: false,
+      modelProviderRouting: false,
+      humanApprovals: false,
+      streaming: false,
+      persistentSessions: true,
+    },
+    workerInstructions: '\nExecution engine: Perplexity Web. Conversation transport is the signed-in Perplexity Web website in ND\'s visible browser. Do not assume direct ND filesystem or shell tools exist inside Perplexity Web.\n',
+  }
+}
+
+export function poeWebEngineDescriptor(): CodingEngineDescriptor {
+  return {
+    id: POE_WEB_ENGINE_ID,
+    name: 'Poe Web',
+    integration: 'primary',
+    available: true,
+    description: 'Chat through the signed-in Poe Web website (https://poe.com/) in ND\'s visible browser. Multiple AI models in one site with Poe.',
+    capabilities: {
+      workspace: false,
+      filesystem: false,
+      shell: false,
+      browser: true,
+      skills: false,
+      mcp: false,
+      modelProviderRouting: false,
+      humanApprovals: false,
+      streaming: false,
+      persistentSessions: true,
+    },
+    workerInstructions: '\nExecution engine: Poe Web. Conversation transport is the signed-in Poe Web website in ND\'s visible browser. Do not assume direct ND filesystem or shell tools exist inside Poe Web.\n',
+  }
+}
+
+export function arenaWebEngineDescriptor(): CodingEngineDescriptor {
+  return {
+    id: ARENA_WEB_ENGINE_ID,
+    name: 'Arena AI Web',
+    integration: 'primary',
+    available: true,
+    description: 'Chat through the signed-in Arena AI Web website (https://arena.ai/) in ND\'s visible browser. Compare AI model responses with Arena AI.',
+    capabilities: {
+      workspace: false,
+      filesystem: false,
+      shell: false,
+      browser: true,
+      skills: false,
+      mcp: false,
+      modelProviderRouting: false,
+      humanApprovals: false,
+      streaming: false,
+      persistentSessions: true,
+    },
+    workerInstructions: '\nExecution engine: Arena AI Web. Conversation transport is the signed-in Arena AI Web website in ND\'s visible browser. Do not assume direct ND filesystem or shell tools exist inside Arena AI Web.\n',
+  }
+}
+
+export function metaWebEngineDescriptor(): CodingEngineDescriptor {
+  return {
+    id: META_WEB_ENGINE_ID,
+    name: 'Meta AI Web',
+    integration: 'primary',
+    available: true,
+    description: 'Chat through the signed-in Meta AI Web website (https://www.meta.ai/) in ND\'s visible browser. General chat and images with Meta AI.',
+    capabilities: {
+      workspace: false,
+      filesystem: false,
+      shell: false,
+      browser: true,
+      skills: false,
+      mcp: false,
+      modelProviderRouting: false,
+      humanApprovals: false,
+      streaming: false,
+      persistentSessions: true,
+    },
+    workerInstructions: '\nExecution engine: Meta AI Web. Conversation transport is the signed-in Meta AI Web website in ND\'s visible browser. Do not assume direct ND filesystem or shell tools exist inside Meta AI Web.\n',
+  }
+}
+
+export function duckWebEngineDescriptor(): CodingEngineDescriptor {
+  return {
+    id: DUCK_WEB_ENGINE_ID,
+    name: 'Duck.ai Web',
+    integration: 'primary',
+    available: true,
+    description: 'Chat through the signed-in Duck.ai Web website (https://duck.ai/) in ND\'s visible browser. Privacy-focused AI chat with Duck.ai.',
+    capabilities: {
+      workspace: false,
+      filesystem: false,
+      shell: false,
+      browser: true,
+      skills: false,
+      mcp: false,
+      modelProviderRouting: false,
+      humanApprovals: false,
+      streaming: false,
+      persistentSessions: true,
+    },
+    workerInstructions: '\nExecution engine: Duck.ai Web. Conversation transport is the signed-in Duck.ai Web website in ND\'s visible browser. Do not assume direct ND filesystem or shell tools exist inside Duck.ai Web.\n',
   }
 }
 

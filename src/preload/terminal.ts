@@ -81,6 +81,7 @@ const routerApi: RouterDesktopApi = {
   googleExistingAccount: () => ipcRenderer.invoke(ROUTER_IPC.googleExisting),
   saveCombo: (input) => ipcRenderer.invoke(ROUTER_IPC.saveCombo, input),
   deleteCombo: (comboId) => ipcRenderer.invoke(ROUTER_IPC.deleteCombo, comboId),
+  testCandidate: (input) => ipcRenderer.invoke(ROUTER_IPC.testCandidate, input),
   testProvider: (providerId) => ipcRenderer.invoke(ROUTER_IPC.testProvider, providerId),
   usage: () => ipcRenderer.invoke(ROUTER_IPC.usage),
   resetUsage: () => ipcRenderer.invoke(ROUTER_IPC.resetUsage),

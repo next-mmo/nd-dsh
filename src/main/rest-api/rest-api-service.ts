@@ -1,7 +1,20 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { promises as fsPromises, existsSync, writeFileSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
-import { CHATGPT_WEB_ENGINE_ID, DEEPSEEK_WEB_ENGINE_ID, GEMINI_WEB_ENGINE_ID } from '../../shared/coding-engines.js'
+import {
+  ARENA_WEB_ENGINE_ID,
+  CHATGPT_WEB_ENGINE_ID,
+  DEEPSEEK_WEB_ENGINE_ID,
+  DUCK_WEB_ENGINE_ID,
+  GEMINI_WEB_ENGINE_ID,
+  GROK_WEB_ENGINE_ID,
+  META_WEB_ENGINE_ID,
+  MISTRAL_WEB_ENGINE_ID,
+  PERPLEXITY_WEB_ENGINE_ID,
+  POE_WEB_ENGINE_ID,
+  QWEN_WEB_ENGINE_ID,
+  ZAI_WEB_ENGINE_ID,
+} from '../../shared/coding-engines.js'
 import { parsePromptShieldBlockedError } from '../../shared/prompt-shield.js'
 import type {
   RestApiRunRequest,
@@ -431,6 +444,15 @@ function normalizeEngineId(engine?: string): string {
   if (lower === 'gpt-web' || lower === 'chatgpt' || lower === 'chatgpt-web') return CHATGPT_WEB_ENGINE_ID
   if (lower === 'gemini-web' || lower === 'gemini') return GEMINI_WEB_ENGINE_ID
   if (lower === 'deepseek-web' || lower === 'deepseek') return DEEPSEEK_WEB_ENGINE_ID
+  if (lower === 'grok-web' || lower === 'grok') return GROK_WEB_ENGINE_ID
+  if (lower === 'qwen-web' || lower === 'qwen') return QWEN_WEB_ENGINE_ID
+  if (lower === 'zai-web' || lower === 'zai' || lower === 'glm-web' || lower === 'glm') return ZAI_WEB_ENGINE_ID
+  if (lower === 'mistral-web' || lower === 'mistral') return MISTRAL_WEB_ENGINE_ID
+  if (lower === 'perplexity-web' || lower === 'perplexity') return PERPLEXITY_WEB_ENGINE_ID
+  if (lower === 'poe-web' || lower === 'poe') return POE_WEB_ENGINE_ID
+  if (lower === 'arena-web' || lower === 'arena' || lower === 'lmsys') return ARENA_WEB_ENGINE_ID
+  if (lower === 'meta-web' || lower === 'meta') return META_WEB_ENGINE_ID
+  if (lower === 'duck-web' || lower === 'duck' || lower === 'duck-ai') return DUCK_WEB_ENGINE_ID
   return engine
 }
 

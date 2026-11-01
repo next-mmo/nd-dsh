@@ -14,12 +14,13 @@ import { Toaster } from './components/ui/sonner'
 import { ChatPanel } from './components/ChatPanel'
 import { SurfaceErrorBoundary } from './components/surface-error-boundary'
 import { useNativeViewOcclusion } from './lib/use-native-view-occlusion'
+import { setMiniBrowserActive, useMiniBrowserActive } from './lib/use-mini-browser'
 import { DesignView } from './components/DesignView'
 import { DiffView } from './components/DiffView'
 import { DshCodingSurface } from './components/DshCodingSurface'
 import { EditorPane } from './components/EditorPane'
 import { Explorer } from './components/Explorer'
-import { BrowserIcon, CameraIcon, CompanyIcon, CrosshairIcon, ExternalIcon, FileIcon, HomeIcon, MonitorIcon, PencilIcon, PuzzleIcon, QualityIcon, SettingsIcon, SidebarToggleIcon, SparkIcon, TrashIcon } from './components/Icons'
+import { BrowserIcon, CameraIcon, CompanyIcon, CrosshairIcon, ExternalIcon, FileIcon, GridIcon, HomeIcon, MonitorIcon, PencilIcon, PuzzleIcon, QualityIcon, SettingsIcon, SidebarToggleIcon, SparkIcon, TrashIcon } from './components/Icons'
 import { OrganizationDashboard, type CompanyView } from './components/OrganizationDashboard'
 import { QaView } from './components/QaView'
 import { RuntimePrompts } from './components/RuntimePrompts'
@@ -80,13 +81,14 @@ import {
 } from './lib/settings-route'
 
 const ExtensionPackagesCard = lazy(() => import('./components/ExtensionPackages').then((module) => ({ default: module.ExtensionPackagesCard })))
+const ExtensionViewDialog = lazy(() => import('./components/ExtensionPackages').then((module) => ({ default: module.ExtensionViewDialog })))
 const SettingsPane = lazy(() => import('./components/SettingsPane').then((module) => ({ default: module.SettingsPane })))
 
-type ProductView = 'home' | 'company' | 'agent' | 'design' | 'qa' | 'extensions' | 'settings'
+type ProductView = 'home' | 'company' | 'agent' | 'design' | 'qa' | 'extensions' | 'router' | 'settings'
 
 type AgentPane = 'files' | 'browser'
 
-const VIEWS: ProductView[] = ['home', 'company', 'agent', 'design', 'qa', 'extensions', 'settings']
+const VIEWS: ProductView[] = ['home', 'company', 'agent', 'design', 'qa', 'extensions', 'router', 'settings']
 
 const CHAT_MIN_PX = 580
 const CHAT_DEFAULT_PX = 640
@@ -125,9 +127,11 @@ function initialChatLayout(): { width: number; sessionsCollapsed: boolean } {
 function viewFromHash(): ProductView {
   const route = window.location.hash.replace(/^#\/?/, '').split(/[/?]/)[0]
   if (route === 'extensions') return 'extensions'
+  if (route === 'router' || route === 'nd-router') return 'router'
   if (route === 'settings') {
     const tab = settingsTabFromLocation()
     if (tab === 'extensions') return 'extensions'
+    if (tab === 'router') return 'router'
     return 'settings'
   }
   return VIEWS.includes(route as ProductView) ? (route as ProductView) : 'agent'
@@ -135,6 +139,10 @@ function viewFromHash(): ProductView {
 
 function hashForView(view: ProductView, settingsTab: SettingsTab, settingsSubTabs: SettingsSubTabs): string {
   if (view === 'extensions') return '#/settings?tab=extensions'
+  if (view === 'router') {
+    const subTab = settingsSubTabs.router
+    return settingsHash('router', subTab)
+  }
   if (view !== 'settings') return `#/${view}`
   const subTab = settingsTab === 'general'
     ? settingsSubTabs.general
@@ -322,11 +330,14 @@ export default function App() {
   // shell makes that decision in one place so two mounted panes can never
   // fight over visibility, and a dialog (occlusion) always wins.
   const nativeOverlayOpen = useNativeViewOcclusion()
-  const browserSurface = view === 'agent' && agentPane === 'browser'
-    ? 'agent'
-    : view === 'home' && personalPane === 'browser'
-      ? 'personal'
-      : null
+  const miniBrowserActive = useMiniBrowserActive()
+  const browserSurface = miniBrowserActive
+    ? 'mini-browser'
+    : view === 'agent' && agentPane === 'browser'
+      ? 'agent'
+      : view === 'home' && personalPane === 'browser'
+        ? 'personal'
+        : null
   useEffect(() => {
     // The float overlay owns no surface; letting it claim the shared native
     // browser view would both reject and fight the full window for it.
@@ -336,9 +347,17 @@ export default function App() {
   // PRD 0006: ND Home personal records, extension packages, and the launcher's
   // explicit context selector (Personal by default, independent of the active
   // company/project selection).
+  const [miniBrowserOpen, setMiniBrowserOpen] = useState(false)
   const [ndExtensions, setNdExtensions] = useState<NdExtensionsStateView | null>(null)
   useEffect(() => { if (ndExtensions) reconcileExtensionKeepAlive(ndExtensions) }, [ndExtensions])
+  useEffect(() => { setMiniBrowserActive(miniBrowserOpen) }, [miniBrowserOpen])
   const [extensionViewRequest, setExtensionViewRequest] = useState<{ extensionId: string; viewId: string; context: NdContext } | null>(null)
+  useEffect(() => {
+    if (extensionViewRequest?.extensionId === 'nd.mini-browser') {
+      setMiniBrowserOpen(true)
+      setExtensionViewRequest(null)
+    }
+  }, [extensionViewRequest])
   const [homeState, setHomeState] = useState<NdHomeStateView | null>(null)
   const [homeBusy, setHomeBusy] = useState(false)
   const [launcherContextId, setLauncherContextId] = useState('personal')
@@ -938,7 +957,9 @@ export default function App() {
     if (nextView) {
       if (nextView === 'extensions') {
         setSettingsTab('extensions')
-      } else if (nextView === 'settings' && settingsTab === 'extensions') {
+      } else if (nextView === 'router') {
+        setSettingsTab('router')
+      } else if (nextView === 'settings' && (settingsTab === 'extensions' || settingsTab === 'router')) {
         setSettingsTab('general')
       } else if (nextView === 'home') {
         switchProject(PERSONAL_PROJECT_ID)
@@ -961,8 +982,14 @@ export default function App() {
       selectSurface('workbench')
       return
     }
+    if (tab === 'router') {
+      setView('router')
+      setSettingsTab('router')
+      selectSurface('workbench')
+      return
+    }
     if (tab) setSettingsTab(tab)
-    else if (settingsTab === 'extensions') setSettingsTab('general')
+    else if (settingsTab === 'extensions' || settingsTab === 'router') setSettingsTab('general')
     switchToWorkbench('settings')
   }
 
@@ -979,8 +1006,11 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (workspaceProfile === 'general' && view === 'qa') setView('home')
-  }, [workspaceProfile, view])
+    if (workspaceProfile === 'general') {
+      if (view === 'qa' || view === 'router') setView('home')
+      if (agentPane === 'files') setAgentPane('browser')
+    }
+  }, [workspaceProfile, view, agentPane])
 
   const selectTheme = (mode: ThemeMode): void => {
     void window.ndDsh.theme.set(mode).then(setTheme).catch((cause) => notify(errorMessage(cause)))
@@ -1438,6 +1468,10 @@ export default function App() {
       return
     }
     if (command.openViewId) {
+      if (command.openViewId === 'mini-browser' || command.extensionId === 'nd.mini-browser') {
+        setMiniBrowserOpen(true)
+        return
+      }
       setExtensionViewRequest({ extensionId: command.extensionId, viewId: command.openViewId, context })
       setSettingsTab('extensions')
       setView('extensions')
@@ -1615,11 +1649,12 @@ export default function App() {
     { id: 'design', label: 'Design', icon: <PencilIcon /> },
     { id: 'qa', label: 'QA', icon: <QualityIcon /> },
     { id: 'extensions', label: 'Extensions', icon: <PuzzleIcon /> },
+    { id: 'router', label: 'ND Router', icon: <GridIcon /> },
     { id: 'settings', label: 'Settings', icon: <SettingsIcon /> },
   ]
   const navItems = workspaceProfile === 'coding'
     ? allNavItems
-    : allNavItems.filter((item) => item.id !== 'qa')
+    : allNavItems.filter((item) => item.id !== 'qa' && item.id !== 'router')
 
   if (inspectScope === 'external') {
     return (
@@ -1806,10 +1841,12 @@ export default function App() {
                   className={cn(
                     'grid h-[22px] min-w-[52px] place-items-center rounded-md border px-2 text-[9px] font-extrabold tracking-[0.06em] transition-[color,background-color,border-color,box-shadow] disabled:cursor-not-allowed disabled:opacity-50',
                     workspaceProfile === profile
-                      ? 'border-primary/25 bg-primary/12 text-primary shadow-[0_1px_3px_rgba(0,0,0,0.2)]'
+                      ? (profile === 'general'
+                          ? 'border-blue-500/30 bg-blue-500/15 text-blue-400 shadow-[0_1px_3px_rgba(59,130,246,0.25)]'
+                          : 'border-emerald-500/30 bg-emerald-500/15 text-emerald-400 shadow-[0_1px_3px_rgba(16,185,129,0.25)]')
                       : 'border-transparent text-faint hover:bg-accent hover:text-foreground',
                   )}
-                  title={profile === 'general' ? 'General workspace for everyday AI work and extensions' : 'Coding workspace with developer tools and coding surfaces'}
+                  title={profile === 'general' ? 'General: Create, learn, and explore — everyday AI, personal notes, browser & design' : 'Coding: Build, debug, and ship — developer workbench, git controls, files, terminal & QA'}
                   onClick={() => selectWorkspaceProfile(profile)}
                 >
                   {profile === 'general' ? 'GENERAL' : 'CODING'}
@@ -1853,9 +1890,12 @@ export default function App() {
               </div>
             ) : null}
             <div className="flex min-w-0 flex-col">
-              <strong className="text-[15px] tracking-[0.06em] text-strong">ND-DSH</strong>
-              <span className="overflow-hidden text-xs text-faint text-ellipsis whitespace-nowrap">
-                {headerWorkspaceLabel}
+              <div className="flex items-center gap-1.5">
+                <strong className="text-[14px] font-extrabold tracking-[0.06em] text-strong">ND-DSH</strong>
+                <span className={cn('rounded-full px-1.5 py-0.2 text-[9px] font-bold tracking-wider uppercase', workspaceProfile === 'general' ? 'border border-blue-500/20 bg-blue-500/10 text-blue-400' : 'border border-emerald-500/20 bg-emerald-500/10 text-emerald-400')}>{workspaceProfile === 'general' ? 'General' : 'Coding'}</span>
+              </div>
+              <span className="overflow-hidden text-[11px] text-faint text-ellipsis whitespace-nowrap" title={workspaceProfile === 'general' ? 'Everyday AI · Create, learn, and explore' : (headerWorkspaceLabel && headerWorkspaceLabel !== 'No workspace' ? `${headerWorkspaceLabel} · Build, debug, and ship` : 'Build, debug, and ship')}>
+                {workspaceProfile === 'general' ? 'Create, learn, and explore' : (headerWorkspaceLabel && headerWorkspaceLabel !== 'No workspace' ? `${headerWorkspaceLabel} · Build, debug, and ship` : 'Build, debug, and ship')}
               </span>
             </div>
           </div>
@@ -2035,7 +2075,7 @@ export default function App() {
           </SurfaceErrorBoundary>
         ) : (
           <>
-            <div className={cn('h-full w-full', view === 'settings' || view === 'extensions' ? 'hidden' : 'block')}>
+            <div className={cn('h-full w-full', view === 'settings' || view === 'extensions' || view === 'router' ? 'hidden' : 'block')}>
               <Group orientation="horizontal" className="h-full w-full">
             <Panel
               panelRef={chatPanelRef}
@@ -2054,6 +2094,7 @@ export default function App() {
               <SurfaceErrorBoundary label="Chat" resetKey={workspace?.root ?? 'workspace-loading'} onError={notify}>
                 <ChatPanel
                   key={workspace?.root ?? 'workspace-loading'}
+                  workspaceProfile={workspaceProfile ?? 'general'}
                   status={harnessStatus}
                   workspaceRoot={workspace?.root}
                   onGitEditableChange={setGitEditable}
@@ -2095,7 +2136,7 @@ export default function App() {
                 <SurfaceErrorBoundary label="Personal" resetKey={`home:${homeState?.notes.length ?? 0}`} onError={notify}>
                   {homeState ? (
                     <PersonalSurface
-                      active={view === 'home'}
+                      active={view === 'home' && !miniBrowserOpen}
                       pane={personalPane}
                       onPaneChange={setPersonalPane}
                       newTabPage={
@@ -2148,14 +2189,29 @@ export default function App() {
               <section aria-hidden={view !== 'agent'} className={cn('absolute inset-0 overflow-hidden', view === 'agent' && !workspaceCollapsed ? 'flex' : 'hidden')}>
                 <div className="flex h-full w-full min-w-0 flex-col overflow-hidden">
                   <div className="flex shrink-0 items-center gap-[3px] border-b border-border-soft bg-secondary px-2 py-1" role="tablist" aria-label="Agent workspace panes">
-                    <button className={paneTabClasses(agentPane === 'files')} onClick={() => setAgentPane('files')}>
-                      <FileIcon />
-                      <span>Files</span>
-                    </button>
-                    <button className={paneTabClasses(agentPane === 'browser')} onClick={() => setAgentPane('browser')}>
-                      <BrowserIcon />
-                      <span>Browser</span>
-                    </button>
+                    {workspaceProfile === 'general' ? (
+                      <>
+                        <button className={paneTabClasses(agentPane === 'browser')} onClick={() => setAgentPane('browser')}>
+                          <BrowserIcon />
+                          <span>Browser</span>
+                        </button>
+                        <button className={paneTabClasses(agentPane === 'files')} onClick={() => setAgentPane('files')}>
+                          <FileIcon />
+                          <span>Files & Notes</span>
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button className={paneTabClasses(agentPane === 'files')} onClick={() => setAgentPane('files')}>
+                          <FileIcon />
+                          <span>Files</span>
+                        </button>
+                        <button className={paneTabClasses(agentPane === 'browser')} onClick={() => setAgentPane('browser')}>
+                          <BrowserIcon />
+                          <span>Browser</span>
+                        </button>
+                      </>
+                    )}
                   </div>
                   <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
                     {agentPane === 'files' ? (
@@ -2235,7 +2291,7 @@ export default function App() {
                     ) : (
                       <SurfaceErrorBoundary label="Browser" resetKey={`${view}:${browserState?.url ?? ''}`} onError={notify}>
                         <BrowserPane
-                          active={view === 'agent'}
+                          active={view === 'agent' && !miniBrowserOpen}
                           state={browserState}
                           onSnapshot={(result) => {
                             navigator.clipboard.writeText(result)
@@ -2279,10 +2335,10 @@ export default function App() {
             </Panel>
           </Group>
         </div>
-        {view === 'settings' || view === 'extensions' ? (
-          <section aria-hidden={view !== 'settings' && view !== 'extensions'} className="relative h-full w-full overflow-hidden">
+        {view === 'settings' || view === 'extensions' || view === 'router' ? (
+          <section aria-hidden={view !== 'settings' && view !== 'extensions' && view !== 'router'} className="relative h-full w-full overflow-hidden">
             <Suspense fallback={<div className="grid h-full w-full place-items-center bg-surface-0"><div className="size-[34px] animate-spin rounded-full border border-border-strong border-t-primary" /></div>}>
-              <SurfaceErrorBoundary label={view === 'extensions' ? 'Extensions' : 'Settings'} resetKey={view} onError={notify}>
+              <SurfaceErrorBoundary label={view === 'extensions' ? 'Extensions' : view === 'router' ? 'ND Router' : 'Settings'} resetKey={view} onError={notify}>
                 <SettingsPane
                   theme={theme}
                   onSelectTheme={selectTheme}
@@ -2295,11 +2351,14 @@ export default function App() {
                     switchToWorkbench('agent')
                     setAgentPane('browser')
                   }}
-                  tab={view === 'extensions' ? 'extensions' : settingsTab}
+                  tab={view === 'extensions' ? 'extensions' : view === 'router' ? 'router' : settingsTab}
                   onSelectTab={(tab) => {
                     if (tab === 'extensions') {
                       setView('extensions')
                       setSettingsTab('extensions')
+                    } else if (tab === 'router') {
+                      setView('router')
+                      setSettingsTab('router')
                     } else {
                       setView('settings')
                       setSettingsTab(tab)
@@ -2319,10 +2378,10 @@ export default function App() {
                       state={ndExtensions}
                       organization={orgState}
                       contexts={extensionContextOptions}
-                      requestedView={extensionViewRequest}
+                      requestedView={null}
                       onRequestedViewHandled={() => setExtensionViewRequest(null)}
                       browserFocusNudge={browserFocusNudge}
-                      onOpenBrowser={async (tabId) => {
+                      onOpenBrowser={async (tabId: string) => {
                         await window.ndDsh.browserPlatform.activateTab('builtin', tabId)
                         await window.ndDsh.browserPlatform.select({ mode: 'tab', targetId: 'builtin', tabId })
                         switchToWorkbench('agent')
@@ -2381,6 +2440,65 @@ export default function App() {
       ) : null}
       <RuntimePrompts onError={notify} organization={orgState} />
       <ExtensionKeepAliveHost theme={theme?.effective ?? 'dark'} onError={notify} />
+      <Dialog open={miniBrowserOpen} onOpenChange={setMiniBrowserOpen}>
+        <DialogContent
+          data-browser-dialog="true"
+          showCloseButton={false}
+          className="p-0 border-border-strong bg-background overflow-hidden max-w-[94vw] w-[1140px] h-[82vh] max-h-[820px] rounded-xl flex flex-col gap-0 shadow-2xl"
+        >
+          <BrowserPane
+            active={miniBrowserOpen}
+            mode="dialog"
+            state={browserState}
+            newTabPage={
+              homeState ? (
+                <PersonalDialpad
+                  links={homeState.links}
+                  onOpen={openPersonalTab}
+                  onRemoveLink={removePersonalDialpadLink}
+                  onError={notify}
+                />
+              ) : undefined
+            }
+            onSaveSite={savePersonalDialpadLink}
+            siteSaved={personalSiteSaved}
+            onSnapshot={(result) => {
+              navigator.clipboard.writeText(result)
+                .then(() => notify('Browser snapshot copied to the clipboard.'))
+                .catch(() => notify('Browser snapshot captured, but copying to the clipboard failed.'))
+            }}
+            onError={notify}
+            onOpenSettings={() => {
+              setMiniBrowserOpen(false)
+              setSettingsTab('general')
+              setSettingsSubTabs((current) => ({ ...current, general: 'browser' }))
+              switchToWorkbench('settings')
+            }}
+            onPopOut={() => {
+              setMiniBrowserOpen(false)
+              switchToWorkbench('home')
+              setPersonalPane('browser')
+            }}
+            onClose={() => setMiniBrowserOpen(false)}
+          />
+        </DialogContent>
+      </Dialog>
+      <ExtensionViewDialog
+        target={extensionViewRequest}
+        organization={orgState}
+        state={ndExtensions ?? undefined}
+        onClose={() => setExtensionViewRequest(null)}
+        onError={notify}
+        onChanged={async () => {
+          setNdExtensions(await window.ndDsh.ndExtensions.state())
+        }}
+        onOpenBrowser={async (tabId: string) => {
+          await window.ndDsh.browserPlatform.activateTab('builtin', tabId)
+          await window.ndDsh.browserPlatform.select({ mode: 'tab', targetId: 'builtin', tabId })
+          switchToWorkbench('agent')
+          setAgentPane('browser')
+        }}
+      />
       <ModalInspectDock
         hidden={captureOverlay !== null}
         pickDisabled={elementInspectActive}

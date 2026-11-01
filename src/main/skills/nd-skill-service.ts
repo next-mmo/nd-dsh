@@ -15,6 +15,10 @@ function inside(root: string, path: string): boolean {
   const rel = relative(root, path)
   return !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`)
 }
+function normalizePath(p: string): string {
+  const resolved = resolve(p)
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved
+}
 function flag(data: Record<string, unknown>, key: string, fallback: boolean): boolean {
   if (!(key in data)) return fallback
   const value = String(data[key]).toLowerCase()
@@ -46,17 +50,28 @@ export class NdSkillService {
   private async context(expectedProjectId?: string | null): Promise<{ state: OrganizationSnapshot; scope: Scope; key: string }> {
     const root = resolve(this.deps.workspace.state().root)
     const state = await this.deps.organization.state()
-    const projectId = state.activeProjectId ?? null
-    const project = state.projects.find((item) => item.id === projectId)
-    if (projectId && projectId !== PERSONAL_PROJECT_ID && !project) throw new Error('Active skill project is unavailable')
-    if (expectedProjectId !== undefined && expectedProjectId !== projectId) throw new Error('Skill project changed; reopen Skills')
-    if (project && (!project.workspacePath || resolve(project.workspacePath) !== root)) throw new Error('Skill workspace does not match active project')
+    let projectId = state.activeProjectId ?? null
+    let project = state.projects.find((item) => item.id === projectId)
+    if (expectedProjectId === null) {
+      // Unscoped request (e.g. RouterPlayground): fallback gracefully if project is unlinked or workspace differs
+      if (projectId && projectId !== PERSONAL_PROJECT_ID && !project) {
+        projectId = null
+        project = undefined
+      } else if (project && (!project.workspacePath || normalizePath(project.workspacePath) !== normalizePath(root))) {
+        projectId = null
+        project = undefined
+      }
+    } else {
+      if (projectId && projectId !== PERSONAL_PROJECT_ID && !project) throw new Error('Active skill project is unavailable')
+      if (expectedProjectId !== undefined && expectedProjectId !== projectId) throw new Error('Skill project changed; reopen Skills')
+      if (project && (!project.workspacePath || normalizePath(project.workspacePath) !== normalizePath(root))) throw new Error('Skill workspace does not match active project')
+    }
     const scope = { root, projectId }
     return { state, scope, key: createHash('sha256').update(JSON.stringify(scope)).digest('hex') }
   }
 
-  async assertScope(key: string): Promise<void> {
-    if ((await this.context()).key !== key) throw new Error('Skill workspace changed; reopen Skills')
+  async assertScope(key: string, expectedProjectId?: string | null): Promise<void> {
+    if ((await this.context(expectedProjectId)).key !== key) throw new Error('Skill workspace changed; reopen Skills')
   }
 
   private async collect(expectedProjectId?: string | null): Promise<{ scope: string; skills: Skill[] }> {
@@ -104,7 +119,7 @@ export class NdSkillService {
         } catch { /* Malformed/unreadable files are not executable catalog entries. */ }
       }
     }
-    await this.assertScope(context.key)
+    await this.assertScope(context.key, expectedProjectId)
     return { scope: context.key, skills: [...skills.values()] }
   }
 
@@ -113,8 +128,8 @@ export class NdSkillService {
     return { scope: result.scope, skills: result.skills.filter((skill) => skill.userInvocable).map(({ instructions: _instructions, directory: _directory, userInvocable: _userInvocable, ...metadata }) => metadata) }
   }
 
-  async detail(selectionId: string): Promise<{ skill: SkillSuggestion; markdown: string }> {
-    const result = await this.collect()
+  async detail(selectionId: string, expectedProjectId?: string | null): Promise<{ skill: SkillSuggestion; markdown: string }> {
+    const result = await this.collect(expectedProjectId)
     const skill = result.skills.find((item) => item.selectionId === selectionId && item.userInvocable)
     if (!skill) throw new Error('Skill unavailable or changed. Select it again in the active project.')
     const { instructions, directory: _directory, userInvocable: _userInvocable, ...metadata } = skill

@@ -1034,6 +1034,14 @@ const desktopApi: DesktopApi = {
     getModeSettings: async () => ({ mode: 'auto', agentFallback: false, visualRecovery: true }),
     setModeSettings: async (settings) => ({ mode: 'auto', agentFallback: false, visualRecovery: true, ...settings }),
   },
+  grokWeb: {
+    getModeSettings: async () => ({ mode: 'auto', agentFallback: false, visualRecovery: true }),
+    setModeSettings: async (settings) => ({ mode: 'auto', agentFallback: false, visualRecovery: true, ...settings }),
+  },
+  webEngine: {
+    getModeSettings: async () => ({ mode: 'auto', agentFallback: false, visualRecovery: true }),
+    setModeSettings: async (_engineId, settings) => ({ mode: 'auto', agentFallback: false, visualRecovery: true, ...settings }),
+  },
   window: {
     setFloatMode: async () => ({ float: false }),
     resizeFloatWindow: async () => undefined,

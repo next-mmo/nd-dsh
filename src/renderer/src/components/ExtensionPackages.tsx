@@ -1815,7 +1815,7 @@ function WallpaperLinksGrid({ rows, thumbs, queueThumbnail, busy, onPreview, onA
   )
 }
 
-function ExtensionViewDialog({
+export function ExtensionViewDialog({
   target,
   organization,
   state,

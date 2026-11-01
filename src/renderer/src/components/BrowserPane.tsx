@@ -25,6 +25,12 @@ interface BrowserPaneProps {
   /** Saves the current site to the dialpad. Absent means no star is offered. */
   onSaveSite?: (() => void) | undefined
   siteSaved?: boolean | undefined
+  /** Mode: 'full' (default in workbench) or 'dialog' */
+  mode?: 'full' | 'dialog' | undefined
+  /** Pop out to full browser workbench from dialog */
+  onPopOut?: (() => void) | undefined
+  /** Close dialog callback */
+  onClose?: (() => void) | undefined
 }
 
 const iconButtonClasses = cn(
@@ -55,7 +61,7 @@ function TabFavicon({ tab }: { tab: BrowserTabDescriptor }) {
   return <GlobeIcon className="size-[13px] shrink-0 text-faint" />
 }
 
-export function BrowserPane({ active, state, onSnapshot, onError, onOpenSettings, newTabPage, onSaveSite, siteSaved }: BrowserPaneProps) {
+export function BrowserPane({ active, state, onSnapshot, onError, onOpenSettings, newTabPage, onSaveSite, siteSaved, mode = 'full', onPopOut, onClose }: BrowserPaneProps) {
   const uiPreview = window.ndDshRuntimeMode === 'ui-preview'
   const surfaceRef = useRef<HTMLDivElement>(null)
   const tabStripRef = useRef<HTMLDivElement>(null)
@@ -313,7 +319,7 @@ export function BrowserPane({ active, state, onSnapshot, onError, onOpenSettings
   const approval = platform?.approvals[0]
 
   return (
-    <section className="flex flex-1 flex-col h-full w-full min-h-0 min-w-0 bg-background" aria-label="Built-in browser">
+    <section className={cn("flex flex-1 flex-col h-full w-full min-h-0 min-w-0 bg-background", mode === 'dialog' && "rounded-xl overflow-hidden")} aria-label="Built-in browser">
       <div
         ref={tabStripRef}
         role="tablist"
@@ -370,6 +376,32 @@ export function BrowserPane({ active, state, onSnapshot, onError, onOpenSettings
         >
           <PlusIcon />
         </button>
+        {mode === 'dialog' ? (
+          <div className="ml-auto flex items-center gap-1 shrink-0 pr-1">
+            {onPopOut ? (
+              <button
+                type="button"
+                aria-label="Pop out to full browser"
+                title="Pop out to full browser pane"
+                className="grid size-[28px] shrink-0 place-items-center rounded-[8px] text-soft transition-colors hover:bg-accent hover:text-foreground [&_svg]:size-[14px]"
+                onClick={onPopOut}
+              >
+                <ExternalIcon />
+              </button>
+            ) : null}
+            {onClose ? (
+              <button
+                type="button"
+                aria-label="Close dialog"
+                title="Close (Esc)"
+                className="grid size-[28px] shrink-0 place-items-center rounded-[8px] text-soft transition-colors hover:bg-accent hover:text-foreground [&_svg]:size-[14px]"
+                onClick={onClose}
+              >
+                <CloseIcon />
+              </button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       <div className="flex h-[39px] shrink-0 min-w-0 items-center gap-[3px] border-b border-border-soft bg-secondary px-[7px] py-[5px]">

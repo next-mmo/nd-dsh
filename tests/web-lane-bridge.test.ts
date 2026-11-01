@@ -75,6 +75,19 @@ describe('WebLaneBridge', () => {
     expect(runWebLane).toHaveBeenCalledWith(expect.objectContaining({ engineId: 'deepseek-web', prompt: 'hello', model: 'deep-think' }))
   })
 
+  it('accepts a grok-web lane with its mode hint', async () => {
+    const { descriptor, runWebLane } = await startBridge(async (input) => ({
+      text: 'grok answer',
+      engineId: input.engineId,
+      model: input.model ?? 'default',
+      latencyMs: 15,
+    }))
+    const response = await post(descriptor, { requestId: 'gk1', engine: 'grok-web', model: 'think', prompt: 'hello' })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ ok: true, engineId: 'grok-web', model: 'think' })
+    expect(runWebLane).toHaveBeenCalledWith(expect.objectContaining({ engineId: 'grok-web', prompt: 'hello', model: 'think' }))
+  })
+
   it('maps sign-in and busy failures to stable codes', async () => {
     let code: 'login-required' | 'page-busy' = 'login-required'
     const { descriptor } = await startBridge(async () => {

@@ -129,11 +129,11 @@ export function SettingsPane({
   return (
     <section
       aria-label="Settings"
-      className="grid h-full w-full grid-cols-[248px_minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)] min-h-0 min-w-0 bg-surface-0"
+      className="grid h-full w-full grid-cols-[210px_minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)] min-h-0 min-w-0 bg-surface-0"
     >
-      <header className="col-span-2 border-b border-border-soft px-[26px] py-3.5">
-        <span className="mb-[5px] block text-[8px] font-bold tracking-[0.13em] text-faint">ND-DSH · AI COMPANY OS</span>
-        <h1 className="m-0 text-lg font-semibold tracking-tight text-strong">Settings</h1>
+      <header className="col-span-2 border-b border-border-soft px-4 py-2">
+        <span className="mb-0.5 block text-[8px] font-bold tracking-[0.13em] text-faint">ND-DSH · AI COMPANY OS</span>
+        <h1 className="m-0 text-sm font-semibold tracking-tight text-strong">Settings</h1>
       </header>
 
       <aside className="flex min-h-0 flex-col gap-2 border-r border-border-soft px-2.5 py-3">

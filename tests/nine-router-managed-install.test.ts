@@ -248,4 +248,40 @@ describe('NineRouterManagedRuntime signed install', () => {
     await expect(runtime.installFromDirectory(fixture.root)).rejects.toThrow(/trust root/)
     expect((await runtime.state()).signingKeyConfigured).toBe(false)
   })
+
+
+  it('captures process output into logger and exposes recent logs on error or state', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'nd-9router-log-'))
+    cleanups.push(() => rm(dataDir, { recursive: true, force: true }))
+    let outputHandler: ((frame: unknown) => void) | undefined
+    let exitHandler: ((frame: unknown) => void) | undefined
+    const core = {
+      onEvent: vi.fn((event: string, handler: (frame: unknown) => void) => {
+        if (event === 'process.output') outputHandler = handler
+        if (event === 'process.exit') exitHandler = handler
+        return () => undefined
+      }),
+      request: vi.fn(async () => ({})),
+    }
+    const runtime = new NineRouterManagedRuntime(core as never, dataDir)
+    await runtime.initialize()
+
+    // Manually simulate runtime having processId = 'p1'
+    ;(runtime as unknown as { processId: string }).processId = 'p1'
+
+    // Feed output from child process
+    outputHandler?.({ resourceId: 'p1', data: { stream: 'stdout', bytes: Buffer.from('Server listening on port 20128\n') } })
+    outputHandler?.({ resourceId: 'p1', data: { stream: 'stderr', bytes: Buffer.from('Error: EADDRINUSE: address already in use\n') } })
+
+    const stateBeforeExit = await runtime.state()
+    expect(stateBeforeExit.recentLogs).toContain('Server listening on port 20128')
+    expect(stateBeforeExit.recentLogs).toContain('Error: EADDRINUSE: address already in use')
+
+    // Trigger exit
+    exitHandler?.({ resourceId: 'p1', data: { exitCode: 1 } })
+
+    const stateAfterExit = await runtime.state()
+    expect(stateAfterExit.lastError).toContain('EADDRINUSE')
+    expect(stateAfterExit.running).toBe(false)
+  })
 })

@@ -14,6 +14,8 @@ describe('settings route', () => {
     expect(settingsTabFromLocation({ hash: '#/settings?tab=model', search: '' })).toBe('models')
     expect(settingsTabFromLocation({ hash: '#/settings?tab=capabilities', search: '' })).toBe('capabilities')
     expect(settingsTabFromLocation({ hash: '#/settings?tab=extensions', search: '' })).toBe('extensions')
+    expect(settingsTabFromLocation({ hash: '#/router', search: '' })).toBe('router')
+    expect(settingsTabFromLocation({ hash: '#/nd-router', search: '' })).toBe('router')
     expect(settingsTabFromLocation({ hash: '#/settings?tab=workspace', search: '' })).toBe('general')
     expect(settingsTabFromLocation({ hash: '#/settings?tab=shortcuts', search: '' })).toBe('general')
   })

@@ -1,7 +1,7 @@
 use crate::catalog;
 use crate::store;
 use crate::types::{
-    AccountRecord, AccountView, ComboRecord, ProviderView, RoutedEntry,
+    AccountRecord, AccountView, ComboRecord, ProviderRecord, ProviderView, RoutedEntry,
     RouterError, SaveAccountInput, SaveComboInput, SaveProviderInput, UsageEntry, MAX_USAGE_LINES,
     REQUEST_TIMEOUT_SECS, STORE_SCHEMA_VERSION, USAGE_FILE, WEB_REQUEST_TIMEOUT_SECS,
     WEB_TEST_TIMEOUT_SECS, WebBridgeConfig,
@@ -515,7 +515,7 @@ impl RouterState {
                 }
                 continue;
             }
-            if lane == catalog::KIND_ANTIGRAVITY || lane == catalog::KIND_QODER {
+            if catalog::is_cli_kind(lane) {
                 let messages = body.get("messages").and_then(Value::as_array);
                 let prompt = crate::cli::prompt_from_messages(messages.map(Vec::as_slice).unwrap_or(&[]));
                 if prompt.trim().is_empty() {
@@ -526,8 +526,10 @@ impl RouterState {
                 let outcome = if lane == catalog::KIND_QODER {
                     let secret = self.entry_secret(&entry);
                     crate::cli::run_qoder(&entry.model, &prompt, entry.account.as_ref(), secret.as_deref()).await
-                } else {
+                } else if lane == catalog::KIND_ANTIGRAVITY {
                     crate::cli::run_antigravity(&entry.model, &prompt, entry.account.as_ref()).await
+                } else {
+                    crate::cli::run_generic_cli(lane, &entry.model, &prompt).await
                 };
                 match outcome {
                     Ok(completion) => {
@@ -589,7 +591,7 @@ impl RouterState {
                 }
                 continue;
             }
-            if entry.provider.kind != catalog::KIND_OPENAI {
+            if !catalog::is_http_kind(&entry.provider.kind) {
                 last = Some((501, format!("{} lane is not implemented yet", entry.provider.kind)));
                 continue;
             }
@@ -711,29 +713,27 @@ impl RouterState {
         }
     }
 
-    pub async fn test_provider(&self, provider_id: &str) -> Result<Value, RouterError> {
-        let (provider, model) = {
-            let guard = self.store.lock().unwrap_or_else(|error| error.into_inner());
-            let provider = guard
-                .providers
-                .iter()
-                .find(|provider| provider.id == provider_id)
-                .cloned()
-                .ok_or_else(|| RouterError::not_found("provider_not_found"))?;
-            let model = provider.models.first().cloned().unwrap_or_else(|| "default".to_owned());
-            (provider, model)
-        };
-        if provider.kind == catalog::KIND_ANTIGRAVITY || provider.kind == catalog::KIND_QODER {
+    pub async fn run_provider_test(
+        &self,
+        provider: &ProviderRecord,
+        model: &str,
+        secret: Option<&str>,
+        account: Option<&AccountRecord>,
+    ) -> Result<Value, RouterError> {
+        let provider_id = &provider.id;
+        if catalog::is_cli_kind(&provider.kind) {
             let started = Instant::now();
             let outcome = if provider.kind == catalog::KIND_QODER {
-                let account = provider.accounts.iter().find(|account| account.is_active);
-                let secret = account
-                    .and_then(|account| account.secret_ref.clone())
-                    .or_else(|| provider.secret_ref.clone())
-                    .and_then(|entry_id| self.read_secret(&entry_id));
-                crate::cli::run_qoder(&model, "Reply with exactly: OK", account, secret.as_deref()).await
+                crate::cli::run_qoder(model, "Reply with exactly: OK", account, secret).await
+            } else if provider.kind == catalog::KIND_ANTIGRAVITY {
+                crate::cli::run_antigravity(model, "Reply with exactly: OK", None).await
             } else {
-                crate::cli::run_antigravity(&model, "Reply with exactly: OK", None).await
+                crate::cli::test_cli_binary(&provider.kind).await.map(|preview| crate::cli::CliCompletion {
+                    text: preview,
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                    total_tokens: 0,
+                })
             };
             return match outcome {
                 Ok(completion) => Ok(json!({
@@ -756,7 +756,7 @@ impl RouterState {
             };
         }
         if catalog::is_web_kind(&provider.kind) {
-            let entry = RoutedEntry { provider: provider.clone(), account: None, model: model.clone() };
+            let entry = RoutedEntry { provider: provider.clone(), account: None, model: model.to_owned() };
             let started = Instant::now();
             return match self.run_web_lane(&entry, "Reply with exactly: OK", None, WEB_TEST_TIMEOUT_SECS).await {
                 Ok(text) => Ok(json!({
@@ -778,7 +778,7 @@ impl RouterState {
                 })),
             };
         }
-        if provider.kind != catalog::KIND_OPENAI {
+        if !catalog::is_http_kind(&provider.kind) {
             return Ok(json!({
                 "id": provider_id,
                 "ok": false,
@@ -788,7 +788,6 @@ impl RouterState {
                 "error": format!("{} lane is not implemented yet", provider.kind),
             }));
         }
-        let entry = RoutedEntry { provider: provider.clone(), account: None, model: model.clone() };
         let body = json!({
             "model": model,
             "messages": [{"role": "user", "content": "ping"}],
@@ -803,14 +802,16 @@ impl RouterState {
         };
         let started = Instant::now();
         let mut request = self.client.post(&url).header(CONTENT_TYPE, "application/json").json(&body);
-        if let Some(secret) = self.entry_secret(&entry).filter(|value| !value.is_empty()) {
+        if let Some(secret) = secret.filter(|value| !value.is_empty()) {
             request = request.bearer_auth(secret);
         }
         match request.send().await {
             Ok(upstream) => {
                 let status = upstream.status().as_u16();
                 let ok = upstream.status().is_success();
-                let error = if ok { None } else { Some(catalog::truncate(&upstream.text().await.unwrap_or_default(), 300)) };
+                let raw_text = upstream.text().await.unwrap_or_default();
+                let error = if ok { None } else { Some(catalog::truncate(&raw_text, 300)) };
+                let preview = if ok { Some(catalog::truncate(raw_text.trim(), 80)) } else { None };
                 Ok(json!({
                     "id": provider_id,
                     "ok": ok,
@@ -818,6 +819,7 @@ impl RouterState {
                     "latencyMs": started.elapsed().as_millis() as u64,
                     "model": model,
                     "error": error,
+                    "preview": preview,
                 }))
             }
             Err(error) => Ok(json!({
@@ -829,6 +831,63 @@ impl RouterState {
                 "error": format!("provider could not be reached: {error}"),
             })),
         }
+    }
+
+    pub async fn test_provider(&self, provider_id: &str) -> Result<Value, RouterError> {
+        let (provider, model, secret, account) = {
+            let guard = self.store.lock().unwrap_or_else(|error| error.into_inner());
+            let provider = guard
+                .providers
+                .iter()
+                .find(|provider| provider.id == provider_id)
+                .cloned()
+                .ok_or_else(|| RouterError::not_found("provider_not_found"))?;
+            let model = provider.models.first().cloned().unwrap_or_else(|| "default".to_owned());
+            let account = provider.accounts.iter().find(|account| account.is_active).cloned();
+            let secret = account
+                .as_ref()
+                .and_then(|account| account.secret_ref.as_deref())
+                .or_else(|| provider.secret_ref.as_deref())
+                .and_then(|entry_id| self.read_secret(entry_id));
+            (provider, model, secret, account)
+        };
+        self.run_provider_test(&provider, &model, secret.as_deref(), account.as_ref()).await
+    }
+
+    pub async fn test_candidate(&self, input: SaveProviderInput) -> Result<Value, RouterError> {
+        let existing = {
+            let guard = self.store.lock().unwrap_or_else(|error| error.into_inner());
+            input
+                .id
+                .as_ref()
+                .and_then(|id| guard.providers.iter().find(|p| p.id == *id).cloned())
+        };
+        let record = match store::sanitize_provider(&input, existing.as_ref()) {
+            Ok(record) => record,
+            Err(error) => {
+                return Ok(json!({
+                    "id": input.id.unwrap_or_default(),
+                    "ok": false,
+                    "statusCode": 400,
+                    "latencyMs": 0,
+                    "model": "none",
+                    "error": error,
+                }));
+            }
+        };
+        let model = record.models.first().cloned().unwrap_or_else(|| "default".to_owned());
+        let secret = if let Some(key) = input.api_key.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+            Some(key.to_owned())
+        } else if let Some(existing_record) = existing.as_ref() {
+            existing_record
+                .secret_ref
+                .as_deref()
+                .and_then(|id| self.read_secret(id))
+        } else {
+            None
+        };
+        let account = record.accounts.iter().find(|account| account.is_active).cloned();
+        self.run_provider_test(&record, &model, secret.as_deref(), account.as_ref()).await
     }
 
     pub fn usage_summary(&self) -> Value {

@@ -24,6 +24,7 @@ export class RemoteExtensionCatalog {
       version: manifest.version, permissions: manifest.permissions,
       commands: manifest.contributions.commands.map((command) => ({ id: command.id, title: command.title })),
       installed: installedIds.has(manifest.id), available: true,
+      ...(manifest.category ? { category: manifest.category } : {}),
     }))
   }
 

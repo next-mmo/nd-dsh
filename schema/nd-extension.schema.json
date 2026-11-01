@@ -464,6 +464,12 @@
           }
         }
       }
+    },
+    "category": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "Optional category or type for classification (e.g. 'gateway-api', 'games', 'ai', 'system', 'tools')."
     }
   },
   "$defs": {

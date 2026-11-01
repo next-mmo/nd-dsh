@@ -108,6 +108,7 @@ export function registerRouterIpc(window: BrowserWindow, service: RouterService,
   })
   handle(ROUTER_IPC.saveCombo, (_event, input) => service.saveCombo(input as never))
   handle(ROUTER_IPC.deleteCombo, (_event, comboId) => service.deleteCombo(id(comboId, 'Combo id')))
+  handle(ROUTER_IPC.testCandidate, (_event, input) => service.testCandidate(input as never))
   handle(ROUTER_IPC.testProvider, (_event, providerId) => service.testProvider(id(providerId, 'Provider id')))
   handle(ROUTER_IPC.usage, () => service.usage())
   handle(ROUTER_IPC.resetUsage, () => service.resetUsage())

@@ -16,6 +16,10 @@ import {
   manifestPermissionIssues,
   requiredPermissionsForManifest,
   validateNdExtensionManifest,
+  normalizeExtensionCategory,
+  detectExtensionCategory,
+  extensionCategoryLabel,
+  ND_EXTENSION_CATEGORIES,
 } from '../src/shared/extension-package.js'
 import { BUILTIN_EXTENSION_PACKAGES, DAILY_ESSENTIALS_MANIFEST, PROJECT_WORKFLOW_MANIFEST, WALLPAPER_MANAGER_MANIFEST, defaultActivationContexts } from '../src/shared/builtin-extension-packages.js'
 
@@ -312,6 +316,83 @@ describe('published JSON schema', () => {
     for (const method of ND_HOST_METHODS) {
       expect(method.permission, `${method.id} needs a permission`).toBeTruthy()
       expect(method.contexts.length, `${method.id} needs at least one context`).toBeGreaterThan(0)
+    }
+  })
+})
+
+describe('extension categories and filter types', () => {
+  it('normalizes category strings and aliases', () => {
+    expect(normalizeExtensionCategory('game')).toBe('games')
+    expect(normalizeExtensionCategory('games')).toBe('games')
+    expect(normalizeExtensionCategory('gateway')).toBe('gateway-api')
+    expect(normalizeExtensionCategory('api')).toBe('gateway-api')
+    expect(normalizeExtensionCategory('gateway-api')).toBe('gateway-api')
+    expect(normalizeExtensionCategory('gateway & api')).toBe('gateway-api')
+    expect(normalizeExtensionCategory('ai')).toBe('ai')
+    expect(normalizeExtensionCategory('agents')).toBe('ai')
+    expect(normalizeExtensionCategory('ai-agent')).toBe('ai')
+    expect(normalizeExtensionCategory('system')).toBe('system')
+    expect(normalizeExtensionCategory('os')).toBe('system')
+    expect(normalizeExtensionCategory('tools')).toBe('tools')
+    expect(normalizeExtensionCategory('utility')).toBe('tools')
+    expect(normalizeExtensionCategory(undefined)).toBeUndefined()
+    expect(normalizeExtensionCategory('unknown-foo-bar')).toBeUndefined()
+  })
+
+  it('detects category from explicit manifest category or heuristic fallback', () => {
+    // Explicit category
+    expect(detectExtensionCategory({ id: 'custom.pkg', category: 'games' })).toBe('games')
+    expect(detectExtensionCategory({ id: 'custom.pkg', category: 'gateway & api' })).toBe('gateway-api')
+
+    // Gateway & API heuristics
+    expect(detectExtensionCategory({ id: 'nd.9router', name: '9Router', description: 'Local AI model gateway' })).toBe('gateway-api')
+    expect(detectExtensionCategory({ id: 'nd.api-studio', name: 'API Studio', description: 'API client and runner' })).toBe('gateway-api')
+
+    // Games heuristics
+    expect(detectExtensionCategory({ id: 'nd.tic-tac-toe', name: '3D Tic-Tac-Toe', description: 'Board game' })).toBe('games')
+    expect(detectExtensionCategory({ id: 'nd.wizard-chess-3d', name: '3D Wizard Chess', description: 'Chess game' })).toBe('games')
+
+    // AI & Agents heuristics
+    expect(detectExtensionCategory({ id: 'nd.gpt-project-brief', name: 'GPT Brief', description: 'AI brief' })).toBe('ai')
+    expect(detectExtensionCategory({ id: 'nd.computer-use', name: 'Computer Use', description: 'Agent observation' })).toBe('ai')
+    expect(detectExtensionCategory({ id: 'nd.translate', name: 'Translate', description: 'Language translation' })).toBe('ai')
+
+    // System heuristics
+    expect(detectExtensionCategory({ id: 'nd.quit-process', name: 'Quit Process', description: 'System processes' })).toBe('system')
+    expect(detectExtensionCategory({ id: 'nd.disk-cleaner', name: 'Disk Cleaner', description: 'Disk storage' })).toBe('system')
+    expect(detectExtensionCategory({ id: 'nd.wallpaper-manager', name: 'Wallpaper', description: 'OS wallpaper' })).toBe('system')
+
+    // Tools & Utilities fallback
+    expect(detectExtensionCategory({ id: 'nd.clipboard-history', name: 'Clipboard History', description: 'Clipboard manager' })).toBe('tools')
+    expect(detectExtensionCategory({ id: 'nd.password-vault', name: 'Password Vault', description: 'Encrypted vault' })).toBe('tools')
+    expect(detectExtensionCategory({ id: 'nd.daily-essentials', name: 'Daily Essentials', description: 'Notes and tools' })).toBe('tools')
+  })
+
+  it('maps category ids to human-friendly labels', () => {
+    expect(extensionCategoryLabel('gateway-api')).toBe('Gateway & API')
+    expect(extensionCategoryLabel('games')).toBe('Games')
+    expect(extensionCategoryLabel('ai')).toBe('AI & Agents')
+    expect(extensionCategoryLabel('system')).toBe('System & OS')
+    expect(extensionCategoryLabel('tools')).toBe('Tools & Utilities')
+  })
+
+  it('accepts and preserves valid category in manifest validation', () => {
+    const valid = validateNdExtensionManifest({
+      protocol: 'nd.extension/1',
+      id: 'nd.test-games',
+      name: 'Test Games',
+      description: 'A test games extension',
+      version: '1.0.0',
+      apiVersion: 1,
+      contexts: ['personal'],
+      permissions: [],
+      category: 'games',
+      settings: [],
+      contributions: { commands: [{ id: 'play', title: 'Play', host: 'note.create', contexts: ['personal'] }] },
+    })
+    expect(valid.ok).toBe(true)
+    if (valid.ok) {
+      expect(valid.manifest.category).toBe('games')
     }
   })
 })

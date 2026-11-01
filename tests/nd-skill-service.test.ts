@@ -257,4 +257,31 @@ it('parses real bundled dubbing-speaker-translate skill', async () => {
   expect(skill.instructions).toContain('ឪពុក!')
 })
 
+it('handles unscoped catalog(null) gracefully when active project workspace does not match root', async () => {
+  const f = await fixture()
+  await f.file('bundled/sample.md')
+  // Active project workspace points to a different folder
+  f.state.projects[0]!.workspacePath = join(f.root, 'some-subfolder')
+  
+  // Unscoped catalog(null) from RouterPlayground should not throw and should still collect bundled skills
+  const catalog = await f.service.catalog(null)
+  expect(catalog).toBeDefined()
+  expect(catalog.skills.map((s) => s.name)).toContain('sample')
+
+  // Scoped catalog('p') should still enforce workspace matching
+  await expect(f.service.catalog('p')).rejects.toThrow('Skill workspace does not match active project')
+})
+
+it('normalizes path casing on Windows without throwing workspace mismatch', async () => {
+  const f = await fixture()
+  await f.file('bundled/sample.md')
+  // Simulated casing difference on Windows
+  f.state.projects[0]!.workspacePath = f.root.toLowerCase()
+  f.move(f.root.toUpperCase())
+
+  const catalog = await f.service.catalog('p')
+  expect(catalog).toBeDefined()
+  expect(catalog.skills.map((s) => s.name)).toContain('sample')
+})
+
 

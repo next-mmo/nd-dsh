@@ -14,6 +14,7 @@ import { isCaptureDelaySeconds, isGlobalShortcutId, type GlobalShortcutId } from
 import { isWorkspaceProfile } from '../shared/workspace-profile.js'
 import { asNdContext, isNdContext } from '../shared/nd-context.js'
 import { DEFAULT_WEB_BROWSER_MODE_SETTINGS, type WebBrowserModeSettings } from '../shared/browser-modes.js'
+import { CHATGPT_WEB_ENGINE_ID, DEEPSEEK_WEB_ENGINE_ID, GEMINI_WEB_ENGINE_ID, GROK_WEB_ENGINE_ID } from '../shared/coding-engines.js'
 import type { LauncherPopupController } from './launcher-popup.js'
 import type { ShortcutRegistry } from './shortcut-registry.js'
 import { projectRoot, presetSourceDir, bundledResourceRoot, harnessNodeBinPath } from './app-paths.js'
@@ -218,8 +219,8 @@ export function registerIpc(deps: IpcDependencies): () => void {
   const skills = new NdSkillService({ organization: deps.organizationStore, workspace: deps.projectWorkspace, bundledRoot: join(presetSourceDir(), 'nd-dsh', 'skills') })
   deps.engineRouter.setSkillService(skills)
   deps.engineRouter.setMessageStore(deps.sessionArchive)
-  handle(IPC.skillsDetail, (_event, selectionId) => skills.detail(asString(selectionId, 'Skill selection', 64)))
-  handle(IPC.skillsCatalog, (_event, projectId) => skills.catalog(projectId === null ? null : asString(projectId, 'Project id', 128)))
+  handle(IPC.skillsDetail, (_event, selectionId) => skills.detail(asString(selectionId, 'Skill selection', 64), null))
+  handle(IPC.skillsCatalog, (_event, projectId) => skills.catalog(projectId == null ? null : asString(projectId, 'Project id', 128)))
 
   /**
    * Join the usage ledger with organization ownership.
@@ -927,6 +928,49 @@ export function registerIpc(deps: IpcDependencies): () => void {
     const engine = deps.engineRouter.getDeepSeekWeb()
     if (!engine) throw new Error('DeepSeek Web is unavailable')
     return engine.setModeSettings(input as Partial<WebBrowserModeSettings>)
+  })
+  handle(IPC.grokWebModeGet, () => {
+    return deps.engineRouter.getGrokWeb()?.getModeSettings() ?? DEFAULT_WEB_BROWSER_MODE_SETTINGS
+  })
+  handle(IPC.grokWebModeSet, (_event, input) => {
+    const engine = deps.engineRouter.getGrokWeb()
+    if (!engine) throw new Error('Grok Web is unavailable')
+    return engine.setModeSettings(input as Partial<WebBrowserModeSettings>)
+  })
+  handle(IPC.webEngineModeGet, (_event, engineId) => {
+    const id = typeof engineId === 'string' ? engineId : ''
+    if (id === GROK_WEB_ENGINE_ID) return deps.engineRouter.getGrokWeb()?.getModeSettings() ?? DEFAULT_WEB_BROWSER_MODE_SETTINGS
+    if (id === DEEPSEEK_WEB_ENGINE_ID) return deps.engineRouter.getDeepSeekWeb()?.getModeSettings() ?? DEFAULT_WEB_BROWSER_MODE_SETTINGS
+    if (id === GEMINI_WEB_ENGINE_ID) return deps.engineRouter.getGeminiWeb()?.getModeSettings() ?? DEFAULT_WEB_BROWSER_MODE_SETTINGS
+    if (id === CHATGPT_WEB_ENGINE_ID) return deps.engineRouter.getChatGptWeb()?.getModeSettings() ?? DEFAULT_WEB_BROWSER_MODE_SETTINGS
+    return deps.engineRouter.getGenericWeb(id)?.getModeSettings() ?? DEFAULT_WEB_BROWSER_MODE_SETTINGS
+  })
+  handle(IPC.webEngineModeSet, (_event, input) => {
+    const payload = input as { engineId: string; settings: Partial<WebBrowserModeSettings> }
+    const id = payload?.engineId ?? ''
+    if (id === GROK_WEB_ENGINE_ID) {
+      const engine = deps.engineRouter.getGrokWeb()
+      if (!engine) throw new Error('Grok Web is unavailable')
+      return engine.setModeSettings(payload.settings)
+    }
+    if (id === DEEPSEEK_WEB_ENGINE_ID) {
+      const engine = deps.engineRouter.getDeepSeekWeb()
+      if (!engine) throw new Error('DeepSeek Web is unavailable')
+      return engine.setModeSettings(payload.settings)
+    }
+    if (id === GEMINI_WEB_ENGINE_ID) {
+      const engine = deps.engineRouter.getGeminiWeb()
+      if (!engine) throw new Error('Gemini Web is unavailable')
+      return engine.setModeSettings(payload.settings)
+    }
+    if (id === CHATGPT_WEB_ENGINE_ID) {
+      const engine = deps.engineRouter.getChatGptWeb()
+      if (!engine) throw new Error('ChatGPT Web is unavailable')
+      return engine.setModeSettings(payload.settings)
+    }
+    const engine = deps.engineRouter.getGenericWeb(id)
+    if (!engine) throw new Error(`Web engine is unavailable: ${id}`)
+    return engine.setModeSettings(payload.settings)
   })
   handle(IPC.harnessPermissionGet, () => deps.theme.permissionMode())
   handle(IPC.harnessPermissionSet, async (_event, value) => {

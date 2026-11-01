@@ -22,6 +22,7 @@ import {
   type BrowserTabDescriptor,
 } from '../shared/browser-platform.js'
 import { IPC, type DesktopApi, type ModelProvider } from '../shared/contracts.js'
+import type { WebBrowserModeSettings } from '../shared/browser-modes.js'
 import { EXTENSIONS_IPC, type AgentExtensionManifest, type ExtensionsDesktopApi } from '../shared/extensions.js'
 import {
   ND_EXTENSIONS_IPC,
@@ -298,6 +299,15 @@ const api: DesktopApi = {
   deepseekWeb: {
     getModeSettings: () => ipcRenderer.invoke(IPC.deepseekWebModeGet),
     setModeSettings: (settings) => ipcRenderer.invoke(IPC.deepseekWebModeSet, settings),
+  },
+  grokWeb: {
+    getModeSettings: () => ipcRenderer.invoke(IPC.grokWebModeGet),
+    setModeSettings: (settings) => ipcRenderer.invoke(IPC.grokWebModeSet, settings),
+  },
+  webEngine: {
+    getModeSettings: (engineId: string) => ipcRenderer.invoke(IPC.webEngineModeGet, engineId),
+    setModeSettings: (engineId: string, settings: Partial<WebBrowserModeSettings>) =>
+      ipcRenderer.invoke(IPC.webEngineModeSet, { engineId, settings }),
   },
   browserCompanion: {
     state: () => ipcRenderer.invoke(BROWSER_COMPANION_IPC.state) as Promise<BrowserCompanionState>,    acquireLease: (connectionId: string, tabId: number, ownerId: string, scope?: BrowserCompanionLeaseScope) =>

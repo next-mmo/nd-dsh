@@ -202,4 +202,99 @@ describe('RouterService', () => {
     expect(save?.input).not.toHaveProperty('apiKey')
     expect(save?.input).not.toHaveProperty('clearSecret')
   })
+
+  it('enforces a successful live ping test before saving candidate providers', async () => {
+    const calls: Array<{ method: string; input?: unknown }> = []
+    let pingOk = false
+    const localCore = {
+      request: vi.fn(async (method: string, input?: unknown) => {
+        calls.push({ method, input })
+        if (method === 'router.testCandidate') {
+          return pingOk
+            ? { id: 'prov-test', ok: true, statusCode: 200, latencyMs: 120, model: 'gpt-oss-120b' }
+            : { id: 'prov-test', ok: false, statusCode: 502, latencyMs: 300, model: 'gpt-oss-120b', error: 'Endpoint unreachable' }
+        }
+        if (method === 'router.state') {
+          return { providers: [], combos: [], counters: {} }
+        }
+        return { saved: true }
+      }),
+    }
+    const localService = new RouterService(localCore as never, providers as never, dir, () => undefined)
+
+    // When ping fails, saveProvider must throw and reject saving
+    await expect(
+      localService.saveProvider({
+        kind: 'ovh-kepler',
+        name: 'OVH Kepler',
+        baseUrl: 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1',
+        models: ['gpt-oss-120b'],
+      })
+    ).rejects.toThrow(/Ping test failed \(502\)/)
+
+    expect(calls.some((c) => c.method === 'router.saveProvider')).toBe(false)
+
+    // When ping succeeds, saveProvider proceeds and persists
+    pingOk = true
+    await expect(
+      localService.saveProvider({
+        kind: 'ovh-kepler',
+        name: 'OVH Kepler',
+        baseUrl: 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1',
+        models: ['gpt-oss-120b'],
+      })
+    ).resolves.toBeDefined()
+
+    expect(calls.some((c) => c.method === 'router.saveProvider')).toBe(true)
+  })
+
+  it('skips ping test when only toggling provider active state', async () => {
+    const calls: Array<{ method: string; input?: unknown }> = []
+    const localCore = {
+      request: vi.fn(async (method: string, input?: unknown) => {
+        calls.push({ method, input })
+        if (method === 'router.state') {
+          return { providers: [], combos: [], counters: {} }
+        }
+        return { updated: true }
+      }),
+    }
+    const localService = new RouterService(localCore as never, providers as never, dir, () => undefined)
+
+    await localService.saveProvider({ id: 'prov-existing', isActive: false })
+    expect(calls.some((c) => c.method === 'router.testCandidate')).toBe(false)
+    expect(calls.some((c) => c.method === 'router.saveProvider')).toBe(true)
+  })
+
+  it('automatically recovers and re-initializes when nd-core reports ND Router is not initialized', async () => {
+    let initialized = false
+    const calls: string[] = []
+    const localCore = {
+      request: vi.fn(async (method: string) => {
+        calls.push(method)
+        if (method === 'router.initialize') {
+          initialized = true
+          return {
+            endpoint: 'http://127.0.0.1:3999',
+            key: 'ndr_recovered',
+            port: 3130,
+            state: routerState([{ name: 'api-route', hidden: false }]),
+          }
+        }
+        if (!initialized) {
+          throw new Error('NdCoreError: [method_failed] ND Router is not initialized')
+        }
+        if (method === 'router.state') {
+          return routerState([{ name: 'api-route', hidden: false }])
+        }
+        return { ok: true }
+      }),
+    }
+    const localService = new RouterService(localCore as never, providers as never, dir, () => undefined)
+
+    // Call state when uninitialized -> must recover transparently by calling router.initialize first, then router.state
+    const state = await localService.state()
+    expect(state.combos.length).toBe(1)
+    expect(calls).toEqual(['router.state', 'router.initialize', 'router.state'])
+  })
 })

@@ -87,3 +87,54 @@ describe('extension provider browser route', () => {
     expect(close).not.toHaveBeenCalled()
   })
 })
+
+import { detectExtensionCategory, extensionCategoryLabel } from '../../../shared/extension-package'
+
+describe('extension package category filtering', () => {
+  const samplePackages = [
+    { id: 'nd.9router', name: '9Router', description: 'Local AI model gateway and proxy runtime', category: 'gateway-api' },
+    { id: 'nd.api-studio', name: 'ND API Studio', description: 'HTTP API design and runner' },
+    { id: 'nd.tic-tac-toe', name: '3D Tic-Tac-Toe', description: 'Play game on 3D board', category: 'games' },
+    { id: 'nd.translate', name: 'ND Translate', description: 'Real-time text translation' },
+    { id: 'nd.disk-cleaner', name: 'Disk Cleaner', description: 'Analyze disk space' },
+    { id: 'nd.daily-essentials', name: 'Daily Essentials', description: 'Productivity notes and capture' },
+  ]
+
+  it('filters packages accurately by category chip selection', () => {
+    const filterByCategory = (category: string) =>
+      samplePackages.filter((pkg) => category === 'all' || detectExtensionCategory(pkg) === category)
+
+    expect(filterByCategory('all')).toHaveLength(6)
+
+    const gatewayPkgs = filterByCategory('gateway-api')
+    expect(gatewayPkgs.map((p) => p.id)).toEqual(['nd.9router', 'nd.api-studio'])
+
+    const gamesPkgs = filterByCategory('games')
+    expect(gamesPkgs.map((p) => p.id)).toEqual(['nd.tic-tac-toe'])
+
+    const aiPkgs = filterByCategory('ai')
+    expect(aiPkgs.map((p) => p.id)).toEqual(['nd.translate'])
+
+    const systemPkgs = filterByCategory('system')
+    expect(systemPkgs.map((p) => p.id)).toEqual(['nd.disk-cleaner'])
+
+    const toolsPkgs = filterByCategory('tools')
+    expect(toolsPkgs.map((p) => p.id)).toEqual(['nd.daily-essentials'])
+  })
+
+  it('filters packages by both search query and category', () => {
+    const filter = (query: string, category: string) => {
+      const q = query.trim().toLowerCase()
+      return samplePackages
+        .filter((pkg) => !q || `${pkg.name} ${pkg.description} ${pkg.id}`.toLowerCase().includes(q))
+        .filter((pkg) => category === 'all' || detectExtensionCategory(pkg) === category)
+    }
+
+    // "studio" in gateway-api
+    expect(filter('studio', 'gateway-api').map((p) => p.id)).toEqual(['nd.api-studio'])
+    // "studio" in games should be empty
+    expect(filter('studio', 'games')).toHaveLength(0)
+    // "game" in games
+    expect(filter('game', 'games').map((p) => p.id)).toEqual(['nd.tic-tac-toe'])
+  })
+})

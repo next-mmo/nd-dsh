@@ -54,6 +54,113 @@ pub fn qoder_binary() -> String {
     std::env::var("ND_QODER_BIN").unwrap_or_else(|_| "qoder".to_owned())
 }
 
+pub fn cli_binary_for_kind(kind: &str) -> String {
+    match kind {
+        catalog::KIND_ANTIGRAVITY => agy_binary(),
+        catalog::KIND_QODER => qoder_binary(),
+        catalog::KIND_GEMINI_CLI => std::env::var("ND_DSH_GEMINI_BINARY").unwrap_or_else(|_| "gemini".to_owned()),
+        catalog::KIND_CODEX_CLI => std::env::var("ND_DSH_CODEX_BINARY").unwrap_or_else(|_| "codex".to_owned()),
+        catalog::KIND_CLAUDE_CLI => std::env::var("ND_DSH_CLAUDE_BINARY").unwrap_or_else(|_| "claude".to_owned()),
+        catalog::KIND_PI_CLI => std::env::var("ND_DSH_PI_BINARY").unwrap_or_else(|_| "pi".to_owned()),
+        catalog::KIND_ZCODE_CLI => std::env::var("ND_DSH_ZCODE_BINARY").unwrap_or_else(|_| "zcode".to_owned()),
+        catalog::KIND_CURSOR_CLI => std::env::var("ND_DSH_CURSOR_BINARY").unwrap_or_else(|_| "cursor-agent".to_owned()),
+        catalog::KIND_OPENCODE_CLI => std::env::var("ND_DSH_OPENCODE_BINARY").unwrap_or_else(|_| "opencode".to_owned()),
+        catalog::KIND_GOOSE_CLI => std::env::var("ND_DSH_GOOSE_BINARY").unwrap_or_else(|_| "goose".to_owned()),
+        catalog::KIND_HERMES_CLI => std::env::var("ND_DSH_HERMES_BINARY").unwrap_or_else(|_| "hermes".to_owned()),
+        catalog::KIND_JCODE_CLI => std::env::var("ND_DSH_JCODE_BINARY").unwrap_or_else(|_| "jcode".to_owned()),
+        catalog::KIND_MINIMAX_CLI => std::env::var("ND_DSH_MINIMAX_BINARY").unwrap_or_else(|_| "minimax".to_owned()),
+        other => other.to_owned(),
+    }
+}
+
+pub async fn test_cli_binary(kind: &str) -> Result<String, RouterError> {
+    let bin = cli_binary_for_kind(kind);
+    let mut command = Command::new(&bin);
+    command.arg("--version");
+    command.stdin(std::process::Stdio::null());
+    command.stdout(std::process::Stdio::piped());
+    command.stderr(std::process::Stdio::piped());
+    command.kill_on_drop(true);
+
+    let output = match tokio::time::timeout(Duration::from_secs(5), command.output()).await {
+        Ok(Ok(output)) => output,
+        Ok(Err(error)) => {
+            return Err(RouterError::bad_request(format!(
+                "CLI binary '{bin}' is not installed or not found on PATH: {error}"
+            )));
+        }
+        Err(_) => {
+            return Err(RouterError::bad_gateway(format!("'{bin} --version' timed out")));
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    let preview = if !stdout.is_empty() { stdout } else { stderr };
+    if preview.is_empty() {
+        Ok(format!("{bin} CLI available"))
+    } else {
+        Ok(catalog::truncate(&preview, 80))
+    }
+}
+
+pub async fn run_generic_cli(
+    kind: &str,
+    model: &str,
+    prompt: &str,
+) -> Result<CliCompletion, RouterError> {
+    let prompt = prompt.trim();
+    if prompt.is_empty() {
+        return Err(RouterError::bad_request("the CLI lane needs a non-empty prompt"));
+    }
+    let bin = cli_binary_for_kind(kind);
+    let mut command = Command::new(&bin);
+    match kind {
+        catalog::KIND_CLAUDE_CLI => {
+            command.arg("-p").arg(prompt);
+            if !model.is_empty() && model != "default" {
+                command.arg("--model").arg(model);
+            }
+        }
+        catalog::KIND_CODEX_CLI => {
+            command.arg("exec").arg(prompt);
+        }
+        catalog::KIND_OPENCODE_CLI => {
+            command.arg("run").arg(prompt);
+            if !model.is_empty() && model != "default" {
+                command.arg("--model").arg(model);
+            }
+        }
+        catalog::KIND_GOOSE_CLI
+        | catalog::KIND_HERMES_CLI
+        | catalog::KIND_ZCODE_CLI
+        | catalog::KIND_JCODE_CLI
+        | catalog::KIND_MINIMAX_CLI => {
+            command.arg("run").arg(prompt);
+        }
+        _ => {
+            command.arg(prompt);
+        }
+    }
+    command.stdin(std::process::Stdio::null());
+    command.stdout(std::process::Stdio::piped());
+    command.stderr(std::process::Stdio::piped());
+    command.kill_on_drop(true);
+
+    let output = tokio::time::timeout(Duration::from_secs(120), command.output())
+        .await
+        .map_err(|_| RouterError::bad_gateway(format!("{bin} CLI did not finish in time")))?
+        .map_err(|error| RouterError::bad_gateway(format!("{bin} CLI could not be started: {error}")))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    if !output.status.success() && stdout.is_empty() {
+        return Err(RouterError::bad_gateway(format!("{bin} CLI failed: {stderr}")));
+    }
+    let text = if !stdout.is_empty() { stdout } else { stderr };
+    Ok(completion_from_text(prompt, &text))
+}
+
 /// Flatten OpenAI chat messages into one print-mode prompt. A single message
 /// passes through verbatim; a conversation keeps role labels so the CLI's
 /// single user turn still sees who said what.

@@ -691,8 +691,10 @@ function workflowOpenCommand(extensionId: string, workflow: NdWorkflowContributi
 }
 
 function toRows(value: unknown, view: NdViewContribution): NdViewRow[] {
-  if (!Array.isArray(value) || !view.itemTitleKey) return []
-  return value.flatMap((item, index) => {
+  if (!view.itemTitleKey) return []
+  const items = Array.isArray(value) ? value : isRecord(value) ? [value] : []
+  if (items.length === 0) return []
+  return items.flatMap((item, index) => {
     if (!item || typeof item !== 'object') return []
     const record = item as Record<string, unknown>
     const title = record[view.itemTitleKey!]

@@ -320,6 +320,145 @@ async fn routes_deepseek_web_with_seeded_modes_through_the_bridge() {
 }
 
 #[tokio::test]
+async fn routes_additional_web_lanes_through_the_bridge() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let (bridge_url, bridge_token, calls) = mock_web_bridge().await;
+    let state = RouterState::with_options(
+        temp.path().to_path_buf(),
+        RouterOptions {
+            external_key: Some("ndr_ext_test_external_key_1234".to_owned()),
+            web_bridge: Some(WebBridgeConfig { url: bridge_url, token: bridge_token }),
+            safe_mode: false,
+            preferred_port: None,
+        },
+    )
+    .expect("state");
+
+    let kinds = [
+        ("qwen-web", "Qwen Web", "qwen-max"),
+        ("zai-web", "Z.ai Web", "glm-4-plus"),
+        ("mistral-web", "Mistral Web", "mistral-large"),
+        ("perplexity-web", "Perplexity Web", "sonar"),
+        ("poe-web", "Poe Web", "assistant"),
+        ("arena-web", "Arena AI Web", "battle"),
+        ("meta-web", "Meta AI Web", "llama-3.3"),
+        ("duck-web", "Duck.ai Web", "gpt-4o-mini"),
+    ];
+
+    for (kind, expected_name, sample_model) in kinds {
+        let saved = state
+            .save_provider(SaveProviderInput {
+                id: Some(kind.to_owned()),
+                kind: Some(kind.to_owned()),
+                name: None,
+                base_url: None,
+                models: None,
+                is_active: Some(true),
+                priority: Some(0),
+                api_key: None,
+                clear_secret: false,
+            })
+            .expect("save provider");
+        assert_eq!(saved["name"], expected_name);
+        assert_eq!(saved["kind"], kind);
+        assert!(saved["models"].as_array().unwrap().contains(&json!(sample_model)));
+
+        let response = state
+            .chat_with_request(
+                json!({"model": format!("{kind}/{sample_model}"), "messages": [{"role": "user", "content": "hello"}]}),
+                None,
+                "/v1/chat/completions",
+                Some(&format!("req-{kind}")),
+            )
+            .await
+            .expect("chat");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get("x-nd-router-provider").and_then(|v| v.to_str().ok()),
+            Some(kind)
+        );
+        assert_eq!(
+            response.headers().get("x-nd-router-model").and_then(|v| v.to_str().ok()),
+            Some(sample_model)
+        );
+    }
+
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 8);
+    assert_eq!(calls[0].1["engine"], "qwen-web");
+    assert_eq!(calls[7].1["engine"], "duck-web");
+}
+
+#[tokio::test]
+async fn routes_grok_web_with_seeded_modes_through_the_bridge() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let (bridge_url, bridge_token, calls) = mock_web_bridge().await;
+    let state = RouterState::with_options(
+        temp.path().to_path_buf(),
+        RouterOptions {
+            external_key: Some("ndr_ext_test_external_key_1234".to_owned()),
+            web_bridge: Some(WebBridgeConfig { url: bridge_url, token: bridge_token }),
+            safe_mode: false,
+            preferred_port: None,
+        },
+    )
+    .expect("state");
+    let saved = state
+        .save_provider(SaveProviderInput {
+            id: Some("grok-web".to_owned()),
+            kind: Some("grok".to_owned()),
+            name: None,
+            base_url: None,
+            models: None,
+            is_active: Some(true),
+            priority: Some(0),
+            api_key: None,
+            clear_secret: false,
+        })
+        .expect("grok provider");
+    assert_eq!(saved["name"], "Grok Web");
+    assert_eq!(saved["kind"], "grok-web");
+    assert_eq!(saved["models"], json!(["default", "grok-3", "grok-2", "deepsearch", "think"]));
+
+    state
+        .save_combo(combo_input("grok", "priority", vec![combo_entry("grok-web", "think")]))
+        .expect("grok combo");
+    let response = state
+        .chat_with_request(
+            json!({"model": "grok", "messages": [{"role": "user", "content": "hello grok"}]}),
+            None,
+            "/v1/chat/completions",
+            Some("req-grok-1"),
+        )
+        .await
+        .expect("grok chat");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers().get("x-nd-router-provider").and_then(|value| value.to_str().ok()), Some("grok-web"));
+    assert_eq!(response.headers().get("x-nd-router-model").and_then(|value| value.to_str().ok()), Some("think"));
+
+    let direct = state
+        .chat_with_request(
+            json!({"model": "grok-web/default", "messages": [{"role": "user", "content": "direct route"}]}),
+            None,
+            "/v1/chat/completions",
+            Some("req-grok-2"),
+        )
+        .await
+        .expect("direct grok chat");
+    assert_eq!(direct.headers().get("x-nd-router-provider").and_then(|value| value.to_str().ok()), Some("grok-web"));
+    assert_eq!(direct.headers().get("x-nd-router-combo").and_then(|value| value.to_str().ok()), Some("direct"));
+
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0].1["engine"], "grok-web");
+    assert_eq!(calls[0].1["model"], "think");
+    assert_eq!(calls[0].1["prompt"], "hello grok");
+    assert_eq!(calls[1].1["engine"], "grok-web");
+    assert_eq!(calls[1].1["model"], "default");
+    assert_eq!(calls[1].1["prompt"], "direct route");
+}
+
+#[tokio::test]
 async fn safe_mode_locks_external_auth_and_web_lanes_but_keeps_internal_routing() {
     let temp = tempfile::tempdir().expect("tempdir");
     let (bridge_url, bridge_token, calls) = mock_web_bridge().await;
@@ -746,4 +885,93 @@ async fn qoder_test_provider_runs_the_cli_with_the_pat_account() {
     assert_eq!(result["preview"], "pat:qoder-test-pat");
 
     unsafe { std::env::remove_var("ND_QODER_BIN") };
+}
+
+#[test]
+fn categorizes_and_seeds_free_api_providers() {
+    use crate::catalog;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let state = RouterState::new(temp.path().to_path_buf()).expect("state");
+
+    for (alias, expected_kind, expected_model) in [
+        ("pollinations", catalog::KIND_POLLINATIONS, "openai-fast"),
+        ("ovh", catalog::KIND_OVH_KEPLER, "gpt-oss-120b"),
+        ("free-ai", catalog::KIND_FREE_AI, "qwen3-coder"),
+        ("kilo", catalog::KIND_KILO, "openrouter/free"),
+    ] {
+        let normalized = catalog::normalize_kind(alias).expect("normalize");
+        assert_eq!(normalized, expected_kind);
+        assert_eq!(catalog::provider_category(&normalized), "api");
+        assert_eq!(catalog::provider_auth_mode(&normalized), "none");
+        assert!(catalog::is_http_kind(&normalized));
+        assert!(catalog::is_free_api_kind(&normalized));
+
+        let saved = state
+            .save_provider(SaveProviderInput {
+                id: Some(format!("provider-{alias}")),
+                kind: Some(alias.to_owned()),
+                name: None,
+                base_url: None,
+                models: None,
+                is_active: Some(true),
+                priority: Some(0),
+                api_key: None,
+                clear_secret: false,
+            })
+            .expect("save_provider");
+        assert!(!saved["baseUrl"].as_str().unwrap_or("").is_empty());
+        assert_eq!(saved["models"][0], expected_model);
+    }
+
+    assert_eq!(catalog::provider_category(catalog::KIND_ANTIGRAVITY), "cli");
+    assert_eq!(catalog::provider_auth_mode(catalog::KIND_ANTIGRAVITY), "cli");
+    assert_eq!(catalog::provider_category(catalog::KIND_CHATGPT_WEB), "web");
+    assert_eq!(catalog::provider_auth_mode(catalog::KIND_CHATGPT_WEB), "browser");
+    assert_eq!(catalog::provider_category(catalog::KIND_OPENAI), "api");
+    assert_eq!(catalog::provider_auth_mode(catalog::KIND_OPENAI), "api-key");
+}
+
+#[tokio::test]
+async fn test_candidate_validates_and_pings_without_persisting() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let state = RouterState::new(temp.path().to_path_buf()).expect("state");
+
+    // Invalid kind returns ok: false, statusCode: 400
+    let invalid_kind = state
+        .test_candidate(SaveProviderInput {
+            id: None,
+            kind: Some("non-existent-kind".to_owned()),
+            name: None,
+            base_url: None,
+            models: None,
+            api_key: None,
+            clear_secret: false,
+            is_active: Some(true),
+            priority: Some(0),
+        })
+        .await
+        .expect("test_candidate");
+    assert_eq!(invalid_kind["ok"], false);
+    assert_eq!(invalid_kind["statusCode"], 400);
+
+    // Missing baseUrl for custom openai-compatible returns ok: false, statusCode: 400
+    let missing_url = state
+        .test_candidate(SaveProviderInput {
+            id: None,
+            kind: Some("openai-compatible".to_owned()),
+            name: Some("Custom API".to_owned()),
+            base_url: Some("".to_owned()),
+            models: None,
+            api_key: None,
+            clear_secret: false,
+            is_active: Some(true),
+            priority: Some(0),
+        })
+        .await
+        .expect("test_candidate");
+    assert_eq!(missing_url["ok"], false);
+    assert_eq!(missing_url["statusCode"], 400);
+
+    // Ensure store is completely empty (candidate was not saved)
+    assert_eq!(state.snapshot()["providers"].as_array().map(Vec::len), Some(0));
 }

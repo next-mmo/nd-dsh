@@ -742,16 +742,20 @@ export function registerNativeHostHandlers(
   host.register('ninerouter.status', async () => {
     const state = await deps.nineRouterManaged?.state()
     return {
-      title: state?.running
-        ? `9Router running (${state.endpoint})`
-        : state?.installed
-          ? '9Router installed (stopped)'
-          : '9Router not installed',
-      detail: state?.running
-        ? `Gateway is ready at ${state.endpoint}. Models can be discovered and connected in ND Router.`
-        : state?.installed
-          ? 'Runtime is ready to start from ND Router or launcher.'
-          : 'Install the 9Router extension from Extensions, or configure in ND Router.',
+      title: state?.lastError && !state.running
+        ? '9Router error'
+        : state?.running
+          ? `9Router running (${state.endpoint})`
+          : state?.installed
+            ? '9Router installed (stopped)'
+            : '9Router not installed',
+      detail: state?.lastError
+        ? state.lastError
+        : state?.running
+          ? `Gateway is ready at ${state.endpoint}. Models can be discovered and connected in ND Router.`
+          : state?.installed
+            ? 'Runtime is ready to start from ND Router or launcher.'
+            : 'Install the 9Router extension from Extensions, or configure in ND Router.',
       state: state ?? null,
     }
   })
@@ -2840,6 +2844,7 @@ async function packageCatalogView(state: NdExtensionsStateView, id: string, pack
       })),
       installed: fallback.installed,
       available: true,
+      ...(validated.manifest.category ? { category: validated.manifest.category } : {}),
     }
   } catch {
     return fallback

@@ -30,6 +30,7 @@ export interface NineRouterState {
   endpoint?: string
   version?: string
   lastError?: string
+  recentLogs?: string[]
 }
 export interface NineRouterModel {
   id: string

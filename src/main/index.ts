@@ -450,13 +450,21 @@ async function createWindow(cdpPort: number): Promise<void> {
     browser,
     storePath: join(userData, 'deepseek-web-sessions.json'),
     log: (line) => console.warn(line),
+  }, {
+    browser,
+    storePath: join(userData, 'grok-web-sessions.json'),
+    log: (line) => console.warn(line),
+  }, {
+    browser,
+    storeDir: userData,
+    log: (line: string) => console.warn(line),
   })
   activeEngineRouter = engineRouter
   engineRouter.setBrowserAccessProvider(browserPlatform)
   // A web chat or router lane owns the visible browser while its turn runs;
   // switching identities mid-turn would hide the page the engine is driving.
   browserPlatform.setProfileSwitchGuard(() => engineRouter.hasRunningWebTurn()
-    ? 'Finish the active ChatGPT Web / Gemini Web / DeepSeek Web turn before switching browser profiles'
+    ? 'Finish the active web chat turn before switching browser profiles'
     : undefined)
   // The router's web lanes need the engine router; start the private loopback
   // bridge first, then hand its descriptor to the Rust router. API lanes still
@@ -750,6 +758,11 @@ async function createWindow(cdpPort: number): Promise<void> {
   })
   if (rendererUrl) await window.loadURL(rendererUrl)
   else await window.loadFile(rendererFile)
+  if (!window.isDestroyed() && !window.isVisible() && !launchInBackground) {
+    window.show()
+    window.focus()
+    localRuntime?.setBackground(false)
+  }
   markStartup('renderer-loaded')
   // Hotkeys go live as soon as the window exists. createWindow still runs a long
   // benchmark tail afterwards, and a launcher key that only works once startup

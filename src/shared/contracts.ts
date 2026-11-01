@@ -874,6 +874,14 @@ export interface DesktopApi {
     getModeSettings(): Promise<WebBrowserModeSettings>
     setModeSettings(settings: Partial<WebBrowserModeSettings>): Promise<WebBrowserModeSettings>
   }
+  grokWeb: {
+    getModeSettings(): Promise<WebBrowserModeSettings>
+    setModeSettings(settings: Partial<WebBrowserModeSettings>): Promise<WebBrowserModeSettings>
+  }
+  webEngine?: {
+    getModeSettings(engineId: string): Promise<WebBrowserModeSettings>
+    setModeSettings(engineId: string, settings: Partial<WebBrowserModeSettings>): Promise<WebBrowserModeSettings>
+  }
   /** OS-style media transport over whatever the embedded browser is playing. */
   media?: {
     state(): Promise<NdMediaSessionState | null>
@@ -1066,4 +1074,8 @@ export const IPC = {
   geminiWebModeSet: 'gemini-web:mode-set',
   deepseekWebModeGet: 'deepseek-web:mode-get',
   deepseekWebModeSet: 'deepseek-web:mode-set',
+  grokWebModeGet: 'grok-web:mode-get',
+  grokWebModeSet: 'grok-web:mode-set',
+  webEngineModeGet: 'web-engine:mode-get',
+  webEngineModeSet: 'web-engine:mode-set',
 } as const

@@ -19,7 +19,7 @@ import type {
   SessionSummary,
   WorkspaceSuggestion,
 } from '../../../shared/contracts'
-import { ANTIGRAVITY_ENGINE_ID, CHATGPT_WEB_ENGINE_ID, CODEX_CLI_ENGINE_ID, DEEPSEEK_WEB_ENGINE_ID, GEMINI_WEB_ENGINE_ID, ND_HARNESS_ENGINE_ID, ND_NATIVE_ENGINE_ID, PI_CODING_ENGINE_ID, ZCODE_CLI_ENGINE_ID } from '../../../shared/coding-engines'
+import { ANTIGRAVITY_ENGINE_ID, CHATGPT_WEB_ENGINE_ID, CODEX_CLI_ENGINE_ID, DEEPSEEK_WEB_ENGINE_ID, GEMINI_WEB_ENGINE_ID, GROK_WEB_ENGINE_ID, ND_HARNESS_ENGINE_ID, ND_NATIVE_ENGINE_ID, PI_CODING_ENGINE_ID, ZCODE_CLI_ENGINE_ID } from '../../../shared/coding-engines'
 import { OPENCODE_CLI_ENGINE_ID } from '../../../shared/extra-coding-engines'
 import { DisplayGroup, groupEntries, parseFileChanges, toolPreview, type ContextBlock } from '../../../shared/chat-grouping'
 import { filterSessionsInProjectScope, isSessionInProjectScope, PERSONAL_PROJECT_ID } from '../../../shared/session-project-scope'
@@ -65,6 +65,7 @@ import {
   CrosshairIcon,
   FileIcon,
   FolderIcon,
+  LogsIcon,
   PlusIcon,
   RotateIcon,
   SearchIcon,
@@ -79,6 +80,7 @@ import {
 } from './Icons'
 import { cn } from '../lib/utils'
 import { TerminalDock } from './TerminalDock'
+import { ProcessLogsDrawer, formatLogTimestamp, type ProcessLogEntry } from './ProcessLogsDrawer'
 import { ProjectServerControl } from './ProjectServerControl'
 import { ChangedFilesCard } from './ChangedFilesCard'
 import { ChatContextPopover } from './ChatContextPopover'
@@ -86,6 +88,7 @@ import { ZcodeModelConfigDialog } from './ZcodeModelConfigDialog'
 import { ChatGptProjectDialog } from './ChatGptProjectDialog'
 import { PromptShieldReviewDialog } from './PromptShieldReviewDialog'
 import { parsePromptShieldBlockedError, type PromptShieldBlockedPayload } from '../../../shared/prompt-shield'
+import type { WorkspaceProfile } from '../../../shared/workspace-profile'
 import { GeminiGemDialog } from './GeminiGemDialog'
 import { ImageGalleryDialog, ImagePreviewDialog, MarkdownLite } from './MarkdownLite'
 import { Button } from './ui/button'
@@ -138,6 +141,8 @@ interface ChatPanelProps {
   elementAttachmentVersion?: number
   /** Reveals and activates the browser tab owned by a web-engine chat. */
   onActivateBrowserTab?(tabId: string): void
+  /** Human-facing workspace profile: 'general' (everyday AI work) vs 'coding' (developer tools). */
+  workspaceProfile?: WorkspaceProfile | null
 }
 
 const PERMISSION_MODES = [
@@ -272,11 +277,127 @@ function fileMentionTag(relativePath: string): string {
   return extension ? extension.toUpperCase().slice(0, 5) : 'FILE'
 }
 
-export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelected, workspaceProjectId, onOpenWorkspace, sessionsCollapsed, threadCollapsed, onToggleThreadCollapsed, onSessionsWidthChange, sessionProjectScope, projects, onSelectProject, onError, onOpenSettings, onOpenFile, onOpenLink, externalPrompt, onExternalPromptConsumed, incomingImage, onIncomingImageConsumed, sessionOpenRequest, onSessionOpenConsumed, elementAttachmentVersion, onGitEditableChange, onActivateBrowserTab }: ChatPanelProps) {
+const WEB_ENGINE_INFO: Record<string, { label: string; url: string; linkText: string }> = {
+  'grok-web': { label: 'Grok Web · signed-in grok.com · model selectable per chat', url: 'https://grok.com/', linkText: 'Open Grok' },
+  'qwen-web': { label: 'Qwen Web · signed-in chat.qwen.ai · coding, reasoning, translation', url: 'https://chat.qwen.ai/', linkText: 'Open Qwen' },
+  'zai-web': { label: 'Z.ai Web · signed-in chat.z.ai · coding, technical tasks', url: 'https://chat.z.ai/', linkText: 'Open Z.ai' },
+  'mistral-web': { label: 'Mistral Web · signed-in chat.mistral.ai · coding, productivity, chat', url: 'https://chat.mistral.ai/', linkText: 'Open Mistral' },
+  'perplexity-web': { label: 'Perplexity Web · signed-in perplexity.ai · deep research, cited answers', url: 'https://www.perplexity.ai/', linkText: 'Open Perplexity' },
+  'poe-web': { label: 'Poe Web · signed-in poe.com · multiple AI models in one site', url: 'https://poe.com/', linkText: 'Open Poe' },
+  'arena-web': { label: 'Arena AI Web · signed-in arena.ai · compare AI model responses', url: 'https://arena.ai/', linkText: 'Open Arena' },
+  'meta-web': { label: 'Meta AI Web · signed-in meta.ai · general chat, images', url: 'https://www.meta.ai/', linkText: 'Open Meta AI' },
+  'duck-web': { label: 'Duck.ai Web · signed-in duck.ai · privacy-focused AI chat', url: 'https://duck.ai/', linkText: 'Open Duck.ai' },
+}
+
+function entriesToProcessLogs(entries: ThreadEntry[]): ProcessLogEntry[] {
+  return entries.map((entry, index) => {
+    const timestamp = formatLogTimestamp()
+    switch (entry.kind) {
+      case 'user':
+        return {
+          id: entry.id || `user-${index}`,
+          time: Date.now(),
+          timestamp,
+          level: 'info',
+          title: 'User message submitted',
+          detail: entry.text,
+          payload: entry.images?.length ? { imagesCount: entry.images.length } : undefined,
+        }
+      case 'assistant':
+        return {
+          id: entry.id || `assistant-${index}`,
+          time: Date.now(),
+          timestamp,
+          level: 'success',
+          title: 'Assistant response',
+          subtitle: entry.streaming ? 'Streaming…' : 'Completed',
+          detail: entry.text,
+        }
+      case 'reasoning':
+        return {
+          id: entry.id || `reasoning-${index}`,
+          time: Date.now(),
+          timestamp,
+          level: 'phase',
+          title: 'Reasoning thought',
+          detail: entry.text,
+        }
+      case 'tool':
+        return {
+          id: entry.id || `tool-${index}`,
+          time: Date.now(),
+          timestamp,
+          level: 'tool',
+          title: `Tool: ${entry.name}`,
+          subtitle: entry.status,
+          detail: typeof entry.result === 'string' ? entry.result : JSON.stringify(entry.result, null, 2),
+          payload: entry.args,
+        }
+      case 'approval':
+        return {
+          id: entry.id || `approval-${index}`,
+          time: Date.now(),
+          timestamp,
+          level: 'warn',
+          title: `Approval requested: ${entry.toolName}`,
+          subtitle: entry.resolved ?? 'pending',
+          detail: entry.reason,
+        }
+      case 'question':
+        return {
+          id: entry.id || `question-${index}`,
+          time: Date.now(),
+          timestamp,
+          level: 'warn',
+          title: 'Question requested by agent',
+          payload: entry.questions,
+        }
+      case 'notice':
+        return {
+          id: entry.id || `notice-${index}`,
+          time: Date.now(),
+          timestamp,
+          level: entry.tone === 'error' ? 'error' : 'info',
+          title: `Notice: ${entry.text}`,
+          subtitle: entry.tone,
+        }
+      case 'context':
+        return {
+          id: entry.id || `context-${index}`,
+          time: Date.now(),
+          timestamp,
+          level: 'info',
+          title: `Context: ${entry.source}`,
+          detail: entry.text,
+        }
+      case 'todo':
+        return {
+          id: entry.id || `todo-${index}`,
+          time: Date.now(),
+          timestamp,
+          level: 'status',
+          title: `Todo list (${entry.items.length} items)`,
+          payload: entry.items,
+        }
+      default:
+        return {
+          id: `entry-${index}`,
+          time: Date.now(),
+          timestamp,
+          level: 'info',
+          title: 'Session entry',
+        }
+    }
+  })
+}
+
+export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelected, workspaceProjectId, onOpenWorkspace, sessionsCollapsed, threadCollapsed, onToggleThreadCollapsed, onSessionsWidthChange, sessionProjectScope, projects, onSelectProject, onError, onOpenSettings, onOpenFile, onOpenLink, externalPrompt, onExternalPromptConsumed, incomingImage, onIncomingImageConsumed, sessionOpenRequest, onSessionOpenConsumed, elementAttachmentVersion, onGitEditableChange, onActivateBrowserTab, workspaceProfile = 'general' }: ChatPanelProps) {
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [collapsedSessionParents, setCollapsedSessionParents] = useState<Set<string>>(new Set())
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [terminalOpen, setTerminalOpen] = useState(false)
+  const [logsOpen, setLogsOpen] = useState(false)
+  const [sessionLogs, setSessionLogs] = useState<Record<string, ProcessLogEntry[]>>({})
   const [threads, setThreads] = useState<Record<string, ThreadEntry[]>>({})
   const [busySessions, setBusySessions] = useState<Set<string>>(new Set())
   const [submitting, setSubmitting] = useState(false)
@@ -381,6 +502,8 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   const [geminiModeSettings, setGeminiModeSettings] = useState<WebBrowserModeSettings>({ mode: 'auto', agentFallback: false, visualRecovery: true })
   const [chatGptModeSettings, setChatGptModeSettings] = useState<WebBrowserModeSettings>({ mode: 'auto', agentFallback: false, visualRecovery: true })
   const [deepSeekModeSettings, setDeepSeekModeSettings] = useState<WebBrowserModeSettings>({ mode: 'auto', agentFallback: false, visualRecovery: true })
+  const [grokModeSettings, setGrokModeSettings] = useState<WebBrowserModeSettings>({ mode: 'auto', agentFallback: false, visualRecovery: true })
+  const [genericModeSettings, setGenericModeSettings] = useState<Record<string, WebBrowserModeSettings>>({})
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -426,6 +549,12 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
 
   const activeSession = useMemo(() => sessions.find((s) => s.sessionId === activeSessionId) ?? null, [sessions, activeSessionId])
   const entries = useMemo(() => threads[activeSessionId ?? ''] ?? [], [threads, activeSessionId])
+  const activeSessionLogs = useMemo(() => {
+    const sid = activeSessionId ?? 'draft'
+    const existing = sessionLogs[sid]
+    if (existing && existing.length > 0) return existing
+    return entriesToProcessLogs(entries)
+  }, [activeSessionId, sessionLogs, entries])
   const threadContext = useMemo(() => collectThreadContext(entries), [entries])
   const busy = busySessions.has(activeSessionId ?? '') || Boolean(activeSession?.running) || Boolean(engineSessions.find((session) => session.sessionId === activeSessionId)?.running)
   // Messages sent while this session is working wait here and go out when the
@@ -481,11 +610,11 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   // Only the Harness runtime admits a prompt into a running turn; vendor CLIs
   // and web engines stay queue-only.
   const canSteer = onHarnessThread && activeSessionId !== null
-  const supportsEngineModels = activeEngineId === ANTIGRAVITY_ENGINE_ID || activeEngineId === CODEX_CLI_ENGINE_ID || activeEngineId === ZCODE_CLI_ENGINE_ID || activeEngineId === ND_NATIVE_ENGINE_ID || activeEngineId === PI_CODING_ENGINE_ID || activeEngineId === OPENCODE_CLI_ENGINE_ID || activeEngineId === GEMINI_WEB_ENGINE_ID || activeEngineId === DEEPSEEK_WEB_ENGINE_ID
+  const supportsEngineModels = activeEngineId === ANTIGRAVITY_ENGINE_ID || activeEngineId === CODEX_CLI_ENGINE_ID || activeEngineId === ZCODE_CLI_ENGINE_ID || activeEngineId === ND_NATIVE_ENGINE_ID || activeEngineId === PI_CODING_ENGINE_ID || activeEngineId === OPENCODE_CLI_ENGINE_ID || activeEngineId === GEMINI_WEB_ENGINE_ID || activeEngineId === DEEPSEEK_WEB_ENGINE_ID || activeEngineId === GROK_WEB_ENGINE_ID
   const engineModel = engineModelSelections[activeEngineId] ?? null
-  const engineModelDefaultLabel = activeEngineId === GEMINI_WEB_ENGINE_ID ? 'Gemini default' : activeEngineId === DEEPSEEK_WEB_ENGINE_ID ? 'DeepSeek default' : 'Native default'
-  const engineModelDefaultHint = activeEngineId === GEMINI_WEB_ENGINE_ID ? 'whatever the Gemini chat is set to' : activeEngineId === DEEPSEEK_WEB_ENGINE_ID ? 'whatever DeepSeek has selected' : 'whatever the CLI is configured with'
-  const engineModelIdleLabel = activeEngineId === GEMINI_WEB_ENGINE_ID ? 'Gemini default' : activeEngineId === DEEPSEEK_WEB_ENGINE_ID ? 'DeepSeek default' : 'Native model'
+  const engineModelDefaultLabel = activeEngineId === GEMINI_WEB_ENGINE_ID ? 'Gemini default' : activeEngineId === DEEPSEEK_WEB_ENGINE_ID ? 'DeepSeek default' : activeEngineId === GROK_WEB_ENGINE_ID ? 'Grok default' : 'Native default'
+  const engineModelDefaultHint = activeEngineId === GEMINI_WEB_ENGINE_ID ? 'whatever the Gemini chat is set to' : activeEngineId === DEEPSEEK_WEB_ENGINE_ID ? 'whatever DeepSeek has selected' : activeEngineId === GROK_WEB_ENGINE_ID ? 'whatever Grok has selected' : 'whatever the CLI is configured with'
+  const engineModelIdleLabel = activeEngineId === GEMINI_WEB_ENGINE_ID ? 'Gemini default' : activeEngineId === DEEPSEEK_WEB_ENGINE_ID ? 'DeepSeek default' : activeEngineId === GROK_WEB_ENGINE_ID ? 'Grok default' : 'Native model'
   const setEngineModel = (model: string | null): void => {
     setEngineModelSelections((current) => ({ ...current, [activeEngineId]: model }))
   }
@@ -561,6 +690,41 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
     try {
       const updated = await window.ndDsh?.deepseekWeb?.setModeSettings?.({ mode })
       if (updated) setDeepSeekModeSettings(updated)
+    } catch {
+      // ignore
+    }
+  }, [])
+  useEffect(() => {
+    if (activeEngineId === GROK_WEB_ENGINE_ID) {
+      void window.ndDsh?.grokWeb?.getModeSettings?.().then((settings) => {
+        if (settings) setGrokModeSettings(settings)
+      })
+    }
+  }, [activeEngineId])
+  const handleSelectGrokMode = useCallback(async (mode: WebBrowserMode) => {
+    try {
+      const updated = await window.ndDsh?.grokWeb?.setModeSettings?.({ mode })
+      if (updated) setGrokModeSettings(updated)
+    } catch {
+      // ignore
+    }
+  }, [])
+  useEffect(() => {
+    if (activeEngineId && activeEngineId in WEB_ENGINE_INFO && activeEngineId !== GROK_WEB_ENGINE_ID) {
+      void window.ndDsh?.webEngine?.getModeSettings?.(activeEngineId).then((settings) => {
+        if (settings) setGenericModeSettings((prev) => ({ ...prev, [activeEngineId]: settings }))
+      })
+    }
+  }, [activeEngineId])
+  const handleSelectWebEngineMode = useCallback(async (engineId: string, mode: WebBrowserMode) => {
+    try {
+      if (engineId === GROK_WEB_ENGINE_ID) {
+        const updated = await window.ndDsh?.grokWeb?.setModeSettings?.({ mode })
+        if (updated) setGrokModeSettings(updated)
+      } else {
+        const updated = await window.ndDsh?.webEngine?.setModeSettings?.(engineId, { mode })
+        if (updated) setGenericModeSettings((prev) => ({ ...prev, [engineId]: updated }))
+      }
     } catch {
       // ignore
     }
@@ -789,7 +953,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   const selectEngineSession = useCallback((summary: EngineSessionSummary): void => {
     setDraftEngineId(null)
     setActiveSessionId(summary.sessionId)
-    if (summary.engineId === CHATGPT_WEB_ENGINE_ID || summary.engineId === GEMINI_WEB_ENGINE_ID || summary.engineId === DEEPSEEK_WEB_ENGINE_ID) {
+    if (summary.engineId === CHATGPT_WEB_ENGINE_ID || summary.engineId === GEMINI_WEB_ENGINE_ID || summary.engineId === DEEPSEEK_WEB_ENGINE_ID || summary.engineId === GROK_WEB_ENGINE_ID) {
       // The engine owns (and persists) the tab mapping; it recreates the tab
       // when the user closed it or the app restarted.
       void window.ndDsh.engines.browserTab(summary.sessionId)
@@ -1159,8 +1323,13 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
       const needle = mentionTrigger.query.toLowerCase()
       if (skillsOwner !== skillsScope || skillsState !== 'ready') return []
       return skillItems
-        .filter((skill) => skill.name.toLowerCase().includes(needle))
-        .slice(0, MENTION_MENU_LIMIT)
+        .filter(
+          (skill) =>
+            skill.name.toLowerCase().includes(needle) ||
+            (skill.displayName && skill.displayName.toLowerCase().includes(needle)) ||
+            skill.description.toLowerCase().includes(needle)
+        )
+        .slice(0, 32)
         .map((skill) => ({
           kind: 'skill' as const,
           insert: `/${skill.name}`,
@@ -1283,6 +1452,103 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
 
   function handleFrame(frame: DshEventFrame): void {
     const sessionId = frame.sessionId
+    const logSessionId = sessionId ?? activeSessionId
+    if (logSessionId) {
+      let logItem: Omit<ProcessLogEntry, 'id' | 'timestamp' | 'time'> | null = null
+
+      if (frame.kind === 'session-status') {
+        logItem = {
+          level: 'status',
+          title: frame.running ? 'Session turn started' : 'Session turn finished',
+          subtitle: frame.running ? 'Running' : 'Idle',
+          detail: `Session ${logSessionId} status changed to ${frame.running ? 'running' : 'idle'}`,
+        }
+      } else if (frame.kind === 'session-event' && frame.event) {
+        const env = frame.event
+        if (env.type === 'tool/call') {
+          const data = env.data as Record<string, unknown> | undefined
+          const name = String(data?.name ?? frame.toolName ?? 'tool')
+          const callId = data?.callId ? String(data.callId) : frame.callId
+          logItem = {
+            level: 'tool',
+            title: `Tool call: ${name}`,
+            subtitle: callId ? `ID: ${callId.slice(0, 8)}` : undefined,
+            detail: data?.args ? JSON.stringify(data.args, null, 2) : undefined,
+            payload: data?.args,
+          }
+        } else if (env.type === 'tool/result') {
+          const data = env.data as Record<string, unknown> | undefined
+          const name = String(data?.name ?? frame.toolName ?? 'tool')
+          const status = data?.status ? String(data.status) : undefined
+          logItem = {
+            level: 'tool',
+            title: `Tool result: ${name}`,
+            subtitle: status,
+            detail: typeof data?.result === 'string' ? data.result : JSON.stringify(data?.result, null, 2),
+            payload: data?.result,
+          }
+        } else if (env.type === 'agent/thought') {
+          const data = env.data as Record<string, unknown> | undefined
+          const text = typeof data?.text === 'string' ? data.text : JSON.stringify(data)
+          logItem = {
+            level: 'phase',
+            title: 'Agent reasoning thought',
+            detail: text,
+          }
+        } else if (env.type === 'agent/status') {
+          const data = env.data as Record<string, unknown> | undefined
+          const msg = String(data?.phase ?? data?.message ?? 'Status update')
+          logItem = {
+            level: 'status',
+            title: `Status: ${msg}`,
+            detail: JSON.stringify(data),
+          }
+        }
+      } else if (frame.kind === 'approval-requested') {
+        logItem = {
+          level: 'warn',
+          title: `Approval requested: ${frame.toolName ?? 'action'}`,
+          subtitle: frame.approvalId,
+          detail: frame.reason,
+        }
+      } else if (frame.kind === 'approval-resolved') {
+        logItem = {
+          level: 'info',
+          title: `Approval resolved: ${frame.toolName ?? 'action'}`,
+          subtitle: frame.outcome,
+        }
+      } else if (frame.kind === 'question-requested') {
+        logItem = {
+          level: 'warn',
+          title: 'Question requested by agent',
+        }
+      } else if (frame.kind === 'agent-error') {
+        logItem = {
+          level: 'error',
+          title: `Agent Error: ${frame.message ?? 'Unknown error'}`,
+          detail: frame.message,
+        }
+      } else if (frame.kind === 'stream-error') {
+        logItem = {
+          level: 'error',
+          title: `Stream Error: ${frame.message ?? 'Unknown stream error'}`,
+          detail: frame.message,
+        }
+      }
+
+      if (logItem) {
+        const item: ProcessLogEntry = {
+          id: crypto.randomUUID(),
+          timestamp: formatLogTimestamp(),
+          time: Date.now(),
+          ...logItem,
+        }
+        setSessionLogs((current) => ({
+          ...current,
+          [logSessionId]: [...(current[logSessionId] ?? []), item].slice(-1000),
+        }))
+      }
+    }
     if (sessionId) {
       if (frame.kind === 'session-status') {
         if (frame.running) {
@@ -1622,6 +1888,21 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
         : { permissionMode }
     const imageOption = message.images.length > 0 ? { images: message.images } : {}
     const fileOption = message.files.length > 0 ? { files: message.files } : {}
+    const sid = targetSessionId ?? 'draft'
+    const promptLog: ProcessLogEntry = {
+      id: crypto.randomUUID(),
+      timestamp: formatLogTimestamp(),
+      time: Date.now(),
+      level: 'info',
+      title: `Prompt submitted to ${activeEngineName || activeEngineId}`,
+      subtitle: source !== 'composer' ? `Source: ${source}` : undefined,
+      detail: outbound,
+      payload: { source, attachmentCount: message.images.length + message.files.length },
+    }
+    setSessionLogs((current) => ({
+      ...current,
+      [sid]: [...(current[sid] ?? []), promptLog].slice(-1000),
+    }))
     let runOptions: HarnessRunOptions = {
       ...options,
       ...(source === 'steer' ? { mode: 'steer' as const } : {}),
@@ -2665,6 +2946,33 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
           </div>
         ) : null}
 
+        {(() => {
+          const webInfo = activeEngineId ? WEB_ENGINE_INFO[activeEngineId] : undefined
+          if (!webInfo || !activeEngineId) return null
+          return (
+            <div className="mx-3 mt-2.5 space-y-1.5">
+              <div className="flex items-center justify-between gap-2 rounded-[7px] border border-border-soft bg-surface-1 px-2.5 py-1.5 text-[10px]">
+                <span className="min-w-0 truncate text-soft">
+                  {webInfo.label}
+                </span>
+                <button
+                  type="button"
+                  className="shrink-0 rounded border border-border-soft px-1.5 py-0.5 text-[9px] text-faint hover:bg-accent hover:text-foreground"
+                  onClick={() => onOpenLink?.(webInfo.url)}
+                  title={`Open ${webInfo.linkText} in browser`}
+                >
+                  {webInfo.linkText}
+                </button>
+              </div>
+              <BrowserModeSelector
+                mode={genericModeSettings[activeEngineId]?.mode ?? (activeEngineId === GROK_WEB_ENGINE_ID ? grokModeSettings.mode : 'auto')}
+                onSelect={(mode) => void handleSelectWebEngineMode(activeEngineId, mode)}
+                modes={['auto', 'extension', 'cdp']}
+              />
+            </div>
+          )
+        })()}
+
         {changedFiles.length > 0 ? (
           <ChangedFilesCard files={changedFiles} {...(onOpenFile ? { onOpenFile } : {})} onError={onError} />
         ) : null}
@@ -2672,10 +2980,104 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
         <div className="relative min-h-0 flex-1">
           <div className="h-full overflow-auto px-3 pt-2.5 pb-4" ref={scrollRef} onScroll={onFeedScroll}>
           {entries.length === 0 && !busy ? (
-            <div className="flex h-full flex-col items-center justify-center gap-1 p-5 text-center text-faint">
-              <span className="mb-1.5 grid size-[46px] place-items-center rounded-xl border border-primary/30 bg-primary/10 text-primary [&_svg]:size-5"><SparkIcon /></span>
-              <h3 className="m-0 text-[13px] font-semibold text-soft">{onHarnessThread ? 'ND Agent' : activeEngineName}</h3>
-              <p className="m-0 max-w-[300px] text-[9px]/[1.6]">Ask anything about this workspace — open files, inspect the browser, or plan company goals. Inspect context usage and thread activity with the Context badge.</p>
+            <div className="flex h-full flex-col items-center justify-center gap-1.5 p-6 text-center text-faint">
+              <span className={cn(
+                'mb-1.5 grid size-[48px] place-items-center rounded-2xl border text-primary shadow-sm [&_svg]:size-5',
+                workspaceProfile === 'general'
+                  ? 'border-blue-500/30 bg-blue-500/10 text-blue-400 shadow-[0_0_20px_rgba(59,130,246,0.15)]'
+                  : 'border-primary/30 bg-primary/10 text-primary shadow-[0_0_20px_rgba(var(--primary-rgb),0.15)]',
+              )}>
+                {workspaceProfile === 'general' ? <SparkIcon /> : <TerminalIcon />}
+              </span>
+              <div className="flex items-center gap-2">
+                <h3 className="m-0 text-[14px] font-bold text-foreground">
+                  {workspaceProfile === 'general' ? 'ND Assistant' : onHarnessThread ? 'ND Coding Agent' : activeEngineName}
+                </h3>
+                <span className={cn(
+                  'rounded-full px-2 py-0.5 text-[9px] font-semibold tracking-wide uppercase',
+                  workspaceProfile === 'general'
+                    ? 'border border-blue-500/20 bg-blue-500/15 text-blue-400'
+                    : 'border border-emerald-500/20 bg-emerald-500/15 text-emerald-400',
+                )}>
+                  {workspaceProfile === 'general' ? 'General' : 'Coding'}
+                </span>
+              </div>
+              <p className="m-0 max-w-[340px] text-[11px]/[1.6] text-muted-foreground">
+                {workspaceProfile === 'general'
+                  ? 'Create, learn, and explore — write documents, research the web, plan company goals, or design in ND Pencil.'
+                  : 'Build, debug, and ship — inspect repository code, run tests, and execute autonomous coding workflows.'}
+              </p>
+
+              {/* Quick starter chips */}
+              <div className="mt-4 flex max-w-[360px] flex-wrap justify-center gap-1.5">
+                {workspaceProfile === 'general' ? (
+                  <>
+                    <button
+                      type="button"
+                      className="rounded-full border border-border-soft bg-surface-1 px-3 py-1 text-[11px] text-soft transition-colors hover:border-blue-500/40 hover:bg-blue-500/10 hover:text-foreground"
+                      onClick={() => {
+                        setPrompt('Draft an executive summary and action plan for: ')
+                        textareaRef.current?.focus()
+                      }}
+                    >
+                      📝 Draft a memo or summary
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-full border border-border-soft bg-surface-1 px-3 py-1 text-[11px] text-soft transition-colors hover:border-blue-500/40 hover:bg-blue-500/10 hover:text-foreground"
+                      onClick={() => {
+                        setPrompt('Research and summarize current best practices for: ')
+                        textareaRef.current?.focus()
+                      }}
+                    >
+                      🌐 Research on the web
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-full border border-border-soft bg-surface-1 px-3 py-1 text-[11px] text-soft transition-colors hover:border-blue-500/40 hover:bg-blue-500/10 hover:text-foreground"
+                      onClick={() => {
+                        setPrompt('Break down this goal into actionable project milestones: ')
+                        textareaRef.current?.focus()
+                      }}
+                    >
+                      📋 Plan project milestones
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="rounded-full border border-border-soft bg-surface-1 px-3 py-1 text-[11px] text-soft transition-colors hover:border-primary/40 hover:bg-primary/10 hover:text-foreground"
+                      onClick={() => {
+                        setPrompt('Explain the architecture and main components of this repository.')
+                        textareaRef.current?.focus()
+                      }}
+                    >
+                      💻 Explain codebase architecture
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-full border border-border-soft bg-surface-1 px-3 py-1 text-[11px] text-soft transition-colors hover:border-primary/40 hover:bg-primary/10 hover:text-foreground"
+                      onClick={() => {
+                        setPrompt('Run the automated test suite and report any failing tests.')
+                        textareaRef.current?.focus()
+                      }}
+                    >
+                      🧪 Run tests & verify health
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-full border border-border-soft bg-surface-1 px-3 py-1 text-[11px] text-soft transition-colors hover:border-primary/40 hover:bg-primary/10 hover:text-foreground"
+                      onClick={() => {
+                        setPrompt('Find and debug any recent errors or regressions in: ')
+                        textareaRef.current?.focus()
+                      }}
+                    >
+                      🔍 Find & debug issues
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
           ) : null}
           {feed.groups.map((group, index) => {
@@ -3066,7 +3468,11 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
                   void run()
                 }
               }}
-              placeholder="Ask the agent to work here — @ files/browser targets, / skills"
+              placeholder={
+                workspaceProfile === 'general'
+                  ? 'Ask anything, create, research, or coordinate daily work — / skills, @ context'
+                  : 'Ask the agent to build, debug, or edit code — @ files, / skills'
+              }
               rows={1}
               className="max-h-[180px] w-full resize-none overflow-y-auto bg-transparent text-xs/[1.5] text-foreground outline-none placeholder:text-faint"
             />
@@ -3438,10 +3844,44 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
             >
               <span>&gt;_</span><span>Terminal</span>
             </button>
+            <button
+              type="button"
+              aria-pressed={logsOpen}
+              disabled={!activeSessionId}
+              className={cn(
+                'flex h-6 items-center gap-1 rounded-md border px-1.5 font-mono text-[9px] transition-colors disabled:cursor-not-allowed disabled:opacity-40',
+                logsOpen
+                  ? 'border-primary/25 bg-primary/[0.08] text-primary font-semibold'
+                  : 'border-border-soft text-faint hover:bg-accent hover:text-foreground',
+              )}
+              title="Toggle chat process logs drawer"
+              aria-label="Toggle process logs"
+              onClick={() => setLogsOpen((open) => !open)}
+            >
+              <LogsIcon className="size-2.5" />
+              <span>Logs</span>
+              {activeSessionLogs.length > 0 ? (
+                <span className="rounded-full bg-surface-2 px-1 text-[8px] font-mono text-faint">
+                  {activeSessionLogs.length}
+                </span>
+              ) : null}
+            </button>
           </div>
           <span className="min-w-0 truncate text-right text-[8px] text-fainter" title="Browser actions run in the pane you can see.">Browser actions run in the pane you can see.</span>
         </div>
       </aside>
+      <ProcessLogsDrawer
+        open={logsOpen}
+        onClose={() => setLogsOpen(false)}
+        logs={activeSessionLogs}
+        onClear={() => {
+          const sid = activeSessionId ?? 'draft'
+          setSessionLogs((current) => ({ ...current, [sid]: [] }))
+        }}
+        busy={submitting || busySessions.has(activeSessionId ?? '')}
+        title="Chat Process Logs"
+        subtitle={activeEngineName || activeEngineId || undefined}
+      />
       {threadCollapsed ? (
         <aside
           aria-label="Collapsed engine thread"

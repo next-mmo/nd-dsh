@@ -1,7 +1,22 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { CodingEngineDescriptor } from '../../shared/contracts.js'
-import { buildCodingEngineCatalog, chatGptWebEngineDescriptor, deepSeekWebEngineDescriptor, geminiWebEngineDescriptor, ND_HARNESS_ENGINE_ID } from '../../shared/coding-engines.js'
+import {
+  arenaWebEngineDescriptor,
+  buildCodingEngineCatalog,
+  chatGptWebEngineDescriptor,
+  deepSeekWebEngineDescriptor,
+  duckWebEngineDescriptor,
+  geminiWebEngineDescriptor,
+  grokWebEngineDescriptor,
+  metaWebEngineDescriptor,
+  mistralWebEngineDescriptor,
+  ND_HARNESS_ENGINE_ID,
+  perplexityWebEngineDescriptor,
+  poeWebEngineDescriptor,
+  qwenWebEngineDescriptor,
+  zaiWebEngineDescriptor,
+} from '../../shared/coding-engines.js'
 import { buildExtraCodingEngineCatalog } from '../../shared/extra-coding-engines.js'
 import { antigravityBinPath, claudeBinPath, codexBinPath, cursorBinPath, dshPatchPath, harnessCliBinPath, harnessRoot, ndAgentBinPath, piBinPath, presetSourceDir, zcodeBinPath } from '../app-paths.js'
 import type { CapabilityAssignmentStore } from '../capabilities/capability-assignment-store.js'
@@ -62,6 +77,15 @@ export class CodingEngineRegistry {
       chatGptWebEngineDescriptor(),
       geminiWebEngineDescriptor(),
       deepSeekWebEngineDescriptor(),
+      grokWebEngineDescriptor(),
+      qwenWebEngineDescriptor(),
+      zaiWebEngineDescriptor(),
+      mistralWebEngineDescriptor(),
+      perplexityWebEngineDescriptor(),
+      poeWebEngineDescriptor(),
+      arenaWebEngineDescriptor(),
+      metaWebEngineDescriptor(),
+      duckWebEngineDescriptor(),
     ]
   }
 

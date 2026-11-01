@@ -72,7 +72,7 @@ pub fn sanitize_provider(
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
         .or_else(|| existing.map(|record| record.base_url.clone()))
-        .unwrap_or_default();
+        .unwrap_or_else(|| default_base_url(&kind));
     if catalog::requires_base_url(&kind) && base_url.is_empty() {
         return Err("baseUrl is required for an OpenAI-compatible provider".to_owned());
     }
@@ -186,18 +186,72 @@ fn sanitize_models(models: Vec<String>) -> Vec<String> {
 
 fn default_name(kind: &str) -> String {
     match kind {
+        catalog::KIND_POLLINATIONS => "Pollinations AI (Free)".to_owned(),
+        catalog::KIND_OVH_KEPLER => "OVH Kepler Cloud (Free)".to_owned(),
+        catalog::KIND_FREE_AI => "Free.ai (Free)".to_owned(),
+        catalog::KIND_KILO => "Kilo Gateway (Free)".to_owned(),
         catalog::KIND_ANTIGRAVITY => "Antigravity".to_owned(),
         catalog::KIND_GEMINI_CLI => "Gemini CLI".to_owned(),
         catalog::KIND_QODER => "Qoder CLI".to_owned(),
+        catalog::KIND_CODEX_CLI => "Codex CLI".to_owned(),
+        catalog::KIND_CLAUDE_CLI => "Claude Code CLI".to_owned(),
+        catalog::KIND_PI_CLI => "Pi CLI".to_owned(),
+        catalog::KIND_ZCODE_CLI => "ZCode CLI".to_owned(),
+        catalog::KIND_CURSOR_CLI => "Cursor CLI".to_owned(),
+        catalog::KIND_OPENCODE_CLI => "OpenCode CLI".to_owned(),
+        catalog::KIND_GOOSE_CLI => "Goose CLI".to_owned(),
+        catalog::KIND_HERMES_CLI => "Hermes CLI".to_owned(),
+        catalog::KIND_JCODE_CLI => "JCode CLI".to_owned(),
+        catalog::KIND_MINIMAX_CLI => "MiniMax CLI".to_owned(),
         catalog::KIND_CHATGPT_WEB => "ChatGPT Web".to_owned(),
         catalog::KIND_GEMINI_WEB => "Gemini Web".to_owned(),
         catalog::KIND_DEEPSEEK_WEB => "DeepSeek Web".to_owned(),
+        catalog::KIND_GROK_WEB => "Grok Web".to_owned(),
+        catalog::KIND_QWEN_WEB => "Qwen Web".to_owned(),
+        catalog::KIND_ZAI_WEB => "Z.ai Web".to_owned(),
+        catalog::KIND_MISTRAL_WEB => "Mistral Web".to_owned(),
+        catalog::KIND_PERPLEXITY_WEB => "Perplexity Web".to_owned(),
+        catalog::KIND_POE_WEB => "Poe Web".to_owned(),
+        catalog::KIND_ARENA_WEB => "Arena AI Web".to_owned(),
+        catalog::KIND_META_WEB => "Meta AI Web".to_owned(),
+        catalog::KIND_DUCK_WEB => "Duck.ai Web".to_owned(),
         _ => "OpenAI-compatible".to_owned(),
     }
 }
 
 fn default_models(kind: &str) -> Vec<String> {
     match kind {
+        catalog::KIND_POLLINATIONS => vec!["openai-fast".to_owned()],
+        catalog::KIND_OVH_KEPLER => vec![
+            "gpt-oss-120b".to_owned(),
+            "Qwen3.6-27B".to_owned(),
+            "Qwen2.5-VL-72B-Instruct".to_owned(),
+            "Mistral-Small-3.2-24B-Instruct-2506".to_owned(),
+            "Meta-Llama-3_3-70B-Instruct".to_owned(),
+        ],
+        catalog::KIND_FREE_AI => vec![
+            "qwen3-coder".to_owned(),
+            "qwen25-vl".to_owned(),
+            "deepseek-r1-7b".to_owned(),
+            "deepseek-r1".to_owned(),
+            "mistral".to_owned(),
+        ],
+        catalog::KIND_KILO => vec![
+            "openrouter/free".to_owned(),
+            "cohere/north-mini-code:free".to_owned(),
+            "kilo-auto/small".to_owned(),
+            "nvidia/nemotron-3.5-lightning:free".to_owned(),
+        ],
+        catalog::KIND_CODEX_CLI => vec!["default".to_owned(), "o3-mini".to_owned(), "o1".to_owned()],
+        catalog::KIND_CLAUDE_CLI => vec!["default".to_owned(), "claude-3-7-sonnet".to_owned(), "claude-3-5-sonnet".to_owned()],
+        catalog::KIND_PI_CLI => vec!["default".to_owned()],
+        catalog::KIND_ZCODE_CLI => vec!["default".to_owned(), "deepseek-r1".to_owned()],
+        catalog::KIND_CURSOR_CLI => vec!["default".to_owned(), "claude-3-7-sonnet".to_owned()],
+        catalog::KIND_OPENCODE_CLI => vec!["default".to_owned()],
+        catalog::KIND_GOOSE_CLI => vec!["default".to_owned()],
+        catalog::KIND_HERMES_CLI => vec!["default".to_owned()],
+        catalog::KIND_JCODE_CLI => vec!["default".to_owned()],
+        catalog::KIND_MINIMAX_CLI => vec!["default".to_owned(), "MiniMax-Text-01".to_owned()],
         catalog::KIND_CHATGPT_WEB => vec!["default".to_owned()],
         catalog::KIND_GEMINI_WEB => vec![
             "3.5 Flash-Lite".to_owned(),
@@ -206,6 +260,70 @@ fn default_models(kind: &str) -> Vec<String> {
             "4 Argon".to_owned(),
         ],
         catalog::KIND_DEEPSEEK_WEB => vec!["default".to_owned(), "deep-think".to_owned()],
+        catalog::KIND_GROK_WEB => vec![
+            "default".to_owned(),
+            "grok-3".to_owned(),
+            "grok-2".to_owned(),
+            "deepsearch".to_owned(),
+            "think".to_owned(),
+        ],
+        catalog::KIND_QWEN_WEB => vec![
+            "default".to_owned(),
+            "qwen-max".to_owned(),
+            "qwen-plus".to_owned(),
+            "qwen-turbo".to_owned(),
+            "qwen-coder".to_owned(),
+        ],
+        catalog::KIND_ZAI_WEB => vec![
+            "default".to_owned(),
+            "glm-4-plus".to_owned(),
+            "glm-4-air".to_owned(),
+            "glm-4-flash".to_owned(),
+        ],
+        catalog::KIND_MISTRAL_WEB => vec![
+            "default".to_owned(),
+            "mistral-large".to_owned(),
+            "mistral-small".to_owned(),
+            "codestral".to_owned(),
+        ],
+        catalog::KIND_PERPLEXITY_WEB => vec![
+            "default".to_owned(),
+            "sonar".to_owned(),
+            "sonar-pro".to_owned(),
+            "sonar-reasoning".to_owned(),
+        ],
+        catalog::KIND_POE_WEB => vec![
+            "default".to_owned(),
+            "assistant".to_owned(),
+            "web-search".to_owned(),
+        ],
+        catalog::KIND_ARENA_WEB => vec![
+            "default".to_owned(),
+            "battle".to_owned(),
+            "side-by-side".to_owned(),
+            "direct-chat".to_owned(),
+        ],
+        catalog::KIND_META_WEB => vec![
+            "default".to_owned(),
+            "llama-3.3".to_owned(),
+            "imagine".to_owned(),
+        ],
+        catalog::KIND_DUCK_WEB => vec![
+            "default".to_owned(),
+            "gpt-4o-mini".to_owned(),
+            "claude-3-haiku".to_owned(),
+            "llama-3.3-70b".to_owned(),
+        ],
         _ => Vec::new(),
+    }
+}
+
+fn default_base_url(kind: &str) -> String {
+    match kind {
+        catalog::KIND_POLLINATIONS => "https://text.pollinations.ai/v1".to_owned(),
+        catalog::KIND_OVH_KEPLER => "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1".to_owned(),
+        catalog::KIND_FREE_AI => "https://api.free.ai/v1".to_owned(),
+        catalog::KIND_KILO => "https://api.kilo.ai/api/gateway/v1".to_owned(),
+        _ => String::new(),
     }
 }

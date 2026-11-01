@@ -53,6 +53,8 @@ export class RouterService {
   private readonly externalKeys: RouterExternalKeyStore
   private readonly safeMode: RouterSafeModeStore
   private webLaneBridge: WebLaneCanceller | undefined
+  private lastWebBridgeDescriptor: WebLaneBridgeDescriptor | undefined
+  private initPromise: Promise<void> | undefined
   private readonly playground = new Map<string, AbortController>()
 
   constructor(
@@ -63,9 +65,17 @@ export class RouterService {
   ) {
     this.externalKeys = new RouterExternalKeyStore(join(dataDir, 'external-key.json'), undefined, log)
     this.safeMode = new RouterSafeModeStore(join(dataDir, 'router-safe-mode.json'), log)
+    if (typeof (this.core as { onEvent?: unknown }).onEvent === 'function') {
+      (this.core as { onEvent(event: string, listener: () => void): () => void }).onEvent('core.ready', () => {
+        void this.ensureInitialized().catch((error) => {
+          this.log(`ND Router re-initialization on core.ready failed: ${message(error)}`)
+        })
+      })
+    }
   }
 
   async initialize(webLaneBridge?: WebLaneBridgeDescriptor): Promise<void> {
+    if (webLaneBridge) this.lastWebBridgeDescriptor = webLaneBridge
     this.webLaneBridge = undefined
     const external = this.externalKeys.loadOrCreate()
     try {
@@ -74,7 +84,7 @@ export class RouterService {
         externalKey: external.key,
         safeMode: this.safeMode.enabled(),
         preferredPort: preferredPort(),
-        ...(webLaneBridge ? { webBridge: webLaneBridge } : {}),
+        ...(this.lastWebBridgeDescriptor ? { webBridge: this.lastWebBridgeDescriptor } : {}),
       }, 30_000)
       this.endpoint = result.endpoint
       this.key = result.key
@@ -83,6 +93,30 @@ export class RouterService {
     } catch (error) {
       // Web lanes are unavailable without the bridge, but API lanes still work.
       this.log(`ND Router is unavailable: ${message(error)}`)
+      throw error
+    }
+  }
+
+  private async ensureInitialized(): Promise<void> {
+    if (this.initPromise) {
+      await this.initPromise
+      return
+    }
+    this.initPromise = this.initialize(this.lastWebBridgeDescriptor).finally(() => {
+      this.initPromise = undefined
+    })
+    await this.initPromise
+  }
+
+  private async coreRequest<T>(method: string, params: unknown, timeoutMs?: number): Promise<T> {
+    try {
+      return await this.core.request<T>(method, params, timeoutMs)
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('ND Router is not initialized')) {
+        await this.ensureInitialized()
+        return await this.core.request<T>(method, params, timeoutMs)
+      }
+      throw error
     }
   }
 
@@ -96,12 +130,33 @@ export class RouterService {
   }
 
   async state(): Promise<RouterState> {
-    const state = await this.core.request<RouterState>('router.state', {})
+    const state = await this.coreRequest<RouterState>('router.state', {})
     return this.withEndpoint({ ...state, safeMode: state.safeMode === true })
   }
 
-  async saveProvider(input: RouterProviderInput): Promise<RouterState> {
-    await this.core.request('router.saveProvider', input)
+  testCandidate(input: RouterProviderInput): Promise<RouterTestResult> {
+    const timeout = isRouterWebProviderKind(input.kind ?? '') ? 310_000 : 150_000
+    return this.coreRequest<RouterTestResult>('router.testCandidate', input, timeout)
+  }
+
+  async saveProvider(input: RouterProviderInput, options?: { skipPingTest?: boolean }): Promise<RouterState> {
+    const isTogglingActiveOnly = Boolean(
+      input.id &&
+      input.isActive !== undefined &&
+      !input.baseUrl &&
+      !input.apiKey &&
+      !input.models &&
+      !input.kind
+    )
+    if (!isTogglingActiveOnly && !options?.skipPingTest) {
+      const ping = await this.testCandidate(input)
+      if (!ping.ok) {
+        throw new Error(
+          `Ping test failed (${ping.statusCode}): ${ping.error || 'Connection test failed'}. Provider cannot be saved.`
+        )
+      }
+    }
+    await this.coreRequest('router.saveProvider', input)
     return this.refreshedState()
   }
 
@@ -126,32 +181,32 @@ export class RouterService {
       models: provider.models,
       isActive: provider.isActive,
       priority: provider.priority,
-    })
+    }, { skipPingTest: true })
     return true
   }
 
   async deleteProvider(providerId: string): Promise<RouterState> {
-    await this.core.request('router.deleteProvider', { providerId })
+    await this.coreRequest('router.deleteProvider', { providerId })
     return this.refreshedState()
   }
 
   async saveAccount(input: RouterAccountInput): Promise<RouterState> {
-    await this.core.request('router.saveAccount', input)
+    await this.coreRequest('router.saveAccount', input)
     return this.refreshedState()
   }
 
   async deleteAccount(providerId: string, accountId: string): Promise<RouterState> {
-    await this.core.request('router.deleteAccount', { providerId, accountId })
+    await this.coreRequest('router.deleteAccount', { providerId, accountId })
     return this.refreshedState()
   }
 
   async saveCombo(input: RouterComboInput): Promise<RouterState> {
-    await this.core.request('router.saveCombo', input)
+    await this.coreRequest('router.saveCombo', input)
     return this.refreshedState()
   }
 
   async deleteCombo(comboId: string): Promise<RouterState> {
-    await this.core.request('router.deleteCombo', { comboId })
+    await this.coreRequest('router.deleteCombo', { comboId })
     return this.refreshedState()
   }
 
@@ -161,17 +216,17 @@ export class RouterService {
       .then((state) => {
         const provider = state.providers.find((candidate) => candidate.id === providerId)
         const timeout = provider && isRouterWebProviderKind(provider.kind) ? 310_000 : 150_000
-        return this.core.request<RouterTestResult>('router.testProvider', { providerId }, timeout)
+        return this.coreRequest<RouterTestResult>('router.testProvider', { providerId }, timeout)
       })
-      .catch(() => this.core.request<RouterTestResult>('router.testProvider', { providerId }, 150_000))
+      .catch(() => this.coreRequest<RouterTestResult>('router.testProvider', { providerId }, 150_000))
   }
 
   usage(): Promise<RouterUsageSummary> {
-    return this.core.request<RouterUsageSummary>('router.usage', {})
+    return this.coreRequest<RouterUsageSummary>('router.usage', {})
   }
 
   async resetUsage(): Promise<RouterUsageSummary> {
-    await this.core.request('router.resetUsage', {})
+    await this.coreRequest('router.resetUsage', {})
     return this.usage()
   }
 
@@ -201,7 +256,7 @@ export class RouterService {
     this.safeMode.setEnabled(enabled)
     if (enabled) this.stopAllLocalLanes()
     try {
-      const state = await this.core.request<RouterState>('router.setSafeMode', { enabled }, 10_000)
+      const state = await this.coreRequest<RouterState>('router.setSafeMode', { enabled }, 10_000)
       return this.withEndpoint({ ...state, safeMode: enabled })
     } catch (error) {
       // The preference is still durable. If an older sidecar is running, the
@@ -214,7 +269,7 @@ export class RouterService {
   async rotateExternalKey(): Promise<RouterExternalKey> {
     this.assertExternalApiAvailable()
     const next = this.externalKeys.rotate()
-    await this.core.request('router.setExternalKey', { externalKey: next.key }, 10_000)
+    await this.coreRequest('router.setExternalKey', { externalKey: next.key }, 10_000)
     return { endpoint: this.endpoint ?? '', key: next.key, hasKey: true, persisted: next.persisted, safeMode: false }
   }
 

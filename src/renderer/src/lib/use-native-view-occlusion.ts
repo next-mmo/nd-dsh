@@ -1,9 +1,17 @@
 import { useLayoutEffect, useState } from 'react'
 
+const OVERLAY_SLOTS = [
+  'popover-content',
+  'select-content',
+  'dropdown-menu-content',
+  'dropdown-menu-sub-content',
+  'alert-dialog-content',
+]
+
 const OVERLAY_SELECTOR = [
-  'popover-content', 'select-content', 'dropdown-menu-content',
-  'dropdown-menu-sub-content', 'dialog-content', 'alert-dialog-content',
-].map((slot) => `[data-slot="${slot}"]`).join(',')
+  ...OVERLAY_SLOTS.map((slot) => `[data-slot="${slot}"]`),
+  '[data-slot="dialog-content"]:not([data-browser-dialog="true"])',
+].join(',')
 
 /** Native child views composite above DOM portals regardless of CSS z-index. */
 export function useNativeViewOcclusion(): boolean {

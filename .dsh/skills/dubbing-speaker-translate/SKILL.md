@@ -1,6 +1,6 @@
 ---
 name: dubbing-speaker-translate
-description: Translate SRT subtitles into natural Khmer suitable for professional movie dubbing, keeping timecodes and speaker tags unchanged.
+description: Translate SRT subtitles, dialogue transcripts, and video captions into natural Khmer suitable for professional movie dubbing, keeping timecodes and speaker tags unchanged.
 ---
 
 Translate the following subtitles into natural Khmer suitable for professional movie dubbing.

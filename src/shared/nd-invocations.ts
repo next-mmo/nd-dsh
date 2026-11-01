@@ -165,6 +165,7 @@ export interface NdInstalledPackageView {
   commands: Array<{ id: string; title: string; description?: string }>
   hasExecutable: boolean
   previousVersion?: string
+  category?: string
 }
 
 export interface NdActivationView {
@@ -223,6 +224,7 @@ export interface NdAvailablePackageView {
   commands: Array<{ id: string; title: string; description?: string }>
   installed: boolean
   available: boolean
+  category?: string
 }
 
 export interface NdHomeNoteView {

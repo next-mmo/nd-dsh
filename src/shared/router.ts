@@ -1,14 +1,57 @@
 import type { NineRouterDesktopApi } from './nine-router.js'
 
-export type RouterProviderKind =
-  | 'openai-compatible'
+export type RouterProviderCategory = 'api' | 'cli' | 'web'
+export type RouterAuthMode = 'none' | 'api-key' | 'cli' | 'browser'
+
+export type RouterCliProviderKind =
   | 'antigravity'
   | 'gemini-cli'
   | 'qoder'
+  | 'codex-cli'
+  | 'claude-code-cli'
+  | 'pi-coding'
+  | 'zcode-cli'
+  | 'cursor-cli'
+  | 'opencode-cli'
+  | 'goose-cli'
+  | 'hermes-cli'
+  | 'jcode-cli'
+  | 'minimax-cli'
+
+export type RouterProviderKind =
+  | 'openai-compatible'
+  | 'pollinations'
+  | 'ovh-kepler'
+  | 'free-ai'
+  | 'kilo-gateway'
+  | RouterCliProviderKind
   | 'chatgpt-web'
   | 'gemini-web'
   | 'deepseek-web'
-export type RouterWebProviderKind = 'chatgpt-web' | 'gemini-web' | 'deepseek-web'
+  | 'grok-web'
+  | 'qwen-web'
+  | 'zai-web'
+  | 'mistral-web'
+  | 'perplexity-web'
+  | 'poe-web'
+  | 'arena-web'
+  | 'meta-web'
+  | 'duck-web'
+
+export type RouterWebProviderKind =
+  | 'chatgpt-web'
+  | 'gemini-web'
+  | 'deepseek-web'
+  | 'grok-web'
+  | 'qwen-web'
+  | 'zai-web'
+  | 'mistral-web'
+  | 'perplexity-web'
+  | 'poe-web'
+  | 'arena-web'
+  | 'meta-web'
+  | 'duck-web'
+
 export type RouterComboStrategy = 'priority' | 'round-robin'
 
 /** Seed models for web lanes; Gemini's live picker can replace these later. */
@@ -16,10 +59,108 @@ export const ROUTER_WEB_LANE_MODELS: Record<RouterWebProviderKind, string[]> = {
   'chatgpt-web': ['default'],
   'gemini-web': ['3.5 Flash-Lite', '3.8 Flash', '3.1 Pro', '4 Argon'],
   'deepseek-web': ['default', 'deep-think'],
+  'grok-web': ['default', 'grok-3', 'grok-2', 'deepsearch', 'think'],
+  'qwen-web': ['default', 'qwen-max', 'qwen-plus', 'qwen-turbo', 'qwen-coder'],
+  'zai-web': ['default', 'glm-4-plus', 'glm-4-air', 'glm-4-flash'],
+  'mistral-web': ['default', 'mistral-large', 'mistral-small', 'codestral'],
+  'perplexity-web': ['default', 'sonar', 'sonar-pro', 'sonar-reasoning'],
+  'poe-web': ['default', 'assistant', 'web-search'],
+  'arena-web': ['default', 'battle', 'side-by-side', 'direct-chat'],
+  'meta-web': ['default', 'llama-3.3', 'imagine'],
+  'duck-web': ['default', 'gpt-4o-mini', 'claude-3-haiku', 'llama-3.3-70b'],
 }
 
 export function isRouterWebProviderKind(kind: string): kind is RouterWebProviderKind {
-  return kind === 'chatgpt-web' || kind === 'gemini-web' || kind === 'deepseek-web'
+  return (
+    kind === 'chatgpt-web' ||
+    kind === 'gemini-web' ||
+    kind === 'deepseek-web' ||
+    kind === 'grok-web' ||
+    kind === 'qwen-web' ||
+    kind === 'zai-web' ||
+    kind === 'mistral-web' ||
+    kind === 'perplexity-web' ||
+    kind === 'poe-web' ||
+    kind === 'arena-web' ||
+    kind === 'meta-web' ||
+    kind === 'duck-web'
+  )
+}
+
+export const ROUTER_CLI_LANE_MODELS: Record<RouterCliProviderKind, string[]> = {
+  'codex-cli': ['default', 'o3-mini', 'o1', 'gpt-4.5'],
+  'claude-code-cli': ['default', 'claude-3-7-sonnet', 'claude-3-5-sonnet', 'claude-3-5-haiku'],
+  'pi-coding': ['default'],
+  'zcode-cli': ['default', 'deepseek-r1', 'deepseek-v3', 'qwen-2.5-coder'],
+  'cursor-cli': ['default', 'claude-3-7-sonnet', 'claude-3-5-sonnet', 'gpt-4o'],
+  'opencode-cli': ['default', 'deepseek/deepseek-chat', 'anthropic/claude-3-7-sonnet'],
+  'goose-cli': ['default'],
+  'hermes-cli': ['default'],
+  'jcode-cli': ['default'],
+  'minimax-cli': ['default', 'MiniMax-Text-01'],
+  antigravity: ['default', 'gemini-2.5-flash', 'gemini-2.5-pro'],
+  qoder: ['default', 'qoder-1', 'deepseek-r1'],
+  'gemini-cli': ['default', 'gemini-2.5-flash', 'gemini-2.5-pro'],
+}
+
+export function isRouterCliProviderKind(kind: string): kind is RouterCliProviderKind {
+  return (
+    kind === 'antigravity' ||
+    kind === 'gemini-cli' ||
+    kind === 'qoder' ||
+    kind === 'codex-cli' ||
+    kind === 'claude-code-cli' ||
+    kind === 'pi-coding' ||
+    kind === 'zcode-cli' ||
+    kind === 'cursor-cli' ||
+    kind === 'opencode-cli' ||
+    kind === 'goose-cli' ||
+    kind === 'hermes-cli' ||
+    kind === 'jcode-cli' ||
+    kind === 'minimax-cli'
+  )
+}
+
+export const ROUTER_FREE_API_MODELS: Record<string, string[]> = {
+  pollinations: ['openai-fast'],
+  'ovh-kepler': [
+    'gpt-oss-120b',
+    'Qwen3.6-27B',
+    'Qwen2.5-VL-72B-Instruct',
+    'Mistral-Small-3.2-24B-Instruct-2506',
+    'Meta-Llama-3_3-70B-Instruct',
+  ],
+  'free-ai': ['qwen3-coder', 'qwen25-vl', 'deepseek-r1-7b', 'deepseek-r1', 'mistral'],
+  'kilo-gateway': [
+    'openrouter/free',
+    'cohere/north-mini-code:free',
+    'kilo-auto/small',
+    'nvidia/nemotron-3.5-lightning:free',
+  ],
+}
+
+export const ROUTER_FREE_API_BASE_URLS: Record<string, string> = {
+  pollinations: 'https://text.pollinations.ai/v1',
+  'ovh-kepler': 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1',
+  'free-ai': 'https://api.free.ai/v1',
+  'kilo-gateway': 'https://api.kilo.ai/api/gateway/v1',
+}
+
+export function isRouterFreeApiKind(kind: string): boolean {
+  return kind === 'pollinations' || kind === 'ovh-kepler' || kind === 'free-ai' || kind === 'kilo-gateway'
+}
+
+export function providerCategory(kind: string): RouterProviderCategory {
+  if (isRouterWebProviderKind(kind)) return 'web'
+  if (isRouterCliProviderKind(kind)) return 'cli'
+  return 'api'
+}
+
+export function providerAuthMode(kind: string): RouterAuthMode {
+  if (isRouterFreeApiKind(kind)) return 'none'
+  if (isRouterWebProviderKind(kind)) return 'browser'
+  if (isRouterCliProviderKind(kind)) return 'cli'
+  return 'api-key'
 }
 
 export const ROUTER_HEADERS = {
@@ -209,6 +350,7 @@ export const ROUTER_IPC = {
   googleExisting: 'router:google-existing',
   saveCombo: 'router:save-combo',
   deleteCombo: 'router:delete-combo',
+  testCandidate: 'router:test-candidate',
   testProvider: 'router:test-provider',
   usage: 'router:usage',
   resetUsage: 'router:reset-usage',
@@ -231,6 +373,7 @@ export interface RouterDesktopApi extends NineRouterDesktopApi {
   googleExistingAccount(): Promise<RouterGoogleExistingAccount>
   saveCombo(input: RouterComboInput): Promise<RouterState>
   deleteCombo(comboId: string): Promise<RouterState>
+  testCandidate(input: RouterProviderInput): Promise<RouterTestResult>
   testProvider(providerId: string): Promise<RouterTestResult>
   usage(): Promise<RouterUsageSummary>
   resetUsage(): Promise<RouterUsageSummary>

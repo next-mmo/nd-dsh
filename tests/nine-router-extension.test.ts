@@ -18,6 +18,8 @@ import { ExtensionPackageStore } from '../src/main/extensions/package-store.js'
 import { NativeHostRegistry } from '../src/main/extensions/native-host.js'
 import { manifestPermissionIssues, validateNdExtensionManifest, type NdExtensionManifest } from '../src/shared/extension-package.js'
 import { NineRouterManagedRuntime } from '../src/main/router/nine-router-managed.js'
+import { InvocationStateStore } from '../src/main/extensions/invocation-state.js'
+import { InvocationBroker } from '../src/main/extensions/invocation-broker.js'
 
 const packagePath = fileURLToPath(new URL('../extensions/9router/', import.meta.url))
 const manifestPath = new URL('../extensions/9router/nd-extension.json', import.meta.url)
@@ -157,4 +159,41 @@ describe('9Router ND extension package', () => {
     expect(statusResult.title).toBe('9Router not installed')
     expect(statusResult.state.installed).toBe(false)
   })
-})
+  it('loads 9Router overview detail view into rows with title and body instead of empty wallpaper rows', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'nd-ext-store-'))
+    const stateDir = await mkdtemp(join(tmpdir(), 'nd-state-'))
+    cleanups.push(async () => {
+      await rm(rootDir, { recursive: true, force: true })
+      await rm(stateDir, { recursive: true, force: true })
+    })
+
+    const packageStore = new ExtensionPackageStore(rootDir)
+    await packageStore.initialize()
+    await packageStore.installFromDirectory(packagePath, { expectId: 'nd.9router' })
+
+    const host = new NativeHostRegistry()
+    host.register('ninerouter.status', async () => ({
+      title: '9Router not installed',
+      detail: 'Install 9Router extension or configure in ND Router.',
+      state: { installed: false, running: false },
+    }))
+
+    const state = new InvocationStateStore(stateDir)
+        await state.setActivation('nd.9router', { kind: 'personal' }, true)
+
+    const broker = new InvocationBroker({
+      packages: packageStore,
+      state,
+      host,
+      organization: { state: async () => ({ companies: [], projects: [], memory: [] }), policy: async () => 'allow' as const },
+    })
+
+    const view = await broker.loadView('nd.9router', 'overview', { kind: 'personal' })
+    expect(view.kind).toBe('detail')
+    expect(view.title).toBe('9Router')
+    expect(view.rows).toHaveLength(1)
+    expect(view.rows[0]?.title).toBe('9Router not installed')
+    expect(view.rows[0]?.body).toBe('Install 9Router extension or configure in ND Router.')
+    expect(view.actions.map((a) => a.id)).toEqual(['start', 'stop', 'refresh'])
+  })
+});

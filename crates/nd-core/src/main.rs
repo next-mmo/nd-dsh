@@ -698,6 +698,9 @@ fn dispatch(
         // The desktop owns the data directory and receives the per-launch
         // loopback key only once, from initialize.
         "router.initialize" => {
+            if let Some(mut existing) = state.router.lock().unwrap_or_else(|error| error.into_inner()).take() {
+                existing.stop();
+            }
             let params = from_params::<RouterInitParams>(params)?;
             let options = nd_router::state::RouterOptions {
                 external_key: params.external_key,
@@ -756,6 +759,15 @@ fn dispatch(
         "router.deleteCombo" => {
             let input = from_params::<ComboIdInput>(params)?;
             Ok(router_state(&state)?.delete_combo(&input.combo_id)?)
+        }
+        "router.testCandidate" => {
+            let input = from_params::<SaveProviderInput>(params)?;
+            let state_ref = router_state(&state)?;
+            let guard = state.router.lock().unwrap_or_else(|error| error.into_inner());
+            let server = guard
+                .as_ref()
+                .ok_or_else(|| errors::coded(CODE_METHOD_FAILED, "ND Router is not initialized"))?;
+            Ok(server.block_on(state_ref.test_candidate(input))?)
         }
         "router.testProvider" => {
             let input = from_params::<ProviderIdInput>(params)?;

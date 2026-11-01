@@ -99,7 +99,9 @@ export class NineRouterManagedRuntime {
   private lastError: string | undefined
   /** Last inventory result for an unverified import; start is the authoritative check. */
   private unverifiedIntegrity: NineRouterState['integrity']
+  private recentLogs: string[] = []
   private readonly removeExitListener: () => void
+  private readonly removeOutputListener: () => void
   private packageStore?: ExtensionPackageStore
   private readonly packagesRoot: string
 
@@ -108,9 +110,29 @@ export class NineRouterManagedRuntime {
     this.root = join(dataDir, '9router-managed')
     this.installedFile = join(this.root, 'installed.json')
     this.secretsFile = join(this.root, 'secrets.json')
+    this.removeOutputListener = core.onEvent<{ stream?: 'stdout' | 'stderr'; bytes?: Uint8Array }>('process.output', frame => {
+      if (frame.resourceId !== this.processId) return
+      const raw = frame.data?.bytes
+      if (!raw) return
+      const text = Buffer.from(raw).toString('utf8')
+      const lines = text.split(/\r?\n/).filter(line => line.trim().length > 0)
+      for (const line of lines) {
+        this.recentLogs.push(line)
+        if (this.recentLogs.length > 60) this.recentLogs.shift()
+        if (frame.data?.stream === 'stderr') {
+          console.error(`[9Router] ${line}`)
+        } else {
+          console.log(`[9Router] ${line}`)
+        }
+      }
+    })
     this.removeExitListener = core.onEvent<{ processId: string; exitCode: number }>('process.exit', frame => {
       if (frame.resourceId !== this.processId) return
-      this.lastError = '9Router process exited (code ' + String(frame.data?.exitCode ?? '?') + ')'
+      const exitCode = frame.data?.exitCode ?? '?'
+      const errorLines = this.recentLogs.filter(l => /(?:error|exception|fail|cannot find|errno|fatal)/i.test(l))
+      const detail = errorLines.slice(-2).join('; ') || this.recentLogs.slice(-1).join('')
+      this.lastError = `9Router process exited (code ${String(exitCode)})${detail ? ': ' + detail : ''}`
+      console.warn(`[9Router] ${this.lastError}`)
       this.processId = undefined
       this.port = undefined
     })
@@ -213,6 +235,7 @@ export class NineRouterManagedRuntime {
       ...(record?.version ? { version: record.version } : {}),
       ...(this.processId && this.port ? { endpoint: 'http://127.0.0.1:' + this.port + '/v1' } : {}),
       ...(this.lastError ? { lastError: this.lastError } : {}),
+      ...(this.recentLogs.length > 0 ? { recentLogs: [...this.recentLogs] } : {}),
     }
   }
 
@@ -403,6 +426,8 @@ export class NineRouterManagedRuntime {
     const port = await freeLoopbackPort()
     const processId = randomUUID()
     this.lastError = undefined
+    this.recentLogs = []
+    console.log(`[9Router] Starting managed 9Router runtime on loopback...`)
     try {
       await this.core.request('process.spawn', {
         id: processId,
@@ -455,11 +480,20 @@ export class NineRouterManagedRuntime {
         } catch { /* service is not ready yet */ }
         await new Promise(resolve => setTimeout(resolve, 300))
       }
-      if (!ready) throw new Error('Managed 9Router failed its startup health check')
+      if (!ready) {
+              const errorLines = this.recentLogs.filter(l => /(?:error|exception|fail|cannot find|errno|fatal)/i.test(l))
+              const detail = errorLines.slice(-2).join('; ') || this.recentLogs.slice(-2).join('; ')
+              const msg = `Managed 9Router failed its startup health check${detail ? ` (${detail})` : ''}`
+              console.error(`[9Router] ${msg}`)
+              throw new Error(msg)
+            }
+            console.log(`[9Router] Startup health check passed; endpoint ready at http://127.0.0.1:${port}/v1`)
     } catch (e) {
       await this.core.request('process.cancel', { processId }, 5_000).catch(() => undefined)
       if (this.processId === processId) { this.processId = undefined; this.port = undefined }
-      this.lastError = e instanceof Error ? e.message : String(e)
+      const message = e instanceof Error ? e.message : String(e)
+      this.lastError = message
+      console.error(`[9Router startup error] ${message}`)
       throw e
     }
     return this.state()
@@ -478,5 +512,6 @@ export class NineRouterManagedRuntime {
   async dispose(): Promise<void> {
     await this.stop()
     this.removeExitListener()
+    this.removeOutputListener()
   }
 }

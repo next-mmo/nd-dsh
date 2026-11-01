@@ -19,6 +19,150 @@ export const ND_EXTENSION_PROTOCOL = 'nd.extension/1'
 export const ND_EXTENSION_MANIFEST_FILENAME = 'nd-extension.json'
 export const ND_EXTENSION_API_VERSION = 1
 
+/** Standard extension categories for catalog indexing and UI filter chips. */
+export const ND_EXTENSION_CATEGORIES = [
+  'gateway-api',
+  'games',
+  'ai',
+  'system',
+  'tools',
+] as const
+
+export type NdExtensionCategory = (typeof ND_EXTENSION_CATEGORIES)[number]
+
+export interface NdExtensionCategoryDefinition {
+  id: NdExtensionCategory
+  label: string
+}
+
+export const ND_EXTENSION_CATEGORY_DEFINITIONS: readonly NdExtensionCategoryDefinition[] = [
+  { id: 'gateway-api', label: 'Gateway & API' },
+  { id: 'games', label: 'Games' },
+  { id: 'ai', label: 'AI & Agents' },
+  { id: 'system', label: 'System & OS' },
+  { id: 'tools', label: 'Tools & Utilities' },
+] as const
+
+export function normalizeExtensionCategory(raw?: string): NdExtensionCategory | undefined {
+  if (!raw || typeof raw !== 'string') return undefined
+  const cleaned = raw.toLowerCase().trim()
+  if (cleaned === 'game' || cleaned === 'games' || cleaned === 'gaming') return 'games'
+  if (
+    cleaned === 'gateway' ||
+    cleaned === 'api' ||
+    cleaned === 'gateway-api' ||
+    cleaned === 'gateway & api' ||
+    cleaned === 'gateway_api' ||
+    cleaned === 'router'
+  ) return 'gateway-api'
+  if (
+    cleaned === 'ai' ||
+    cleaned === 'agent' ||
+    cleaned === 'agents' ||
+    cleaned === 'ai-agent' ||
+    cleaned === 'ai-agents' ||
+    cleaned === 'ai & agents' ||
+    cleaned === 'llm' ||
+    cleaned === 'model'
+  ) return 'ai'
+  if (
+    cleaned === 'system' ||
+    cleaned === 'os' ||
+    cleaned === 'system & os' ||
+    cleaned === 'system-os' ||
+    cleaned === 'process' ||
+    cleaned === 'disk'
+  ) return 'system'
+  if (
+    cleaned === 'tool' ||
+    cleaned === 'tools' ||
+    cleaned === 'utility' ||
+    cleaned === 'utilities' ||
+    cleaned === 'tools & utilities'
+  ) return 'tools'
+  return undefined
+}
+
+export function detectExtensionCategory(pkg: {
+  id: string
+  name?: string
+  description?: string
+  category?: string
+}): NdExtensionCategory {
+  const normalized = normalizeExtensionCategory(pkg.category)
+  if (normalized) return normalized
+
+  const id = pkg.id.toLowerCase()
+  const name = (pkg.name ?? '').toLowerCase()
+  const desc = (pkg.description ?? '').toLowerCase()
+  const text = `${id} ${name} ${desc}`
+
+  // Gateway & API:
+  if (
+    id.includes('router') ||
+    id.includes('9router') ||
+    id.includes('api-studio') ||
+    id.includes('gateway') ||
+    text.includes('gateway') ||
+    text.includes('api studio') ||
+    text.includes('api design') ||
+    text.includes('proxy runtime') ||
+    text.includes('model gateway')
+  ) {
+    return 'gateway-api'
+  }
+
+  // Games:
+  if (
+    id.includes('chess') ||
+    id.includes('tic-tac-toe') ||
+    text.includes('game') ||
+    text.includes('chess') ||
+    text.includes('tic-tac-toe')
+  ) {
+    return 'games'
+  }
+
+  // AI & Agents:
+  if (
+    id.includes('gpt') ||
+    id.includes('computer-use') ||
+    id.includes('translate') ||
+    id.includes('task-results') ||
+    id.includes('project-brief') ||
+    text.includes('gpt') ||
+    text.includes('translation') ||
+    text.includes('translate') ||
+    text.includes('computer use') ||
+    text.includes('ai agent')
+  ) {
+    return 'ai'
+  }
+
+  // System & OS:
+  if (
+    id.includes('process') ||
+    id.includes('disk') ||
+    id.includes('wallpaper') ||
+    id.includes('security') ||
+    id.includes('account-mgt') ||
+    text.includes('wallpaper') ||
+    text.includes('disk cleaner') ||
+    text.includes('quit process') ||
+    text.includes('account manager') ||
+    text.includes('security authority')
+  ) {
+    return 'system'
+  }
+
+  return 'tools'
+}
+
+export function extensionCategoryLabel(category: NdExtensionCategory): string {
+  const match = ND_EXTENSION_CATEGORY_DEFINITIONS.find((item) => item.id === category)
+  return match?.label ?? 'Tools & Utilities'
+}
+
 /** ND API grants a package may request; executable trust is a separate record. */
 export const ND_EXTENSION_PERMISSIONS = [
   'security.read',
@@ -316,6 +460,8 @@ export interface NdExtensionManifest {
   contributions: NdPackageContributions
   /** Executable transport. Installation never executes it; trust is granted separately. */
   executable?: NdMcpStdioRuntime
+  /** Optional category or type for classification (e.g. 'gateway-api', 'games', 'ai', 'system', 'tools'). */
+  category?: string
 }
 
 export interface NdValidationIssue {
@@ -366,6 +512,9 @@ export function validateNdExtensionManifest(value: unknown): NdManifestValidatio
   validateHostContexts(contributions, issues)
 
   const executable = executableValue(record.executable, contributions, issues)
+  const category = typeof record.category === 'string' && record.category.trim()
+    ? text(record.category, 'category', 64, undefined, issues)
+    : undefined
 
   if (issues.length > 0) return { ok: false, issues }
   const manifest: NdExtensionManifest = {
@@ -380,6 +529,7 @@ export function validateNdExtensionManifest(value: unknown): NdManifestValidatio
     settings,
     contributions,
     ...(executable ? { executable } : {}),
+    ...(category ? { category } : {}),
   }
   return { ok: true, manifest }
 }
