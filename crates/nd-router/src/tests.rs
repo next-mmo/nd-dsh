@@ -927,8 +927,20 @@ fn categorizes_and_seeds_free_api_providers() {
     assert_eq!(catalog::provider_auth_mode(catalog::KIND_ANTIGRAVITY), "cli");
     assert_eq!(catalog::provider_category(catalog::KIND_CHATGPT_WEB), "web");
     assert_eq!(catalog::provider_auth_mode(catalog::KIND_CHATGPT_WEB), "browser");
+    assert_eq!(catalog::provider_category(catalog::KIND_AI_STUDIO_WEB), "web");
+    assert_eq!(catalog::provider_auth_mode(catalog::KIND_AI_STUDIO_WEB), "browser");
     assert_eq!(catalog::provider_category(catalog::KIND_OPENAI), "api");
     assert_eq!(catalog::provider_auth_mode(catalog::KIND_OPENAI), "api-key");
+    assert_eq!(catalog::provider_category(catalog::KIND_AI_STUDIO), "api");
+    assert_eq!(catalog::provider_auth_mode(catalog::KIND_AI_STUDIO), "api-key");
+    assert_eq!(
+        catalog::normalize_kind("ai-studio").expect("ai-studio"),
+        catalog::KIND_AI_STUDIO
+    );
+    assert_eq!(
+        catalog::normalize_kind("aistudio-web").expect("aistudio-web"),
+        catalog::KIND_AI_STUDIO_WEB
+    );
 }
 
 #[tokio::test]

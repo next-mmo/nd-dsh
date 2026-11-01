@@ -20,15 +20,21 @@ export interface ParsedGeminiConversation {
 }
 
 const GEMINI_ORIGIN = 'https://gemini.google.com'
+const AI_STUDIO_ORIGIN = 'https://aistudio.google.com'
 const CHAT_PATH_PATTERN = /(?:^|\/)app\/([A-Za-z0-9_-]+)/
+const AI_STUDIO_APP_PATTERN = /(?:^|\/)(apps|prompts)(?:\/([A-Za-z0-9_-]+))?/i
 const CHAT_ID_PATTERN = /^[A-Za-z0-9_-]{6,64}$/
 
 /**
- * Parse a Gemini chat link (normal chat / skill chat) into a standardized descriptor.
+ * Parse a Gemini chat link or Google AI Studio app/project link into a standardized descriptor.
  * Supports:
  * - https://gemini.google.com/app/fa5b05f3a25f7f76
  * - https://gemini.google.com/u/0/app/fa5b05f3a25f7f76 (Google multi-account URLs)
+ * - https://aistudio.google.com/apps
+ * - https://aistudio.google.com/apps/fa5b05f3a25f7f76
+ * - https://aistudio.google.com/prompts/fa5b05f3a25f7f76
  * - gemini.google.com/app/fa5b05f3a25f7f76
+ * - aistudio.google.com/apps
  * - /app/fa5b05f3a25f7f76
  * - fa5b05f3a25f7f76 (bare chat ID)
  */
@@ -60,8 +66,25 @@ export function parseGeminiSkillLinkInput(input: string): ParsedGeminiGem | null
     pathname = trimmed
   }
 
-  if (origin && origin !== GEMINI_ORIGIN && !origin.endsWith('.gemini.google.com')) {
+  const isGeminiOrigin = origin === GEMINI_ORIGIN || origin.endsWith('.gemini.google.com')
+  const isAiStudioOrigin = origin === AI_STUDIO_ORIGIN || origin.endsWith('.aistudio.google.com')
+
+  if (origin && !isGeminiOrigin && !isAiStudioOrigin) {
     return null
+  }
+
+  if (isAiStudioOrigin) {
+    const match = AI_STUDIO_APP_PATTERN.exec(pathname)
+    if (!match || !match[1]) return null
+    const section = match[1].toLowerCase()
+    const appId = match[2]
+    const ref = appId ? `${section}/${appId}` : section
+    const targetUrl = appId ? `${AI_STUDIO_ORIGIN}/${section}/${appId}` : `${AI_STUDIO_ORIGIN}/${section}`
+    return {
+      gemRef: ref,
+      gemId: appId || section,
+      gemUrl: targetUrl,
+    }
   }
 
   const match = CHAT_PATH_PATTERN.exec(pathname)
@@ -93,7 +116,12 @@ export function parseGeminiConversationUrl(url: string): ParsedGeminiConversatio
 export function isGeminiPageUrl(value: string): boolean {
   try {
     const origin = new URL(value).origin
-    return origin === GEMINI_ORIGIN || origin.endsWith('.gemini.google.com')
+    return (
+      origin === GEMINI_ORIGIN ||
+      origin.endsWith('.gemini.google.com') ||
+      origin === AI_STUDIO_ORIGIN ||
+      origin.endsWith('.aistudio.google.com')
+    )
   } catch {
     return false
   }

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
+  ROUTER_AI_STUDIO_BASE_URL,
+  ROUTER_AI_STUDIO_MODELS,
   ROUTER_FREE_API_BASE_URLS,
   ROUTER_FREE_API_MODELS,
   ROUTER_WEB_LANE_MODELS,
@@ -51,6 +53,7 @@ interface ComboDraftEntry {
 
 type ProviderKindChoice =
   | 'openai-compatible'
+  | 'ai-studio'
   | 'pollinations'
   | 'ovh-kepler'
   | 'free-ai'
@@ -58,6 +61,7 @@ type ProviderKindChoice =
   | RouterCliProviderKind
   | 'chatgpt-web'
   | 'gemini-web'
+  | 'aistudio-web'
   | 'deepseek-web'
   | 'grok-web'
   | 'qwen-web'
@@ -167,7 +171,11 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
   const changeProviderKind = (kind: ProviderKindChoice): void => {
     setDraftPing({ testing: false, result: null, error: null })
     setProviderKind(kind)
-    if (isRouterFreeApiKind(kind)) {
+    if (kind === 'ai-studio') {
+      setProviderName('Google AI Studio')
+      setProviderBaseUrl(ROUTER_AI_STUDIO_BASE_URL)
+      setProviderModels(ROUTER_AI_STUDIO_MODELS.join(', '))
+    } else if (isRouterFreeApiKind(kind)) {
       setProviderName(kindLabel(kind))
       setProviderBaseUrl(ROUTER_FREE_API_BASE_URLS[kind] ?? '')
       setProviderModels(ROUTER_FREE_API_MODELS[kind]?.join(', ') ?? '')
@@ -182,6 +190,16 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
 
   const buildCandidateInput = (): RouterProviderInput | null => {
     const models = providerModels.split(/[\n,]/).map((model) => model.trim()).filter(Boolean)
+    if (providerKind === 'ai-studio') {
+      const baseUrl = providerBaseUrl.trim() || ROUTER_AI_STUDIO_BASE_URL
+      return {
+        kind: 'ai-studio',
+        name: providerName.trim() || 'Google AI Studio',
+        baseUrl,
+        models: models.length > 0 ? models : ROUTER_AI_STUDIO_MODELS,
+        ...(providerKey.trim() ? { apiKey: providerKey.trim() } : {}),
+      }
+    }
     if (isRouterFreeApiKind(providerKind)) {
       const baseUrl = providerBaseUrl.trim() || ROUTER_FREE_API_BASE_URLS[providerKind] || ''
       const freeModels = models.length > 0 ? models : (ROUTER_FREE_API_MODELS[providerKind] ?? [])
@@ -555,6 +573,7 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
                             <option value="kilo-gateway">Kilo Gateway (Aggregator · No Key)</option>
                           </optgroup>
                           <optgroup label="Custom API (API Key Required)">
+                            <option value="ai-studio">Google AI Studio (Gemini 2.5 / 2.0 / 1.5)</option>
                             <option value="openai-compatible">OpenAI-compatible</option>
                           </optgroup>
                           <optgroup label="CLI (Command Line Tools)">
@@ -575,6 +594,7 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
                           <optgroup label="Web Chat (Browser Session)">
                             <option value="chatgpt-web">ChatGPT Web</option>
                             <option value="gemini-web">Gemini Web</option>
+                            <option value="aistudio-web">Google AI Studio Web (Apps Builder)</option>
                             <option value="deepseek-web">DeepSeek Web</option>
                             <option value="grok-web">Grok Web</option>
                             <option value="qwen-web">Qwen Web</option>
@@ -592,9 +612,11 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
                             ? 'Free public API: zero authentication required.'
                             : isRouterWebProviderKind(providerKind)
                               ? 'Web chat lane: uses the embedded browser session; no key is stored.'
-                              : providerKind === 'antigravity' || providerKind === 'qoder'
-                                ? 'CLI lane: uses local command-line tools and OS credentials.'
-                                : 'API lane: OpenAI-compatible endpoint with optional API key.'}
+                              : providerKind === 'ai-studio'
+                                ? 'API lane: Google AI Studio Gemini models via official OpenAI-compatible endpoint.'
+                                : providerKind === 'antigravity' || providerKind === 'qoder'
+                                  ? 'CLI lane: uses local command-line tools and OS credentials.'
+                                  : 'API lane: OpenAI-compatible endpoint with optional API key.'}
                         </span>
                       </div>
                       <div className="flex min-w-0 gap-2">
@@ -609,10 +631,10 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
                           }}
                           className="max-w-[180px]"
                         />
-                        {(providerKind === 'openai-compatible' || isRouterFreeApiKind(providerKind)) ? (
+                        {(providerKind === 'openai-compatible' || providerKind === 'ai-studio' || isRouterFreeApiKind(providerKind)) ? (
                           <Input
                             aria-label="Provider base URL"
-                            placeholder={isRouterFreeApiKind(providerKind) ? (ROUTER_FREE_API_BASE_URLS[providerKind] || 'https://...') : 'http://127.0.0.1:8326'}
+                            placeholder={providerKind === 'ai-studio' ? ROUTER_AI_STUDIO_BASE_URL : isRouterFreeApiKind(providerKind) ? (ROUTER_FREE_API_BASE_URLS[providerKind] || 'https://...') : 'http://127.0.0.1:8326'}
                             value={providerBaseUrl}
                             disabled={disabled || draftPing.testing}
                             onChange={(event) => {
@@ -626,7 +648,7 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
                       <div className="flex min-w-0 gap-2">
                         <Input
                           aria-label="Provider models"
-                          placeholder={providerKind === 'antigravity' ? 'Models, e.g. gemini-3.8-flash-medium, claude-sonnet-5-5-medium (from `agy models`)' : providerKind === 'qoder' ? 'Models, e.g. auto, lite, performance (from `qoder --list-models`)' : isRouterWebProviderKind(providerKind) ? `Modes, e.g. ${ROUTER_WEB_LANE_MODELS[providerKind].join(', ')}` : 'Models (comma separated, optional)'}
+                          placeholder={providerKind === 'ai-studio' ? 'Models, e.g. gemini-2.5-flash, gemini-2.5-pro, gemini-2.0-flash' : providerKind === 'antigravity' ? 'Models, e.g. gemini-3.8-flash-medium, claude-sonnet-5-5-medium (from `agy models`)' : providerKind === 'qoder' ? 'Models, e.g. auto, lite, performance (from `qoder --list-models`)' : isRouterWebProviderKind(providerKind) ? `Modes, e.g. ${ROUTER_WEB_LANE_MODELS[providerKind].join(', ')}` : 'Models (comma separated, optional)'}
                           value={providerModels}
                           disabled={disabled || draftPing.testing}
                           onChange={(event) => {
@@ -635,12 +657,12 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
                           }}
                           className="min-w-0 flex-1 font-mono text-[11px]"
                         />
-                        {providerKind === 'openai-compatible' ? (
+                        {(providerKind === 'openai-compatible' || providerKind === 'ai-studio') ? (
                           <Input
                             aria-label="Provider API key"
                             type="password"
                             autoComplete="off"
-                            placeholder="API key (optional)"
+                            placeholder={providerKind === 'ai-studio' ? 'AI Studio API key (aistudio.google.com)' : 'API key (optional)'}
                             value={providerKey}
                             disabled={disabled || draftPing.testing}
                             onChange={(event) => {
@@ -651,6 +673,19 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
                           />
                         ) : null}
                       </div>
+                      {providerKind === 'ai-studio' ? (
+                        <div className="flex items-center gap-1.5 text-[11px] text-faint">
+                          <span>Get your Gemini API key from</span>
+                          <button
+                            type="button"
+                            className="text-primary underline hover:text-primary/80"
+                            onClick={() => void window.ndDsh.browser.navigate('https://aistudio.google.com/app/apikey')}
+                          >
+                            Google AI Studio (aistudio.google.com/app/apikey)
+                          </button>
+                          <span>· OpenAI-compatible endpoint with Gemini 2.5 / 2.0 / 1.5</span>
+                        </div>
+                      ) : null}
                       {providerKind === 'antigravity' ? (
                         <span className={rowDesc}>
                           Runs your installed agy CLI — it owns the Google sign-in, ND never sees tokens. Account entries below
@@ -1128,6 +1163,8 @@ function categoryBadge(kind: string): { category: string; auth: string; authLabe
 
 function kindLabel(kind: string): string {
   switch (kind) {
+    case 'ai-studio': return 'Google AI Studio'
+    case 'aistudio-web': return 'Google AI Studio Web'
     case 'pollinations': return 'Pollinations AI (Free)'
     case 'ovh-kepler': return 'OVH Kepler Cloud (Free)'
     case 'free-ai': return 'Free.ai (Free)'

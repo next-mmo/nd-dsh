@@ -4,6 +4,7 @@ export const ND_HARNESS_ENGINE_ID = 'nd-harness'
 export const ND_NATIVE_ENGINE_ID = 'nd-native'
 export const CHATGPT_WEB_ENGINE_ID = 'chatgpt-web'
 export const GEMINI_WEB_ENGINE_ID = 'gemini-web'
+export const AISTUDIO_WEB_ENGINE_ID = 'aistudio-web'
 export const DEEPSEEK_WEB_ENGINE_ID = 'deepseek-web'
 export const GROK_WEB_ENGINE_ID = 'grok-web'
 export const QWEN_WEB_ENGINE_ID = 'qwen-web'
@@ -77,6 +78,29 @@ export function geminiWebEngineDescriptor(): CodingEngineDescriptor {
       persistentSessions: true,
     },
     workerInstructions: '\nExecution engine: Gemini Web. Conversation transport is the signed-in Gemini website in ND\'s visible browser. No local code transport is assumed: Gemini has no connected Git or filesystem tools, so use conversation text only and never claim code was pushed or committed.\n',
+  }
+}
+
+export function aiStudioWebEngineDescriptor(): CodingEngineDescriptor {
+  return {
+    id: AISTUDIO_WEB_ENGINE_ID,
+    name: 'Google AI Studio Web',
+    integration: 'primary',
+    available: true,
+    description: 'Chat and build apps through Google AI Studio (https://aistudio.google.com/apps) in ND\'s visible browser. Vibe coding, prototyping, and app building with Gemini models.',
+    capabilities: {
+      workspace: false,
+      filesystem: false,
+      shell: false,
+      browser: true,
+      skills: false,
+      mcp: false,
+      modelProviderRouting: false,
+      humanApprovals: false,
+      streaming: false,
+      persistentSessions: true,
+    },
+    workerInstructions: '\nExecution engine: Google AI Studio Web. Conversation transport is the signed-in Google AI Studio website in ND\'s visible browser. Build apps and prototypes with Gemini.\n',
   }
 }
 

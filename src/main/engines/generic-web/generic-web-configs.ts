@@ -1,5 +1,6 @@
 import type { EngineModelOption } from '../../../shared/contracts.js'
 import {
+  AISTUDIO_WEB_ENGINE_ID,
   ARENA_WEB_ENGINE_ID,
   DUCK_WEB_ENGINE_ID,
   META_WEB_ENGINE_ID,
@@ -24,6 +25,23 @@ export interface GenericWebConfig {
 }
 
 export const GENERIC_WEB_CONFIGS: Record<string, GenericWebConfig> = {
+  [AISTUDIO_WEB_ENGINE_ID]: {
+    engineId: AISTUDIO_WEB_ENGINE_ID,
+    name: 'Google AI Studio Web',
+    homeUrl: 'https://aistudio.google.com/apps',
+    origins: [
+      'https://aistudio.google.com',
+      'https://alkalimakersuite-pa.clients6.google.com',
+      'https://makersuite.google.com',
+    ],
+    models: [
+      { id: 'default', name: 'Page default' },
+      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash' },
+      { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro' },
+      { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash' },
+      { id: 'gemini-2.0-pro', name: 'Gemini 2.0 Pro' },
+    ],
+  },
   [QWEN_WEB_ENGINE_ID]: {
     engineId: QWEN_WEB_ENGINE_ID,
     name: 'Qwen Web',

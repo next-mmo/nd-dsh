@@ -19,7 +19,7 @@ import type {
   SessionSummary,
   WorkspaceSuggestion,
 } from '../../../shared/contracts'
-import { ANTIGRAVITY_ENGINE_ID, CHATGPT_WEB_ENGINE_ID, CODEX_CLI_ENGINE_ID, DEEPSEEK_WEB_ENGINE_ID, GEMINI_WEB_ENGINE_ID, GROK_WEB_ENGINE_ID, ND_HARNESS_ENGINE_ID, ND_NATIVE_ENGINE_ID, PI_CODING_ENGINE_ID, ZCODE_CLI_ENGINE_ID } from '../../../shared/coding-engines'
+import { AISTUDIO_WEB_ENGINE_ID, ANTIGRAVITY_ENGINE_ID, CHATGPT_WEB_ENGINE_ID, CODEX_CLI_ENGINE_ID, DEEPSEEK_WEB_ENGINE_ID, GEMINI_WEB_ENGINE_ID, GROK_WEB_ENGINE_ID, ND_HARNESS_ENGINE_ID, ND_NATIVE_ENGINE_ID, PI_CODING_ENGINE_ID, ZCODE_CLI_ENGINE_ID } from '../../../shared/coding-engines'
 import { OPENCODE_CLI_ENGINE_ID } from '../../../shared/extra-coding-engines'
 import { DisplayGroup, groupEntries, parseFileChanges, toolPreview, type ContextBlock } from '../../../shared/chat-grouping'
 import { filterSessionsInProjectScope, isSessionInProjectScope, PERSONAL_PROJECT_ID } from '../../../shared/session-project-scope'
@@ -63,6 +63,7 @@ import {
   CornerDownLeftIcon,
   CornerDownRightIcon,
   CrosshairIcon,
+  ExternalIcon,
   FileIcon,
   FolderIcon,
   LogsIcon,
@@ -610,11 +611,11 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   // Only the Harness runtime admits a prompt into a running turn; vendor CLIs
   // and web engines stay queue-only.
   const canSteer = onHarnessThread && activeSessionId !== null
-  const supportsEngineModels = activeEngineId === ANTIGRAVITY_ENGINE_ID || activeEngineId === CODEX_CLI_ENGINE_ID || activeEngineId === ZCODE_CLI_ENGINE_ID || activeEngineId === ND_NATIVE_ENGINE_ID || activeEngineId === PI_CODING_ENGINE_ID || activeEngineId === OPENCODE_CLI_ENGINE_ID || activeEngineId === GEMINI_WEB_ENGINE_ID || activeEngineId === DEEPSEEK_WEB_ENGINE_ID || activeEngineId === GROK_WEB_ENGINE_ID
+  const supportsEngineModels = activeEngineId === ANTIGRAVITY_ENGINE_ID || activeEngineId === CODEX_CLI_ENGINE_ID || activeEngineId === ZCODE_CLI_ENGINE_ID || activeEngineId === ND_NATIVE_ENGINE_ID || activeEngineId === PI_CODING_ENGINE_ID || activeEngineId === OPENCODE_CLI_ENGINE_ID || activeEngineId === GEMINI_WEB_ENGINE_ID || activeEngineId === AISTUDIO_WEB_ENGINE_ID || activeEngineId === DEEPSEEK_WEB_ENGINE_ID || activeEngineId === GROK_WEB_ENGINE_ID
   const engineModel = engineModelSelections[activeEngineId] ?? null
-  const engineModelDefaultLabel = activeEngineId === GEMINI_WEB_ENGINE_ID ? 'Gemini default' : activeEngineId === DEEPSEEK_WEB_ENGINE_ID ? 'DeepSeek default' : activeEngineId === GROK_WEB_ENGINE_ID ? 'Grok default' : 'Native default'
-  const engineModelDefaultHint = activeEngineId === GEMINI_WEB_ENGINE_ID ? 'whatever the Gemini chat is set to' : activeEngineId === DEEPSEEK_WEB_ENGINE_ID ? 'whatever DeepSeek has selected' : activeEngineId === GROK_WEB_ENGINE_ID ? 'whatever Grok has selected' : 'whatever the CLI is configured with'
-  const engineModelIdleLabel = activeEngineId === GEMINI_WEB_ENGINE_ID ? 'Gemini default' : activeEngineId === DEEPSEEK_WEB_ENGINE_ID ? 'DeepSeek default' : activeEngineId === GROK_WEB_ENGINE_ID ? 'Grok default' : 'Native model'
+  const engineModelDefaultLabel = activeEngineId === GEMINI_WEB_ENGINE_ID || activeEngineId === AISTUDIO_WEB_ENGINE_ID ? 'AI Studio default' : activeEngineId === DEEPSEEK_WEB_ENGINE_ID ? 'DeepSeek default' : activeEngineId === GROK_WEB_ENGINE_ID ? 'Grok default' : 'Native default'
+  const engineModelDefaultHint = activeEngineId === GEMINI_WEB_ENGINE_ID || activeEngineId === AISTUDIO_WEB_ENGINE_ID ? 'whatever Google AI Studio / Gemini has selected' : activeEngineId === DEEPSEEK_WEB_ENGINE_ID ? 'whatever DeepSeek has selected' : activeEngineId === GROK_WEB_ENGINE_ID ? 'whatever Grok has selected' : 'whatever the CLI is configured with'
+  const engineModelIdleLabel = activeEngineId === GEMINI_WEB_ENGINE_ID || activeEngineId === AISTUDIO_WEB_ENGINE_ID ? 'AI Studio default' : activeEngineId === DEEPSEEK_WEB_ENGINE_ID ? 'DeepSeek default' : activeEngineId === GROK_WEB_ENGINE_ID ? 'Grok default' : 'Native model'
   const setEngineModel = (model: string | null): void => {
     setEngineModelSelections((current) => ({ ...current, [activeEngineId]: model }))
   }
@@ -655,7 +656,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   }, [activeWorkspaceRoot])
 
   useEffect(() => {
-    if (activeEngineId === GEMINI_WEB_ENGINE_ID) {
+    if (activeEngineId === GEMINI_WEB_ENGINE_ID || activeEngineId === AISTUDIO_WEB_ENGINE_ID) {
       void refreshGeminiGemBinding()
       void window.ndDsh?.geminiWeb?.getModeSettings?.().then((settings) => {
         if (settings) setGeminiModeSettings(settings)
@@ -953,7 +954,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   const selectEngineSession = useCallback((summary: EngineSessionSummary): void => {
     setDraftEngineId(null)
     setActiveSessionId(summary.sessionId)
-    if (summary.engineId === CHATGPT_WEB_ENGINE_ID || summary.engineId === GEMINI_WEB_ENGINE_ID || summary.engineId === DEEPSEEK_WEB_ENGINE_ID || summary.engineId === GROK_WEB_ENGINE_ID) {
+    if (summary.engineId === CHATGPT_WEB_ENGINE_ID || summary.engineId === GEMINI_WEB_ENGINE_ID || summary.engineId === AISTUDIO_WEB_ENGINE_ID || summary.engineId === DEEPSEEK_WEB_ENGINE_ID || summary.engineId === GROK_WEB_ENGINE_ID) {
       // The engine owns (and persists) the tab mapping; it recreates the tab
       // when the user closed it or the app restarted.
       void window.ndDsh.engines.browserTab(summary.sessionId)
@@ -2622,6 +2623,14 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
                   <SettingsIcon />
                 </button>
               ) : null}
+              <button
+                className="grid size-[22px] place-items-center rounded-[5px] text-faint transition-colors hover:bg-accent hover:text-foreground [&_svg]:size-[13px]"
+                title="Create project in Google AI Studio (https://aistudio.google.com/apps)"
+                aria-label="Create project in Google AI Studio"
+                onClick={() => onOpenLink?.('https://aistudio.google.com/apps')}
+              >
+                <ExternalIcon className="size-[13px]" />
+              </button>
               <button className="grid size-[22px] place-items-center rounded-[5px] text-faint transition-colors hover:bg-accent hover:text-foreground [&_svg]:size-[13px]" title="New session" onClick={() => void handleNewSession()}>
                 <PlusIcon />
               </button>
@@ -2637,33 +2646,52 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
             // The boot fallback root is a runtime cwd, not a project. Present an
             // explicit empty state instead of a default project row.
             <div className="flex flex-col items-start gap-1.5 rounded-md px-2 py-1.5">
-              <p className="m-0 text-[10px]/[1.45] text-faint">No project selected. Open a folder to work in a workspace.</p>
-              {onOpenWorkspace ? (
+              <p className="m-0 text-[10px]/[1.45] text-faint">No project selected. Open a folder or build an app in Google AI Studio.</p>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {onOpenWorkspace ? (
+                  <button
+                    className="h-[22px] rounded-md border border-border-strong px-2 text-[10px] font-semibold text-soft transition-colors hover:bg-accent hover:text-foreground"
+                    onClick={() => onOpenWorkspace()}
+                  >
+                    Open folder
+                  </button>
+                ) : null}
                 <button
                   className="h-[22px] rounded-md border border-border-strong px-2 text-[10px] font-semibold text-soft transition-colors hover:bg-accent hover:text-foreground"
-                  onClick={() => onOpenWorkspace()}
+                  onClick={() => onOpenLink?.('https://aistudio.google.com/apps')}
+                  title="Create app project in Google AI Studio (https://aistudio.google.com/apps)"
                 >
-                  Open folder
+                  Create Project (AI Studio)
                 </button>
-              ) : null}
+              </div>
             </div>
           ) : null}
 
           <div className="mt-1.5 flex flex-col gap-1">
             <div className="flex items-center justify-between">
               <span className="px-2 text-[9px] font-semibold tracking-[0.08em] text-faint">CHATS</span>
-              <button
-                className={cn(
-                  'grid size-[22px] shrink-0 place-items-center rounded-[5px] transition-colors [&_svg]:size-[13px]',
-                  groupByDate ? 'bg-accent text-primary' : 'text-faint hover:bg-accent hover:text-foreground',
-                )}
-                title={groupByDate ? 'Chats grouped by date' : 'Chats listed together'}
-                aria-label={groupByDate ? 'Chats grouped by date' : 'Chats listed together'}
-                aria-pressed={groupByDate}
-                onClick={toggleGroupByDate}
-              >
-                <CalendarIcon />
-              </button>
+              <div className="flex items-center gap-0.5">
+                <button
+                  className="grid size-[22px] shrink-0 place-items-center rounded-[5px] text-faint transition-colors hover:bg-accent hover:text-foreground [&_svg]:size-[13px]"
+                  title="Create project in Google AI Studio (https://aistudio.google.com/apps)"
+                  aria-label="Create project in Google AI Studio"
+                  onClick={() => onOpenLink?.('https://aistudio.google.com/apps')}
+                >
+                  <PlusIcon />
+                </button>
+                <button
+                  className={cn(
+                    'grid size-[22px] shrink-0 place-items-center rounded-[5px] transition-colors [&_svg]:size-[13px]',
+                    groupByDate ? 'bg-accent text-primary' : 'text-faint hover:bg-accent hover:text-foreground',
+                  )}
+                  title={groupByDate ? 'Chats grouped by date' : 'Chats listed together'}
+                  aria-label={groupByDate ? 'Chats grouped by date' : 'Chats listed together'}
+                  aria-pressed={groupByDate}
+                  onClick={toggleGroupByDate}
+                >
+                  <CalendarIcon />
+                </button>
+              </div>
             </div>
             {sessionListError ? (
               <div role="status" className="flex items-center justify-between gap-2 rounded-md border border-border-soft px-2 py-1.5 text-[10px]/[1.45] text-faint">
@@ -2867,11 +2895,13 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
           </div>
         ) : null}
 
-        {activeEngineId === GEMINI_WEB_ENGINE_ID ? (
+        {activeEngineId === GEMINI_WEB_ENGINE_ID || activeEngineId === AISTUDIO_WEB_ENGINE_ID ? (
           <div className="mx-3 mt-2.5 space-y-1.5">
             <div className="flex items-center justify-between gap-2 rounded-[7px] border border-border-soft bg-surface-1 px-2.5 py-1.5 text-[10px]">
               <div className="flex min-w-0 items-center gap-2">
-                <span className="shrink-0 font-medium text-soft">Gemini Skill:</span>
+                <span className="shrink-0 font-medium text-soft">
+                  {activeEngineId === AISTUDIO_WEB_ENGINE_ID ? 'AI Studio App:' : 'Gemini / AI Studio:'}
+                </span>
                 {geminiGemBinding ? (
                   <span className="flex min-w-0 items-center gap-1.5 truncate">
                     <strong className="truncate font-semibold text-foreground">
@@ -2885,19 +2915,29 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
                   </span>
                 ) : (
                   <span className="truncate text-faint">
-                    No skill linked — chats use your default Gemini (optional)
+                    {activeEngineId === AISTUDIO_WEB_ENGINE_ID
+                      ? 'No app linked — build apps at aistudio.google.com/apps (optional)'
+                      : 'No project/skill linked — chats use your default Gemini (optional)'}
                   </span>
                 )}
               </div>
               <div className="flex shrink-0 items-center gap-1.5">
+                <button
+                  type="button"
+                  className="rounded border border-border-soft px-1.5 py-0.5 text-[9px] text-faint hover:bg-accent hover:text-foreground"
+                  onClick={() => onOpenLink?.('https://aistudio.google.com/apps')}
+                  title="Create app project in Google AI Studio (https://aistudio.google.com/apps)"
+                >
+                  Create Project (AI Studio)
+                </button>
                 {geminiGemBinding?.gemUrl ? (
                   <button
                     type="button"
                     className="rounded border border-border-soft px-1.5 py-0.5 text-[9px] text-faint hover:bg-accent hover:text-foreground"
                     onClick={() => onOpenLink?.(geminiGemBinding.gemUrl)}
-                    title="Open in Gemini"
+                    title="Open in Gemini / AI Studio"
                   >
-                    Open in Gemini
+                    Open in Google
                   </button>
                 ) : (
                   <button
@@ -2914,12 +2954,14 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
                   className="rounded bg-primary/10 px-2 py-0.5 text-[9px] font-medium text-primary hover:bg-primary/20"
                   onClick={() => setGeminiGemModalOpen(true)}
                 >
-                  {geminiGemBinding ? 'Change' : 'Link Skill'}
+                  {geminiGemBinding ? 'Change' : 'Link Project'}
                 </button>
               </div>
             </div>
 
-            <BrowserModeSelector mode={geminiModeSettings.mode} onSelect={(mode) => void handleSelectGeminiMode(mode)} />
+            {activeEngineId === GEMINI_WEB_ENGINE_ID ? (
+              <BrowserModeSelector mode={geminiModeSettings.mode} onSelect={(mode) => void handleSelectGeminiMode(mode)} />
+            ) : null}
           </div>
         ) : null}
 

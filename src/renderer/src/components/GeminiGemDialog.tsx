@@ -13,15 +13,15 @@ interface GeminiGemDialogProps {
 }
 
 const SPEC: WebBindingDialogSpec = {
-  title: 'Link Gemini Skill',
-  description: 'Link workspace "{workspaceName}" to a Gemini skill or chat. Gemini Web chats for this project open that chat, so its instructions stay attached.',
-  inputLabel: 'Gemini chat link',
-  inputPlaceholder: 'https://gemini.google.com/app/fa5b05f3a25f7f76',
-  hint: 'Paste the link to your Gemini chat (e.g. https://gemini.google.com/app/fa5b05f3a25f7f76).',
-  openLinkLabel: 'Open gemini.google.com/customize/skills',
-  openLinkUrl: 'https://gemini.google.com/customize/skills',
-  saveLabel: 'Save Skill Link',
-  clearLabel: 'Clear Skill',
+  title: 'Link Gemini Skill / Google AI Studio App',
+  description: 'Link workspace "{workspaceName}" to a Gemini skill or Google AI Studio app project. Web chats for this project keep instructions or app context attached.',
+  inputLabel: 'Gemini chat link or AI Studio app URL',
+  inputPlaceholder: 'https://gemini.google.com/app/... or https://aistudio.google.com/apps/...',
+  hint: 'Paste the link to your Gemini chat or Google AI Studio app (e.g. https://aistudio.google.com/apps or https://gemini.google.com/app/fa5b05f3a25f7f76).',
+  openLinkLabel: 'Create App in AI Studio (aistudio.google.com/apps)',
+  openLinkUrl: 'https://aistudio.google.com/apps',
+  saveLabel: 'Save Project Link',
+  clearLabel: 'Clear Link',
 }
 
 export function GeminiGemDialog({

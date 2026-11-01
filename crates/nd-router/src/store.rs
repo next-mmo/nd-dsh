@@ -186,6 +186,8 @@ fn sanitize_models(models: Vec<String>) -> Vec<String> {
 
 fn default_name(kind: &str) -> String {
     match kind {
+        catalog::KIND_AI_STUDIO => "Google AI Studio".to_owned(),
+        catalog::KIND_AI_STUDIO_WEB => "Google AI Studio Web".to_owned(),
         catalog::KIND_POLLINATIONS => "Pollinations AI (Free)".to_owned(),
         catalog::KIND_OVH_KEPLER => "OVH Kepler Cloud (Free)".to_owned(),
         catalog::KIND_FREE_AI => "Free.ai (Free)".to_owned(),
@@ -221,6 +223,19 @@ fn default_name(kind: &str) -> String {
 
 fn default_models(kind: &str) -> Vec<String> {
     match kind {
+        catalog::KIND_AI_STUDIO => vec![
+            "gemini-2.5-flash".to_owned(),
+            "gemini-2.5-pro".to_owned(),
+            "gemini-2.0-flash".to_owned(),
+            "gemini-2.0-pro".to_owned(),
+            "gemini-1.5-flash".to_owned(),
+            "gemini-1.5-pro".to_owned(),
+        ],
+        catalog::KIND_AI_STUDIO_WEB => vec![
+            "default".to_owned(),
+            "gemini-2.5-flash".to_owned(),
+            "gemini-2.5-pro".to_owned(),
+        ],
         catalog::KIND_POLLINATIONS => vec!["openai-fast".to_owned()],
         catalog::KIND_OVH_KEPLER => vec![
             "gpt-oss-120b".to_owned(),
@@ -320,6 +335,7 @@ fn default_models(kind: &str) -> Vec<String> {
 
 fn default_base_url(kind: &str) -> String {
     match kind {
+        catalog::KIND_AI_STUDIO => "https://generativelanguage.googleapis.com/v1beta/openai/".to_owned(),
         catalog::KIND_POLLINATIONS => "https://text.pollinations.ai/v1".to_owned(),
         catalog::KIND_OVH_KEPLER => "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1".to_owned(),
         catalog::KIND_FREE_AI => "https://api.free.ai/v1".to_owned(),

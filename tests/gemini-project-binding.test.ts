@@ -27,6 +27,7 @@ describe('Gemini Web conversation URL parsing (normal chats)', () => {
 
   it('classifies page and conversation URLs', () => {
     expect(isGeminiPageUrl('https://gemini.google.com/app')).toBe(true)
+    expect(isGeminiPageUrl('https://aistudio.google.com/apps')).toBe(true)
     expect(isGeminiPageUrl('https://chatgpt.com/')).toBe(false)
     expect(isGeminiConversationUrl('https://gemini.google.com/app/fa5b05f3a25f7f76')).toBe(true)
     expect(isGeminiConversationUrl('https://gemini.google.com/u/0/app/fa5b05f3a25f7f76')).toBe(true)
@@ -57,6 +58,24 @@ describe('Gemini chat and skill link parsing', () => {
       gemRef: 'fa5b05f3a25f7f76',
       gemId: 'fa5b05f3a25f7f76',
       gemUrl: 'https://gemini.google.com/app/fa5b05f3a25f7f76',
+    })
+  })
+
+  it('accepts Google AI Studio app and project links', () => {
+    expect(parseGeminiSkillLinkInput('https://aistudio.google.com/apps')).toEqual({
+      gemRef: 'apps',
+      gemId: 'apps',
+      gemUrl: 'https://aistudio.google.com/apps',
+    })
+    expect(parseGeminiSkillLinkInput('https://aistudio.google.com/apps/my-app-123')).toEqual({
+      gemRef: 'apps/my-app-123',
+      gemId: 'my-app-123',
+      gemUrl: 'https://aistudio.google.com/apps/my-app-123',
+    })
+    expect(parseGeminiSkillLinkInput('https://aistudio.google.com/prompts/prompt-456')).toEqual({
+      gemRef: 'prompts/prompt-456',
+      gemId: 'prompt-456',
+      gemUrl: 'https://aistudio.google.com/prompts/prompt-456',
     })
   })
 

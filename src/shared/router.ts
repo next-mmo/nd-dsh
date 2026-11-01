@@ -20,6 +20,7 @@ export type RouterCliProviderKind =
 
 export type RouterProviderKind =
   | 'openai-compatible'
+  | 'ai-studio'
   | 'pollinations'
   | 'ovh-kepler'
   | 'free-ai'
@@ -27,6 +28,7 @@ export type RouterProviderKind =
   | RouterCliProviderKind
   | 'chatgpt-web'
   | 'gemini-web'
+  | 'aistudio-web'
   | 'deepseek-web'
   | 'grok-web'
   | 'qwen-web'
@@ -41,6 +43,7 @@ export type RouterProviderKind =
 export type RouterWebProviderKind =
   | 'chatgpt-web'
   | 'gemini-web'
+  | 'aistudio-web'
   | 'deepseek-web'
   | 'grok-web'
   | 'qwen-web'
@@ -58,6 +61,7 @@ export type RouterComboStrategy = 'priority' | 'round-robin'
 export const ROUTER_WEB_LANE_MODELS: Record<RouterWebProviderKind, string[]> = {
   'chatgpt-web': ['default'],
   'gemini-web': ['3.5 Flash-Lite', '3.8 Flash', '3.1 Pro', '4 Argon'],
+  'aistudio-web': ['default', 'gemini-2.5-flash', 'gemini-2.5-pro'],
   'deepseek-web': ['default', 'deep-think'],
   'grok-web': ['default', 'grok-3', 'grok-2', 'deepsearch', 'think'],
   'qwen-web': ['default', 'qwen-max', 'qwen-plus', 'qwen-turbo', 'qwen-coder'],
@@ -74,6 +78,7 @@ export function isRouterWebProviderKind(kind: string): kind is RouterWebProvider
   return (
     kind === 'chatgpt-web' ||
     kind === 'gemini-web' ||
+    kind === 'aistudio-web' ||
     kind === 'deepseek-web' ||
     kind === 'grok-web' ||
     kind === 'qwen-web' ||
@@ -145,6 +150,17 @@ export const ROUTER_FREE_API_BASE_URLS: Record<string, string> = {
   'free-ai': 'https://api.free.ai/v1',
   'kilo-gateway': 'https://api.kilo.ai/api/gateway/v1',
 }
+
+export const ROUTER_AI_STUDIO_MODELS: string[] = [
+  'gemini-2.5-flash',
+  'gemini-2.5-pro',
+  'gemini-2.0-flash',
+  'gemini-2.0-pro',
+  'gemini-1.5-flash',
+  'gemini-1.5-pro',
+]
+
+export const ROUTER_AI_STUDIO_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/openai/'
 
 export function isRouterFreeApiKind(kind: string): boolean {
   return kind === 'pollinations' || kind === 'ovh-kepler' || kind === 'free-ai' || kind === 'kilo-gateway'

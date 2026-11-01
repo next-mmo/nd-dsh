@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { CodingEngineDescriptor } from '../../shared/contracts.js'
 import {
+  aiStudioWebEngineDescriptor,
   arenaWebEngineDescriptor,
   buildCodingEngineCatalog,
   chatGptWebEngineDescriptor,
@@ -76,6 +77,7 @@ export class CodingEngineRegistry {
       }),
       chatGptWebEngineDescriptor(),
       geminiWebEngineDescriptor(),
+      aiStudioWebEngineDescriptor(),
       deepSeekWebEngineDescriptor(),
       grokWebEngineDescriptor(),
       qwenWebEngineDescriptor(),

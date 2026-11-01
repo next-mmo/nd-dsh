@@ -1,4 +1,6 @@
 pub const KIND_OPENAI: &str = "openai-compatible";
+pub const KIND_AI_STUDIO: &str = "ai-studio";
+pub const KIND_AI_STUDIO_WEB: &str = "aistudio-web";
 pub const KIND_POLLINATIONS: &str = "pollinations";
 pub const KIND_OVH_KEPLER: &str = "ovh-kepler";
 pub const KIND_FREE_AI: &str = "free-ai";
@@ -36,6 +38,8 @@ pub fn normalize_kind(value: &str) -> Result<String, String> {
     let normalized = value.trim().to_ascii_lowercase();
     match normalized.as_str() {
         "" | "custom" | "openai" | "openai-compatible" => Ok(KIND_OPENAI.to_owned()),
+        "ai-studio" | "aistudio" | "google-ai-studio" | "google-aistudio" => Ok(KIND_AI_STUDIO.to_owned()),
+        "aistudio-web" | "ai-studio-web" | "google-ai-studio-web" => Ok(KIND_AI_STUDIO_WEB.to_owned()),
         "pollinations" | "pollinations-ai" | "pollinations-free" => Ok(KIND_POLLINATIONS.to_owned()),
         "ovh" | "ovh-kepler" | "ovh-cloud" | "ovh-anonymous" => Ok(KIND_OVH_KEPLER.to_owned()),
         "free-ai" | "freeai" => Ok(KIND_FREE_AI.to_owned()),
@@ -74,6 +78,7 @@ pub fn is_web_kind(kind: &str) -> bool {
         kind,
         KIND_CHATGPT_WEB
             | KIND_GEMINI_WEB
+            | KIND_AI_STUDIO_WEB
             | KIND_DEEPSEEK_WEB
             | KIND_GROK_WEB
             | KIND_QWEN_WEB
@@ -91,6 +96,7 @@ pub fn is_http_kind(kind: &str) -> bool {
     matches!(
         kind,
         KIND_OPENAI
+            | KIND_AI_STUDIO
             | KIND_POLLINATIONS
             | KIND_OVH_KEPLER
             | KIND_FREE_AI
