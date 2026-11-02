@@ -1,4 +1,5 @@
 import { RemoteExtensionCatalog } from './remote-catalog.js'
+import type { ChildProcess } from 'node:child_process'
 import { app, clipboard, dialog, ipcMain, nativeImage, protocol, safeStorage, shell, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { existsSync, promises as fs } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
@@ -49,6 +50,9 @@ import type { CoreDiskScan } from '../core/core-disk.js'
 import type { CoreComputer } from '../core/core-computer.js'
 import type { CoreApiHttp } from '../core/core-api-http.js'
 import { ComputerUseService } from './computer-use-service.js'
+import { MediaDownloadService, type MediaSpawnProcess } from '../media-download/media-download-service.js'
+import { MediaToolInstaller, mediaToolRoot } from '../media-download/media-tool-installer.js'
+import { activeYouTubePage } from '../media-download/active-tab.js'
 import {
   ApiStudioSpecStore,
   ApiStudioWorkspaceSaveBuffer,
@@ -112,6 +116,10 @@ export interface NdIpcDependencies {
   browser: Pick<BrowserController, 'navigate'> & TranslateBrowserPort
   /** Multi-tab platform surface for extension hosts that manage real browser tabs. */
   browserPlatform?: Pick<BrowserPlatformService, 'createTab' | 'activateTab' | 'closeTab' | 'tabs'>
+  /** nd-core-backed spawner for the media downloader; no background policy is injected. */
+  spawnProcess?: MediaSpawnProcess
+  /** Whole-tree teardown for a media-download child (nd-core process.cancel). */
+  stopProcess?: (child: ChildProcess, timeoutMs?: number) => Promise<void>
   providers: ProviderStore
   workflow: Pick<WorkflowService, 'projectView' | 'refresh'>
   /**
@@ -160,6 +168,7 @@ const PAY_GUARD_ID = 'nd.pay-guard'
 const DISK_CLEANER_ID = 'nd.disk-cleaner'
 const API_STUDIO_ID = 'nd.api-studio'
 const COMPUTER_USE_ID = 'nd.computer-use'
+const YOUTUBE_DOWNLOADER_ID = 'nd.youtube-downloader'
 export const NINE_ROUTER_ID = 'nd.9router'
 
 /**
@@ -188,6 +197,7 @@ const AVAILABLE_PACKAGES: readonly { id: string; path: () => string }[] = app.is
     { id: DISK_CLEANER_ID, path: diskCleanerPackagePath },
     { id: API_STUDIO_ID, path: apiStudioPackagePath },
     { id: COMPUTER_USE_ID, path: computerUsePackagePath },
+    { id: YOUTUBE_DOWNLOADER_ID, path: youtubeDownloaderPackagePath },
     { id: NINE_ROUTER_ID, path: nineRouterPackagePath },
   ]),
 ]
@@ -292,6 +302,12 @@ function apiStudioPackagePath(): string {
   return app.isPackaged
     ? join(process.resourcesPath, 'nd-extensions', 'api-studio')
     : join(app.getAppPath(), 'extensions', 'api-studio')
+}
+
+function youtubeDownloaderPackagePath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'nd-extensions', 'youtube-downloader')
+    : join(app.getAppPath(), 'extensions', 'youtube-downloader')
 }
 
 function computerUsePackagePath(): string {
@@ -418,6 +434,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
           diskCleanerCatalogView(state),
           apiStudioCatalogView(state),
           computerUseCatalogView(state),
+          youtubeDownloaderCatalogView(state),
           nineRouterCatalogView(state),
         ]),
       ]),
@@ -437,7 +454,28 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
   const resetComputerUse = (id: string, key: string): void => {
     if (id === COMPUTER_USE_ID) void computerUse?.reset(id, key).catch(() => undefined)
   }
-  const disposeNativeHost = registerNativeHostHandlers(deps, clipboardHistory, computerUse)
+  // Media tool setup downloads pinned binaries but never executes them. The
+  // downloader child itself is spawned through nd-core for whole-tree cancel.
+  // The two ND_DSH_MEDIA_* overrides are developer/E2E-only so a live test
+  // never writes the developer's real Downloads folder or redownloads tools.
+  const mediaDownloadsDir = !app.isPackaged && process.env.ND_DSH_MEDIA_DOWNLOAD_DIR?.trim()
+    ? resolve(process.env.ND_DSH_MEDIA_DOWNLOAD_DIR.trim())
+    : app.getPath('downloads')
+  const mediaToolsRoot = !app.isPackaged && process.env.ND_DSH_MEDIA_TOOLS_ROOT?.trim()
+    ? resolve(process.env.ND_DSH_MEDIA_TOOLS_ROOT.trim())
+    : mediaToolRoot(app.getPath('userData'))
+  const mediaDownload = deps.spawnProcess
+    ? new MediaDownloadService({
+        userDataDir: app.getPath('userData'),
+        downloadsDir: mediaDownloadsDir,
+        tools: new MediaToolInstaller({ rootDir: mediaToolsRoot }),
+        spawnProcess: deps.spawnProcess,
+        ...(deps.stopProcess ? { stopProcess: deps.stopProcess } : {}),
+        revealFile: (path) => shell.showItemInFolder(path),
+      })
+    : null
+  const disposeNativeHost = registerNativeHostHandlers(deps, clipboardHistory, computerUse, mediaDownload)
+
 
   deps.broker.setOnApprovalRequested(() => { void emitState() })
   deps.home.setOnChanged(() => { void emitHome(); deps.onHomeChanged?.() })
@@ -722,6 +760,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
     if (wallpaperTimer) clearInterval(wallpaperTimer)
     for (const channel of channels) ipcMain.removeHandler(channel)
     void clipboardHistory.dispose()
+    mediaDownload?.dispose()
     deps.broker.setOnApprovalRequested(undefined)
     deps.home.setOnChanged(undefined)
     protocol.unhandle(ND_WEBVIEW_URL_SCHEME)
@@ -737,6 +776,7 @@ export function registerNativeHostHandlers(
   deps: NdIpcDependencies,
   clipboardHistory?: ClipboardHistoryAttachment,
   computerUse?: ComputerUseService | null,
+  mediaDownload?: MediaDownloadService | null,
 ): { dispose: () => void } {
   const { host, providers } = deps
   host.register('ninerouter.status', async () => {
@@ -2508,6 +2548,75 @@ export function registerNativeHostHandlers(
     return { url, surface: 'external' }
   })
 
+  // --- YouTube downloader -----------------------------------------------------
+  //
+  // The package view is sandboxed and has no network or Node. These hosts are
+  // the only way to read the active tab, acquire the pinned tools, start one
+  // download, or reveal its verified output. The service re-validates every
+  // input; these closures only narrow the bridge to Personal and enforce that
+  // status/cancel/reveal are user gestures.
+
+  const requireMediaDownload = (): MediaDownloadService => {
+    if (!mediaDownload) throw new Error('Media downloads are not available in this build')
+    return mediaDownload
+  }
+  const requireUserMediaAction = (context: { caller: string }): void => {
+    if (context.caller === 'agent') {
+      throw new Error('Managing a media download is a user action; ask the user to do it in ND')
+    }
+  }
+
+  host.register('media.download.current', async (_input, context) => {
+    requirePersonalContext(context)
+    if (!deps.browserPlatform) return null
+    try {
+      return activeYouTubePage(await deps.browserPlatform.tabs(BUILTIN_BROWSER_TARGET_ID))
+    } catch {
+      return null
+    }
+  })
+
+  host.register('media.download.status', async (_input, context) => {
+    requirePersonalContext(context)
+    requireUserMediaAction(context)
+    return requireMediaDownload().status(context.extensionId)
+  })
+
+  host.register('media.download.prepare', async (_input, context) => {
+    requirePersonalContext(context)
+    return requireMediaDownload().prepare(context.extensionId)
+  })
+
+  host.register('media.download.start', async (input, context) => {
+    requirePersonalContext(context)
+    const mode = input.mode === 'video' || input.mode === 'audio' ? input.mode : null
+    if (!mode) throw new Error('Choose video or audio')
+    const url = requiredText(input.url, 'Video URL', 2_048)
+    const title = typeof input.title === 'string' && input.title.trim()
+      ? input.title.trim().slice(0, 300)
+      : undefined
+    return requireMediaDownload().start(context.extensionId, {
+      url,
+      mode,
+      ...(title ? { title } : {}),
+    })
+  })
+
+  host.register('media.download.cancel', async (input, context) => {
+    requirePersonalContext(context)
+    requireUserMediaAction(context)
+    const id = requiredText(input.id, 'Download', 160)
+    return { canceled: requireMediaDownload().cancel(context.extensionId, id) }
+  })
+
+  host.register('media.download.reveal', async (input, context) => {
+    requirePersonalContext(context)
+    requireUserMediaAction(context)
+    const id = requiredText(input.id, 'Download', 160)
+    await requireMediaDownload().reveal(context.extensionId, id)
+    return { revealed: true }
+  })
+
   host.register('os.openTarget', async (input) => {
     const kind = input.kind === 'app' ? 'app' : input.kind === 'folder' ? 'folder' : 'file'
     const filters = kind === 'app' && process.platform === 'win32'
@@ -2814,6 +2923,14 @@ async function nineRouterCatalogView(state: NdExtensionsStateView): Promise<NdAv
     name: '9Router',
     description: 'Local AI model gateway and proxy runtime. Aggregate models, manage providers, and connect local routes directly to ND Router.',
     permissions: ['ninerouter.read', 'ninerouter.write'],
+  })
+}
+
+async function youtubeDownloaderCatalogView(state: NdExtensionsStateView): Promise<NdAvailablePackageView> {
+  return packageCatalogView(state, YOUTUBE_DOWNLOADER_ID, youtubeDownloaderPackagePath(), {
+    name: 'YouTube Downloader',
+    description: 'Download a YouTube video as a single-file MP4 up to 720p or audio as M4A. First use installs pinned yt-dlp and Deno (about 61 MB) from official GitHub releases after SHA-256 verification. Windows only; download only content you have rights to.',
+    permissions: ['media.download'],
   })
 }
 

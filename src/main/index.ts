@@ -388,7 +388,12 @@ async function createWindow(cdpPort: number): Promise<void> {
   const engineSpawn = createCoreSpawn(core, executionCoordinator, backgroundPolicyPath)
   // Project dev servers and machine verification are ND-owned system work,
   // not engine children: keep them Rust-owned without inheriting a worker permit.
+  // Project dev servers and machine verification are ND-owned system work,
+  // not engine children: keep them Rust-owned without inheriting a worker permit.
   const unscopedCoreSpawn = createCoreSpawn(core, undefined, backgroundPolicyPath)
+  // The media downloader must not inherit the background Node policy
+  // (NODE_OPTIONS=--require …); Deno treats it as an unknown runtime flag.
+  const mediaDownloadSpawn = createCoreSpawn(core)
   const git = new GitService(workspace, { core })
   const harnessJournal = new CoreSessionJournalStore(core)
   const directEngineJournal = new CoreSessionJournalStore(core, {
@@ -561,7 +566,7 @@ async function createWindow(cdpPort: number): Promise<void> {
   const coreSystemVolume = createCoreSystemVolume(core)
   const coreVault = createCoreVault(core)
   const coreApiHttp = createCoreApiHttp(core)
-  const disposeIpc = registerIpc({ window, preloadPath: preload, launcherPopup, shortcuts: shortcutRegistry, browser, browserPlatform, dshSurface, engines, engineRouter, nativeToolBroker: nativeBroker, ownsWorktree: (cwd) => taskWorktrees?.ownsRoot(cwd) === true, harness, projectWorkspace, workspaces, theme, providers, externalElements, recentPicks, git, corePackageSnapshot: createCorePackageSnapshot(core), coreGit: coreGit.exec.bind(coreGit), coreMedia, coreClipboard, coreMediaKeys, coreSystemVolume, coreVault, coreApiHttp, coreDisk: createCoreDiskScan(core), coreComputer: createCoreComputer(core), qa, sessionArchive, usageLedger, capabilities, organizationStore, nineRouterManaged })
+  const disposeIpc = registerIpc({ window, preloadPath: preload, launcherPopup, shortcuts: shortcutRegistry, browser, browserPlatform, mediaDownloadSpawn, stopProcess: stopCoreManagedChildProcess, dshSurface, engines, engineRouter, nativeToolBroker: nativeBroker, ownsWorktree: (cwd) => taskWorktrees?.ownsRoot(cwd) === true, harness, projectWorkspace, workspaces, theme, providers, externalElements, recentPicks, git, corePackageSnapshot: createCorePackageSnapshot(core), coreGit: coreGit.exec.bind(coreGit), coreMedia, coreClipboard, coreMediaKeys, coreSystemVolume, coreVault, coreApiHttp, coreDisk: createCoreDiskScan(core), coreComputer: createCoreComputer(core), qa, sessionArchive, usageLedger, capabilities, organizationStore, nineRouterManaged })
   if (nativeAgent.ready()) void nativeAgent.start().catch((error) => {
     console.warn('ND Agent private runtime could not initialize:', error instanceof Error ? error.message : String(error))
   })

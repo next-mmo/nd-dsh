@@ -429,6 +429,23 @@ ships only a sandboxed canvas UI whose privileged actions are
 directly from the repository; desktop coverage is in
 `tests/disk-cleaner-extension.test.ts` and `e2e/disk-cleaner.spec.ts`.
 
+`YouTube Downloader` under `extensions/youtube-downloader` is the reference for
+a pinned native tool behind a web view. It is fully external and Windows-only:
+first use downloads reviewed yt-dlp (Unlicense) and Deno (MIT) releases into
+`<userData>/runtimes/media-downloader`, checks exact byte counts and SHA-256,
+and never executes them during setup. Downloads run through nd-core with one
+fixed argv, ignore yt-dlp config files, import no cookies, never use ffmpeg,
+and write only into a per-job staging directory; exactly one verified MP4/M4A
+is moved into Downloads. The package ships no binaries. It accepts single
+YouTube watch/Shorts/live/`youtu.be` links only, runs one job at a time, and
+keeps status/cancel/reveal behind a user gesture. Deno is an implementation
+detail of this native host, not a runtime packages may select. Coverage:
+`tests/youtube-downloader-extension.test.ts`, `tests/media-download-service.test.ts`,
+`tests/media-download-tools.test.ts`, and `e2e/youtube-downloader.spec.ts`.
+Live tool installation and a real download are opt-in via
+`ND_MEDIA_DOWNLOAD_E2E=1`; `ND_DSH_MEDIA_DOWNLOAD_DIR` and
+`ND_DSH_MEDIA_TOOLS_ROOT` redirect an E2E run away from real user folders.
+
 For the real model-backed coding autopilot scenario, build first and configure
 the gitignored `.env.e2e`. In PowerShell, run:
 

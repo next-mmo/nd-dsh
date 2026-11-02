@@ -1,0 +1,45 @@
+{
+  "protocol": "nd.extension/1",
+  "id": "nd.youtube-downloader",
+  "name": "YouTube Downloader",
+  "description": "Download a YouTube video as a single-file MP4 up to 720p or audio as M4A. First use downloads pinned yt-dlp and Deno (about 61 MB) from official GitHub releases after SHA-256 verification. Windows only. Download only content you have rights to.",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "contexts": ["personal"],
+  "permissions": ["media.download"],
+  "settings": [],
+  "contributions": {
+    "tools": [],
+    "skills": [],
+    "commands": [
+      {
+        "id": "open",
+        "title": "YouTube Downloader",
+        "description": "Download a YouTube video as MP4 or audio as M4A.",
+        "keywords": ["youtube", "download", "video", "audio", "mp4", "m4a", "save", "offline"],
+        "host": "media.download.status",
+        "openViewId": "downloader",
+        "contexts": ["personal"]
+      }
+    ],
+    "views": [
+      {
+        "id": "downloader",
+        "title": "YouTube Downloader",
+        "description": "Paste a YouTube link or use the active tab. Single-file MP4 up to 720p, or M4A audio.",
+        "kind": "web",
+        "entry": "ui/index.html",
+        "contexts": ["personal"],
+        "actions": [
+          { "id": "current", "title": "Read the active YouTube tab", "host": "media.download.current" },
+          { "id": "status", "title": "Read downloader setup and downloads", "host": "media.download.status" },
+          { "id": "prepare", "title": "Set up the downloader tools", "host": "media.download.prepare" },
+          { "id": "start", "title": "Download a YouTube video or audio", "host": "media.download.start" },
+          { "id": "cancel", "title": "Cancel a download", "host": "media.download.cancel" },
+          { "id": "reveal", "title": "Show a downloaded file", "host": "media.download.reveal" }
+        ]
+      }
+    ],
+    "workflows": []
+  }
+}
