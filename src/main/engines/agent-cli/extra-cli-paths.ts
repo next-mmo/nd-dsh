@@ -110,3 +110,22 @@ export function hermesBinPath(): string | undefined {
 export function minimaxBinPath(): string | undefined {
   return firstExisting('ND_DSH_MINIMAX_BINARY', npmBinCandidates('mmx'))
 }
+export function traeBinPath(): string | undefined {
+  const home = process.env.USERPROFILE ?? process.env.HOME ?? ''
+  const localAppData = process.env.LOCALAPPDATA ?? ''
+  return firstExisting('ND_DSH_TRAE_BINARY', [
+    ...(process.platform === 'win32'
+      ? [
+          ...(localAppData ? [join(localAppData, 'Programs', 'Trae', 'bin', 'trae.cmd')] : []),
+          join(home, 'AppData', 'Local', 'Programs', 'Trae', 'bin', 'trae.cmd'),
+          join(home, '.local', 'bin', 'trae.cmd'),
+          join(home, '.local', 'bin', 'trae.exe'),
+        ]
+      : [
+          '/Applications/Trae.app/Contents/Resources/app/bin/trae',
+          join(home, '.local', 'bin', 'trae'),
+          '/usr/local/bin/trae',
+        ]),
+    ...npmBinCandidates('trae'),
+  ])
+}

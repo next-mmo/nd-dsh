@@ -152,4 +152,40 @@ describe('browser media state reconciliation', () => {
     expect(tracker.state()?.playing).toBe(false)
     contents.close()
   })
-})
+  it('reports hasVideo and pip from metadata snapshot', async () => {
+    const { tracker, contents } = setup()
+    contents.snapshot = { title: 'Video track', artist: 'Director', playing: true, hasVideo: true, pip: false } as any
+    contents.emit('media-started-playing')
+    await tracker.refresh()
+    expect(tracker.state()).toMatchObject({
+      title: 'Video track',
+      hasVideo: true,
+      pip: false,
+    })
+    contents.snapshot = { title: 'Video track', artist: 'Director', playing: true, hasVideo: true, pip: true } as any
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(tracker.state()?.pip).toBe(true)
+    contents.close()
+  })
+
+  it('toggles picture-in-picture mode and reflects state', async () => {
+    const { tracker, contents } = setup()
+    expect(await tracker.togglePictureInPicture()).toEqual({ ok: false, reason: 'no-active-media' })
+
+    contents.emit('media-started-playing')
+    await tracker.refresh()
+
+    // Mock executeJavaScript handling the toggle PIP script
+    contents.executeJavaScript.mockImplementation(async (script) => {
+      if (typeof script === 'string' && script.includes('requestPictureInPicture')) {
+        return { ok: true, active: true }
+      }
+      return { title: 'Track one', artist: 'Artist', playing: true, hasVideo: true, pip: true }
+    })
+
+    const result = await tracker.togglePictureInPicture()
+    expect(result).toEqual({ ok: true, active: true })
+    expect(tracker.state()?.pip).toBe(true)
+    contents.close()
+  })
+});

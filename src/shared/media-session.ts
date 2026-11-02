@@ -22,6 +22,10 @@ export interface NdMediaSessionState {
   site: string
   url: string
   updatedAt: number
+  /** Whether the media tab has a video element. */
+  hasVideo?: boolean
+  /** Whether Picture-in-Picture is currently active. */
+  pip?: boolean
 }
 
 /** OS media transport keys the sidecar can synthesize as a fallback. */

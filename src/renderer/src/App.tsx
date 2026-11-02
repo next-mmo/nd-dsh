@@ -1007,7 +1007,7 @@ export default function App() {
 
   useEffect(() => {
     if (workspaceProfile === 'general') {
-      if (view === 'qa' || view === 'router') setView('home')
+      if (view === 'qa') setView('home')
       if (agentPane === 'files') setAgentPane('browser')
     }
   }, [workspaceProfile, view, agentPane])
@@ -1631,9 +1631,15 @@ export default function App() {
           void captureClipboardToNote(context)
           return
         case 'extension-view': {
-          const match = /^([a-z0-9][a-z0-9._-]{1,127}):([a-z0-9][a-z0-9._-]{0,127})$/.exec(text ?? '')
+          const match = /^([a-z0-9][a-z0-9._-]{1,127}):([a-z0-9][a-z0-9._-]{0,127})(?:#(.*))?$/.exec(text ?? '')
           if (!match) return
-          setExtensionViewRequest({ extensionId: match[1]!, viewId: match[2]!, context })
+          const extensionId = match[1]!
+          const viewId = match[2]!
+          const tabId = match[3] ? decodeURIComponent(match[3]) : undefined
+          if (tabId) {
+            void window.ndDsh.browserPlatform.activateTab('builtin', tabId).catch(() => undefined)
+          }
+          setExtensionViewRequest({ extensionId, viewId, context })
           setSettingsTab('extensions')
           setView('extensions')
           return
@@ -1654,7 +1660,7 @@ export default function App() {
   ]
   const navItems = workspaceProfile === 'coding'
     ? allNavItems
-    : allNavItems.filter((item) => item.id !== 'qa' && item.id !== 'router')
+    : allNavItems.filter((item) => item.id !== 'qa')
 
   if (inspectScope === 'external') {
     return (
@@ -2414,6 +2420,19 @@ export default function App() {
           }}
           onOpenAgent={() => switchToWorkbench('agent')}
           onOpenMedia={openMediaTab}
+          onOpenDownloadMedia={async (media) => {
+            setQuickLauncherOpen(false)
+            if (media.tabId) {
+              await window.ndDsh.browserPlatform.activateTab('builtin', media.tabId).catch(() => undefined)
+            }
+            setExtensionViewRequest({
+              extensionId: 'nd.youtube-downloader',
+              viewId: 'downloader',
+              context: activeLauncherContext(),
+            })
+            setSettingsTab('extensions')
+            setView('extensions')
+          }}
           onActivateProject={launcherActivateProject}
           onSwitchCompany={launcherSwitchCompany}
           onCreateTask={launcherCreateTask}

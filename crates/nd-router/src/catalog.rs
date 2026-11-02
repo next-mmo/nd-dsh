@@ -18,6 +18,7 @@ pub const KIND_GOOSE_CLI: &str = "goose-cli";
 pub const KIND_HERMES_CLI: &str = "hermes-cli";
 pub const KIND_JCODE_CLI: &str = "jcode-cli";
 pub const KIND_MINIMAX_CLI: &str = "minimax-cli";
+pub const KIND_TRAE_CLI: &str = "trae-cli";
 pub const KIND_CHATGPT_WEB: &str = "chatgpt-web";
 pub const KIND_GEMINI_WEB: &str = "gemini-web";
 pub const KIND_DEEPSEEK_WEB: &str = "deepseek-web";
@@ -57,6 +58,7 @@ pub fn normalize_kind(value: &str) -> Result<String, String> {
         "hermes-cli" | "hermes" => Ok(KIND_HERMES_CLI.to_owned()),
         "jcode-cli" | "jcode" => Ok(KIND_JCODE_CLI.to_owned()),
         "minimax-cli" | "minimax" => Ok(KIND_MINIMAX_CLI.to_owned()),
+        "trae-cli" | "trae" => Ok(KIND_TRAE_CLI.to_owned()),
         "chatgpt-web" | "chatgpt" | "gpt-web" => Ok(KIND_CHATGPT_WEB.to_owned()),
         "gemini-web" => Ok(KIND_GEMINI_WEB.to_owned()),
         "deepseek-web" | "deepseek" | "deepseek-chat-web" => Ok(KIND_DEEPSEEK_WEB.to_owned()),
@@ -130,6 +132,7 @@ pub fn is_cli_kind(kind: &str) -> bool {
             | KIND_HERMES_CLI
             | KIND_JCODE_CLI
             | KIND_MINIMAX_CLI
+            | KIND_TRAE_CLI
     )
 }
 

@@ -987,3 +987,40 @@ async fn test_candidate_validates_and_pings_without_persisting() {
     // Ensure store is completely empty (candidate was not saved)
     assert_eq!(state.snapshot()["providers"].as_array().map(Vec::len), Some(0));
 }
+
+#[tokio::test]
+async fn categorizes_and_seeds_trae_cli_provider() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let state = RouterState::new(temp.path().to_path_buf()).expect("state");
+    let saved = state
+        .save_provider(SaveProviderInput {
+            id: Some("trae".to_owned()),
+            kind: Some("trae-cli".to_owned()),
+            name: None,
+            base_url: None,
+            models: None,
+            api_key: None,
+            clear_secret: false,
+            is_active: Some(true),
+            priority: Some(0),
+        })
+        .expect("save_provider");
+    assert_eq!(saved["name"], "Trae CLI");
+    assert_eq!(saved["kind"], "trae-cli");
+    assert_eq!(crate::catalog::provider_category("trae-cli"), "cli");
+    assert_eq!(crate::catalog::provider_auth_mode("trae-cli"), "cli");
+    let models = saved["models"].as_array().expect("models");
+    assert!(models.iter().any(|m| m == "default"));
+    assert!(models.iter().any(|m| m == "agent"));
+    assert!(models.iter().any(|m| m == "ask"));
+    assert!(models.iter().any(|m| m == "edit"));
+}
+
+#[tokio::test]
+async fn test_trae_cli_binary_detection() {
+    let result = crate::cli::test_cli_binary("trae-cli").await;
+    match result {
+        Ok(output) => assert!(!output.is_empty()),
+        Err(err) => assert!(err.message.contains("not installed") || err.message.contains("timed out")),
+    }
+}

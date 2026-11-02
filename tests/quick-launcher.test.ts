@@ -133,4 +133,13 @@ describe('ND Quick Launcher shortcut modes', () => {
     expect(launcherBrowserTabId('nd-browser-tab:')).toBeNull()
     expect(launcherBrowserTabId('nd-browser-tab:%')).toBeNull()
   })
-})
+  it('validates extension-view handoff target for downloader handoff', () => {
+    expect(isLauncherHandoffTarget('extension-view')).toBe(true)
+    const payload = 'nd.youtube-downloader:downloader#tab%3A123'
+    const match = /^([a-z0-9][a-z0-9._-]{1,127}):([a-z0-9][a-z0-9._-]{0,127})(?:#(.*))?$/.exec(payload)
+    expect(match).not.toBeNull()
+    expect(match![1]).toBe('nd.youtube-downloader')
+    expect(match![2]).toBe('downloader')
+    expect(decodeURIComponent(match![3]!)).toBe('tab:123')
+  })
+});

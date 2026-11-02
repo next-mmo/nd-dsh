@@ -17,6 +17,7 @@ export type RouterCliProviderKind =
   | 'hermes-cli'
   | 'jcode-cli'
   | 'minimax-cli'
+  | 'trae-cli'
 
 export type RouterProviderKind =
   | 'openai-compatible'
@@ -103,6 +104,7 @@ export const ROUTER_CLI_LANE_MODELS: Record<RouterCliProviderKind, string[]> = {
   'hermes-cli': ['default'],
   'jcode-cli': ['default'],
   'minimax-cli': ['default', 'MiniMax-Text-01'],
+  'trae-cli': ['default', 'agent', 'ask', 'edit'],
   antigravity: ['default', 'gemini-2.5-flash', 'gemini-2.5-pro'],
   qoder: ['default', 'qoder-1', 'deepseek-r1'],
   'gemini-cli': ['default', 'gemini-2.5-flash', 'gemini-2.5-pro'],
@@ -122,7 +124,8 @@ export function isRouterCliProviderKind(kind: string): kind is RouterCliProvider
     kind === 'goose-cli' ||
     kind === 'hermes-cli' ||
     kind === 'jcode-cli' ||
-    kind === 'minimax-cli'
+    kind === 'minimax-cli' ||
+    kind === 'trae-cli'
   )
 }
 

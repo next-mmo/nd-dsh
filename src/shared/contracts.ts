@@ -889,6 +889,7 @@ export interface DesktopApi {
     playPause(): Promise<{ ok: boolean }>
     next(): Promise<{ ok: boolean }>
     previous(): Promise<{ ok: boolean }>
+    togglePip?(): Promise<{ ok: boolean; active?: boolean; reason?: string }>
     volumeState(): Promise<NdSystemVolumeState>
     setVolume(update: NdSystemVolumeUpdate): Promise<NdSystemVolumeState>
   }
@@ -967,6 +968,7 @@ export const IPC = {
   mediaPlayPause: 'media:play-pause',
   mediaNext: 'media:next',
   mediaPrevious: 'media:previous',
+  mediaTogglePip: 'media:toggle-pip',
   mediaVolumeState: 'media:volume-state',
   mediaVolumeSet: 'media:volume-set',
   workspaceState: 'workspace:state',

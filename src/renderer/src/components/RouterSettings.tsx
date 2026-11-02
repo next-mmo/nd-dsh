@@ -36,6 +36,15 @@ import {
   rowTitle,
   rowValueText,
 } from './settings-primitives'
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from './ui/dialog'
 import { Input } from './ui/input'
 import { Switch } from './ui/switch'
 
@@ -121,6 +130,11 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
     } else {
       setInternalSubTab(next)
     }
+  }
+
+  const openAddProviderDialog = (): void => {
+    setDraftPing({ testing: false, result: null, error: null })
+    setShowProviderForm(true)
   }
 
   useEffect(() => {
@@ -319,7 +333,6 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
   const requestsOk = usage?.ok ?? counters.ok
   const requestsFailed = usage?.failed ?? counters.failed
   const providerBreakdown = Object.entries(usage?.byProvider ?? {}).sort((left, right) => right[1] - left[1]).slice(0, 8)
-  const providerFormOpen = showProviderForm || providers.length === 0
   const routeFormOpen = showRouteForm || combos.length === 0
   const draftHasWebLane = comboEntries.some((entry) => {
     const provider = providers.find((candidate) => candidate.id === entry.providerId)
@@ -424,7 +437,7 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
                   </div>
                   <div className="flex flex-wrap justify-end gap-1">
                     <SettingsButton onClick={() => selectSubTab('playground')}>Open playground</SettingsButton>
-                    <SettingsButton onClick={() => { setShowProviderForm(true); selectSubTab('providers') }}>Add provider</SettingsButton>
+                    <SettingsButton onClick={() => { openAddProviderDialog(); selectSubTab('providers') }}>Add provider</SettingsButton>
                     <SettingsButton onClick={() => { setShowRouteForm(true); selectSubTab('routes') }}>New route</SettingsButton>
                     <SettingsButton onClick={() => selectSubTab('access')}>External API</SettingsButton>
                   </div>
@@ -502,11 +515,9 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
                       ND's secure stores
                     </span>
                   </div>
-                  {providers.length > 0 && !showProviderForm ? (
-                    <SettingsButton disabled={disabled} onClick={() => setShowProviderForm(true)}>
-                      Add provider
-                    </SettingsButton>
-                  ) : null}
+                  <SettingsButton disabled={disabled} onClick={openAddProviderDialog}>
+                    Add provider
+                  </SettingsButton>
                 </SettingsRow>
 
                 {providers.map((provider) => (
@@ -551,209 +562,7 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
                 ))}
 
                 {providers.length === 0 ? (
-                  <SettingsNote>No providers yet. Add an OpenAI-compatible endpoint, Antigravity, Qoder CLI, or any web chat lane (Grok, Qwen, Z.ai, Mistral, Perplexity, Poe, Arena, Meta, Duck, ChatGPT, Gemini, DeepSeek) below.</SettingsNote>
-                ) : null}
-
-                {providerFormOpen ? (
-                  <SettingsRow className="items-start">
-                    <div className="flex min-w-0 flex-1 flex-col gap-2">
-                      <span className={rowTitle}>New provider</span>
-                      <div className="flex min-w-0 items-center gap-2">
-                        <select
-                          aria-label="Provider kind"
-                          className="h-8 w-[250px] shrink-0 rounded-md border border-border bg-surface-1 px-2 text-[11px] text-soft"
-                          value={providerKind}
-                          disabled={disabled}
-                          onChange={(event) => changeProviderKind(event.target.value as ProviderKindChoice)}
-                        >
-                          <optgroup label="Free API (Zero Auth Required)">
-                            <option value="pollinations">Pollinations AI (Fast · No Key)</option>
-                            <option value="ovh-kepler">OVH Kepler Cloud (120B / Qwen 3.6 · No Key)</option>
-                            <option value="free-ai">Free.ai (Coding & Vision · No Key)</option>
-                            <option value="kilo-gateway">Kilo Gateway (Aggregator · No Key)</option>
-                          </optgroup>
-                          <optgroup label="Custom API (API Key Required)">
-                            <option value="ai-studio">Google AI Studio (Gemini 2.5 / 2.0 / 1.5)</option>
-                            <option value="openai-compatible">OpenAI-compatible</option>
-                          </optgroup>
-                          <optgroup label="CLI (Command Line Tools)">
-                            <option value="antigravity">Antigravity (agy CLI)</option>
-                            <option value="qoder">Qoder CLI</option>
-                            <option value="claude-code-cli">Claude Code CLI</option>
-                            <option value="codex-cli">Codex CLI</option>
-                            <option value="cursor-cli">Cursor CLI</option>
-                            <option value="opencode-cli">OpenCode CLI</option>
-                            <option value="goose-cli">Goose CLI</option>
-                            <option value="hermes-cli">Hermes CLI</option>
-                            <option value="pi-coding">Pi CLI</option>
-                            <option value="zcode-cli">ZCode CLI</option>
-                            <option value="jcode-cli">JCode CLI</option>
-                            <option value="minimax-cli">MiniMax CLI</option>
-                            <option value="gemini-cli">Gemini CLI</option>
-                          </optgroup>
-                          <optgroup label="Web Chat (Browser Session)">
-                            <option value="chatgpt-web">ChatGPT Web</option>
-                            <option value="gemini-web">Gemini Web</option>
-                            <option value="aistudio-web">Google AI Studio Web (Apps Builder)</option>
-                            <option value="deepseek-web">DeepSeek Web</option>
-                            <option value="grok-web">Grok Web</option>
-                            <option value="qwen-web">Qwen Web</option>
-                            <option value="zai-web">Z.ai Web</option>
-                            <option value="mistral-web">Mistral Web</option>
-                            <option value="perplexity-web">Perplexity Web</option>
-                            <option value="poe-web">Poe Web</option>
-                            <option value="arena-web">Arena AI Web</option>
-                            <option value="meta-web">Meta AI Web</option>
-                            <option value="duck-web">Duck.ai Web</option>
-                          </optgroup>
-                        </select>
-                        <span className={rowDesc}>
-                          {isRouterFreeApiKind(providerKind)
-                            ? 'Free public API: zero authentication required.'
-                            : isRouterWebProviderKind(providerKind)
-                              ? 'Web chat lane: uses the embedded browser session; no key is stored.'
-                              : providerKind === 'ai-studio'
-                                ? 'API lane: Google AI Studio Gemini models via official OpenAI-compatible endpoint.'
-                                : providerKind === 'antigravity' || providerKind === 'qoder'
-                                  ? 'CLI lane: uses local command-line tools and OS credentials.'
-                                  : 'API lane: OpenAI-compatible endpoint with optional API key.'}
-                        </span>
-                      </div>
-                      <div className="flex min-w-0 gap-2">
-                        <Input
-                          aria-label="Provider name"
-                          placeholder={isRouterWebProviderKind(providerKind) ? 'Name (optional)' : 'Name, e.g. Free plugin'}
-                          value={providerName}
-                          disabled={disabled || draftPing.testing}
-                          onChange={(event) => {
-                            setDraftPing({ testing: false, result: null, error: null })
-                            setProviderName(event.target.value)
-                          }}
-                          className="max-w-[180px]"
-                        />
-                        {(providerKind === 'openai-compatible' || providerKind === 'ai-studio' || isRouterFreeApiKind(providerKind)) ? (
-                          <Input
-                            aria-label="Provider base URL"
-                            placeholder={providerKind === 'ai-studio' ? ROUTER_AI_STUDIO_BASE_URL : isRouterFreeApiKind(providerKind) ? (ROUTER_FREE_API_BASE_URLS[providerKind] || 'https://...') : 'http://127.0.0.1:8326'}
-                            value={providerBaseUrl}
-                            disabled={disabled || draftPing.testing}
-                            onChange={(event) => {
-                              setDraftPing({ testing: false, result: null, error: null })
-                              setProviderBaseUrl(event.target.value)
-                            }}
-                            className="min-w-0 flex-1 font-mono text-[11px]"
-                          />
-                        ) : null}
-                      </div>
-                      <div className="flex min-w-0 gap-2">
-                        <Input
-                          aria-label="Provider models"
-                          placeholder={providerKind === 'ai-studio' ? 'Models, e.g. gemini-2.5-flash, gemini-2.5-pro, gemini-2.0-flash' : providerKind === 'antigravity' ? 'Models, e.g. gemini-3.8-flash-medium, claude-sonnet-5-5-medium (from `agy models`)' : providerKind === 'qoder' ? 'Models, e.g. auto, lite, performance (from `qoder --list-models`)' : isRouterWebProviderKind(providerKind) ? `Modes, e.g. ${ROUTER_WEB_LANE_MODELS[providerKind].join(', ')}` : 'Models (comma separated, optional)'}
-                          value={providerModels}
-                          disabled={disabled || draftPing.testing}
-                          onChange={(event) => {
-                            setDraftPing({ testing: false, result: null, error: null })
-                            setProviderModels(event.target.value)
-                          }}
-                          className="min-w-0 flex-1 font-mono text-[11px]"
-                        />
-                        {(providerKind === 'openai-compatible' || providerKind === 'ai-studio') ? (
-                          <Input
-                            aria-label="Provider API key"
-                            type="password"
-                            autoComplete="off"
-                            placeholder={providerKind === 'ai-studio' ? 'AI Studio API key (aistudio.google.com)' : 'API key (optional)'}
-                            value={providerKey}
-                            disabled={disabled || draftPing.testing}
-                            onChange={(event) => {
-                              setDraftPing({ testing: false, result: null, error: null })
-                              setProviderKey(event.target.value)
-                            }}
-                            className="max-w-[220px]"
-                          />
-                        ) : null}
-                      </div>
-                      {providerKind === 'ai-studio' ? (
-                        <div className="flex items-center gap-1.5 text-[11px] text-faint">
-                          <span>Get your Gemini API key from</span>
-                          <button
-                            type="button"
-                            className="text-primary underline hover:text-primary/80"
-                            onClick={() => void window.ndDsh.browser.navigate('https://aistudio.google.com/app/apikey')}
-                          >
-                            Google AI Studio (aistudio.google.com/app/apikey)
-                          </button>
-                          <span>· OpenAI-compatible endpoint with Gemini 2.5 / 2.0 / 1.5</span>
-                        </div>
-                      ) : null}
-                      {providerKind === 'antigravity' ? (
-                        <span className={rowDesc}>
-                          Runs your installed agy CLI — it owns the Google sign-in, ND never sees tokens. Account entries below
-                          carry the AGY_ACCOUNT name so per-account routing activates as soon as the CLI honors them.
-                        </span>
-                      ) : providerKind === 'qoder' ? (
-                        <span className={rowDesc}>
-                          Runs your installed qoder CLI — each account selects its own profile folder (QODER_CONFIG_DIR) and/or
-                          a personal access token. ND never reads the CLI's stored tokens.
-                        </span>
-                      ) : isRouterWebProviderKind(providerKind) ? (
-                        <span className={rowDesc}>
-                          Drives the embedded browser's signed-in {kindLabel(providerKind)} session.
-                          Every router request starts a fresh conversation.
-                        </span>
-                      ) : null}
-
-                      {draftPing.testing ? (
-                        <div className="flex items-center gap-2 rounded-md border border-border bg-surface-2 px-2.5 py-1 text-[11px] text-soft">
-                          <span className="inline-block h-3 w-3 animate-spin rounded-full border border-soft border-t-transparent" />
-                          <span>Pinging endpoint with test probe...</span>
-                        </div>
-                      ) : null}
-                      {draftPing.result?.ok ? (
-                        <div className="flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[11px] text-emerald-400">
-                          <span className="font-medium">✓ Ping OK ({draftPing.result.latencyMs}ms)</span>
-                          <span className="text-soft">· Model: {draftPing.result.model}</span>
-                          {draftPing.result.preview ? (
-                            <span className="truncate max-w-[280px] text-soft/80" title={draftPing.result.preview}>
-                              ({draftPing.result.preview})
-                            </span>
-                          ) : null}
-                        </div>
-                      ) : null}
-                      {draftPing.error ? (
-                        <div className="flex items-center gap-2 rounded-md border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-[11px] text-rose-400">
-                          <span className="font-medium">✕ Ping Failed:</span>
-                          <span className="truncate max-w-[360px]" title={draftPing.error}>{draftPing.error}</span>
-                        </div>
-                      ) : null}
-
-                      <div className="flex items-center gap-2 pt-1">
-                        <SettingsButton
-                          disabled={disabled || draftPing.testing}
-                          onClick={() => void runDraftPing()}
-                        >
-                          {draftPing.testing ? 'Pinging...' : 'Test connection'}
-                        </SettingsButton>
-                        <SettingsButton
-                          disabled={disabled || draftPing.testing}
-                          onClick={() => void addProvider()}
-                        >
-                          {draftPing.testing ? 'Testing...' : 'Add provider'}
-                        </SettingsButton>
-                        {providers.length > 0 ? (
-                          <SettingsButton
-                            disabled={disabled || draftPing.testing}
-                            onClick={() => {
-                              setShowProviderForm(false)
-                              setDraftPing({ testing: false, result: null, error: null })
-                            }}
-                          >
-                            Cancel
-                          </SettingsButton>
-                        ) : null}
-                      </div>
-                    </div>
-                  </SettingsRow>
+                  <SettingsNote>No providers yet. Click &ldquo;Add provider&rdquo; to connect an OpenAI-compatible endpoint, CLI lane (Trae, Claude Code, Antigravity, Qoder), or web chat lane.</SettingsNote>
                 ) : null}
               </div>
             </SettingsSection>
@@ -962,6 +771,237 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
         )}
       </div>
       )}
+
+      <Dialog
+        open={showProviderForm}
+        onOpenChange={(open) => {
+          setShowProviderForm(open)
+          if (!open) {
+            setDraftPing({ testing: false, result: null, error: null })
+          }
+        }}
+      >
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-[540px]">
+          <DialogHeader>
+            <DialogTitle>Add provider</DialogTitle>
+            <DialogDescription>
+              Connect an OpenAI-compatible endpoint, CLI lane, or browser web lane to ND Router.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex flex-col gap-3 py-1">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[11px] font-semibold text-foreground">Provider type</label>
+              <select
+                aria-label="Provider kind"
+                className="h-8.5 w-full rounded-md border border-border bg-surface-1 px-2.5 text-xs text-foreground outline-none transition-colors focus:border-primary"
+                value={providerKind}
+                disabled={disabled || draftPing.testing}
+                onChange={(event) => changeProviderKind(event.target.value as ProviderKindChoice)}
+              >
+                <optgroup label="Free API (Zero Auth Required)">
+                  <option value="pollinations">Pollinations AI (Fast · No Key)</option>
+                  <option value="ovh-kepler">OVH Kepler Cloud (120B / Qwen 3.6 · No Key)</option>
+                  <option value="free-ai">Free.ai (Coding & Vision · No Key)</option>
+                  <option value="kilo-gateway">Kilo Gateway (Aggregator · No Key)</option>
+                </optgroup>
+                <optgroup label="Custom API (API Key Required)">
+                  <option value="ai-studio">Google AI Studio (Gemini 2.5 / 2.0 / 1.5)</option>
+                  <option value="openai-compatible">OpenAI-compatible</option>
+                </optgroup>
+                <optgroup label="CLI (Command Line Tools)">
+                  <option value="antigravity">Antigravity (agy CLI)</option>
+                  <option value="qoder">Qoder CLI</option>
+                  <option value="claude-code-cli">Claude Code CLI</option>
+                  <option value="codex-cli">Codex CLI</option>
+                  <option value="cursor-cli">Cursor CLI</option>
+                  <option value="opencode-cli">OpenCode CLI</option>
+                  <option value="goose-cli">Goose CLI</option>
+                  <option value="hermes-cli">Hermes CLI</option>
+                  <option value="pi-coding">Pi CLI</option>
+                  <option value="zcode-cli">ZCode CLI</option>
+                  <option value="jcode-cli">JCode CLI</option>
+                  <option value="minimax-cli">MiniMax CLI</option>
+                  <option value="trae-cli">Trae CLI</option>
+                  <option value="gemini-cli">Gemini CLI</option>
+                </optgroup>
+                <optgroup label="Web Chat (Browser Session)">
+                  <option value="chatgpt-web">ChatGPT Web</option>
+                  <option value="gemini-web">Gemini Web</option>
+                  <option value="aistudio-web">Google AI Studio Web (Apps Builder)</option>
+                  <option value="deepseek-web">DeepSeek Web</option>
+                  <option value="grok-web">Grok Web</option>
+                  <option value="qwen-web">Qwen Web</option>
+                  <option value="zai-web">Z.ai Web</option>
+                  <option value="mistral-web">Mistral Web</option>
+                  <option value="perplexity-web">Perplexity Web</option>
+                  <option value="poe-web">Poe Web</option>
+                  <option value="arena-web">Arena AI Web</option>
+                  <option value="meta-web">Meta AI Web</option>
+                  <option value="duck-web">Duck.ai Web</option>
+                </optgroup>
+              </select>
+              <span className="text-[11px] leading-relaxed text-muted-foreground">
+                {isRouterFreeApiKind(providerKind)
+                  ? 'Free public API: zero authentication required.'
+                  : isRouterWebProviderKind(providerKind)
+                    ? 'Web chat lane: uses the embedded browser session; no key is stored.'
+                    : providerKind === 'ai-studio'
+                      ? 'API lane: Google AI Studio Gemini models via official OpenAI-compatible endpoint.'
+                      : providerKind === 'antigravity' || providerKind === 'qoder'
+                        ? 'CLI lane: uses local command-line tools and OS credentials.'
+                        : 'API lane: OpenAI-compatible endpoint with optional API key.'}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[11px] font-semibold text-foreground">Name</label>
+                <Input
+                  aria-label="Provider name"
+                  placeholder={isRouterWebProviderKind(providerKind) ? 'Name (optional)' : 'Name, e.g. Free plugin'}
+                  value={providerName}
+                  disabled={disabled || draftPing.testing}
+                  onChange={(event) => {
+                    setDraftPing({ testing: false, result: null, error: null })
+                    setProviderName(event.target.value)
+                  }}
+                />
+              </div>
+
+              {(providerKind === 'openai-compatible' || providerKind === 'ai-studio' || isRouterFreeApiKind(providerKind)) ? (
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[11px] font-semibold text-foreground">Base URL</label>
+                  <Input
+                    aria-label="Provider base URL"
+                    placeholder={providerKind === 'ai-studio' ? ROUTER_AI_STUDIO_BASE_URL : isRouterFreeApiKind(providerKind) ? (ROUTER_FREE_API_BASE_URLS[providerKind] || 'https://...') : 'http://127.0.0.1:8326'}
+                    value={providerBaseUrl}
+                    disabled={disabled || draftPing.testing}
+                    onChange={(event) => {
+                      setDraftPing({ testing: false, result: null, error: null })
+                      setProviderBaseUrl(event.target.value)
+                    }}
+                    className="font-mono text-[11px]"
+                  />
+                </div>
+              ) : null}
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[11px] font-semibold text-foreground">Models</label>
+              <Input
+                aria-label="Provider models"
+                placeholder={providerKind === 'ai-studio' ? 'Models, e.g. gemini-2.5-flash, gemini-2.5-pro, gemini-2.0-flash' : providerKind === 'antigravity' ? 'Models, e.g. gemini-3.8-flash-medium, claude-sonnet-5-5-medium (from `agy models`)' : providerKind === 'qoder' ? 'Models, e.g. auto, lite, performance (from `qoder --list-models`)' : isRouterWebProviderKind(providerKind) ? `Modes, e.g. ${ROUTER_WEB_LANE_MODELS[providerKind].join(', ')}` : 'Models (comma separated, optional)'}
+                value={providerModels}
+                disabled={disabled || draftPing.testing}
+                onChange={(event) => {
+                  setDraftPing({ testing: false, result: null, error: null })
+                  setProviderModels(event.target.value)
+                }}
+                className="font-mono text-[11px]"
+              />
+            </div>
+
+            {(providerKind === 'openai-compatible' || providerKind === 'ai-studio') ? (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[11px] font-semibold text-foreground">API key</label>
+                <Input
+                  aria-label="Provider API key"
+                  type="password"
+                  autoComplete="off"
+                  placeholder={providerKind === 'ai-studio' ? 'AI Studio API key (aistudio.google.com)' : 'API key (optional)'}
+                  value={providerKey}
+                  disabled={disabled || draftPing.testing}
+                  onChange={(event) => {
+                    setDraftPing({ testing: false, result: null, error: null })
+                    setProviderKey(event.target.value)
+                  }}
+                />
+              </div>
+            ) : null}
+
+            {providerKind === 'ai-studio' ? (
+              <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                <span>Get your Gemini API key from</span>
+                <button
+                  type="button"
+                  className="text-primary underline hover:text-primary/80"
+                  onClick={() => void window.ndDsh.browser.navigate('https://aistudio.google.com/app/apikey')}
+                >
+                  Google AI Studio (aistudio.google.com/app/apikey)
+                </button>
+                <span>· OpenAI-compatible endpoint with Gemini 2.5 / 2.0 / 1.5</span>
+              </div>
+            ) : null}
+
+            {providerKind === 'antigravity' ? (
+              <span className="text-[11px] leading-relaxed text-muted-foreground">
+                Runs your installed agy CLI — it owns the Google sign-in, ND never sees tokens. Account entries below
+                carry the AGY_ACCOUNT name so per-account routing activates as soon as the CLI honors them.
+              </span>
+            ) : providerKind === 'qoder' ? (
+              <span className="text-[11px] leading-relaxed text-muted-foreground">
+                Runs your installed qoder CLI — each account selects its own profile folder (QODER_CONFIG_DIR) and/or
+                a personal access token. ND never reads the CLI's stored tokens.
+              </span>
+            ) : isRouterWebProviderKind(providerKind) ? (
+              <span className="text-[11px] leading-relaxed text-muted-foreground">
+                Drives the embedded browser's signed-in {kindLabel(providerKind)} session.
+                Every router request starts a fresh conversation.
+              </span>
+            ) : null}
+
+            {draftPing.testing ? (
+              <div className="flex items-center gap-2 rounded-md border border-border bg-surface-2 px-2.5 py-1 text-[11px] text-soft">
+                <span className="inline-block h-3 w-3 animate-spin rounded-full border border-soft border-t-transparent" />
+                <span>Pinging endpoint with test probe...</span>
+              </div>
+            ) : null}
+            {draftPing.result?.ok ? (
+              <div className="flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[11px] text-emerald-400">
+                <span className="font-medium">✓ Ping OK ({draftPing.result.latencyMs}ms)</span>
+                <span className="text-soft">· Model: {draftPing.result.model}</span>
+                {draftPing.result.preview ? (
+                  <span className="truncate max-w-[280px] text-soft/80" title={draftPing.result.preview}>
+                    ({draftPing.result.preview})
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
+            {draftPing.error ? (
+              <div className="flex items-center gap-2 rounded-md border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-[11px] text-rose-400">
+                <span className="font-medium">✕ Ping Failed:</span>
+                <span className="truncate max-w-[360px]" title={draftPing.error}>{draftPing.error}</span>
+              </div>
+            ) : null}
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-2">
+            <DialogClose asChild>
+              <button
+                type="button"
+                disabled={disabled || draftPing.testing}
+                className="shrink-0 rounded-md border border-border bg-secondary px-2.5 py-1.5 text-[10px] text-soft transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            </DialogClose>
+            <SettingsButton
+              disabled={disabled || draftPing.testing}
+              onClick={() => void runDraftPing()}
+            >
+              {draftPing.testing ? 'Pinging...' : 'Test connection'}
+            </SettingsButton>
+            <SettingsButton
+              active
+              disabled={disabled || draftPing.testing}
+              onClick={() => void addProvider()}
+            >
+              {draftPing.testing ? 'Testing...' : 'Add provider'}
+            </SettingsButton>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -1194,6 +1234,7 @@ function kindLabel(kind: string): string {
     case 'zcode-cli': return 'ZCode CLI'
     case 'jcode-cli': return 'JCode CLI'
     case 'minimax-cli': return 'MiniMax CLI'
+    case 'trae-cli': return 'Trae CLI'
     case 'gemini-cli': return 'Gemini CLI'
     default: return kind
   }

@@ -8,6 +8,8 @@ interface MediaTabRecord {
   /** 0 until the tab first played media; inactive tabs never surface. */
   lastActivityAt: number
   metadata: NdMediaMetadata | null
+  hasVideo?: boolean
+  pip?: boolean
   refreshTimer: NodeJS.Timeout | null
   refreshPromise: Promise<void> | null
   revision: number
@@ -31,6 +33,8 @@ const METADATA_SCRIPT = `(() => {
     album: (meta && meta.album) || '',
     artworkUrl: artwork && artwork.src ? artwork.src : '',
     playing: els.some((el) => !el.paused && !el.ended),
+    hasVideo: els.some((el) => el.tagName === 'VIDEO'),
+    pip: Boolean(document.pictureInPictureElement),
   };
 })()`
 
@@ -136,6 +140,8 @@ export class BrowserMediaTracker {
       ...(record.metadata?.artist ? { artist: record.metadata.artist } : {}),
       ...(record.metadata?.album ? { album: record.metadata.album } : {}),
       ...(record.metadata?.artworkUrl ? { artworkUrl: record.metadata.artworkUrl } : {}),
+      ...(record.hasVideo !== undefined ? { hasVideo: record.hasVideo } : {}),
+      ...(record.pip !== undefined ? { pip: record.pip } : {}),
       site: siteOf(url),
       url,
       updatedAt: record.lastActivityAt,
@@ -147,6 +153,36 @@ export class BrowserMediaTracker {
     if (!record || record.contents.isDestroyed()) return 'none'
     const result = await record.contents.executeJavaScript(PLAY_PAUSE_SCRIPT, true).catch(() => 'none')
     if (result !== 'paused' && result !== 'playing') return 'none'
+    ++record.revision
+    await this.refreshRecord(record)
+    return result
+  }
+
+  async togglePictureInPicture(): Promise<{ ok: boolean; active?: boolean; reason?: string }> {
+    const record = this.active()
+    if (!record || record.contents.isDestroyed()) return { ok: false, reason: 'no-active-media' }
+    const script = `(async () => {
+      try {
+        if (document.pictureInPictureElement) {
+          await document.exitPictureInPicture();
+          return { ok: true, active: false };
+        }
+        const els = Array.from(document.querySelectorAll('video'));
+        const target = els.find((el) => !el.paused && !el.ended) || els[0] || null;
+        if (!target) return { ok: false, reason: 'no-video' };
+        await target.requestPictureInPicture();
+        return { ok: true, active: true };
+      } catch (error) {
+        return { ok: false, reason: String(error && error.message ? error.message : error) };
+      }
+    })()`
+    const result = (await record.contents.executeJavaScript(script, true).catch((error) => ({
+      ok: false,
+      reason: String(error && error.message ? error.message : error),
+    }))) as { ok: boolean; active?: boolean; reason?: string }
+    if (result && typeof result.active === 'boolean') {
+      record.pip = result.active
+    }
     ++record.revision
     await this.refreshRecord(record)
     return result
@@ -194,6 +230,14 @@ export class BrowserMediaTracker {
         if (typeof raw.playing === 'boolean' && record.playing !== raw.playing) {
           record.playing = raw.playing
           record.lastActivityAt = Date.now()
+          changed = true
+        }
+        if (typeof raw.hasVideo === 'boolean' && record.hasVideo !== raw.hasVideo) {
+          record.hasVideo = raw.hasVideo
+          changed = true
+        }
+        if (typeof raw.pip === 'boolean' && record.pip !== raw.pip) {
+          record.pip = raw.pip
           changed = true
         }
         record.metadata = metadata

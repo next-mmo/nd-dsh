@@ -14,6 +14,7 @@ import {
   MessageSquare,
   MonitorUp,
   Pause,
+  PictureInPicture2,
   Play,
   Puzzle,
   Shuffle,
@@ -65,6 +66,7 @@ interface Props {
   onOpenKanban(): void
   onOpenAgent(): void
   onOpenMedia(tabId: string): void | Promise<void>
+  onOpenDownloadMedia?(media: NdMediaSessionState): void | Promise<void>
   onActivateProject(projectId: string): void | Promise<void>
   onSwitchCompany(companyId: string): void | Promise<void>
   onCreateTask(text: string): void | Promise<void>
@@ -197,6 +199,35 @@ function QuickPickChip({ command, onSelect }: { command: LauncherCommandItem; on
   )
 }
 
+function isDownloadableMedia(media: NdMediaSessionState | null): boolean {
+  if (!media?.url) return false
+  const host = (media.site || '').toLowerCase()
+  return host === 'youtube.com' || host.endsWith('.youtube.com') || host === 'youtu.be'
+}
+
+function VideoDownloadIcon({ className }: { className?: string }): ReactNode {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M7 4H4a1 1 0 0 0-1 1v3" />
+      <path d="M17 4h3a1 1 0 0 1 1 1v3" />
+      <path d="M4 16v3a1 1 0 0 0 1 1h3" />
+      <polygon points="8 9 12 11.5 8 14" fill="currentColor" stroke="none" />
+      <path d="M17 11v6" />
+      <path d="m14.5 14.5 2.5 2.5 2.5-2.5" />
+      <path d="M14 19.5h6" />
+    </svg>
+  )
+}
+
 export function QuickLauncher({
   open,
   onOpenChange,
@@ -213,6 +244,7 @@ export function QuickLauncher({
   onOpenKanban,
   onOpenAgent,
   onOpenMedia,
+  onOpenDownloadMedia,
   onActivateProject,
   onSwitchCompany,
   onCreateTask,
@@ -480,6 +512,34 @@ export function QuickLauncher({
             </span>
           </button>
           <div className="flex shrink-0 items-center gap-1">
+            {isDownloadableMedia(media) ? (
+              <button
+                type="button"
+                aria-label="Download with YouTube Downloader"
+                title="Download with YouTube Downloader"
+                onClick={() => {
+                  if (closeBeforeRun) onOpenChange(false)
+                  void onOpenDownloadMedia?.(media)
+                }}
+                className="rounded-md p-1.5 text-faint transition-colors hover:bg-surface-2 hover:text-strong"
+              >
+                <VideoDownloadIcon className="size-4" />
+              </button>
+            ) : null}
+            {media.hasVideo !== false ? (
+              <button
+                type="button"
+                aria-label={media.pip ? 'Exit Picture-in-Picture' : 'Picture-in-Picture'}
+                title={media.pip ? 'Exit Picture-in-Picture' : 'Picture-in-Picture'}
+                onClick={() => void window.ndDsh.media?.togglePip?.()}
+                className={cn(
+                  'rounded-md p-1.5 transition-colors hover:bg-surface-2',
+                  media.pip ? 'text-primary' : 'text-faint hover:text-strong',
+                )}
+              >
+                <PictureInPicture2 className="size-4" />
+              </button>
+            ) : null}
             <button
               type="button"
               aria-label="Previous track"

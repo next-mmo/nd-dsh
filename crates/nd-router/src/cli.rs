@@ -69,13 +69,42 @@ pub fn cli_binary_for_kind(kind: &str) -> String {
         catalog::KIND_HERMES_CLI => std::env::var("ND_DSH_HERMES_BINARY").unwrap_or_else(|_| "hermes".to_owned()),
         catalog::KIND_JCODE_CLI => std::env::var("ND_DSH_JCODE_BINARY").unwrap_or_else(|_| "jcode".to_owned()),
         catalog::KIND_MINIMAX_CLI => std::env::var("ND_DSH_MINIMAX_BINARY").unwrap_or_else(|_| "minimax".to_owned()),
+        catalog::KIND_TRAE_CLI => std::env::var("ND_DSH_TRAE_BINARY").unwrap_or_else(|_| {
+            if cfg!(windows) {
+                if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+                    let default_path = std::path::PathBuf::from(local_app_data)
+                        .join("Programs")
+                        .join("Trae")
+                        .join("bin")
+                        .join("trae.cmd");
+                    if default_path.exists() {
+                        return default_path.to_string_lossy().to_string();
+                    }
+                }
+                "trae.cmd".to_owned()
+            } else {
+                "trae".to_owned()
+            }
+        }),
         other => other.to_owned(),
     }
 }
 
+fn create_command(bin: &str) -> Command {
+    #[cfg(windows)]
+    {
+        if bin.ends_with(".cmd") || bin.ends_with(".bat") || bin.eq_ignore_ascii_case("trae") {
+            let mut cmd = Command::new("cmd.exe");
+            cmd.arg("/c").arg(bin);
+            return cmd;
+        }
+    }
+    Command::new(bin)
+}
+
 pub async fn test_cli_binary(kind: &str) -> Result<String, RouterError> {
     let bin = cli_binary_for_kind(kind);
-    let mut command = Command::new(&bin);
+    let mut command = create_command(&bin);
     command.arg("--version");
     command.stdin(std::process::Stdio::null());
     command.stdout(std::process::Stdio::piped());
@@ -114,7 +143,7 @@ pub async fn run_generic_cli(
         return Err(RouterError::bad_request("the CLI lane needs a non-empty prompt"));
     }
     let bin = cli_binary_for_kind(kind);
-    let mut command = Command::new(&bin);
+    let mut command = create_command(&bin);
     match kind {
         catalog::KIND_CLAUDE_CLI => {
             command.arg("-p").arg(prompt);
@@ -130,6 +159,15 @@ pub async fn run_generic_cli(
             if !model.is_empty() && model != "default" {
                 command.arg("--model").arg(model);
             }
+        }
+        catalog::KIND_TRAE_CLI => {
+            command.arg("chat");
+            let mode = match model {
+                "ask" | "edit" | "agent" => model,
+                _ => "agent",
+            };
+            command.arg("-m").arg(mode);
+            command.arg(prompt);
         }
         catalog::KIND_GOOSE_CLI
         | catalog::KIND_HERMES_CLI
@@ -157,7 +195,15 @@ pub async fn run_generic_cli(
     if !output.status.success() && stdout.is_empty() {
         return Err(RouterError::bad_gateway(format!("{bin} CLI failed: {stderr}")));
     }
-    let text = if !stdout.is_empty() { stdout } else { stderr };
+    let text = if !stdout.is_empty() {
+        stdout
+    } else if !stderr.is_empty() {
+        stderr
+    } else if kind == catalog::KIND_TRAE_CLI {
+        format!("Dispatched prompt to Trae IDE (mode: {model}, {} characters). Trae window is active.", prompt.len())
+    } else {
+        String::new()
+    };
     Ok(completion_from_text(prompt, &text))
 }
 

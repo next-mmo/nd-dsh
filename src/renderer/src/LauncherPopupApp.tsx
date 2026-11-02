@@ -394,6 +394,12 @@ export default function LauncherPopupApp(): React.ReactNode {
         onOpenKanban={() => handoff('kanban', undefined, selectedContext)}
         onOpenAgent={() => handoff('agent', undefined, selectedContext)}
         onOpenMedia={(tabId) => handoff('browser', launcherBrowserTabPayload(tabId), selectedContext)}
+        onOpenDownloadMedia={(media) => {
+          const payload = media.tabId
+            ? `nd.youtube-downloader:downloader#${encodeURIComponent(media.tabId)}`
+            : 'nd.youtube-downloader:downloader'
+          return handoff('extension-view', payload, selectedContext)
+        }}
         onActivateProject={activateProject}
         onSwitchCompany={switchCompany}
         onCreateTask={createTask}

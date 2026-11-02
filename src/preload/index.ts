@@ -234,6 +234,7 @@ const api: DesktopApi = {
     playPause: () => ipcRenderer.invoke(IPC.mediaPlayPause),
     next: () => ipcRenderer.invoke(IPC.mediaNext),
     previous: () => ipcRenderer.invoke(IPC.mediaPrevious),
+    togglePip: () => ipcRenderer.invoke(IPC.mediaTogglePip),
     volumeState: () => ipcRenderer.invoke(IPC.mediaVolumeState),
     setVolume: (update) => ipcRenderer.invoke(IPC.mediaVolumeSet, update),
   },

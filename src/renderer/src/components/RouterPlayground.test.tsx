@@ -279,6 +279,33 @@ describe('RouterPlayground', () => {
     ])
   })
 
+  it('renders trae-cli provider models in the route select', () => {
+    const onError = vi.fn()
+    const stateWithTrae: RouterState = {
+      ...mockState,
+      providers: [
+        ...mockState.providers,
+        {
+          id: 'trae',
+          kind: 'trae-cli',
+          name: 'Trae CLI',
+          baseUrl: '',
+          models: ['default', 'agent', 'ask', 'edit'],
+          isActive: true,
+          priority: 3,
+          hasSecret: false,
+          accounts: [],
+        },
+      ],
+    }
+    const tree = render({ state: stateWithTrae, onError })
+    const routeSelect = findSelectByAriaLabel(tree, 'Playground route')!
+    const routeOptions = getOptions(routeSelect)
+    expect(routeOptions.some((o) => o.value === 'model:trae/agent')).toBe(true)
+    expect(routeOptions.some((o) => o.value === 'model:trae/ask')).toBe(true)
+    expect(routeOptions.some((o) => o.value === 'model:trae/edit')).toBe(true)
+  })
+
   it('filters routes when a specific provider is selected', () => {
     const onError = vi.fn()
     let tree = render({ state: mockState, onError })

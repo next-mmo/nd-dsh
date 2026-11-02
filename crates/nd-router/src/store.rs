@@ -205,6 +205,7 @@ fn default_name(kind: &str) -> String {
         catalog::KIND_HERMES_CLI => "Hermes CLI".to_owned(),
         catalog::KIND_JCODE_CLI => "JCode CLI".to_owned(),
         catalog::KIND_MINIMAX_CLI => "MiniMax CLI".to_owned(),
+        catalog::KIND_TRAE_CLI => "Trae CLI".to_owned(),
         catalog::KIND_CHATGPT_WEB => "ChatGPT Web".to_owned(),
         catalog::KIND_GEMINI_WEB => "Gemini Web".to_owned(),
         catalog::KIND_DEEPSEEK_WEB => "DeepSeek Web".to_owned(),
@@ -267,6 +268,7 @@ fn default_models(kind: &str) -> Vec<String> {
         catalog::KIND_HERMES_CLI => vec!["default".to_owned()],
         catalog::KIND_JCODE_CLI => vec!["default".to_owned()],
         catalog::KIND_MINIMAX_CLI => vec!["default".to_owned(), "MiniMax-Text-01".to_owned()],
+        catalog::KIND_TRAE_CLI => vec!["default".to_owned(), "agent".to_owned(), "ask".to_owned(), "edit".to_owned()],
         catalog::KIND_CHATGPT_WEB => vec!["default".to_owned()],
         catalog::KIND_GEMINI_WEB => vec![
             "3.5 Flash-Lite".to_owned(),

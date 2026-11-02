@@ -629,6 +629,7 @@ export function registerIpc(deps: IpcDependencies): () => void {
     if (!(await deps.browser.media().skip('previous'))) await sendMediaKey('previous')
     return { ok: true }
   })
+  handleLauncherSurface(IPC.mediaTogglePip, () => deps.browser.media().togglePictureInPicture())
 
   handle(IPC.enginesList, () => deps.engines.list())
   handle(IPC.enginesAssignments, () => deps.engines.assignments())
