@@ -18,6 +18,7 @@ pub mod extension_package;
 pub mod git;
 pub mod media;
 pub mod metrics;
+pub mod os_theme;
 pub mod process;
 pub mod revision;
 pub mod scheduler;

@@ -1,0 +1,185 @@
+{
+  "protocol": "nd.extension/1",
+  "id": "nd.os-toolkit",
+  "name": "OS Toolkit",
+  "description": "Schedule the Windows light and dark theme. Windows has no custom day/night schedule, so ND owns the times and applies them either directly or through PowerToys Light Switch when you already use it. Reads are free; changing your theme always asks first when an agent calls it.",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "contexts": [
+    "personal"
+  ],
+  "permissions": [
+    "ostoolkit.read",
+    "ostoolkit.write"
+  ],
+  "settings": [
+    {
+      "key": "schedulerEnabled",
+      "title": "Run the day/night schedule",
+      "type": "boolean",
+      "default": false,
+      "description": "Off by default. Nothing changes your theme until you turn this on."
+    },
+    {
+      "key": "backend",
+      "title": "Apply backend",
+      "type": "string",
+      "default": "auto",
+      "description": "auto, native, or powertoys. auto uses PowerToys Light Switch when it is installed and enabled, otherwise ND writes the Windows theme directly."
+    },
+    {
+      "key": "dayStart",
+      "title": "Light theme starts at",
+      "type": "string",
+      "default": "07:00",
+      "description": "24-hour HH:MM."
+    },
+    {
+      "key": "nightStart",
+      "title": "Dark theme starts at",
+      "type": "string",
+      "default": "19:00",
+      "description": "24-hour HH:MM. Must differ from the light start."
+    },
+    {
+      "key": "applyApps",
+      "title": "Apply to apps",
+      "type": "boolean",
+      "default": true,
+      "description": "Writes AppsUseLightTheme. Only affects apps that honor the Windows theme."
+    },
+    {
+      "key": "applySystem",
+      "title": "Apply to the taskbar and system",
+      "type": "boolean",
+      "default": true,
+      "description": "Writes SystemUsesLightTheme."
+    },
+    {
+      "key": "lightSwitchSync",
+      "title": "Turn off Light Switch's own schedule",
+      "type": "boolean",
+      "default": true,
+      "description": "Used with the PowerToys backend only, so the two schedulers cannot fight over the same setting."
+    },
+    {
+      "key": "startupReconcile",
+      "title": "Apply the correct theme when ND starts",
+      "type": "boolean",
+      "default": true,
+      "description": "Also re-checks after the computer wakes, so a switch missed while ND was closed self-heals."
+    }
+  ],
+  "contributions": {
+    "commands": [
+      {
+        "id": "open",
+        "title": "OS Toolkit",
+        "description": "Open the day/night theme studio.",
+        "keywords": [
+          "os toolkit",
+          "theme",
+          "dark",
+          "light",
+          "night",
+          "day night",
+          "schedule",
+          "windows theme",
+          "dark mode",
+          "light switch"
+        ],
+        "host": "ostoolkit.theme.status",
+        "openViewId": "studio",
+        "contexts": [
+          "personal"
+        ]
+      },
+      {
+        "id": "light-now",
+        "title": "Light theme now",
+        "description": "Switch Windows to the light theme immediately.",
+        "keywords": [
+          "light",
+          "light mode",
+          "theme",
+          "day"
+        ],
+        "host": "ostoolkit.theme.apply",
+        "contexts": [
+          "personal"
+        ]
+      },
+      {
+        "id": "dark-now",
+        "title": "Dark theme now",
+        "description": "Switch Windows to the dark theme immediately.",
+        "keywords": [
+          "dark",
+          "dark mode",
+          "theme",
+          "night"
+        ],
+        "host": "ostoolkit.theme.apply",
+        "contexts": [
+          "personal"
+        ]
+      },
+      {
+        "id": "toggle",
+        "title": "Toggle the Windows theme",
+        "description": "Flip Windows between light and dark.",
+        "keywords": [
+          "toggle",
+          "flip",
+          "theme",
+          "dark",
+          "light"
+        ],
+        "host": "ostoolkit.theme.apply",
+        "contexts": [
+          "personal"
+        ]
+      }
+    ],
+    "views": [
+      {
+        "id": "studio",
+        "title": "OS Toolkit",
+        "description": "The schedule only runs while ND is open.",
+        "kind": "web",
+        "entry": "ui/index.html",
+        "contexts": [
+          "personal"
+        ],
+        "actions": [
+          {
+            "id": "status",
+            "title": "Read the current theme and schedule state",
+            "host": "ostoolkit.theme.status"
+          },
+          {
+            "id": "probe",
+            "title": "Probe which theme backends are available",
+            "host": "ostoolkit.backends.probe"
+          },
+          {
+            "id": "schedule-get",
+            "title": "Read the day/night schedule",
+            "host": "ostoolkit.schedule.get"
+          },
+          {
+            "id": "schedule-save",
+            "title": "Save the day/night schedule",
+            "host": "ostoolkit.schedule.save"
+          },
+          {
+            "id": "apply",
+            "title": "Change the Windows theme now",
+            "host": "ostoolkit.theme.apply"
+          }
+        ]
+      }
+    ]
+  },
+  "category": "system"
+}

@@ -1,6 +1,6 @@
 import { RemoteExtensionCatalog } from './remote-catalog.js'
 import type { ChildProcess } from 'node:child_process'
-import { app, clipboard, dialog, ipcMain, nativeImage, protocol, safeStorage, shell, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
+import { app, clipboard, dialog, ipcMain, nativeImage, nativeTheme, powerMonitor, protocol, safeStorage, shell, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { existsSync, promises as fs } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import process from 'node:process'
@@ -49,6 +49,18 @@ import type { CoreMedia } from '../core/core-media.js'
 import type { CoreDiskScan } from '../core/core-disk.js'
 import type { CoreComputer } from '../core/core-computer.js'
 import type { CoreApiHttp } from '../core/core-api-http.js'
+import type { CoreOsTheme, OsThemeState } from '../core/core-os-theme.js'
+import { applyOsTheme, resolveBackend } from '../os/theme.js'
+import {
+  desiredTheme,
+  nextChange,
+  osToolkitApplyTarget,
+  resolveOsToolkitSettings,
+  validateOsToolkitSetting,
+  OS_TOOLKIT_EXTENSION_ID as OS_TOOLKIT_ID,
+  OS_TOOLKIT_SETTING_KEYS,
+  type OsToolkitSettings,
+} from '../../shared/os-toolkit-schedule.js'
 import { ComputerUseService } from './computer-use-service.js'
 import { EmulatorService } from './emulator-service.js'
 import { emulatorMirror, MIRROR_CONTENT_TYPE, parseMirrorStreamUrl } from './emulator-mirror.js'
@@ -96,6 +108,7 @@ import { WizardChessStatsStore, asWizardChessOutcome } from './wizard-chess-stor
 import { MiniBrowserStore, browserTabUrl, asMiniEntryId, miniTabTitle, legacyYouTubeQueuePath, type MiniLink } from './mini-browser-store.js'
 import { PayGuardStore } from './pay-guard-store.js'
 import { PayGuardScheduler } from './pay-guard-scheduler.js'
+import { OsToolkitScheduler } from './os-toolkit-scheduler.js'
 import { ND_TRANSLATE_ID, ND_TRANSLATE_MAX_TEXT, isLlmProvider } from '../../shared/nd-translate.js'
 import { ND_WEBVIEW_URL_SCHEME } from '../../shared/extension-webview.js'
 import type { ProviderStore } from '../providers.js'
@@ -153,6 +166,12 @@ export interface NdIpcDependencies {
   coreComputer?: CoreComputer
   /** nd-core's outbound HTTP surface, used by API Studio's request runner. */
   coreApiHttp?: CoreApiHttp
+  /**
+   * nd-core's Windows theme surface. Optional like the other sidecar surfaces;
+   * the OS Toolkit handlers fail closed with an actionable message without it
+   * rather than silently reporting success.
+   */
+  coreOsTheme?: CoreOsTheme
   /** Notified after ND Home records change, so other services can re-derive views. */
   onHomeChanged?: () => void
   nineRouterManaged?: NineRouterManagedRuntime
@@ -203,6 +222,11 @@ const AVAILABLE_PACKAGES: readonly { id: string; path: () => string }[] = app.is
     { id: YOUTUBE_DOWNLOADER_ID, path: youtubeDownloaderPackagePath },
     { id: NINE_ROUTER_ID, path: nineRouterPackagePath },
     { id: EMULATOR_ID, path: emulatorPackagePath },
+    // OS Toolkit runs a timer, so it must stay here and never move to
+    // `BUILTIN_EXTENSION_PACKAGES`: built-ins auto-activate in the personal
+    // context, and a package that can change the whole desktop's theme has to be
+    // installed and switched on by an explicit user decision.
+    { id: OS_TOOLKIT_ID, path: osToolkitPackagePath },
   ]),
 ]
 
@@ -216,6 +240,7 @@ const AVAILABLE_PACKAGES: readonly { id: string; path: () => string }[] = app.is
 let applyWallpaperRotation: ((mode: 'next' | 'random' | 'previous') => Promise<unknown>) | null = null
 let refreshWallpaperRotation: (() => void) | null = null
 let refreshPayGuardScheduler: (() => void) | null = null
+let refreshOsToolkitScheduler: (() => void) | null = null
 
 /** Linked folders: the `folders` list, falling back to the legacy single `folder`. */
 function readLinkedFolders(settings: Record<string, unknown> | undefined): string[] {
@@ -326,6 +351,12 @@ function emulatorPackagePath(): string {
     : join(app.getAppPath(), 'extensions', 'nd-emulator')
 }
 
+function osToolkitPackagePath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'nd-extensions', 'nd-os-toolkit')
+    : join(app.getAppPath(), 'extensions', 'nd-os-toolkit')
+}
+
 /**
  * The ND extension invocation surface plus the ND Home personal surface. Every
  * handler runs in the trusted main process, is registered on narrow channels
@@ -383,6 +414,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
       void syncWallpaperRotation()
       syncClipboardWatcher()
       refreshPayGuardScheduler?.()
+      refreshOsToolkitScheduler?.()
     })
     return seeded
   }
@@ -461,6 +493,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
           youtubeDownloaderCatalogView(state),
           nineRouterCatalogView(state),
           emulatorCatalogView(state),
+          osToolkitCatalogView(state),
         ]),
       ]),
     }
@@ -563,6 +596,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
     if (!existsSync(join(packagePath, 'nd-extension.json'))) throw new Error('This extension is missing from this ND build')
     await deps.packages.installFromDirectory(packagePath, { expectId: requestedId })
     syncClipboardWatcher()
+    if (requestedId === OS_TOOLKIT_ID) refreshOsToolkitScheduler?.()
     await emitState()
     return stateView()
   })
@@ -575,6 +609,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
       await remoteCatalog.refresh()
       await remoteCatalog.install(id, deps.packages, join(app.getPath('userData'), 'nd-extension-downloads'))
       webViews.revokeExtension(id)
+      if (id === OS_TOOLKIT_ID) refreshOsToolkitScheduler?.()
       await emitState()
       return stateView()
     }
@@ -586,6 +621,9 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
     webViews.revokeExtension(id)
     resetComputerUse(id, contextKey({ kind: 'personal' }))
     syncClipboardWatcher()
+    // A version change must rebuild the timer: the old one is bound to the
+    // previous snapshot, and AGENTS.md requires disposal on version change.
+    if (id === OS_TOOLKIT_ID) refreshOsToolkitScheduler?.()
     await emitState()
     return stateView()
   })
@@ -596,6 +634,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
     webViews.revokeExtension(id)
     resetComputerUse(id, contextKey({ kind: 'personal' }))
     syncClipboardWatcher()
+    if (id === OS_TOOLKIT_ID) refreshOsToolkitScheduler?.()
     await emitState()
     return stateView()
   })
@@ -611,6 +650,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
     resetComputerUse(id, contextKey({ kind: 'personal' }))
     syncClipboardWatcher()
     if (id === PAY_GUARD_ID) refreshPayGuardScheduler?.()
+    if (id === OS_TOOLKIT_ID) refreshOsToolkitScheduler?.()
     await emitState()
     return stateView()
   })
@@ -630,6 +670,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
     if (id === WALLPAPER_MANAGER_ID) void syncWallpaperRotation()
     if (id === CLIPBOARD_HISTORY_ID) syncClipboardWatcher()
     if (id === PAY_GUARD_ID) refreshPayGuardScheduler?.()
+    if (id === OS_TOOLKIT_ID) refreshOsToolkitScheduler?.()
     await emitState()
     return stateView()
   })
@@ -646,6 +687,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
     if (id === WALLPAPER_MANAGER_ID) void syncWallpaperRotation()
     if (id === CLIPBOARD_HISTORY_ID) syncClipboardWatcher()
     if (id === PAY_GUARD_ID) refreshPayGuardScheduler?.()
+    if (id === OS_TOOLKIT_ID) refreshOsToolkitScheduler?.()
     await emitState()
     return stateView()
   })
@@ -3015,6 +3057,147 @@ export function registerNativeHostHandlers(
     )
   })
 
+  // --- OS Toolkit -------------------------------------------------------------
+  //
+  // Windows has no user-facing custom day/night theme schedule, and PowerToys
+  // Light Switch cannot be driven into having one: its CLI reuses times already
+  // saved in PowerToys Settings and exits 3 unless Light Switch is enabled. So ND
+  // owns the schedule and only the apply step is delegated, either to the nd-core
+  // sidecar writing the HKCU `Personalize` DWORDs or to Light Switch's own CLI.
+  //
+  // Deliberately not a built-in: it runs a timer that can change the whole
+  // desktop, so both installation and activation have to be explicit.
+
+  const osToolkitScheduler = new OsToolkitScheduler({
+    state: deps.state,
+    packages: deps.packages,
+    ...(deps.coreOsTheme ? { core: deps.coreOsTheme } : {}),
+    onLog: (line) => console.warn(line),
+  })
+  refreshOsToolkitScheduler = () => {
+    osToolkitScheduler.sync().catch((error) => {
+      console.warn('[os-toolkit] Failed to sync the theme scheduler:', error)
+    })
+  }
+
+  /**
+   * Two reconcile triggers that cost no polling. `nativeTheme` already has a
+   * subscriber inside ThemeService; a second listener is a free push whenever the
+   * OS theme drifts from any source, including PowerToys. `powerMonitor` covers a
+   * boundary crossed while the machine was asleep. Neither can loop: reconcile
+   * only applies when the desired theme differs from the one ND last applied.
+   */
+  let osToolkitDriftTimer: NodeJS.Timeout | null = null
+  const onOsToolkitDrift = (): void => {
+    // Debounced, because Windows fires several `updated` events per transition.
+    if (osToolkitDriftTimer) clearTimeout(osToolkitDriftTimer)
+    osToolkitDriftTimer = setTimeout(() => {
+      osToolkitDriftTimer = null
+      refreshOsToolkitScheduler?.()
+    }, 500)
+    osToolkitDriftTimer.unref?.()
+  }
+  nativeTheme.on('updated', onOsToolkitDrift)
+  powerMonitor.on('resume', onOsToolkitDrift)
+
+  const osToolkitSettings = async (): Promise<OsToolkitSettings> =>
+    resolveOsToolkitSettings(await deps.state.settingsFor(OS_TOOLKIT_ID, { kind: 'personal' }))
+
+  const osToolkitBackendDeps = () => ({
+    ...(deps.coreOsTheme ? { core: deps.coreOsTheme } : {}),
+    onLog: (line: string) => console.warn(line),
+  })
+
+  const osToolkitStatus = async (): Promise<Record<string, unknown>> => {
+    const settings = await osToolkitSettings()
+    // `resolveBackend` already probes Light Switch, so status costs one spawn
+    // rather than two.
+    const backend = await resolveBackend(settings.backend, osToolkitBackendDeps())
+    const native: OsThemeState = deps.coreOsTheme
+      ? await deps.coreOsTheme.state()
+      : { available: false, reason: 'The nd-core sidecar is not available, so the Windows theme cannot be read.', platform: process.platform }
+    const now = new Date()
+    return {
+      settings,
+      native,
+      backend: { backend: backend.backend, reason: backend.reason, nativeAvailable: backend.nativeAvailable },
+      lightSwitch: backend.lightSwitch,
+      desired: desiredTheme(settings, now),
+      next: nextChange(settings, now),
+      schedulerRunning: osToolkitScheduler.isRunning,
+      now: `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
+    }
+  }
+
+  host.register('ostoolkit.theme.status', async (_input, context) => {
+    requirePersonalContext(context)
+    return osToolkitStatus()
+  })
+
+  host.register('ostoolkit.backends.probe', async (_input, context) => {
+    requirePersonalContext(context)
+    const settings = await osToolkitSettings()
+    const backend = await resolveBackend(settings.backend, osToolkitBackendDeps())
+    return {
+      backend: backend.backend,
+      reason: backend.reason,
+      nativeAvailable: backend.nativeAvailable,
+      lightSwitch: backend.lightSwitch,
+    }
+  })
+
+  host.register('ostoolkit.schedule.get', async (_input, context) => {
+    requirePersonalContext(context)
+    const settings = await osToolkitSettings()
+    const now = new Date()
+    return { settings, desired: desiredTheme(settings, now), next: nextChange(settings, now) }
+  })
+
+  host.register('ostoolkit.schedule.save', async (input, context) => {
+    requirePersonalContext(context)
+    const raw = input.settings
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new Error('A settings object is required to save the schedule')
+    }
+    const requested = raw as Record<string, unknown>
+    const personal: NdContext = { kind: 'personal' }
+    const staged: Array<[string, string | boolean]> = []
+    for (const key of OS_TOOLKIT_SETTING_KEYS) {
+      if (!(key in requested)) continue
+      // Validated here because this path bypasses the manifest type check the
+      // `setSetting` IPC channel performs. An unusable time must never reach the
+      // store, where every reader would then have to cope with it.
+      staged.push([key, validateOsToolkitSetting(key, requested[key])])
+    }
+    if (staged.length === 0) {
+      throw new Error('Nothing to save: send at least one OS Toolkit setting')
+    }
+    // Persist only after every key has validated. Writing as you go leaves a
+    // half-applied schedule behind when a later key is rejected: the switch could
+    // be turned on against the previous times, which is exactly the state a
+    // careful user would not have chosen.
+    const saved: Record<string, unknown> = {}
+    for (const [key, value] of staged) {
+      await deps.state.setSetting(OS_TOOLKIT_ID, personal, key, value)
+      saved[key] = value
+    }
+    refreshOsToolkitScheduler?.()
+    return { settings: await osToolkitSettings(), saved }
+  })
+
+  host.register('ostoolkit.theme.apply', async (input, context) => {
+    requirePersonalContext(context)
+    const settings = await osToolkitSettings()
+    const target = osToolkitApplyTarget(context.extensionId, context.contributionId, input.mode)
+    const backend = await resolveBackend(settings.backend, osToolkitBackendDeps())
+    return applyOsTheme(target, {
+      backend: backend.backend,
+      apps: settings.applyApps,
+      system: settings.applySystem,
+      ...osToolkitBackendDeps(),
+    })
+  })
+
   return {
     dispose: () => {
       translator.dispose()
@@ -3022,6 +3205,15 @@ export function registerNativeHostHandlers(
       diskScans?.dispose()
       emulatorMirror.dispose()
       emulator.dispose()
+      // Stop the timer and drop both drift listeners, so a disabled or uninstalled
+      // package can never keep changing the desktop theme.
+      osToolkitScheduler.stop()
+      if (osToolkitDriftTimer) {
+        clearTimeout(osToolkitDriftTimer)
+        osToolkitDriftTimer = null
+      }
+      nativeTheme.off('updated', onOsToolkitDrift)
+      powerMonitor.off('resume', onOsToolkitDrift)
     },
   }
 }
@@ -3139,6 +3331,14 @@ async function youtubeDownloaderCatalogView(state: NdExtensionsStateView): Promi
     name: 'YouTube Downloader',
     description: 'Download a YouTube video as a single-file MP4 up to 720p or audio as M4A. First use installs pinned yt-dlp and Deno (about 61 MB) from official GitHub releases after SHA-256 verification. Windows only; download only content you have rights to.',
     permissions: ['media.download'],
+  })
+}
+
+async function osToolkitCatalogView(state: NdExtensionsStateView): Promise<NdAvailablePackageView> {
+  return packageCatalogView(state, OS_TOOLKIT_ID, osToolkitPackagePath(), {
+    name: 'OS Toolkit',
+    description: 'Schedule the Windows light and dark theme. Windows has no custom day/night schedule, so ND owns the times and applies them directly, or through PowerToys Light Switch when you already use it. The schedule runs only while ND is open.',
+    permissions: ['ostoolkit.read', 'ostoolkit.write'],
   })
 }
 

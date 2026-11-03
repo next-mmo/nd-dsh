@@ -98,7 +98,9 @@
           "ninerouter.read",
           "ninerouter.write",
           "emulator.read",
-          "emulator.write"
+          "emulator.write",
+          "ostoolkit.read",
+          "ostoolkit.write"
         ]
       }
     },
@@ -607,7 +609,15 @@
         "emulator.apk.install",
         "emulator.scrcpy.start",
         "emulator.scrcpy.stop",
-        "emulator.logcat.read"
+        "emulator.logcat.read",
+        "emulator.input.tap",
+        "emulator.input.swipe",
+        "emulator.mirror.resume",
+        "ostoolkit.theme.status",
+        "ostoolkit.backends.probe",
+        "ostoolkit.schedule.get",
+        "ostoolkit.schedule.save",
+        "ostoolkit.theme.apply"
       ]
     }
   }

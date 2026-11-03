@@ -1380,6 +1380,54 @@ fn media_set_wallpaper_refuses_paths_it_must_not_touch() {
 }
 
 #[test]
+fn os_theme_get_always_reports_a_renderable_state() {
+    let mut core = Core::launch();
+    let state = core
+        .call::<Value>("os.theme-get", json!({}))
+        .expect("os.theme-get must never fail; it reports unavailability instead");
+    // The shape is what the OS Toolkit extension renders, so it is asserted on
+    // every platform. The values are Windows-only and deliberately not checked:
+    // a host without the Personalize key is a legitimate `available: false`.
+    assert!(state.get("available").is_some(), "{state}");
+    assert!(state.get("platform").is_some(), "{state}");
+    if state["available"] == json!(false) {
+        assert!(
+            state["reason"]
+                .as_str()
+                .is_some_and(|reason| !reason.is_empty()),
+            "an unavailable theme must say why so the UI is not a dead control: {state}"
+        );
+    }
+}
+
+#[test]
+fn os_theme_set_refuses_malformed_requests_before_touching_the_desktop() {
+    // Only the rejection paths are exercised: the success path changes the
+    // developer's real desktop theme, which a test run must never do.
+    let mut core = Core::launch();
+
+    for (label, params) in [
+        ("missing theme", json!({})),
+        ("unknown theme", json!({ "theme": "sepia" })),
+        ("unknown field", json!({ "theme": "dark", "bogus": 1 })),
+        (
+            "non-boolean target",
+            json!({ "theme": "dark", "apps": "yes" }),
+        ),
+        (
+            "no target at all",
+            json!({ "theme": "dark", "apps": false, "system": false }),
+        ),
+    ] {
+        let error = match core.call::<Value>("os.theme-set", params) {
+            Ok(value) => panic!("{label} must be refused, got {value}"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code, "method_failed", "{label}: {error:?}");
+    }
+}
+
+#[test]
 fn every_declared_capability_is_reachable_and_unknown_methods_are_refused() {
     let mut core = Core::launch();
     let health = core.health();
@@ -1404,6 +1452,7 @@ fn every_declared_capability_is_reachable_and_unknown_methods_are_refused() {
         "disk-scan",
         "metrics",
         "computer-use",
+        "os-theme",
     ] {
         assert!(
             capabilities.contains(&capability),

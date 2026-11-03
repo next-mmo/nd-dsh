@@ -1,6 +1,6 @@
 import { normalizeExtensionRuntimePolicy } from '../../../shared/extension-runtime-policy'
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { BookOpen, Braces, Check, ChevronLeft, ChevronRight, Download, ExternalLink, Eye, FolderOpen, FolderPlus, Gamepad2, HardDrive, Image, Languages, Layers, Link2, ListChecks, Maximize2, Minimize2, MonitorPlay, Package, PanelsTopLeft, Pencil, Plus, Power, Puzzle, RefreshCw, Repeat, Search, Settings2, ShieldCheck, Shuffle, SkipBack, SkipForward, Smartphone, Sparkles, SquareTerminal, Trash2, Undo2, Upload, Users, Workflow, Globe, Network } from 'lucide-react'
+import { BookOpen, Braces, Check, ChevronLeft, ChevronRight, Download, ExternalLink, Eye, FolderOpen, FolderPlus, Gamepad2, HardDrive, Image, Languages, Layers, Link2, ListChecks, Maximize2, Minimize2, MonitorPlay, Package, PanelsTopLeft, Pencil, Plus, Power, Puzzle, RefreshCw, Repeat, Search, Settings2, ShieldCheck, Shuffle, SkipBack, SkipForward, Smartphone, Sparkles, SquareTerminal, Sunrise, Trash2, Undo2, Upload, Users, Workflow, Globe, Network } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { cn } from '../lib/utils'
 import type { NdContext } from '../../../shared/nd-context'
@@ -67,6 +67,7 @@ const EXTENSION_ACCENTS: Record<string, { icon: LucideIcon; tileClassName: strin
   'nd.youtube-downloader': { icon: Download, tileClassName: 'border-red-500/25 bg-red-500/15 text-red-500' },
   'nd.9router': { icon: Network, tileClassName: 'border-orange-500/25 bg-orange-500/15 text-orange-500' },
   'nd.emulator': { icon: Smartphone, tileClassName: 'border-emerald-500/25 bg-emerald-500/15 text-emerald-500' },
+  'nd.os-toolkit': { icon: Sunrise, tileClassName: 'border-yellow-500/25 bg-yellow-500/15 text-yellow-500' },
 }
 
 function ExtensionIconTile({ id, large = false }: { id: string; large?: boolean }): React.ReactNode {

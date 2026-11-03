@@ -247,7 +247,8 @@ fn dispatch(
                     "disk-scan",
                     "api-http",
                     "metrics",
-                    "computer-use"
+                    "computer-use",
+                    "os-theme"
                 ],
                 "processCount": state.processes.process_count(),
                 "terminalCount": state.terminals.terminal_count(),
@@ -652,6 +653,13 @@ fn dispatch(
         }
         "media.volume-state" => to_value(nd_runtime::system_volume::state()),
         "media.volume-set" => to_value(nd_runtime::system_volume::set(from_params(params)?)?),
+        // Windows light/dark theme for the OS Toolkit extension. Windows has no
+        // user-facing custom schedule, so ND owns the schedule in the desktop and
+        // the sidecar owns only the per-change registry write plus the broadcast
+        // that makes Explorer repaint. Keeping it here rather than spawning
+        // `reg.exe` follows the same call `media.set-wallpaper` made.
+        "os.theme-get" => to_value(nd_runtime::os_theme::get()),
+        "os.theme-set" => to_value(nd_runtime::os_theme::set(from_params(params)?)?),
         // The sidecar owns clipboard read, write, and observation in one
         // process, which is what makes write-back echo suppression exact.
         // Watchers exist only in response to `clipboard.watch` from the

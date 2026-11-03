@@ -61,6 +61,7 @@ import type { CoreVault } from './core/core-vault.js'
 import type { CoreDiskScan } from './core/core-disk.js'
 import type { CoreComputer } from './core/core-computer.js'
 import type { CoreApiHttp } from './core/core-api-http.js'
+import type { CoreOsTheme } from './core/core-os-theme.js'
 import type { HarnessService } from './harness/harness-service.js'
 import { checkHarnessUpstream } from './harness/harness-upstream.js'
 import type { ProviderStore } from './providers.js'
@@ -123,6 +124,8 @@ interface IpcDependencies {
   coreComputer?: CoreComputer
   /** nd-core-backed outbound HTTP for API Studio. */
   coreApiHttp?: CoreApiHttp
+  /** nd-core-backed Windows theme read/write for OS Toolkit. */
+  coreOsTheme?: CoreOsTheme
   qa: QaService
   sessionArchive: SessionArchiveStore
   /** ND's durable token accounting, captured from the runtime event stream. */
@@ -362,6 +365,7 @@ export function registerIpc(deps: IpcDependencies): () => void {
     ...(deps.coreDisk ? { coreDisk: deps.coreDisk } : {}),
     ...(deps.coreComputer ? { coreComputer: deps.coreComputer } : {}),
     ...(deps.coreApiHttp ? { coreApiHttp: deps.coreApiHttp } : {}),
+    ...(deps.coreOsTheme ? { coreOsTheme: deps.coreOsTheme } : {}),
     ...(deps.nineRouterManaged ? { nineRouterManaged: deps.nineRouterManaged } : {}),
     onHomeChanged: () => { void syncHomeSessions() },
   })

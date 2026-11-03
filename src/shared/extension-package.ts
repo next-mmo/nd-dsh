@@ -205,6 +205,8 @@ export const ND_EXTENSION_PERMISSIONS = [
   'ninerouter.write',
   'emulator.read',
   'emulator.write',
+  'ostoolkit.read',
+  'ostoolkit.write',
 ] as const
 
 export type NdExtensionPermission = (typeof ND_EXTENSION_PERMISSIONS)[number]
@@ -357,6 +359,15 @@ export const ND_HOST_METHODS = [
   { id: 'emulator.input.tap', title: 'Tap a device screen coordinate', permission: 'emulator.write', contexts: ['personal'], sensitive: true },
   { id: 'emulator.input.swipe', title: 'Swipe across a device screen', permission: 'emulator.write', contexts: ['personal'], sensitive: true },
   { id: 'emulator.mirror.resume', title: 'Resume the embedded MJPEG mirror stream', permission: 'emulator.read', contexts: ['personal'], sensitive: false },
+  // OS Toolkit. Reads stay non-sensitive so an agent can report the current theme
+  // without a prompt; `theme.apply` is sensitive because it visibly changes the
+  // whole desktop, matching the wallpaper apply ops. `schedule.save` only mutates
+  // stored configuration, so it is a write without a desktop-visible effect.
+  { id: 'ostoolkit.theme.status', title: 'Read the current Windows theme and schedule state', permission: 'ostoolkit.read', contexts: ['personal'], sensitive: false },
+  { id: 'ostoolkit.backends.probe', title: 'Probe which theme backends are available', permission: 'ostoolkit.read', contexts: ['personal'], sensitive: false },
+  { id: 'ostoolkit.schedule.get', title: 'Read the day/night theme schedule', permission: 'ostoolkit.read', contexts: ['personal'], sensitive: false },
+  { id: 'ostoolkit.schedule.save', title: 'Save the day/night theme schedule', permission: 'ostoolkit.write', contexts: ['personal'], sensitive: false },
+  { id: 'ostoolkit.theme.apply', title: 'Change the Windows light/dark theme now', permission: 'ostoolkit.write', contexts: ['personal'], sensitive: true },
 ] as const satisfies readonly NdHostMethodDescriptor[]
 
 export type NdHostMethod = (typeof ND_HOST_METHODS)[number]['id']
