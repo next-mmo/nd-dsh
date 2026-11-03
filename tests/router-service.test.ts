@@ -154,6 +154,71 @@ describe('RouterService', () => {
     expect(seenCombo).toBe('api-route')
   })
 
+  it('attaches a one-shot AGY approval header to the next playground request only', async () => {
+    const seenApprovals: Array<string | undefined> = []
+    server = createServer((request, response) => {
+      seenApprovals.push(request.headers['x-nd-agy-approval'] as string | undefined)
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }))
+    })
+    await new Promise<void>((resolve) => server?.listen(0, '127.0.0.1', () => resolve()))
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('test server has no port')
+    const localEndpoint = `http://127.0.0.1:${address.port}`
+    let approvalExpiry = Date.now() + 60_000
+    const localCore = {
+      request: vi.fn(async (method: string) => {
+        if (method === 'router.initialize') {
+          return {
+            endpoint: localEndpoint,
+            key: 'ndr_agy_key',
+            port: address.port,
+            state: routerState([{ name: 'agy-route', hidden: false }]),
+          }
+        }
+        if (method === 'router.createAgyApproval') {
+          return { token: 'agy_ap_test_token', category: 'coding', expiresAtMs: approvalExpiry, pendingApprovals: 1 }
+        }
+        return { ok: true }
+      }),
+    }
+    const localService = new RouterService(localCore as never, providers as never, dir, () => undefined)
+    await localService.initialize()
+
+    const approval = await localService.createAgyApproval('coding')
+    expect(approval.token).toBe('agy_ap_test_token')
+
+    const run = (requestId: string): Promise<void> =>
+      new Promise((resolve) => {
+        localService.playgroundStart(
+          {
+            requestId,
+            route: { kind: 'combo', combo: 'agy-route' },
+            messages: [{ role: 'user', content: 'hello' }],
+            stream: false,
+          },
+          (event) => {
+            if (event.type === 'done' || event.type === 'error') resolve()
+          },
+        )
+      })
+
+    await run('agy-approved-1')
+    expect(seenApprovals[0]).toBe('agy_ap_test_token')
+
+    // The client keeps the token attached until expiry because it cannot know
+    // whether a request reached an antigravity entry; the Rust guard enforces
+    // single use, so a replay is rejected server-side.
+    await run('agy-approved-2')
+    expect(seenApprovals[1]).toBe('agy_ap_test_token')
+
+    // Expired approvals are dropped client-side before they reach the router.
+    approvalExpiry = Date.now() - 1_000
+    await localService.createAgyApproval('coding')
+    await run('agy-approved-3')
+    expect(seenApprovals[2]).toBeUndefined()
+  })
+
   it('rotates the external key through the router', async () => {
     await service.initialize()
     const before = service.revealExternalKey().key

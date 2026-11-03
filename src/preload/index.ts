@@ -40,6 +40,7 @@ import {
   type NdBrowserFocusEvent,
 } from '../shared/nd-invocations.js'
 import { USAGE_IPC, type UsageDesktopApi, type UsageScope, type UsageSummary } from '../shared/usage.js'
+import { SUPERAGENT_PROTOTYPE_IPC, type SuperagentPrototypeDesktopApi } from '../shared/superagent-prototype.js'
 import {
   WORKFLOW_PLUGINS_IPC,
   type WorkflowDetectionPreview,
@@ -502,7 +503,16 @@ const api: DesktopApi = {
   },
 }
 
+const superagentApi: SuperagentPrototypeDesktopApi = {
+  status: () => ipcRenderer.invoke(SUPERAGENT_PROTOTYPE_IPC.status),
+  install: () => ipcRenderer.invoke(SUPERAGENT_PROTOTYPE_IPC.install),
+  start: () => ipcRenderer.invoke(SUPERAGENT_PROTOTYPE_IPC.start),
+  stop: () => ipcRenderer.invoke(SUPERAGENT_PROTOTYPE_IPC.stop),
+  open: () => ipcRenderer.invoke(SUPERAGENT_PROTOTYPE_IPC.open),
+}
+
 contextBridge.exposeInMainWorld('ndDsh', api)
 contextBridge.exposeInMainWorld('ndDshExtensions', extensionsApi)
+contextBridge.exposeInMainWorld('ndDshSuperagent', superagentApi)
 contextBridge.exposeInMainWorld('ndDshWorkflowPlugins', workflowPluginsApi)
 contextBridge.exposeInMainWorld('ndDshUsage', usageApi)

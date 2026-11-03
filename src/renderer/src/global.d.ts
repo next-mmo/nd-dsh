@@ -12,6 +12,7 @@ import type { TerminalDesktopApi } from '../../shared/terminal'
 import type { TokenSaverDesktopApi } from '../../shared/token-saver'
 import type { ToolRoutingDesktopApi } from '../../shared/tool-routing'
 import type { UsageDesktopApi } from '../../shared/usage'
+import type { SuperagentPrototypeDesktopApi } from '../../shared/superagent-prototype'
 import type { WorkflowPluginsDesktopApi } from '../../shared/workflow-plugins'
 
 declare global {
@@ -31,6 +32,7 @@ declare global {
     ndDshGateway: NdGatewayDesktopApi
     ndDshWorkflowPlugins: WorkflowPluginsDesktopApi
     ndDshUsage: UsageDesktopApi
+    ndDshSuperagent: SuperagentPrototypeDesktopApi
     ndDshRuntimeMode?: 'ui-preview'
   }
 }

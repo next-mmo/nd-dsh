@@ -203,6 +203,8 @@ export const ND_EXTENSION_PERMISSIONS = [
   'computer.read',
   'ninerouter.read',
   'ninerouter.write',
+  'emulator.read',
+  'emulator.write',
 ] as const
 
 export type NdExtensionPermission = (typeof ND_EXTENSION_PERMISSIONS)[number]
@@ -344,6 +346,17 @@ export const ND_HOST_METHODS = [
   { id: 'ninerouter.status', title: 'View 9Router runtime status', permission: 'ninerouter.read', contexts: ['personal', 'company', 'project'], sensitive: false },
   { id: 'ninerouter.start', title: 'Start 9Router runtime', permission: 'ninerouter.write', contexts: ['personal', 'company', 'project'], sensitive: false },
   { id: 'ninerouter.stop', title: 'Stop 9Router runtime', permission: 'ninerouter.write', contexts: ['personal', 'company', 'project'], sensitive: false },
+  { id: 'emulator.devices.list', title: 'List connected Android devices and emulators', permission: 'emulator.read', contexts: ['personal'], sensitive: false },
+  { id: 'emulator.devices.connect', title: 'Connect to a device via wireless ADB', permission: 'emulator.write', contexts: ['personal'], sensitive: false },
+  { id: 'emulator.adb.exec', title: 'Execute an ADB command on a device', permission: 'emulator.write', contexts: ['personal'], sensitive: true },
+  { id: 'emulator.screenshot.capture', title: 'Capture a device screenshot', permission: 'emulator.read', contexts: ['personal'], sensitive: true },
+  { id: 'emulator.apk.install', title: 'Install an APK on a device', permission: 'emulator.write', contexts: ['personal'], sensitive: true },
+  { id: 'emulator.scrcpy.start', title: 'Start scrcpy screen mirroring', permission: 'emulator.write', contexts: ['personal'], sensitive: false },
+  { id: 'emulator.scrcpy.stop', title: 'Stop scrcpy screen mirroring', permission: 'emulator.write', contexts: ['personal'], sensitive: false },
+  { id: 'emulator.logcat.read', title: 'Read device logcat output', permission: 'emulator.read', contexts: ['personal'], sensitive: false },
+  { id: 'emulator.input.tap', title: 'Tap a device screen coordinate', permission: 'emulator.write', contexts: ['personal'], sensitive: true },
+  { id: 'emulator.input.swipe', title: 'Swipe across a device screen', permission: 'emulator.write', contexts: ['personal'], sensitive: true },
+  { id: 'emulator.mirror.resume', title: 'Resume the embedded MJPEG mirror stream', permission: 'emulator.read', contexts: ['personal'], sensitive: false },
 ] as const satisfies readonly NdHostMethodDescriptor[]
 
 export type NdHostMethod = (typeof ND_HOST_METHODS)[number]['id']

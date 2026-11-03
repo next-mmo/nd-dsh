@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { promises as fsPromises, existsSync, writeFileSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import {
+  ANTIGRAVITY_ENGINE_ID,
   ARENA_WEB_ENGINE_ID,
   CHATGPT_WEB_ENGINE_ID,
   DEEPSEEK_WEB_ENGINE_ID,
@@ -309,6 +310,17 @@ export class NdRestApiService {
       requestData.engine || requestData.engineId || (pathname.includes('gpt-web') ? CHATGPT_WEB_ENGINE_ID : undefined),
     )
 
+    // Unattended batch inference must never run on a consumer Google account
+    // through the Antigravity CLI. SRT dubbing jobs belong to a local model or
+    // an authorized API provider; the AGY lane stays manual/approved.
+    if (engineId === ANTIGRAVITY_ENGINE_ID) {
+      sendJson(res, 403, {
+        ok: false,
+        error: 'The Antigravity CLI is reserved for manual, approved use in ND Chat and the Router playground. Batch SRT translation must use a local model or an authorized API provider.',
+      })
+      return
+    }
+
     const chunks = chunkSrtBlocks(blocks, batchSize)
     const translatedBlocks = []
     let activeSessionId = requestData.sessionId
@@ -395,6 +407,16 @@ export class NdRestApiService {
     const engineId = normalizeEngineId(
       requestData.engine || requestData.engineId || (pathname.includes('gpt-web') ? CHATGPT_WEB_ENGINE_ID : undefined),
     )
+
+    // Same rule as batch SRT jobs: exposed REST endpoints are unattended and
+    // must not drive a consumer Antigravity account.
+    if (engineId === ANTIGRAVITY_ENGINE_ID) {
+      sendJson(res, 403, {
+        ok: false,
+        error: 'The Antigravity CLI is reserved for manual, approved use in ND Chat and the Router playground. REST jobs must use a local model or an authorized API provider.',
+      })
+      return
+    }
 
     try {
       const runResult = await this.options.engineRouter.run(requestData.prompt, {

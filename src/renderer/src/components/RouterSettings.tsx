@@ -12,6 +12,10 @@ import {
   type RouterCliProviderKind,
   providerAuthMode,
   providerCategory,
+  type RouterAgyApproval,
+  type RouterAgyCategory,
+  type RouterAgyState,
+  type RouterAgyUsageSummary,
   type RouterComboEntry,
   type RouterProviderInput,
   type RouterProviderView,
@@ -97,6 +101,11 @@ const NO_COUNTERS = { requests: 0, ok: 0, failed: 0, lastError: null as string |
 export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, onSelectTab }: RouterSettingsProps) {
   const [state, setState] = useState<RouterState | null>(null)
   const [usage, setUsage] = useState<RouterUsageSummary | null>(null)
+  const [agyState, setAgyState] = useState<RouterAgyState | null>(null)
+  const [agyUsage, setAgyUsage] = useState<RouterAgyUsageSummary | null>(null)
+  const [agyBusy, setAgyBusy] = useState(false)
+  const [agyCategory, setAgyCategory] = useState<RouterAgyCategory>('coding')
+  const [agyApproval, setAgyApproval] = useState<RouterAgyApproval | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [tests, setTests] = useState<Record<string, RouterTestResult>>({})
   const [internalSubTab, setInternalSubTab] = useState<RouterSubTab>(routerSubTabFromLocation)
@@ -148,15 +157,46 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
       try {
         const next = await window.ndDshRouter.state()
         const summary = await window.ndDshRouter.usage()
+        const agy = await window.ndDshRouter.agyPolicy()
+        const agySummary = await window.ndDshRouter.agyUsage()
         if (!mounted) return
         setState(next)
         setUsage(summary)
+        setAgyState(agy)
+        setAgyUsage(agySummary)
       } catch (cause) {
         onError(message(cause))
       }
     })()
     return () => { mounted = false }
   }, [onError])
+
+  const refreshAgy = (): void => {
+    void window.ndDshRouter.agyPolicy().then(setAgyState).catch((cause) => onError(message(cause)))
+    void window.ndDshRouter.agyUsage().then(setAgyUsage).catch((cause) => onError(message(cause)))
+  }
+
+  const updateAgy = (action: () => Promise<RouterAgyState>): void => {
+    setAgyBusy(true)
+    void action()
+      .then((next) => {
+        setAgyState(next)
+        refreshAgy()
+      })
+      .catch((cause) => onError(message(cause)))
+      .finally(() => setAgyBusy(false))
+  }
+
+  const approveAgy = (): void => {
+    setAgyBusy(true)
+    void window.ndDshRouter.createAgyApproval(agyCategory)
+      .then((approval) => {
+        setAgyApproval(approval)
+        refreshAgy()
+      })
+      .catch((cause) => onError(message(cause)))
+      .finally(() => setAgyBusy(false))
+  }
 
   const apply = (key: string, action: () => Promise<RouterState>): void => {
     setBusy(key)
@@ -441,6 +481,91 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
                     <SettingsButton onClick={() => { setShowRouteForm(true); selectSubTab('routes') }}>New route</SettingsButton>
                     <SettingsButton onClick={() => selectSubTab('access')}>External API</SettingsButton>
                   </div>
+                </SettingsRow>
+              </div>
+            </SettingsSection>
+
+            <SettingsSection title="Antigravity safety">
+              <div className="space-y-1.5">
+                <SettingsRow>
+                  <div className={rowStack}>
+                    <span className="flex items-center gap-2">
+                      <strong className={rowTitle}>Consumer CLI lane</strong>
+                      <StatusChip warn={agyState?.locked === true} neutral>
+                        {agyState?.locked ? 'Locked' : agyState?.policy.enabled ? 'Enabled' : 'Off'}
+                      </StatusChip>
+                      <StatusChip neutral>Manual only</StatusChip>
+                    </span>
+                    <span className={rowDesc}>
+                      Runs your installed agy CLI with CLI-owned credentials. Off by default; every routed job needs a
+                      one-shot approval and hard hourly/daily/token budgets apply. Local access and low volume do not
+                      guarantee Google account safety.
+                    </span>
+                    {agyState?.lockReason ? <span className={rowPathText}>{agyState.lockReason}</span> : null}
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {agyState?.locked ? (
+                      <SettingsButton disabled={agyBusy} onClick={() => updateAgy(() => window.ndDshRouter.setAgyEnabled(true))}>
+                        Re-arm lane
+                      </SettingsButton>
+                    ) : agyState?.policy.enabled ? (
+                      <SettingsButton disabled={agyBusy} onClick={() => updateAgy(() => window.ndDshRouter.setAgyEnabled(false))}>
+                        Lock now
+                      </SettingsButton>
+                    ) : null}
+                    <Switch
+                      aria-label="Antigravity lane enabled"
+                      checked={agyState?.policy.enabled ?? false}
+                      disabled={agyBusy || !agyState}
+                      onCheckedChange={(enabled) => updateAgy(() => window.ndDshRouter.setAgyPolicy({ enabled }))}
+                    />
+                  </div>
+                </SettingsRow>
+                <SettingsRow>
+                  <div className={rowStack}>
+                    <strong className={rowTitle}>Approve the next AGY request</strong>
+                    <span className={rowDesc}>
+                      Creates a single-use token for one request. The playground attaches it automatically; other local
+                      callers send the x-nd-agy-approval header. Expires after {agyState?.policy.approvalTtlSecs ?? 600}
+                      {' '}seconds.
+                    </span>
+                    {agyApproval ? (
+                      <span className={rowPathText}>
+                        {agyApproval.category} · {agyApproval.token} · expires{' '}
+                        {new Date(agyApproval.expiresAtMs).toLocaleTimeString()}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <select
+                      className="h-7 rounded-md border border-border bg-background px-2 text-[11px]"
+                      value={agyCategory}
+                      disabled={agyBusy}
+                      onChange={(event) => setAgyCategory(event.target.value as RouterAgyCategory)}
+                    >
+                      <option value="coding">Coding</option>
+                      <option value="review">Review</option>
+                      <option value="translation">Translation</option>
+                    </select>
+                    <SettingsButton
+                      disabled={agyBusy || !agyState?.policy.enabled || agyState?.locked === true}
+                      onClick={approveAgy}
+                    >
+                      Approve one job
+                    </SettingsButton>
+                  </div>
+                </SettingsRow>
+                <SettingsRow>
+                  <div className={rowStack}>
+                    <strong className={rowTitle}>Budgets</strong>
+                    <span className={rowDesc}>
+                      {agyState
+                        ? `${agyState.window.jobs}/${agyState.window.limit} this hour · ${agyState.day.jobs}/${agyState.day.jobsLimit} today · ${agyState.day.tokens.toLocaleString()}${agyState.day.tokensLimit > 0 ? `/${agyState.day.tokensLimit.toLocaleString()}` : ''} tokens`
+                        : 'Loading…'}
+                      {agyState && agyState.pendingApprovals > 0 ? ` · ${plural(agyState.pendingApprovals, 'pending approval')}` : ''}
+                    </span>
+                  </div>
+                  <span className={rowValueText}>1 concurrent max</span>
                 </SettingsRow>
               </div>
             </SettingsSection>
@@ -764,6 +889,44 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
                 ))}
 
                 {totalRequests === 0 ? <SettingsNote>No requests yet. Send a prompt from the playground to populate latency and provider counts.</SettingsNote> : null}
+              </div>
+            </SettingsSection>
+            <SettingsSection title="Antigravity CLI activity">
+              <div className="space-y-1.5">
+                <SettingsRow>
+                  <div className={rowStack}>
+                    <strong className={rowTitle}>Jobs, blocks and spend</strong>
+                    <span className={rowDesc}>
+                      {agyUsage
+                        ? `${agyUsage.summary.total} events · ${agyUsage.summary.ok} ran · ${agyUsage.summary.failed} failed or blocked${
+                            Object.keys(agyUsage.summary.byCategory).length
+                              ? ` · ${Object.entries(agyUsage.summary.byCategory).map(([category, count]) => `${category} ${count}`).join(' · ')}`
+                              : ''
+                          }`
+                        : 'Loading…'}
+                    </span>
+                  </div>
+                  <SettingsButton onClick={refreshAgy}>Refresh</SettingsButton>
+                </SettingsRow>
+                {agyUsage?.recent.length
+                  ? agyUsage.recent.slice().reverse().map((entry) => (
+                      <SettingsRow key={`${entry.tsMs}-${entry.status}-${entry.provider}`}>
+                        <div className={rowStack}>
+                          <strong className={rowTitle}>{entry.category ?? entry.blockCode ?? 'blocked'}</strong>
+                          <span className={rowDesc}>
+                            {new Date(entry.tsMs).toLocaleTimeString()} · {entry.ok ? 'ok' : entry.error ?? 'failed'}
+                            {entry.class && entry.class !== 'blocked' ? ` · ${entry.class}` : ''}
+                          </span>
+                        </div>
+                        <span className={rowValueText}>
+                          {(entry.promptTokens + entry.completionTokens).toLocaleString()} tok
+                        </span>
+                      </SettingsRow>
+                    ))
+                  : null}
+                {agyUsage && agyUsage.recent.length === 0 ? (
+                  <SettingsNote>No Antigravity activity yet. Blocked and failed requests appear here without prompt content.</SettingsNote>
+                ) : null}
               </div>
             </SettingsSection>
             <SettingsNote>Resetting clears this local usage journal; routes, keys, and accounts are untouched.</SettingsNote>

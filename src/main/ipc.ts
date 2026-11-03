@@ -46,6 +46,8 @@ import { InvocationStateStore } from './extensions/invocation-state.js'
 import { NativeHostRegistry } from './extensions/native-host.js'
 import { InvocationBroker } from './extensions/invocation-broker.js'
 import { registerNdExtensionIpc } from './extensions/nd-ipc.js'
+import { SUPERAGENT_PROTOTYPE_IPC } from '../shared/superagent-prototype.js'
+import type { SuperagentPrototypeService } from './prototypes/superagent-service.js'
 import type { NineRouterManagedRuntime } from './router/nine-router-managed.js'
 import { HomeStore } from './home/home-store.js'
 import type { GitService } from './git/git-service.js'
@@ -94,6 +96,7 @@ interface IpcDependencies {
   /** ND-owned task worktrees are valid vault command roots too. */
   ownsWorktree?: (cwd: string) => boolean
   harness: HarnessService
+  superagentPrototype: SuperagentPrototypeService
   projectWorkspace: ProjectWorkspaceCoordinator
   workspaces: WorkspaceRegistry
   theme: ThemeService
@@ -886,6 +889,11 @@ export function registerIpc(deps: IpcDependencies): () => void {
   handle(IPC.harnessRun, (_event, value, options) => deps.engineRouter.run(asString(value, 'Prompt', 100_000), asRunOptions(options)))
   handle(IPC.harnessStop, () => deps.engineRouter.stop())
   handle(IPC.harnessStopSession, (_event, value) => deps.engineRouter.stopSession(asString(value, 'Session id', 128)))
+  handle(SUPERAGENT_PROTOTYPE_IPC.status, () => deps.superagentPrototype.status())
+  handle(SUPERAGENT_PROTOTYPE_IPC.install, () => deps.superagentPrototype.install())
+  handle(SUPERAGENT_PROTOTYPE_IPC.start, () => deps.superagentPrototype.start())
+  handle(SUPERAGENT_PROTOTYPE_IPC.stop, () => deps.superagentPrototype.stop())
+  handle(SUPERAGENT_PROTOTYPE_IPC.open, () => deps.superagentPrototype.open())
   handle(IPC.chatGptWebProjectGet, (_event, workspaceRoot) => {
     const root = typeof workspaceRoot === 'string' && workspaceRoot.trim() ? workspaceRoot.trim() : deps.projectWorkspace.state().root
     return deps.engineRouter.getChatGptWeb()?.getProjectBinding(root) ?? null

@@ -42,7 +42,13 @@ async fn chat(
     }
     let combo = combo_header(&headers);
     state
-        .chat_with_request(body, combo.as_deref(), "/v1/chat/completions", request_id_header(&headers).as_deref())
+        .chat_with_request(
+            body,
+            combo.as_deref(),
+            "/v1/chat/completions",
+            request_id_header(&headers).as_deref(),
+            agy_approval_header(&headers).as_deref(),
+        )
         .await
 }
 
@@ -57,7 +63,13 @@ async fn responses(
     }
     let combo = combo_header(&headers);
     state
-        .chat_with_request(body, combo.as_deref(), "/v1/responses", request_id_header(&headers).as_deref())
+        .chat_with_request(
+            body,
+            combo.as_deref(),
+            "/v1/responses",
+            request_id_header(&headers).as_deref(),
+            agy_approval_header(&headers).as_deref(),
+        )
         .await
 }
 
@@ -73,6 +85,15 @@ fn combo_header(headers: &HeaderMap) -> Option<String> {
 fn request_id_header(headers: &HeaderMap) -> Option<String> {
     headers
         .get("x-nd-request-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.chars().take(128).collect())
+}
+
+fn agy_approval_header(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("x-nd-agy-approval")
         .and_then(|value| value.to_str().ok())
         .map(str::trim)
         .filter(|value| !value.is_empty())

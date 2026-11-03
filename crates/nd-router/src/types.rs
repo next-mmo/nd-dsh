@@ -8,6 +8,13 @@ use std::collections::HashMap;
 pub const STORE_SCHEMA_VERSION: u32 = 1;
 pub const STORE_FILE: &str = "router-state.json";
 pub const USAGE_FILE: &str = "usage.jsonl";
+/// Antigravity lane accounting lives in its own file so the safety dashboard
+/// can show blocks, approvals, categories and token usage without disturbing
+/// the generic provider usage feed.
+pub const AGY_USAGE_FILE: &str = "agy-usage.jsonl";
+pub const AGY_HOUR_MS: u64 = 3_600_000;
+pub const AGY_DAY_MS: u64 = 86_400_000;
+pub const MAX_PENDING_AGY_APPROVALS: usize = 8;
 pub const MAX_USAGE_LINES: usize = 5_000;
 pub const REQUEST_TIMEOUT_SECS: u64 = 120;
 /// Web lanes own a real browser turn, which can take the engine's full 10 minutes.
@@ -25,6 +32,8 @@ pub struct PersistedStore {
     pub combos: Vec<ComboRecord>,
     #[serde(default)]
     pub round_robin: HashMap<String, usize>,
+    #[serde(default)]
+    pub agy: AgyStateRecord,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -313,4 +322,121 @@ pub struct SetExternalKeyInput {
 #[serde(rename_all = "camelCase")]
 pub struct SetSafeModeInput {
     pub enabled: bool,
+}
+
+/// Conservative operating budget for the Antigravity CLI lane. These are
+/// internal limits, not Google-validated safe thresholds: the lane runs a
+/// consumer Google account through the user's own `agy` CLI, so ND defaults
+/// to disabled plus manual approval and never retries quota failures.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgyPolicyRecord {
+    /// Master switch. Off by default; the lane stays out of automatic routing
+    /// until the user opts in from Router Settings.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Every router request must carry a one-shot approval token created by
+    /// the user. Provider "Test" clicks count as the user's approval.
+    #[serde(default = "agy_default_true")]
+    pub manual_approval_required: bool,
+    #[serde(default = "agy_default_one")]
+    pub max_concurrent_jobs: u32,
+    #[serde(default = "agy_default_two")]
+    pub max_jobs_per_hour: u32,
+    #[serde(default = "agy_default_ten")]
+    pub max_jobs_per_day: u32,
+    /// Hard daily token budget using the usage the CLI itself reports.
+    /// Zero disables the token budget (job limits still apply).
+    #[serde(default = "agy_default_token_budget")]
+    pub max_tokens_per_day: u64,
+    #[serde(default = "agy_default_ttl")]
+    pub approval_ttl_secs: u64,
+    /// Fixed at zero: ND never re-invokes the CLI after a failure. Moving to
+    /// the next combo entry is provider failover, not a retry.
+    #[serde(default)]
+    pub max_retries: u32,
+    #[serde(default = "agy_default_timeout")]
+    pub max_timeout_secs: u64,
+}
+
+fn agy_default_true() -> bool { true }
+fn agy_default_one() -> u32 { 1 }
+fn agy_default_two() -> u32 { 2 }
+fn agy_default_ten() -> u32 { 10 }
+fn agy_default_token_budget() -> u64 { 200_000 }
+fn agy_default_ttl() -> u64 { 600 }
+fn agy_default_timeout() -> u64 { 300 }
+
+impl Default for AgyPolicyRecord {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            manual_approval_required: true,
+            max_concurrent_jobs: 1,
+            max_jobs_per_hour: 2,
+            max_jobs_per_day: 10,
+            max_tokens_per_day: 200_000,
+            approval_ttl_secs: 600,
+            max_retries: 0,
+            max_timeout_secs: 300,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AgyStateRecord {
+    #[serde(default)]
+    pub policy: AgyPolicyRecord,
+    /// Kill switch / circuit breaker. Trip it manually or let a quota, auth
+    /// or policy failure trip it; only a manual re-enable clears it.
+    #[serde(default)]
+    pub locked: bool,
+    #[serde(default)]
+    pub lock_reason: Option<String>,
+    #[serde(default)]
+    pub window_start_ms: u64,
+    #[serde(default)]
+    pub window_jobs: u32,
+    #[serde(default)]
+    pub day_start_ms: u64,
+    #[serde(default)]
+    pub day_jobs: u32,
+    #[serde(default)]
+    pub day_tokens: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetAgyPolicyInput {
+    pub enabled: Option<bool>,
+    pub manual_approval_required: Option<bool>,
+    pub max_concurrent_jobs: Option<u32>,
+    pub max_jobs_per_hour: Option<u32>,
+    pub max_jobs_per_day: Option<u32>,
+    pub max_tokens_per_day: Option<u64>,
+    pub approval_ttl_secs: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetAgyEnabledInput {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateAgyApprovalInput {
+    pub category: String,
+}
+
+/// Result of one gated antigravity job, fed back into the guard for token
+/// accounting and circuit-breaker classification.
+#[derive(Clone, Debug)]
+pub struct AgyOutcome {
+    pub status: u16,
+    pub ok: bool,
+    pub message: Option<String>,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
 }

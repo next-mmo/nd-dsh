@@ -23,6 +23,7 @@ import { PromptShieldSettings } from './PromptShieldSettings'
 import { RouterSettings } from './RouterSettings'
 import { RuntimeSettings } from './RuntimeSettings'
 import { ShortcutSettings } from './ShortcutSettings'
+import { SuperagentPrototypeCard } from './SuperagentPrototypeCard'
 import { WorkspaceSettings } from './WorkspaceSettings'
 import { searchSettings, type SettingsSearchEntry } from '../lib/settings-search'
 import { cn } from '../lib/utils'
@@ -207,7 +208,12 @@ export function SettingsPane({
             )}
           </div>
         ) : tab === 'plugins' ? (
-          <ExtensionSettings onError={onError} />
+          <div className="min-h-0 overflow-auto">
+            <div className="mx-auto w-full max-w-[1040px] px-[26px] pt-5">
+              <SuperagentPrototypeCard onError={onError} onOpenBrowser={onOpenBrowser} />
+            </div>
+            <ExtensionSettings onError={onError} />
+          </div>
         ) : tab === 'engines' ? (
           <EngineSettings
             onError={onError}

@@ -77,6 +77,33 @@ export type NdWebViewBridgeMessage =
   | NdWebViewInvokeRequestMessage
   | NdWebViewInvokeResultMessage
 
+// ── Mirror capture extension (nd.emulator internal) ──
+
+/** Frame → parent: request the parent to start getUserMedia capture. */
+export interface NdWebViewMirrorStartMessage {
+  kind: 'nd-webview:mirror-start'
+  sourceId: string
+}
+
+/** Frame → parent: stop the continuous capture and fall back to MJPEG. */
+export interface NdWebViewMirrorStopMessage {
+  kind: 'nd-webview:mirror-stop'
+}
+
+/** Parent → frame: a single frame as a transferable ImageBitmap. */
+export interface NdWebViewMirrorFrameMessage {
+  kind: 'nd-webview:mirror-frame'
+  bitmap: ImageBitmap
+  width: number
+  height: number
+}
+
+/** Parent → frame: the capture stream errored; fall back to MJPEG. */
+export interface NdWebViewMirrorErrorMessage {
+  kind: 'nd-webview:mirror-error'
+  error: string
+}
+
 export function isNdWebViewBridgeMessage(value: unknown): value is NdWebViewBridgeMessage {
   if (!value || typeof value !== 'object') return false
   const record = value as { kind?: unknown; protocol?: unknown; requestId?: unknown; ok?: unknown }

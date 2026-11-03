@@ -185,6 +185,8 @@ export function providerAuthMode(kind: string): RouterAuthMode {
 export const ROUTER_HEADERS = {
   combo: 'x-nd-route-combo',
   requestId: 'x-nd-request-id',
+  /** One-shot manual approval for the consumer-account Antigravity lane. */
+  agyApproval: 'x-nd-agy-approval',
   resolvedCombo: 'x-nd-router-combo',
   resolvedProvider: 'x-nd-router-provider',
   resolvedModel: 'x-nd-router-model',
@@ -303,6 +305,73 @@ export interface RouterTestResult {
   preview?: string
 }
 
+/**
+ * Antigravity CLI safety policy. Conservative defaults: the lane is off until
+ * the user opts in, every routed job needs a one-shot manual approval, and
+ * jobs share hard hourly/daily/token budgets. These are internal budgets, not
+ * Google-validated safe thresholds.
+ */
+export interface RouterAgyPolicy {
+  enabled: boolean
+  manualApprovalRequired: boolean
+  maxConcurrentJobs: number
+  maxJobsPerHour: number
+  maxJobsPerDay: number
+  maxTokensPerDay: number
+  approvalTtlSecs: number
+  maxRetries: number
+  maxTimeoutSecs: number
+}
+
+export interface RouterAgyState {
+  policy: RouterAgyPolicy
+  /** True after the kill switch or a quota/auth/policy circuit-breaker trip. */
+  locked: boolean
+  lockReason?: string | null
+  window: { startMs: number; jobs: number; limit: number }
+  day: { startMs: number; jobs: number; jobsLimit: number; tokens: number; tokensLimit: number }
+  pendingApprovals: number
+}
+
+export type RouterAgyCategory = 'coding' | 'review' | 'translation'
+
+export interface RouterAgyApproval {
+  token: string
+  category: RouterAgyCategory
+  expiresAtMs: number
+  pendingApprovals: number
+}
+
+export interface RouterAgyPolicyInput {
+  enabled?: boolean
+  manualApprovalRequired?: boolean
+  maxConcurrentJobs?: number
+  maxJobsPerHour?: number
+  maxJobsPerDay?: number
+  maxTokensPerDay?: number
+  approvalTtlSecs?: number
+}
+
+export interface RouterAgyUsageEntry {
+  tsMs: number
+  category?: string | null
+  provider: string
+  model: string
+  ok: boolean
+  status: number
+  error?: string | null
+  blockCode?: string | null
+  promptTokens: number
+  completionTokens: number
+  class?: string | null
+}
+
+export interface RouterAgyUsageSummary {
+  state: RouterAgyState
+  summary: { total: number; ok: number; failed: number; byCategory: Record<string, number> }
+  recent: RouterAgyUsageEntry[]
+}
+
 export interface RouterGoogleConnectResult {
   state: RouterState
   email: string
@@ -373,6 +442,11 @@ export const ROUTER_IPC = {
   testProvider: 'router:test-provider',
   usage: 'router:usage',
   resetUsage: 'router:reset-usage',
+  agyPolicy: 'router:agy-policy',
+  setAgyPolicy: 'router:set-agy-policy',
+  setAgyEnabled: 'router:set-agy-enabled',
+  createAgyApproval: 'router:create-agy-approval',
+  agyUsage: 'router:agy-usage',
   externalKeyState: 'router:external-key-state',
   revealExternalKey: 'router:reveal-external-key',
   rotateExternalKey: 'router:rotate-external-key',
@@ -396,6 +470,12 @@ export interface RouterDesktopApi extends NineRouterDesktopApi {
   testProvider(providerId: string): Promise<RouterTestResult>
   usage(): Promise<RouterUsageSummary>
   resetUsage(): Promise<RouterUsageSummary>
+  agyPolicy(): Promise<RouterAgyState>
+  setAgyPolicy(input: RouterAgyPolicyInput): Promise<RouterAgyState>
+  /** Kill switch: false locks the lane immediately until re-enabled. */
+  setAgyEnabled(enabled: boolean): Promise<RouterAgyState>
+  createAgyApproval(category: RouterAgyCategory): Promise<RouterAgyApproval>
+  agyUsage(): Promise<RouterAgyUsageSummary>
   externalKeyState(): Promise<RouterExternalApiState>
   revealExternalKey(): Promise<RouterExternalKey>
   rotateExternalKey(): Promise<RouterExternalKey>

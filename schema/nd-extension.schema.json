@@ -96,7 +96,9 @@
           "computer.read",
           "security.read",
           "ninerouter.read",
-          "ninerouter.write"
+          "ninerouter.write",
+          "emulator.read",
+          "emulator.write"
         ]
       }
     },
@@ -597,7 +599,15 @@
         "security.status",
         "ninerouter.status",
         "ninerouter.start",
-        "ninerouter.stop"
+        "ninerouter.stop",
+        "emulator.devices.list",
+        "emulator.devices.connect",
+        "emulator.adb.exec",
+        "emulator.screenshot.capture",
+        "emulator.apk.install",
+        "emulator.scrcpy.start",
+        "emulator.scrcpy.stop",
+        "emulator.logcat.read"
       ]
     }
   }

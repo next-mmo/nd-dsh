@@ -5,7 +5,7 @@ import { existsSync, promises as fs } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import process from 'node:process'
 import { asNdContext, contextKey, type NdContext } from '../../shared/nd-context.js'
-import { ND_HOST_METHODS, manifestPermissionIssues, validateNdExtensionManifest, type NdHostMethod } from '../../shared/extension-package.js'
+import { ND_HOST_METHODS, ND_EXTENSION_MANIFEST_FILENAME, manifestPermissionIssues, validateNdExtensionManifest, type NdHostMethod } from '../../shared/extension-package.js'
 import {
   ND_EXTENSIONS_IPC,
   ND_HOME_IPC,
@@ -50,6 +50,8 @@ import type { CoreDiskScan } from '../core/core-disk.js'
 import type { CoreComputer } from '../core/core-computer.js'
 import type { CoreApiHttp } from '../core/core-api-http.js'
 import { ComputerUseService } from './computer-use-service.js'
+import { EmulatorService } from './emulator-service.js'
+import { emulatorMirror, MIRROR_CONTENT_TYPE, parseMirrorStreamUrl } from './emulator-mirror.js'
 import { MediaDownloadService, type MediaSpawnProcess } from '../media-download/media-download-service.js'
 import { MediaToolInstaller, mediaToolRoot } from '../media-download/media-tool-installer.js'
 import { activeYouTubePage } from '../media-download/active-tab.js'
@@ -170,6 +172,7 @@ const API_STUDIO_ID = 'nd.api-studio'
 const COMPUTER_USE_ID = 'nd.computer-use'
 const YOUTUBE_DOWNLOADER_ID = 'nd.youtube-downloader'
 export const NINE_ROUTER_ID = 'nd.9router'
+export const EMULATOR_ID = 'nd.emulator'
 
 /**
  * Development package sources. Release Discover uses separately published metadata.
@@ -199,6 +202,7 @@ const AVAILABLE_PACKAGES: readonly { id: string; path: () => string }[] = app.is
     { id: COMPUTER_USE_ID, path: computerUsePackagePath },
     { id: YOUTUBE_DOWNLOADER_ID, path: youtubeDownloaderPackagePath },
     { id: NINE_ROUTER_ID, path: nineRouterPackagePath },
+    { id: EMULATOR_ID, path: emulatorPackagePath },
   ]),
 ]
 
@@ -316,6 +320,12 @@ function computerUsePackagePath(): string {
     : join(app.getAppPath(), 'extensions', 'nd-computer-use')
 }
 
+function emulatorPackagePath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'nd-extensions', 'nd-emulator')
+    : join(app.getAppPath(), 'extensions', 'nd-emulator')
+}
+
 /**
  * The ND extension invocation surface plus the ND Home personal surface. Every
  * handler runs in the trusted main process, is registered on narrow channels
@@ -384,6 +394,20 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
    */
   const webViews = new ExtensionWebViewAssets(deps.packages)
   protocol.handle(ND_WEBVIEW_URL_SCHEME, async (request) => {
+    const mirrorToken = parseMirrorStreamUrl(request.url)
+    if (mirrorToken) {
+      const stream = emulatorMirror.attach(mirrorToken)
+      if (!stream) return new Response('Not found', { status: 404, headers: { 'content-type': 'text/plain; charset=utf-8' } })
+      return new Response(stream, {
+        status: 200,
+        headers: {
+          'content-type': MIRROR_CONTENT_TYPE,
+          'cache-control': 'no-store',
+          'x-content-type-options': 'nosniff',
+          'access-control-allow-origin': '*',
+        },
+      })
+    }
     const response = await webViews.respond(request.url)
     const body = response.body ? new Uint8Array(response.body) : null
     return new Response(body, { status: response.status, headers: response.headers })
@@ -436,6 +460,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
           computerUseCatalogView(state),
           youtubeDownloaderCatalogView(state),
           nineRouterCatalogView(state),
+          emulatorCatalogView(state),
         ]),
       ]),
     }
@@ -779,6 +804,7 @@ export function registerNativeHostHandlers(
   mediaDownload?: MediaDownloadService | null,
 ): { dispose: () => void } {
   const { host, providers } = deps
+  const emulator = new EmulatorService()
   host.register('ninerouter.status', async () => {
     const state = await deps.nineRouterManaged?.state()
     return {
@@ -2817,11 +2843,185 @@ export function registerNativeHostHandlers(
     await deps.workflow.refresh(context.context.companyId, context.context.projectId)
     return workflowView(deps, context.context)
   })
+
+  // ── ND Emulator Host Handlers ──
+  host.register('emulator.devices.list', async (_input, context) => {
+    requirePersonalContext(context)
+    const settings = context.settings as Record<string, unknown> | undefined
+    const adbPath = typeof settings?.adbPath === 'string' ? settings.adbPath : undefined
+    return emulator.listDevices(adbPath)
+  })
+
+  host.register('emulator.devices.connect', async (input, context) => {
+    requirePersonalContext(context)
+    const address = requiredText(input.address, 'Device address (e.g. 192.168.1.100:5555)', 256)
+    const settings = context.settings as Record<string, unknown> | undefined
+    const adbPath = typeof settings?.adbPath === 'string' ? settings.adbPath : undefined
+    return emulator.connectDevice(address, adbPath)
+  })
+
+  host.register('emulator.adb.exec', async (input, context) => {
+    requirePersonalContext(context)
+    const command = requiredText(input.command, 'ADB command', 4096)
+    const serial = typeof input.serial === 'string' && input.serial.trim() ? input.serial.trim() : undefined
+    const settings = context.settings as Record<string, unknown> | undefined
+    const adbPath = typeof settings?.adbPath === 'string' ? settings.adbPath : undefined
+    return emulator.execAdb(command, serial, adbPath)
+  })
+
+  host.register('emulator.screenshot.capture', async (input, context) => {
+    requirePersonalContext(context)
+    const serial = typeof input.serial === 'string' && input.serial.trim() ? input.serial.trim() : undefined
+    const settings = context.settings as Record<string, unknown> | undefined
+    const adbPath = typeof settings?.adbPath === 'string' ? settings.adbPath : undefined
+    return emulator.captureScreenshot(serial, adbPath)
+  })
+
+  host.register('emulator.apk.install', async (input, context) => {
+    requirePersonalContext(context)
+    const apkPath = requiredText(input.apkPath, 'APK file path', 2048)
+    const serial = typeof input.serial === 'string' && input.serial.trim() ? input.serial.trim() : undefined
+    if (!serial) throw new Error('A target device serial is required to install an APK')
+    const settings = context.settings as Record<string, unknown> | undefined
+    const adbPath = typeof settings?.adbPath === 'string' ? settings.adbPath : undefined
+    return emulator.installApk(serial, apkPath, adbPath)
+  })
+
+  host.register('emulator.scrcpy.start', async (input, context) => {
+    requirePersonalContext(context)
+    const serial = requiredText(input.serial, 'Device serial for scrcpy', 256)
+    const settings = context.settings as Record<string, unknown> | undefined
+    const scrcpyPath = typeof settings?.scrcpyPath === 'string' ? settings.scrcpyPath : undefined
+    const adbPath = typeof settings?.adbPath === 'string' ? settings.adbPath : undefined
+    const bitrate = typeof input.bitrate === 'number' ? input.bitrate : typeof settings?.defaultBitrate === 'number' ? settings.defaultBitrate : 8
+    const maxFps = typeof input.maxFps === 'number' ? input.maxFps : typeof settings?.defaultMaxFps === 'number' ? settings.defaultMaxFps : 60
+    const codec = typeof input.codec === 'string' ? input.codec : undefined
+    const audio = typeof input.audio === 'boolean' ? input.audio : undefined
+    const maxResolution = typeof input.maxResolution === 'number' ? input.maxResolution : undefined
+    const mode = input.mode === 'embedded' ? 'embedded' : 'external'
+
+    let devices = await emulator.listDevices(adbPath)
+    let target = devices.devices.find((device) => device.serial === serial)
+    if (!target || target.type !== 'device') {
+      await new Promise((resolve) => setTimeout(resolve, 500))
+      devices = await emulator.listDevices(adbPath)
+      target = devices.devices.find((device) => device.serial === serial)
+    }
+    if (!target || target.type !== 'device') {
+      return {
+        started: false,
+        mode,
+        error: target
+          ? `Device ${serial} is ${target.type}. Reconnect USB debugging and try again.`
+          : `Device ${serial} is not connected. Reconnect USB debugging and try again.`,
+      }
+    }
+
+    if (mode === 'external') {
+      const result = await emulator.startScrcpy({ serial, bitrate, maxFps, codec, audio, maxResolution, scrcpyPath })
+      return { ...result, mode }
+    }
+
+    const device = await emulator.deviceSize(serial, adbPath)
+    const result = await emulator.startScrcpy({
+      serial,
+      bitrate,
+      maxFps,
+      codec,
+      audio,
+      maxResolution,
+      scrcpyPath,
+      embedded: true,
+    })
+    if (!result.started) return { ...result, mode }
+    const model = typeof input.model === 'string' ? input.model : ''
+    const token = emulatorMirror.createSession({
+      serial,
+      model,
+      baselineIds: new Set(),
+      titleHints: ['ND Emulator', serial],
+      deviceWidth: device.width,
+      deviceHeight: device.height,
+      paused: true,
+      onIdle: () => {
+        void emulator.stopScrcpy(serial)
+      },
+    })
+    const windowSourceId = await emulatorMirror.resolveWindowSourceId(serial, model)
+    return { ...result, mode, streamUrl: emulatorMirror.streamUrl(token), windowSourceId, device }
+  })
+
+  host.register('emulator.scrcpy.stop', async (input, context) => {
+    requirePersonalContext(context)
+    const serial = typeof input.serial === 'string' && input.serial.trim() ? input.serial.trim() : undefined
+    if (serial) emulatorMirror.stopBySerial(serial)
+    return emulator.stopScrcpy(serial)
+  })
+
+  host.register('emulator.mirror.resume', async (input, context) => {
+    requirePersonalContext(context)
+    const serial = requiredText(input.serial, 'Device serial', 256)
+    const size = emulatorMirror.sessionSize(serial)
+    if (!size) {
+      return { resumed: false, error: `No embedded mirror session exists for ${serial}. Start the embedded mirror first.` }
+    }
+    emulatorMirror.resumeBySerial(serial)
+    const token = emulatorMirror.tokenForSerial(serial)
+    if (!token) return { resumed: false, error: 'Embedded mirror session is unavailable.' }
+    return { resumed: true, streamUrl: emulatorMirror.streamUrl(token) }
+  })
+
+  host.register('emulator.logcat.read', async (input, context) => {
+    requirePersonalContext(context)
+    const serial = typeof input.serial === 'string' && input.serial.trim() ? input.serial.trim() : undefined
+    const lines = typeof input.lines === 'number' ? input.lines : 100
+    const settings = context.settings as Record<string, unknown> | undefined
+    const adbPath = typeof settings?.adbPath === 'string' ? settings.adbPath : undefined
+    return emulator.readLogcat(serial, lines, adbPath)
+  })
+
+  host.register('emulator.input.tap', async (input, context) => {
+    requirePersonalContext(context)
+    const serial = requiredText(input.serial, 'Device serial', 256)
+    const x = unitNumber(input.x, 'Tap X')
+    const y = unitNumber(input.y, 'Tap Y')
+    const settings = context.settings as Record<string, unknown> | undefined
+    const adbPath = typeof settings?.adbPath === 'string' ? settings.adbPath : undefined
+    const size = emulatorMirror.sessionSize(serial) ?? (await emulator.deviceSize(serial, adbPath))
+    return emulator.tap(serial, x * size.width, y * size.height, adbPath)
+  })
+
+  host.register('emulator.input.swipe', async (input, context) => {
+    requirePersonalContext(context)
+    const serial = requiredText(input.serial, 'Device serial', 256)
+    const x1 = unitNumber(input.x1, 'Swipe start X')
+    const y1 = unitNumber(input.y1, 'Swipe start Y')
+    const x2 = unitNumber(input.x2, 'Swipe end X')
+    const y2 = unitNumber(input.y2, 'Swipe end Y')
+    const duration = typeof input.duration === 'number' && Number.isFinite(input.duration)
+      ? Math.min(2000, Math.max(50, Math.round(input.duration)))
+      : 300
+    const settings = context.settings as Record<string, unknown> | undefined
+    const adbPath = typeof settings?.adbPath === 'string' ? settings.adbPath : undefined
+    const size = emulatorMirror.sessionSize(serial) ?? (await emulator.deviceSize(serial, adbPath))
+    return emulator.swipe(
+      serial,
+      x1 * size.width,
+      y1 * size.height,
+      x2 * size.width,
+      y2 * size.height,
+      duration,
+      adbPath,
+    )
+  })
+
   return {
     dispose: () => {
       translator.dispose()
       payGuardScheduler.stop()
       diskScans?.dispose()
+      emulatorMirror.dispose()
+      emulator.dispose()
     },
   }
 }
@@ -2926,6 +3126,14 @@ async function nineRouterCatalogView(state: NdExtensionsStateView): Promise<NdAv
   })
 }
 
+async function emulatorCatalogView(state: NdExtensionsStateView): Promise<NdAvailablePackageView> {
+  return packageCatalogView(state, EMULATOR_ID, emulatorPackagePath(), {
+    name: 'ND Emulator',
+    description: 'Manage Android devices and emulators from ND. Mirror screens with scrcpy, run ADB commands, install APKs, capture screenshots, and let the ND agent verify UI state or execute test suites on connected devices.',
+    permissions: ['emulator.read', 'emulator.write'],
+  })
+}
+
 async function youtubeDownloaderCatalogView(state: NdExtensionsStateView): Promise<NdAvailablePackageView> {
   return packageCatalogView(state, YOUTUBE_DOWNLOADER_ID, youtubeDownloaderPackagePath(), {
     name: 'YouTube Downloader',
@@ -2995,6 +3203,20 @@ async function seedBuiltinPackages(deps: NdIpcDependencies): Promise<void> {
       const existing = await deps.state.activation(manifest.id, context)
       if (!existing || (manifest.id === ND_SECURITY_ID && !existing.enabled)) await deps.state.setActivation(manifest.id, context, true)
     }
+  }
+
+  // Pre-seed ND Emulator as a built-in proving package
+  try {
+    const emulatorPath = emulatorPackagePath()
+    if (existsSync(join(emulatorPath, ND_EXTENSION_MANIFEST_FILENAME))) {
+      const existing = await deps.packages.record(EMULATOR_ID)
+      if (!existing) {
+        await deps.packages.installFromDirectory(emulatorPath, { expectId: EMULATOR_ID })
+        await deps.state.setActivation(EMULATOR_ID, { kind: 'personal' }, true)
+      }
+    }
+  } catch {
+    // Non-fatal if emulator folder is not present
   }
 }
 
@@ -3071,6 +3293,11 @@ function requiredText(value: unknown, label: string, max: number): string {
   const trimmed = value.trim()
   if (trimmed.length > max) throw new Error(`${label} must be at most ${max} characters`)
   return trimmed
+}
+
+function unitNumber(value: unknown, label: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`${label} must be a number`)
+  return Math.min(1, Math.max(0, value))
 }
 
 function firstLine(text: string, max: number): string {

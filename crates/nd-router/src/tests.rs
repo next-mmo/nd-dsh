@@ -1,5 +1,8 @@
 use crate::state::{RouterOptions, RouterState};
-use crate::types::{ComboEntry, SaveAccountInput, SaveComboInput, SaveProviderInput, WebBridgeConfig};
+use crate::types::{
+    ComboEntry, CreateAgyApprovalInput, SaveAccountInput, SaveComboInput, SaveProviderInput,
+    SetAgyEnabledInput, SetAgyPolicyInput, WebBridgeConfig,
+};
 use crate::RouterServer;
 use axum::http::StatusCode;
 use axum::routing::post;
@@ -233,6 +236,7 @@ async fn routes_web_lanes_through_the_bridge_and_keeps_web_combos_private() {
             None,
             "/v1/chat/completions",
             Some("req-web-1"),
+            None,
         )
         .await
         .expect("web chat");
@@ -290,6 +294,7 @@ async fn routes_deepseek_web_with_seeded_modes_through_the_bridge() {
             None,
             "/v1/chat/completions",
             Some("req-deepseek-1"),
+            None,
         )
         .await
         .expect("deepseek chat");
@@ -303,6 +308,7 @@ async fn routes_deepseek_web_with_seeded_modes_through_the_bridge() {
             None,
             "/v1/chat/completions",
             Some("req-deepseek-2"),
+            None,
         )
         .await
         .expect("direct deepseek chat");
@@ -369,6 +375,7 @@ async fn routes_additional_web_lanes_through_the_bridge() {
                 None,
                 "/v1/chat/completions",
                 Some(&format!("req-{kind}")),
+                None,
             )
             .await
             .expect("chat");
@@ -429,6 +436,7 @@ async fn routes_grok_web_with_seeded_modes_through_the_bridge() {
             None,
             "/v1/chat/completions",
             Some("req-grok-1"),
+            None,
         )
         .await
         .expect("grok chat");
@@ -442,6 +450,7 @@ async fn routes_grok_web_with_seeded_modes_through_the_bridge() {
             None,
             "/v1/chat/completions",
             Some("req-grok-2"),
+            None,
         )
         .await
         .expect("direct grok chat");
@@ -494,6 +503,7 @@ async fn safe_mode_locks_external_auth_and_web_lanes_but_keeps_internal_routing(
             None,
             "/v1/chat/completions",
             Some("req-safe-web"),
+            None,
         )
         .await
         .expect_err("web lane must be blocked");
@@ -610,6 +620,38 @@ fn write_agy_stub(dir: &std::path::Path) -> std::path::PathBuf {
     stub
 }
 
+/// A stub whose status string names the failure the classifier should catch.
+fn write_agy_failure_stub(dir: &std::path::Path, status: &str) -> std::path::PathBuf {
+    let stub = dir.join("agy-stub-failure.cmd");
+    std::fs::write(
+        &stub,
+        format!("@echo off\r\necho {{\"status\":\"{status}\",\"response\":\"\",\"usage\":{{}}}}\r\n"),
+    )
+    .expect("write stub");
+    stub
+}
+
+fn enable_agy(state: &RouterState) {
+    state
+        .set_agy_policy(SetAgyPolicyInput {
+            enabled: Some(true),
+            manual_approval_required: None,
+            max_concurrent_jobs: None,
+            max_jobs_per_hour: None,
+            max_jobs_per_day: None,
+            max_tokens_per_day: None,
+            approval_ttl_secs: None,
+        })
+        .expect("enable agy");
+}
+
+fn agy_approval(state: &RouterState) -> String {
+    let result = state
+        .create_agy_approval(CreateAgyApprovalInput { category: "coding".to_owned() })
+        .expect("approval");
+    result["token"].as_str().expect("token").to_owned()
+}
+
 #[tokio::test]
 async fn antigravity_lane_runs_the_cli_with_the_account_selector() {
     let _env = AGY_ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
@@ -624,12 +666,16 @@ async fn antigravity_lane_runs_the_cli_with_the_account_selector() {
     state
         .save_combo(combo_input("free-agy", "priority", vec![combo_entry("agy", "stub-model")]))
         .expect("combo");
+    enable_agy(&state);
+    let approval = agy_approval(&state);
 
     let response = state
-        .chat(
+        .chat_with_request(
             json!({"model": "free-agy", "messages": [{"role": "user", "content": "hi"}]}),
             None,
             "/v1/chat/completions",
+            None,
+            Some(&approval),
         )
         .await
         .expect("chat");
@@ -643,6 +689,9 @@ async fn antigravity_lane_runs_the_cli_with_the_account_selector() {
 
     let usage = state.usage_summary();
     assert_eq!(usage["ok"], 1);
+    let agy = state.agy_usage_summary();
+    assert_eq!(agy["summary"]["ok"], 1);
+    assert_eq!(agy["summary"]["byCategory"]["coding"], 1);
 
     unsafe { std::env::remove_var("ND_AGY_BIN") };
 }
@@ -659,12 +708,16 @@ async fn antigravity_lane_streams_sse() {
     state
         .save_combo(combo_input("stream-agy", "priority", vec![combo_entry("agy", "stub-model")]))
         .expect("combo");
+    enable_agy(&state);
+    let approval = agy_approval(&state);
 
     let response = state
-        .chat(
+        .chat_with_request(
             json!({"model": "stream-agy", "messages": [{"role": "user", "content": "hi"}], "stream": true}),
             None,
             "/v1/chat/completions",
+            None,
+            Some(&approval),
         )
         .await
         .expect("chat");
@@ -690,9 +743,311 @@ async fn antigravity_test_provider_runs_the_cli() {
 
     let state = RouterState::new(temp.path().to_path_buf()).expect("state");
     state.save_provider(antigravity_input("agy", &["stub-model"])).expect("provider");
+    enable_agy(&state);
     let result = state.test_provider("agy").await.expect("test");
     assert_eq!(result["ok"], true);
     assert_eq!(result["statusCode"], 200);
+
+    unsafe { std::env::remove_var("ND_AGY_BIN") };
+}
+
+#[test]
+fn agy_failure_classification_separates_quota_auth_and_policy_errors() {
+    use crate::agy_policy::{classify_agy_failure, AgyCategory, AgyFailureClass};
+
+    assert_eq!(classify_agy_failure("Quota exceeded for this week"), AgyFailureClass::Quota);
+    assert_eq!(classify_agy_failure("HTTP 429 too many requests"), AgyFailureClass::Quota);
+    assert_eq!(classify_agy_failure("Authentication failed: signed out"), AgyFailureClass::Auth);
+    assert_eq!(classify_agy_failure("403 Forbidden: terms of service"), AgyFailureClass::Policy);
+    assert_eq!(classify_agy_failure("network is unreachable"), AgyFailureClass::Other);
+
+    assert_eq!(AgyCategory::parse("dev"), Some(AgyCategory::Coding));
+    assert_eq!(AgyCategory::parse("translation"), Some(AgyCategory::Translation));
+    assert_eq!(AgyCategory::parse("test"), Some(AgyCategory::Test));
+    assert_eq!(AgyCategory::parse("unclassified"), None);
+}
+
+#[tokio::test]
+async fn antigravity_lane_is_disabled_by_default() {
+    let _env = AGY_ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let temp = tempfile::tempdir().expect("tempdir");
+    let stub = write_agy_stub(temp.path());
+    unsafe { std::env::set_var("ND_AGY_BIN", &stub) };
+
+    let state = RouterState::new(temp.path().to_path_buf()).expect("state");
+    state.save_provider(antigravity_input("agy", &["stub-model"])).expect("provider");
+    state
+        .save_combo(combo_input("agy-only", "priority", vec![combo_entry("agy", "stub-model")]))
+        .expect("combo");
+
+    let error = state
+        .chat(
+            json!({"model": "agy-only", "messages": [{"role": "user", "content": "hi"}]}),
+            None,
+            "/v1/chat/completions",
+        )
+        .await
+        .expect_err("disabled lane must not run");
+    assert_eq!(error.status, StatusCode::FORBIDDEN);
+    assert!(error.message.contains("disabled"), "{}", error.message);
+
+    let agy = state.agy_usage_summary();
+    assert_eq!(agy["summary"]["failed"], 1);
+    assert_eq!(agy["recent"][0]["blockCode"], "agy_disabled");
+
+    unsafe { std::env::remove_var("ND_AGY_BIN") };
+}
+
+#[tokio::test]
+async fn antigravity_lane_requires_a_manual_approval() {
+    let _env = AGY_ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let temp = tempfile::tempdir().expect("tempdir");
+    let stub = write_agy_stub(temp.path());
+    unsafe { std::env::set_var("ND_AGY_BIN", &stub) };
+
+    let state = RouterState::new(temp.path().to_path_buf()).expect("state");
+    state.save_provider(antigravity_input("agy", &["stub-model"])).expect("provider");
+    state
+        .save_combo(combo_input("agy-only", "priority", vec![combo_entry("agy", "stub-model")]))
+        .expect("combo");
+    enable_agy(&state);
+
+    let error = state
+        .chat(
+            json!({"model": "agy-only", "messages": [{"role": "user", "content": "hi"}]}),
+            None,
+            "/v1/chat/completions",
+        )
+        .await
+        .expect_err("unapproved request must not run");
+    assert_eq!(error.status, StatusCode::FORBIDDEN);
+    assert!(error.message.contains("approval"), "{}", error.message);
+
+    let bogus = state
+        .chat_with_request(
+            json!({"model": "agy-only", "messages": [{"role": "user", "content": "hi"}]}),
+            None,
+            "/v1/chat/completions",
+            None,
+            Some("agy_ap_not-a-real-token"),
+        )
+        .await
+        .expect_err("invalid approval must not run");
+    assert_eq!(bogus.status, StatusCode::FORBIDDEN);
+    assert!(bogus.message.contains("invalid or expired"), "{}", bogus.message);
+
+    unsafe { std::env::remove_var("ND_AGY_BIN") };
+}
+
+#[tokio::test]
+async fn antigravity_approval_is_single_use() {
+    let _env = AGY_ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let temp = tempfile::tempdir().expect("tempdir");
+    let stub = write_agy_stub(temp.path());
+    unsafe { std::env::set_var("ND_AGY_BIN", &stub) };
+
+    let state = RouterState::new(temp.path().to_path_buf()).expect("state");
+    state.save_provider(antigravity_input("agy", &["stub-model"])).expect("provider");
+    state
+        .save_combo(combo_input("agy-only", "priority", vec![combo_entry("agy", "stub-model")]))
+        .expect("combo");
+    enable_agy(&state);
+    let approval = agy_approval(&state);
+
+    let first = state
+        .chat_with_request(
+            json!({"model": "agy-only", "messages": [{"role": "user", "content": "hi"}]}),
+            None,
+            "/v1/chat/completions",
+            None,
+            Some(&approval),
+        )
+        .await
+        .expect("first use");
+    assert_eq!(first.status(), StatusCode::OK);
+
+    let replay = state
+        .chat_with_request(
+            json!({"model": "agy-only", "messages": [{"role": "user", "content": "hi"}]}),
+            None,
+            "/v1/chat/completions",
+            None,
+            Some(&approval),
+        )
+        .await
+        .expect_err("token must be single-use");
+    assert_eq!(replay.status, StatusCode::FORBIDDEN);
+
+    unsafe { std::env::remove_var("ND_AGY_BIN") };
+}
+
+#[tokio::test]
+async fn antigravity_hourly_limit_stops_jobs() {
+    let _env = AGY_ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let temp = tempfile::tempdir().expect("tempdir");
+    let stub = write_agy_stub(temp.path());
+    unsafe { std::env::set_var("ND_AGY_BIN", &stub) };
+
+    let state = RouterState::new(temp.path().to_path_buf()).expect("state");
+    state.save_provider(antigravity_input("agy", &["stub-model"])).expect("provider");
+    state
+        .save_combo(combo_input("agy-only", "priority", vec![combo_entry("agy", "stub-model")]))
+        .expect("combo");
+    state
+        .set_agy_policy(SetAgyPolicyInput {
+            enabled: Some(true),
+            manual_approval_required: None,
+            max_concurrent_jobs: None,
+            max_jobs_per_hour: Some(1),
+            max_jobs_per_day: None,
+            max_tokens_per_day: None,
+            approval_ttl_secs: None,
+        })
+        .expect("policy");
+
+    let first = state
+        .chat_with_request(
+            json!({"model": "agy-only", "messages": [{"role": "user", "content": "hi"}]}),
+            None,
+            "/v1/chat/completions",
+            None,
+            Some(&agy_approval(&state)),
+        )
+        .await
+        .expect("first job");
+    assert_eq!(first.status(), StatusCode::OK);
+
+    let second = state
+        .chat_with_request(
+            json!({"model": "agy-only", "messages": [{"role": "user", "content": "hi"}]}),
+            None,
+            "/v1/chat/completions",
+            None,
+            Some(&agy_approval(&state)),
+        )
+        .await
+        .expect_err("hourly limit");
+    assert_eq!(second.status, StatusCode::FORBIDDEN);
+    assert!(second.message.contains("hourly limit"), "{}", second.message);
+
+    unsafe { std::env::remove_var("ND_AGY_BIN") };
+}
+
+#[tokio::test]
+async fn antigravity_kill_switch_locks_and_rearms_the_lane() {
+    let _env = AGY_ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let temp = tempfile::tempdir().expect("tempdir");
+    let stub = write_agy_stub(temp.path());
+    unsafe { std::env::set_var("ND_AGY_BIN", &stub) };
+
+    let state = RouterState::new(temp.path().to_path_buf()).expect("state");
+    state.save_provider(antigravity_input("agy", &["stub-model"])).expect("provider");
+    state
+        .save_combo(combo_input("agy-only", "priority", vec![combo_entry("agy", "stub-model")]))
+        .expect("combo");
+    enable_agy(&state);
+    let approval = agy_approval(&state);
+
+    state.set_agy_enabled(SetAgyEnabledInput { enabled: false }).expect("kill switch");
+    let blocked = state
+        .chat_with_request(
+            json!({"model": "agy-only", "messages": [{"role": "user", "content": "hi"}]}),
+            None,
+            "/v1/chat/completions",
+            None,
+            Some(&approval),
+        )
+        .await
+        .expect_err("kill switch must block");
+    assert_eq!(blocked.status, StatusCode::FORBIDDEN);
+    assert!(blocked.message.contains("locked"), "{}", blocked.message);
+    let view = state.agy_view();
+    assert_eq!(view["locked"], true);
+
+    state.set_agy_enabled(SetAgyEnabledInput { enabled: true }).expect("re-arm");
+    assert_eq!(state.agy_view()["locked"], false);
+    let ok = state
+        .chat_with_request(
+            json!({"model": "agy-only", "messages": [{"role": "user", "content": "hi"}]}),
+            None,
+            "/v1/chat/completions",
+            None,
+            Some(&agy_approval(&state)),
+        )
+        .await
+        .expect("runs after re-arm");
+    assert_eq!(ok.status(), StatusCode::OK);
+
+    unsafe { std::env::remove_var("ND_AGY_BIN") };
+}
+
+#[tokio::test]
+async fn antigravity_quota_error_trips_the_circuit_breaker() {
+    let _env = AGY_ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let temp = tempfile::tempdir().expect("tempdir");
+    let stub = write_agy_failure_stub(temp.path(), "QUOTA_EXCEEDED");
+    unsafe { std::env::set_var("ND_AGY_BIN", &stub) };
+
+    let state = RouterState::new(temp.path().to_path_buf()).expect("state");
+    state.save_provider(antigravity_input("agy", &["stub-model"])).expect("provider");
+    state
+        .save_combo(combo_input("agy-only", "priority", vec![combo_entry("agy", "stub-model")]))
+        .expect("combo");
+    enable_agy(&state);
+
+    let failure = state
+        .chat_with_request(
+            json!({"model": "agy-only", "messages": [{"role": "user", "content": "hi"}]}),
+            None,
+            "/v1/chat/completions",
+            None,
+            Some(&agy_approval(&state)),
+        )
+        .await
+        .expect_err("quota status fails the run");
+    assert_eq!(failure.status, StatusCode::BAD_GATEWAY);
+
+    let view = state.agy_view();
+    assert_eq!(view["locked"], true);
+    assert!(view["lockReason"].as_str().unwrap_or_default().contains("quota"));
+
+    // The lock is persisted: a fresh state over the same data dir stays locked.
+    let reloaded = RouterState::new(temp.path().to_path_buf()).expect("reload");
+    assert_eq!(reloaded.agy_view()["locked"], true);
+
+    unsafe { std::env::remove_var("ND_AGY_BIN") };
+}
+
+#[tokio::test]
+async fn antigravity_block_skips_to_the_next_lane() {
+    let _env = AGY_ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let temp = tempfile::tempdir().expect("tempdir");
+    let (base_url, calls) = mock_upstream().await;
+    let stub = write_agy_stub(temp.path());
+    unsafe { std::env::set_var("ND_AGY_BIN", &stub) };
+
+    let state = RouterState::new(temp.path().to_path_buf()).expect("state");
+    state.save_provider(antigravity_input("agy", &["stub-model"])).expect("provider");
+    state.save_provider(provider_input("backup", &base_url, &["ok"])).expect("backup");
+    state
+        .save_combo(combo_input("mixed", "priority", vec![combo_entry("agy", "stub-model"), combo_entry("backup", "ok")]))
+        .expect("combo");
+    // agy stays disabled: the combo must route around it without an approval.
+
+    let response = state
+        .chat(
+            json!({"model": "mixed", "messages": [{"role": "user", "content": "hi"}]}),
+            None,
+            "/v1/chat/completions",
+        )
+        .await
+        .expect("chat");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(calls.lock().unwrap().as_slice(), ["ok"]);
+
+    let agy = state.agy_usage_summary();
+    assert_eq!(agy["summary"]["failed"], 1);
+    assert_eq!(agy["recent"][0]["blockCode"], "agy_disabled");
 
     unsafe { std::env::remove_var("ND_AGY_BIN") };
 }

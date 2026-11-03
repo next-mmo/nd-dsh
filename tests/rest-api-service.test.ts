@@ -110,6 +110,38 @@ describe('NdRestApiService', () => {
     expect(json.sessions[0].sessionId).toBe('chatgpt-web-123')
   })
 
+  it('refuses Antigravity for unattended SRT batch translation', async () => {
+    const { endpoint } = await service.start()
+    const rawSrt = `1
+00:00:02,140 --> 00:00:18,170
+Hello world`
+
+    const res = await fetch(`${endpoint}/api/translate-srt`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ srt: rawSrt, targetLanguage: 'Khmer', engine: 'antigravity' }),
+    })
+    expect(res.status).toBe(403)
+    const json = await res.json()
+    expect(json.ok).toBe(false)
+    expect(json.error).toContain('Antigravity CLI is reserved for manual, approved use')
+    expect(mockEngineRouter.run).not.toHaveBeenCalled()
+  })
+
+  it('refuses Antigravity for exposed REST prompt runs', async () => {
+    const { endpoint } = await service.start()
+    const res = await fetch(`${endpoint}/api/run`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ prompt: 'Translate this subtitle line', engine: 'antigravity' }),
+    })
+    expect(res.status).toBe(403)
+    const json = await res.json()
+    expect(json.ok).toBe(false)
+    expect(json.error).toContain('Antigravity CLI is reserved for manual, approved use')
+    expect(mockEngineRouter.run).not.toHaveBeenCalled()
+  })
+
   it('translates SRT via POST /gpt-web/translate-srt with JSON payload', async () => {
     const { endpoint } = await service.start()
     const rawSrt = `1

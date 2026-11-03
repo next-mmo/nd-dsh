@@ -1,0 +1,12 @@
+{
+  "id": "browser-annotate",
+  "revision": 1,
+  "app_version": "2.28.2",
+  "entry": "dist/preload.js",
+  "marker": "// AGY_TEMP_ANNOTATOR_V1",
+  "function": "installAntigravityAnnotator",
+  "implementation": "annotate.js",
+  "implementation_sha256": "ddf66563181f8bda90c6d88b3e045185231baf1dbdc15b908bc7d335bb928ab4",
+  "startup_hook": "window.addEventListener('DOMContentLoaded', () => {\n    if (window.top !== window) return;\n    electron_1.webFrame.executeJavaScript('(' + installAntigravityAnnotator.toString() + ')()')\n      .catch(error => console.error('[Temporary annotator]', error));\n}, { once: true });\n",
+  "compatibility": "Observed on 2.28.2 only; inspect and test before porting."
+}

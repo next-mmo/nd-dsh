@@ -34,9 +34,9 @@ pub struct RouterOptions {
 }
 
 pub struct RouterState {
-    store: Mutex<crate::types::PersistedStore>,
-    store_path: PathBuf,
-    data_dir: PathBuf,
+    pub(crate) store: Mutex<crate::types::PersistedStore>,
+    pub(crate) store_path: PathBuf,
+    pub(crate) data_dir: PathBuf,
     vault: VaultRegistry,
     vault_path: PathBuf,
     client: reqwest::Client,
@@ -46,6 +46,10 @@ pub struct RouterState {
     web_bridge: Option<WebBridgeConfig>,
     preferred_port: u16,
     counters: Mutex<Counters>,
+    /// One agy job at a time; the guard holds this slot for the whole CLI run.
+    pub(crate) agy_slot: tokio::sync::Mutex<()>,
+    /// Short-lived one-shot approvals; in-memory only, so a restart fails closed.
+    pub(crate) agy_approvals: Mutex<Vec<crate::agy_policy::Approval>>,
 }
 
 #[derive(Default, Clone)]
@@ -89,6 +93,8 @@ impl RouterState {
             web_bridge: options.web_bridge,
             preferred_port: options.preferred_port.unwrap_or(3130),
             counters: Mutex::new(Counters::default()),
+            agy_slot: tokio::sync::Mutex::new(()),
+            agy_approvals: Mutex::new(Vec::new()),
         }))
     }
 
@@ -431,7 +437,7 @@ impl RouterState {
     }
 
     pub async fn chat(&self, body: Value, combo_hint: Option<&str>, path: &str) -> Result<Response, RouterError> {
-        self.chat_with_request(body, combo_hint, path, None).await
+        self.chat_with_request(body, combo_hint, path, None, None).await
     }
 
     pub async fn chat_with_request(
@@ -440,6 +446,7 @@ impl RouterState {
         combo_hint: Option<&str>,
         path: &str,
         request_id: Option<&str>,
+        agy_approval: Option<&str>,
     ) -> Result<Response, RouterError> {
         let model_hint = body.get("model").and_then(Value::as_str).map(ToOwned::to_owned);
         let streaming = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
@@ -527,7 +534,35 @@ impl RouterState {
                     let secret = self.entry_secret(&entry);
                     crate::cli::run_qoder(&entry.model, &prompt, entry.account.as_ref(), secret.as_deref()).await
                 } else if lane == catalog::KIND_ANTIGRAVITY {
-                    crate::cli::run_antigravity(&entry.model, &prompt, entry.account.as_ref()).await
+                    // Consumer Google account: every job passes the safety
+                    // guard (enabled, lock, concurrency, limits, approval).
+                    let gate = match self.agy_begin_request(agy_approval) {
+                        Ok(gate) => gate,
+                        Err(block) => {
+                            self.agy_record_block(&entry.provider.name, &entry.model, &block);
+                            last = Some((403, block.message.clone()));
+                            continue;
+                        }
+                    };
+                    let result = crate::cli::run_antigravity(&entry.model, &prompt, entry.account.as_ref()).await;
+                    let agy_outcome = match &result {
+                        Ok(completion) => crate::types::AgyOutcome {
+                            status: 200,
+                            ok: true,
+                            message: None,
+                            prompt_tokens: completion.prompt_tokens,
+                            completion_tokens: completion.completion_tokens,
+                        },
+                        Err(error) => crate::types::AgyOutcome {
+                            status: error.status.as_u16(),
+                            ok: false,
+                            message: Some(error.message.clone()),
+                            prompt_tokens: 0,
+                            completion_tokens: 0,
+                        },
+                    };
+                    self.agy_finish(gate, &entry.provider.name, &entry.model, &agy_outcome);
+                    result
                 } else {
                     crate::cli::run_generic_cli(lane, &entry.model, &prompt).await
                 };
@@ -726,7 +761,39 @@ impl RouterState {
             let outcome = if provider.kind == catalog::KIND_QODER {
                 crate::cli::run_qoder(model, "Reply with exactly: OK", account, secret).await
             } else if provider.kind == catalog::KIND_ANTIGRAVITY {
-                crate::cli::run_antigravity(model, "Reply with exactly: OK", None).await
+                let gate = match self.agy_begin_test() {
+                    Ok(gate) => gate,
+                    Err(block) => {
+                        self.agy_record_block(&provider.name, model, &block);
+                        return Ok(json!({
+                            "id": provider_id,
+                            "ok": false,
+                            "statusCode": 403,
+                            "latencyMs": 0,
+                            "model": model,
+                            "error": block.message,
+                        }));
+                    }
+                };
+                let result = crate::cli::run_antigravity(model, "Reply with exactly: OK", None).await;
+                let agy_outcome = match &result {
+                    Ok(completion) => crate::types::AgyOutcome {
+                        status: 200,
+                        ok: true,
+                        message: None,
+                        prompt_tokens: completion.prompt_tokens,
+                        completion_tokens: completion.completion_tokens,
+                    },
+                    Err(error) => crate::types::AgyOutcome {
+                        status: error.status.as_u16(),
+                        ok: false,
+                        message: Some(error.message.clone()),
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                    },
+                };
+                self.agy_finish(gate, &provider.name, model, &agy_outcome);
+                result
             } else {
                 crate::cli::test_cli_binary(&provider.kind).await.map(|preview| crate::cli::CliCompletion {
                     text: preview,

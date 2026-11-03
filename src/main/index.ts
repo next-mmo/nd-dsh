@@ -64,6 +64,7 @@ import { ZcodeCliEngine } from './engines/zcode/zcode-cli-engine.js'
 import { GitService } from './git/git-service.js'
 import { GitCli } from './git/git-cli.js'
 import { HarnessService } from './harness/harness-service.js'
+import { SuperagentPrototypeService } from './prototypes/superagent-service.js'
 import { registerIpc } from './ipc.js'
 import { createLauncherPopup } from './launcher-popup.js'
 import { ShortcutRegistry } from './shortcut-registry.js'
@@ -320,6 +321,37 @@ async function createWindow(cdpPort: number): Promise<void> {
     } catch { return undefined }
   }
 
+  // Desktop capture for the embedded emulator mirror: the main renderer streams
+  // the off-screen scrcpy window into the sandboxed extension frame via the
+  // legacy chromeMediaSource constraints. Only ND's own windows may capture
+  // video; every other media or capture request stays denied. Comparing against
+  // the requesting webContents' own URL keeps the check meaningful for the
+  // file:// renderer in production (origin "null") as well as the dev server.
+  {
+    const appSession = window.webContents.session
+    const isOwnWindow = (webContents: Electron.WebContents): boolean =>
+      webContents === window.webContents || webContents === launcherPopup.window()?.webContents
+    const originOf = (rawUrl: string): string | undefined => {
+      try {
+        return new URL(rawUrl).origin
+      } catch {
+        return undefined
+      }
+    }
+    appSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+      if (permission !== 'media' || !isOwnWindow(webContents)) {
+        callback(false)
+        return
+      }
+      const wantsVideo = ('mediaTypes' in details ? details.mediaTypes : undefined)?.includes('video') ?? false
+      if (!wantsVideo) {
+        callback(false)
+        return
+      }
+      callback(originOf(webContents.getURL()) === originOf(details.requestingUrl))
+    })
+  }
+
   const browserProfiles = new BrowserProfileStore(join(userData, 'browser-profiles.json'))
   await browserProfiles.initialize()
   const browser = new BrowserController(window, cdpPort, projectRoot(), {
@@ -401,6 +433,7 @@ async function createWindow(cdpPort: number): Promise<void> {
     maxBytes: 2 * 1024 * 1024,
   })
   const harness = new HarnessService(workspace, browser, providers, externalElements, sessionArchive, usageLedger, harnessJournal)
+  const superagentPrototype = new SuperagentPrototypeService(providers)
   const disposeHarnessJournalRecovery = core.onEvent('core.ready', () => {
     void harness.rehydrateEventJournal().catch((error) => {
       console.error('Failed to rebuild Harness history after ND Core restart:', error)
@@ -566,7 +599,7 @@ async function createWindow(cdpPort: number): Promise<void> {
   const coreSystemVolume = createCoreSystemVolume(core)
   const coreVault = createCoreVault(core)
   const coreApiHttp = createCoreApiHttp(core)
-  const disposeIpc = registerIpc({ window, preloadPath: preload, launcherPopup, shortcuts: shortcutRegistry, browser, browserPlatform, mediaDownloadSpawn, stopProcess: stopCoreManagedChildProcess, dshSurface, engines, engineRouter, nativeToolBroker: nativeBroker, ownsWorktree: (cwd) => taskWorktrees?.ownsRoot(cwd) === true, harness, projectWorkspace, workspaces, theme, providers, externalElements, recentPicks, git, corePackageSnapshot: createCorePackageSnapshot(core), coreGit: coreGit.exec.bind(coreGit), coreMedia, coreClipboard, coreMediaKeys, coreSystemVolume, coreVault, coreApiHttp, coreDisk: createCoreDiskScan(core), coreComputer: createCoreComputer(core), qa, sessionArchive, usageLedger, capabilities, organizationStore, nineRouterManaged })
+  const disposeIpc = registerIpc({ window, preloadPath: preload, launcherPopup, shortcuts: shortcutRegistry, browser, browserPlatform, mediaDownloadSpawn, stopProcess: stopCoreManagedChildProcess, dshSurface, engines, engineRouter, nativeToolBroker: nativeBroker, ownsWorktree: (cwd) => taskWorktrees?.ownsRoot(cwd) === true, harness, superagentPrototype, projectWorkspace, workspaces, theme, providers, externalElements, recentPicks, git, corePackageSnapshot: createCorePackageSnapshot(core), coreGit: coreGit.exec.bind(coreGit), coreMedia, coreClipboard, coreMediaKeys, coreSystemVolume, coreVault, coreApiHttp, coreDisk: createCoreDiskScan(core), coreComputer: createCoreComputer(core), qa, sessionArchive, usageLedger, capabilities, organizationStore, nineRouterManaged })
   if (nativeAgent.ready()) void nativeAgent.start().catch((error) => {
     console.warn('ND Agent private runtime could not initialize:', error instanceof Error ? error.message : String(error))
   })
@@ -940,6 +973,7 @@ async function createWindow(cdpPort: number): Promise<void> {
     disposeDesignIpc()
     disposeTerminalIpc()
     void nineRouterManaged.dispose().catch((error) => console.error('9Router cleanup failed:', error))
+    superagentPrototype.dispose()
     disposeIpc()
     disposeCoreReady()
     disposeHarnessJournalRecovery()

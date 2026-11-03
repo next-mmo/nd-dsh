@@ -1,0 +1,80 @@
+{
+  "protocol": "nd.extension/1",
+  "id": "nd.emulator",
+  "name": "ND Emulator",
+  "description": "Manage Android devices and emulators from ND. Mirror screens inside ND or in an external scrcpy window, control taps and swipes, run ADB commands, install APKs, capture screenshots, and let the ND agent verify UI state or execute test suites on connected devices.",
+  "version": "1.2.0",
+  "apiVersion": 1,
+  "contexts": ["personal"],
+  "permissions": ["emulator.read", "emulator.write"],
+  "category": "tools",
+  "settings": [
+    {
+      "key": "adbPath",
+      "title": "ADB binary path",
+      "type": "string",
+      "default": "adb",
+      "description": "Path to the ADB binary. Defaults to 'adb' on PATH."
+    },
+    {
+      "key": "scrcpyPath",
+      "title": "scrcpy binary path",
+      "type": "string",
+      "default": "scrcpy",
+      "description": "Path to the scrcpy binary. Defaults to 'scrcpy' on PATH."
+    },
+    {
+      "key": "defaultBitrate",
+      "title": "Default mirror bitrate (Mbps)",
+      "type": "number",
+      "default": 8,
+      "description": "Default bitrate for scrcpy screen mirroring in Mbps."
+    },
+    {
+      "key": "defaultMaxFps",
+      "title": "Default max FPS",
+      "type": "number",
+      "default": 60,
+      "description": "Default maximum FPS for scrcpy mirroring."
+    }
+  ],
+  "contributions": {
+    "tools": [],
+    "skills": [],
+    "commands": [
+      {
+        "id": "open",
+        "title": "ND Emulator",
+        "description": "Manage Android devices, mirror screens, and run ADB commands.",
+        "keywords": ["emulator", "android", "scrcpy", "adb", "device", "mirror", "screen"],
+        "host": "emulator.devices.list",
+        "openViewId": "main",
+        "contexts": ["personal"]
+      }
+    ],
+    "views": [
+      {
+        "id": "main",
+        "title": "ND Emulator",
+        "description": "No connected Android devices found. Connect a device via USB or wireless ADB and refresh.",
+        "kind": "web",
+        "entry": "ui/index.html",
+        "contexts": ["personal"],
+        "actions": [
+          { "id": "devices-list", "title": "List connected Android devices", "host": "emulator.devices.list" },
+          { "id": "devices-connect", "title": "Connect to a device via wireless ADB", "host": "emulator.devices.connect" },
+          { "id": "adb-exec", "title": "Execute an ADB command", "host": "emulator.adb.exec" },
+          { "id": "screenshot", "title": "Capture a device screenshot", "host": "emulator.screenshot.capture" },
+          { "id": "apk-install", "title": "Install an APK on a device", "host": "emulator.apk.install" },
+          { "id": "scrcpy-start", "title": "Start screen mirroring", "host": "emulator.scrcpy.start" },
+          { "id": "scrcpy-stop", "title": "Stop screen mirroring", "host": "emulator.scrcpy.stop" },
+          { "id": "logcat-read", "title": "Read device logcat output", "host": "emulator.logcat.read" },
+          { "id": "input-tap", "title": "Tap a device screen coordinate", "host": "emulator.input.tap" },
+          { "id": "input-swipe", "title": "Swipe across a device screen", "host": "emulator.input.swipe" },
+          { "id": "mirror-resume", "title": "Resume the embedded mirror stream", "host": "emulator.mirror.resume" }
+        ]
+      }
+    ],
+    "workflows": []
+  }
+}

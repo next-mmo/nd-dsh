@@ -1,6 +1,10 @@
 use anyhow::{Context, Result};
 use nd_protocol::errors::{self, CODE_INVALID_PARAMS, CODE_METHOD_FAILED, CODE_RUNTIME_BUSY};
 use nd_protocol::{PROTOCOL_VERSION, ProtocolWriter, read_request};
+use nd_router::types::{
+    AccountIdInput, ComboIdInput, CreateAgyApprovalInput, ProviderIdInput, SaveAccountInput,
+    SaveComboInput, SaveProviderInput, SetAgyEnabledInput, SetAgyPolicyInput,
+};
 use nd_runtime::api_http;
 use nd_runtime::artifacts;
 use nd_runtime::cache::{self, ResponseCache};
@@ -41,7 +45,6 @@ use nd_runtime::vault::{
     VaultDeleteResult, VaultIdParams, VaultListParams, VaultListResult, VaultRegistry,
     VaultUpdateParams, VaultWriteParams,
 };
-use nd_router::types::{AccountIdInput, ComboIdInput, ProviderIdInput, SaveAccountInput, SaveComboInput, SaveProviderInput};
 use nd_runtime::workspace::{
     self, IndexParams, ListParams, ReadParams, WriteParams as WorkspaceWriteParams,
 };
@@ -780,6 +783,20 @@ fn dispatch(
         }
         "router.usage" => Ok(router_state(&state)?.usage_summary()),
         "router.resetUsage" => Ok(router_state(&state)?.reset_usage()?),
+        "router.getAgyPolicy" => Ok(router_state(&state)?.agy_view()),
+        "router.setAgyPolicy" => {
+            let input = from_params::<SetAgyPolicyInput>(params)?;
+            Ok(router_state(&state)?.set_agy_policy(input)?)
+        }
+        "router.setAgyEnabled" => {
+            let input = from_params::<SetAgyEnabledInput>(params)?;
+            Ok(router_state(&state)?.set_agy_enabled(input)?)
+        }
+        "router.createAgyApproval" => {
+            let input = from_params::<CreateAgyApprovalInput>(params)?;
+            Ok(router_state(&state)?.create_agy_approval(input)?)
+        }
+        "router.agyUsage" => Ok(router_state(&state)?.agy_usage_summary()),
         other => Err(errors::coded(
             CODE_METHOD_FAILED,
             format!("unknown nd-core method: {other}"),

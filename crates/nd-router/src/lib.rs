@@ -1,3 +1,4 @@
+pub mod agy_policy;
 pub mod catalog;
 pub mod cli;
 pub mod http;

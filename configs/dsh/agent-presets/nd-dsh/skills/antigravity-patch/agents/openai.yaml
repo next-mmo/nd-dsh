@@ -1,0 +1,3 @@
+interface:
+  display_name: "Antigravity Patches"
+  short_description: "Create, test, and maintain local Antigravity patches"

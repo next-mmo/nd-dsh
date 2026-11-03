@@ -6,6 +6,11 @@ import {
   MANAGED_ROUTER_PROVIDER_ID,
   ROUTER_HEADERS,
   type RouterAccountInput,
+  type RouterAgyApproval,
+  type RouterAgyCategory,
+  type RouterAgyPolicyInput,
+  type RouterAgyState,
+  type RouterAgyUsageSummary,
   type RouterComboInput,
   type RouterExternalApiState,
   type RouterExternalKey,
@@ -56,6 +61,8 @@ export class RouterService {
   private lastWebBridgeDescriptor: WebLaneBridgeDescriptor | undefined
   private initPromise: Promise<void> | undefined
   private readonly playground = new Map<string, AbortController>()
+  /** One-shot approval for the next antigravity-lane request; in-memory only. */
+  private pendingAgyApproval: { token: string; expiresAtMs: number } | undefined
 
   constructor(
     private readonly core: CoreClient,
@@ -230,6 +237,42 @@ export class RouterService {
     return this.usage()
   }
 
+  agyPolicy(): Promise<RouterAgyState> {
+    return this.coreRequest<RouterAgyState>('router.getAgyPolicy', {})
+  }
+
+  setAgyPolicy(input: RouterAgyPolicyInput): Promise<RouterAgyState> {
+    // Policy edits never move the pending approval; only token creation does.
+    return this.coreRequest<RouterAgyState>('router.setAgyPolicy', input)
+  }
+
+  async setAgyEnabled(enabled: boolean): Promise<RouterAgyState> {
+    const state = await this.coreRequest<RouterAgyState>('router.setAgyEnabled', { enabled })
+    if (!enabled) this.pendingAgyApproval = undefined
+    return state
+  }
+
+  async createAgyApproval(category: RouterAgyCategory): Promise<RouterAgyApproval> {
+    const approval = await this.coreRequest<RouterAgyApproval>('router.createAgyApproval', { category })
+    // The next router request that reaches an antigravity entry carries this
+    // token; the Rust guard consumes it once, then it is spent.
+    this.pendingAgyApproval = { token: approval.token, expiresAtMs: approval.expiresAtMs }
+    return approval
+  }
+
+  agyUsage(): Promise<RouterAgyUsageSummary> {
+    return this.coreRequest<RouterAgyUsageSummary>('router.agyUsage', {})
+  }
+
+  private agyApprovalHeader(): string | undefined {
+    if (!this.pendingAgyApproval) return undefined
+    if (this.pendingAgyApproval.expiresAtMs <= Date.now()) {
+      this.pendingAgyApproval = undefined
+      return undefined
+    }
+    return this.pendingAgyApproval.token
+  }
+
   externalKeyState(): RouterExternalApiState {
     const value = this.externalKeys.loadOrCreate()
     return {
@@ -325,6 +368,7 @@ export class RouterService {
     this.playground.set(requestId, controller)
     const started = Date.now()
     const stream = input.stream !== false
+    const agyApproval = this.agyApprovalHeader()
     onEvent({ requestId, type: 'phase', phase: 'connecting' })
     try {
       const response = await fetch(`${this.endpoint}/v1/chat/completions`, {
@@ -334,6 +378,7 @@ export class RouterService {
           authorization: `Bearer ${this.key}`,
           [ROUTER_HEADERS.requestId]: requestId,
           ...(combo ? { [ROUTER_HEADERS.combo]: combo } : {}),
+          ...(agyApproval ? { [ROUTER_HEADERS.agyApproval]: agyApproval } : {}),
         },
         body: JSON.stringify({ model, messages: input.messages, stream }),
         signal: controller.signal,

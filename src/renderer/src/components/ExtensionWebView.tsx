@@ -6,6 +6,8 @@ import {
   type NdWebViewHelloMessage,
   type NdWebViewTheme,
   type NdWebViewThemeMessage,
+  type NdWebViewMirrorStartMessage,
+  type NdWebViewMirrorStopMessage,
 } from '../../../shared/extension-webview'
 import type { NdViewData } from '../../../shared/nd-invocations'
 import { cn } from '../lib/utils'
@@ -33,11 +35,15 @@ export function ExtensionWebView({ data, theme, onError }: {
   const frameRef = useRef<HTMLIFrameElement | null>(null)
   const [ready, setReady] = useState(false)
   const webView = data.webView
-  // Keep the callback out of the listener effect's dependencies: parents tend
-  // to pass inline handlers, and a new identity would tear the bridge down on
-  // every render.
   const onErrorRef = useRef(onError)
   onErrorRef.current = onError
+
+  // ── Mirror capture state (nd.emulator only) ──
+  const mirrorStateRef = useRef<{
+    track: MediaStreamTrack | null
+    video: HTMLVideoElement | null
+    rafId: number
+  }>({ track: null, video: null, rafId: 0 })
 
   useEffect(() => {
     const frame = frameRef.current
@@ -49,6 +55,111 @@ export function ExtensionWebView({ data, theme, onError }: {
     }
     frame.contentWindow?.postMessage(message, new URL(webView.url).origin)
   }, [theme, webView?.url])
+
+  // ── Mirror capture (nd.emulator only): getUserMedia → frames → iframe ──
+  useEffect(() => {
+    if (data.extensionId !== 'nd.emulator') return
+    const frame = frameRef.current
+    if (!frame || !webView?.url) return
+    const expectedOrigin = new URL(webView.url).origin
+    const ms = mirrorStateRef.current
+
+    const stopCapture = () => {
+      if (ms.rafId) {
+        cancelAnimationFrame(ms.rafId)
+        ms.rafId = 0
+      }
+      if (ms.track) {
+        ms.track.stop()
+        ms.track = null
+      }
+      if (ms.video) {
+        ms.video.pause()
+        ms.video.srcObject = null
+        ms.video.remove()
+        ms.video = null
+      }
+    }
+
+    const startCapture = async (sourceId: string) => {
+      try {
+        // Old-style Electron desktop capture constraint
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            // @ts-expect-error Electron-specific constraint
+            mandatory: {
+              chromeMediaSource: 'desktop',
+              chromeMediaSourceId: sourceId,
+            },
+          },
+        })
+        const track = stream.getVideoTracks()[0]
+        if (!track) throw new Error('No video track in capture stream')
+        ms.track = track
+
+        const video = document.createElement('video')
+        video.srcObject = stream
+        video.muted = true
+        video.playsInline = true
+        await video.play()
+        ms.video = video
+
+        const onFrame = () => {
+          if (!ms.video || !ms.track || ms.track.readyState === 'ended') {
+            stopCapture()
+            frame.contentWindow?.postMessage({ kind: 'nd-webview:mirror-error', error: 'Capture stream ended' }, expectedOrigin)
+            return
+          }
+          createImageBitmap(ms.video, 0, Math.round(ms.video.videoWidth * 0.065), ms.video.videoWidth, ms.video.videoHeight - Math.round(ms.video.videoWidth * 0.065))
+            .then((bitmap) => {
+              frame.contentWindow?.postMessage({
+                kind: 'nd-webview:mirror-frame',
+                bitmap,
+                width: bitmap.width,
+                height: bitmap.height,
+              }, expectedOrigin, [bitmap])
+            })
+            .catch(() => {
+              // transient frame drop
+            })
+            .finally(() => {
+              if (ms.video) ms.rafId = requestAnimationFrame(onFrame)
+            })
+        }
+        ms.rafId = requestAnimationFrame(onFrame)
+      } catch (err) {
+        stopCapture()
+        frame.contentWindow?.postMessage({
+          kind: 'nd-webview:mirror-error',
+          error: err instanceof Error ? err.message : String(err),
+        }, expectedOrigin)
+      }
+    }
+
+    const onMirrorMessage = (event: MessageEvent) => {
+      if (event.origin !== expectedOrigin) return
+      if (!event.data || typeof event.data !== 'object') return
+      const msg = event.data as { kind?: string }
+      if (msg.kind === 'nd-webview:mirror-start') {
+        const startMsg = event.data as NdWebViewMirrorStartMessage
+        if (typeof startMsg.sourceId === 'string' && startMsg.sourceId.length > 0) {
+          void startCapture(startMsg.sourceId)
+        }
+        return
+      }
+      if (msg.kind === 'nd-webview:mirror-stop') {
+        stopCapture()
+        return
+      }
+    }
+
+    window.addEventListener('message', onMirrorMessage)
+    return () => {
+      window.removeEventListener('message', onMirrorMessage)
+      stopCapture()
+    }
+  }, [data.extensionId, webView?.url])
 
   useEffect(() => {
     if (!webView?.url) return
