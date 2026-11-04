@@ -62,6 +62,15 @@ export class SessionEventHub {
     this.resetPromise = this.store.clear().catch(() => undefined)
   }
 
+  /** Close one session's follow stream to free runtime resources when idle. */
+  closeSession(sessionId: string): void {
+    const handle = this.handles.get(sessionId)
+    if (handle) {
+      handle.close()
+      this.handles.delete(sessionId)
+    }
+  }
+
   /**
    * Rebuild volatile native retention after nd-core restarts while the Harness
    * runtime is still alive. Reopening each interesting follow asks the runtime

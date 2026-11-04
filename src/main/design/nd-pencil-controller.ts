@@ -71,7 +71,10 @@ type BridgeOutbound =
  * are intentionally unavailable inside ND Pencil.
  */
 export class NdPencilController {
-  private readonly view: WebContentsView
+  private view: WebContentsView | undefined
+  private sessionConfigured = false
+  private bounds: Rectangle = { x: 0, y: 0, width: 0, height: 0 }
+  private backgroundColor: string | undefined
   private binaryPath: string | undefined
   private available = false
   private visible = false
@@ -95,24 +98,43 @@ export class NdPencilController {
   private setupInFlight: Promise<DesignFreeformState> | undefined
   private closingDaemon = false
   private readonly pageMessageHandler: (event: IpcMainEvent, payload: unknown) => void
+  private readonly themeUpdatedHandler: () => void
 
   constructor(
     private readonly window: BrowserWindow,
     private readonly workspace: WorkspaceService,
     private readonly projectRoot: string,
-    ndPencilPreload: string,
+    private readonly ndPencilPreload: string,
   ) {
-    const ndPencilSession = session.fromPartition(ND_PENCIL_PARTITION)
-    ndPencilSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
-    ndPencilSession.setPermissionCheckHandler(() => false)
-    ndPencilSession.webRequest.onBeforeRequest(
-      { urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'] },
-      (details, callback) => callback({ cancel: !isAllowedNdPencilNetworkUrl(details.url) }),
-    )
+    this.pageMessageHandler = (event, payload) => {
+      if (!this.view || event.sender !== this.view.webContents || typeof payload !== 'string' || payload.length > MAX_BRIDGE_MESSAGE_BYTES) return
+      this.handlePageMessage(payload)
+    }
+    this.themeUpdatedHandler = () => {
+      if (this.visible && this.status === 'ready') {
+        void this.syncChildFramePreferences()
+      }
+    }
+    ipcMain.on(ND_PENCIL_HOST_IPC.pageMessage, this.pageMessageHandler)
+    nativeTheme.on('updated', this.themeUpdatedHandler)
+  }
 
-    this.view = new WebContentsView({
+  private ensureView(): WebContentsView {
+    if (this.view) return this.view
+    if (!this.sessionConfigured) {
+      const ndPencilSession = session.fromPartition(ND_PENCIL_PARTITION)
+      ndPencilSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
+      ndPencilSession.setPermissionCheckHandler(() => false)
+      ndPencilSession.webRequest.onBeforeRequest(
+        { urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'] },
+        (details, callback) => callback({ cancel: !isAllowedNdPencilNetworkUrl(details.url) }),
+      )
+      this.sessionConfigured = true
+    }
+
+    const view = new WebContentsView({
       webPreferences: {
-        preload: ndPencilPreload,
+        preload: this.ndPencilPreload,
         partition: ND_PENCIL_PARTITION,
         nodeIntegration: false,
         contextIsolation: true,
@@ -121,21 +143,13 @@ export class NdPencilController {
         allowRunningInsecureContent: false,
       },
     })
-    this.window.contentView.addChildView(this.view)
-    this.view.setBounds({ x: 0, y: 0, width: 0, height: 0 })
-    this.view.setVisible(false)
-    this.installViewGuards()
-
-    this.pageMessageHandler = (event, payload) => {
-      if (event.sender !== this.view.webContents || typeof payload !== 'string' || payload.length > MAX_BRIDGE_MESSAGE_BYTES) return
-      this.handlePageMessage(payload)
-    }
-    ipcMain.on(ND_PENCIL_HOST_IPC.pageMessage, this.pageMessageHandler)
-    nativeTheme.on('updated', () => {
-      if (this.visible && this.status === 'ready') {
-        void this.syncChildFramePreferences()
-      }
-    })
+    this.window.contentView.addChildView(view)
+    view.setBounds(this.bounds)
+    if (this.backgroundColor) view.setBackgroundColor(this.backgroundColor)
+    view.setVisible(this.visible)
+    this.view = view
+    this.installViewGuards(view)
+    return view
   }
 
   async initialize(): Promise<void> {
@@ -228,18 +242,21 @@ export class NdPencilController {
       width: Math.max(0, Math.round(bounds.width)),
       height: Math.max(0, Math.round(bounds.height)),
     }
-    this.view.setBounds(safe)
+    this.bounds = safe
+    this.view?.setBounds(safe)
   }
 
   async setVisible(visible: boolean): Promise<DesignFreeformState> {
     this.visible = Boolean(visible)
-    this.view.setVisible(this.visible)
+    if (this.visible) this.ensureView().setVisible(true)
+    else this.view?.setVisible(false)
     this.emitState()
     return this.state()
   }
 
   setBackgroundColor(color: string): void {
-    this.view.setBackgroundColor(color)
+    this.backgroundColor = color
+    this.view?.setBackgroundColor(color)
   }
 
   async open(relativePath: string): Promise<DesignFreeformState> {
@@ -303,10 +320,12 @@ export class NdPencilController {
 
   async destroy(): Promise<void> {
     ipcMain.removeListener(ND_PENCIL_HOST_IPC.pageMessage, this.pageMessageHandler)
+    nativeTheme.off('updated', this.themeUpdatedHandler)
     this.stopInitLoop()
     this.rejectSnapshots(new Error('ND Pencil host was closed'))
     await this.closeRuntime(true).catch(() => undefined)
     await this.closeShellServer().catch(() => undefined)
+    if (!this.view) return
     if (!this.window.isDestroyed()) {
       try { this.window.contentView.removeChildView(this.view) } catch { /* window teardown */ }
     }
@@ -314,6 +333,7 @@ export class NdPencilController {
     // is already tearing down, even though the controller still holds the view.
     const contents = this.view.webContents
     if (contents && !contents.isDestroyed()) contents.close()
+    this.view = undefined
   }
 
   private async startDocument(relativePath: string, absolutePath: string, json: string | undefined, creating: boolean): Promise<void> {
@@ -334,13 +354,14 @@ export class NdPencilController {
     this.emitState()
 
     try {
+      const view = this.ensureView()
       const daemon = await spawnManagedDaemon(binary, shellOrigin, creating ? undefined : absolutePath)
       this.daemon = daemon
       this.version = daemon.version
       this.wireDaemonExit(daemon)
       const frameUrl = `${daemon.baseUrl}/?embed=vscode&nd=1`
       const shellUrl = `${shellOrigin}/?frame=${encodeURIComponent(frameUrl)}`
-      await this.view.webContents.loadURL(shellUrl)
+      await view.webContents.loadURL(shellUrl)
       this.startInitLoop()
     } catch (cause) {
       await this.disposeDaemon().catch(() => undefined)
@@ -513,7 +534,7 @@ export class NdPencilController {
   }
 
   private postToPage(message: BridgeOutbound): void {
-    if (this.view.webContents.isDestroyed()) return
+    if (!this.view || this.view.webContents.isDestroyed()) return
     this.view.webContents.send(ND_PENCIL_HOST_IPC.hostMessage, JSON.stringify(message))
   }
 
@@ -534,8 +555,10 @@ export class NdPencilController {
     this.error = this.available ? undefined : this.error
     this.status = this.available ? 'idle' : 'unavailable'
     this.visible = false
-    this.view.setVisible(false)
-    if (!this.view.webContents.isDestroyed()) await this.view.webContents.loadURL('about:blank').catch(() => undefined)
+    if (this.view) {
+      this.view.setVisible(false)
+      if (!this.view.webContents.isDestroyed()) await this.view.webContents.loadURL('about:blank').catch(() => undefined)
+    }
     this.emitState()
   }
 
@@ -667,8 +690,8 @@ export class NdPencilController {
     if (!this.available || !this.binaryPath) throw new Error(this.error ?? 'Bundled ND Pencil runtime is unavailable')
   }
 
-  private installViewGuards(): void {
-    const contents = this.view.webContents
+  private installViewGuards(view: WebContentsView): void {
+    const contents = view.webContents
     contents.setWindowOpenHandler(() => ({ action: 'deny' }))
     contents.on('will-navigate', (event, url) => {
       if (url === 'about:blank') return
@@ -690,6 +713,7 @@ export class NdPencilController {
   }
 
   private async syncChildFramePreferences(): Promise<void> {
+    if (!this.view || this.view.webContents.isDestroyed()) return
     const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
     const script = childFramePreferencesScript(theme)
     const frames = this.view.webContents.mainFrame?.frames ?? []

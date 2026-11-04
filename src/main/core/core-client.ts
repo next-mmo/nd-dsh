@@ -85,6 +85,7 @@ export class CoreClient {
   private outstandingRequestBytes = 0
   private queuedRequestBytes = 0
   private listeners = new Map<string, Set<(frame: NdCoreEventFrame) => void>>()
+  private resourceListeners = new Map<string, Set<(frame: NdCoreEventFrame) => void>>()
   private starting: Promise<NdCoreHealth> | undefined
   private healthValue: NdCoreHealth | undefined
   private closing = false
@@ -150,6 +151,21 @@ export class CoreClient {
     return () => {
       bucket?.delete(wrapped)
       if (bucket?.size === 0) this.listeners.delete(event)
+    }
+  }
+
+  onResourceEvent<T = unknown>(event: string, resourceId: string, listener: (frame: NdCoreEventFrame<T>) => void): () => void {
+    const key = `${event}:${resourceId}`
+    let bucket = this.resourceListeners.get(key)
+    if (!bucket) {
+      bucket = new Set()
+      this.resourceListeners.set(key, bucket)
+    }
+    const wrapped = listener as (frame: NdCoreEventFrame) => void
+    bucket.add(wrapped)
+    return () => {
+      bucket?.delete(wrapped)
+      if (bucket?.size === 0) this.resourceListeners.delete(key)
     }
   }
 
@@ -417,6 +433,12 @@ export class CoreClient {
       if (typeof frame.event !== 'string') {
         this.failProtocol(new Error('ND Core event is missing its type.'))
         return
+      }
+      if (typeof frame.resourceId === 'string') {
+        const resourceBucket = this.resourceListeners.get(`${frame.event}:${frame.resourceId}`)
+        if (resourceBucket) {
+          for (const listener of resourceBucket) listener(frame)
+        }
       }
       for (const listener of this.listeners.get(frame.event) ?? []) listener(frame)
       for (const listener of this.listeners.get('*') ?? []) listener(frame)

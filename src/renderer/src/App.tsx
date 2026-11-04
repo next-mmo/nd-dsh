@@ -15,14 +15,9 @@ import { ChatPanel } from './components/ChatPanel'
 import { SurfaceErrorBoundary } from './components/surface-error-boundary'
 import { useNativeViewOcclusion } from './lib/use-native-view-occlusion'
 import { setMiniBrowserActive, useMiniBrowserActive } from './lib/use-mini-browser'
-import { DesignView } from './components/DesignView'
-import { DiffView } from './components/DiffView'
-import { DshCodingSurface } from './components/DshCodingSurface'
-import { EditorPane } from './components/EditorPane'
 import { Explorer } from './components/Explorer'
 import { BrowserIcon, CameraIcon, CompanyIcon, CrosshairIcon, ExternalIcon, FileIcon, GridIcon, HomeIcon, MonitorIcon, PencilIcon, PuzzleIcon, QualityIcon, SettingsIcon, SidebarToggleIcon, SparkIcon, TrashIcon } from './components/Icons'
-import { OrganizationDashboard, type CompanyView } from './components/OrganizationDashboard'
-import { QaView } from './components/QaView'
+import type { CompanyView } from './components/OrganizationDashboard'
 import { RuntimePrompts } from './components/RuntimePrompts'
 import { ThemeToggle } from './components/ThemeToggle'
 import { TitlebarIconButton } from './components/titlebar-icon-button'
@@ -30,9 +25,7 @@ import { CaptureOverlay, type CaptureOverlayMode } from './components/CaptureOve
 import { ModalInspectDock } from './components/modal-inspect-dock'
 import { ScreenshotDropdown } from './components/ScreenshotDropdown'
 import { QuickLauncher } from './components/QuickLauncher'
-import { HomeView } from './components/HomeView'
-import { PersonalSurface, type PersonalPane } from './components/personal-surface'
-import { PersonalDialpad } from './components/personal-dialpad'
+import type { PersonalPane } from './components/personal-surface'
 import { reconcileExtensionKeepAlive, ExtensionKeepAliveHost, ExtensionKeepAliveTabs, useExtensionKeepAliveReopenHandler } from './components/extension-view-keepalive'
 import { cn } from './lib/utils'
 import { fileAccent } from './lib/file-accents'
@@ -83,6 +76,15 @@ import {
 const ExtensionPackagesCard = lazy(() => import('./components/ExtensionPackages').then((module) => ({ default: module.ExtensionPackagesCard })))
 const ExtensionViewDialog = lazy(() => import('./components/ExtensionPackages').then((module) => ({ default: module.ExtensionViewDialog })))
 const SettingsPane = lazy(() => import('./components/SettingsPane').then((module) => ({ default: module.SettingsPane })))
+const DesignView = lazy(() => import('./components/DesignView').then((module) => ({ default: module.DesignView })))
+const DiffView = lazy(() => import('./components/DiffView').then((module) => ({ default: module.DiffView })))
+const DshCodingSurface = lazy(() => import('./components/DshCodingSurface').then((module) => ({ default: module.DshCodingSurface })))
+const EditorPane = lazy(() => import('./components/EditorPane').then((module) => ({ default: module.EditorPane })))
+const OrganizationDashboard = lazy(() => import('./components/OrganizationDashboard').then((module) => ({ default: module.OrganizationDashboard })))
+const QaView = lazy(() => import('./components/QaView').then((module) => ({ default: module.QaView })))
+const HomeView = lazy(() => import('./components/HomeView').then((module) => ({ default: module.HomeView })))
+const PersonalSurface = lazy(() => import('./components/personal-surface').then((module) => ({ default: module.PersonalSurface })))
+const PersonalDialpad = lazy(() => import('./components/personal-dialpad').then((module) => ({ default: module.PersonalDialpad })))
 
 type ProductView = 'home' | 'company' | 'agent' | 'design' | 'qa' | 'extensions' | 'router' | 'settings'
 
@@ -218,6 +220,15 @@ export default function App() {
   const [openFileTabs, setOpenFileTabs] = useState<WorkspaceFile[]>([])
   const [activeDiff, setActiveDiff] = useState<{ relativePath: string; staged: boolean } | null>(null)
   const [view, setView] = useState<ProductView>(viewFromHash)
+  const [visitedViews, setVisitedViews] = useState<ReadonlySet<ProductView>>(() => new Set([viewFromHash()]))
+  useEffect(() => {
+    setVisitedViews((current) => {
+      if (current.has(view)) return current
+      const next = new Set(current)
+      next.add(view)
+      return next
+    })
+  }, [view])
   const [companyView, setCompanyView] = useState<CompanyView>('workspace')
   const [companyCreateOpen, setCompanyCreateOpen] = useState(false)
   const [companyDraft, setCompanyDraft] = useState({ name: '', mission: '' })
@@ -264,7 +275,7 @@ export default function App() {
   }, [sessionsCollapsed, sessionsWidthPx, threadCollapsed])
   const [gitEditable, setGitEditable] = useState(false)
   const [workspaceCollapsed, setWorkspaceCollapsed] = useState(false)
-  const [externalPrompt, setExternalPrompt] = useState<{ id: string; text: string } | null>(null)
+  const [externalPrompt, setExternalPrompt] = useState<{ id: string; text: string; prepend?: boolean } | null>(null)
   const [sessionOpenRequest, setSessionOpenRequest] = useState<{ id: string; sessionId: string } | null>(null)
   const [theme, setTheme] = useState<ThemeState | null>(null)
   const [appInspectCountdown, setAppInspectCountdown] = useState<number | null>(null)
@@ -311,6 +322,12 @@ export default function App() {
   // context that opened the tab, and the site is presented there: Personal
   // browsing in the Personal space, everything else in the Agent workbench.
   const [browserFocusNudge, setBrowserFocusNudge] = useState(0)
+  useEffect(() => window.ndDsh.ndExtensions.onSkillCompose?.((request) => {
+    setExtensionViewRequest(null)
+    setQuickLauncherOpen(false)
+    setExternalPrompt({ id: crypto.randomUUID(), text: request.text, prepend: true })
+    switchToWorkbench('agent')
+  }), [])
   const lastBrowserFocusAt = useRef(0)
   const [personalPane, setPersonalPane] = useState<PersonalPane>('records')
   useEffect(() => window.ndDsh.ndExtensions.onBrowserFocus((focus) => {
@@ -2077,7 +2094,9 @@ export default function App() {
       <main className="relative min-h-0 min-w-0 overflow-hidden bg-surface-0">
         {workspaceProfile === 'coding' && surface === 'dsh' ? (
           <SurfaceErrorBoundary label="ND Harness" resetKey={surface} onError={notify}>
-            <DshCodingSurface active inspectOverlayVisible={inspectOverlayVisible} state={dshView} onNotify={notify} />
+            <Suspense fallback={null}>
+              <DshCodingSurface active inspectOverlayVisible={inspectOverlayVisible} state={dshView} onNotify={notify} />
+            </Suspense>
           </SurfaceErrorBoundary>
         ) : (
           <>
@@ -2140,55 +2159,61 @@ export default function App() {
             <Panel className="relative min-h-0 min-w-0 overflow-hidden bg-surface-0" minSize={WORKSPACE_MIN_PX}>
               <section aria-hidden={view !== 'home'} className={cn('absolute inset-0 overflow-hidden', view === 'home' ? 'block' : 'hidden')}>
                 <SurfaceErrorBoundary label="Personal" resetKey={`home:${homeState?.notes.length ?? 0}`} onError={notify}>
-                  {homeState ? (
-                    <PersonalSurface
-                      active={view === 'home' && !miniBrowserOpen}
-                      pane={personalPane}
-                      onPaneChange={setPersonalPane}
-                      newTabPage={
-                        <PersonalDialpad
-                          links={homeState.links}
-                          onOpen={openPersonalTab}
-                          onRemoveLink={removePersonalDialpadLink}
-                          onError={notify}
-                        />
-                      }
-                      onSaveSite={savePersonalDialpadLink}
-                      siteSaved={personalSiteSaved}
-                      state={browserState}
-                      onSnapshot={(result) => {
-                        navigator.clipboard.writeText(result)
-                          .then(() => notify('Browser snapshot copied to the clipboard.'))
-                          .catch(() => notify('Browser snapshot captured, but copying to the clipboard failed.'))
-                      }}
-                      onError={notify}
-                      onOpenSettings={() => {
-                        setSettingsTab('general')
-                        setSettingsSubTabs((current) => ({ ...current, general: 'browser' }))
-                        switchToWorkbench('settings')
-                      }}
-                    >
-                      <HomeView
-                        state={homeState}
-                        busy={homeBusy}
+                  {homeState && (view === 'home' || visitedViews.has('home')) ? (
+                    <Suspense fallback={null}>
+                      <PersonalSurface
+                        active={view === 'home' && !miniBrowserOpen}
+                        pane={personalPane}
+                        onPaneChange={setPersonalPane}
+                        newTabPage={
+                          <PersonalDialpad
+                            links={homeState.links}
+                            onOpen={openPersonalTab}
+                            onRemoveLink={removePersonalDialpadLink}
+                            onError={notify}
+                          />
+                        }
+                        onSaveSite={savePersonalDialpadLink}
+                        siteSaved={personalSiteSaved}
+                        state={browserState}
+                        onSnapshot={(result) => {
+                          navigator.clipboard.writeText(result)
+                            .then(() => notify('Browser snapshot copied to the clipboard.'))
+                            .catch(() => notify('Browser snapshot captured, but copying to the clipboard failed.'))
+                        }}
                         onError={notify}
-                        onChanged={refreshHome}
-                        onCaptureScreen={homeCaptureScreen}
-                        onCaptureArea={openLocalAreaCapture}
-                        onCopyCapture={(captureId) => runHomeCaptureAction('capture-copy', captureId)}
-                        onExportCapture={(captureId) => runHomeCaptureAction('capture-export', captureId)}
-                        onAskWithCapture={askWithCapture}
-                        onOpenChat={openSession}
-                        onStartChat={(prompt) => startContextChat(prompt?.trim() || 'Hello ND — this is my personal space.', { kind: 'personal' })}
-                      />
-                    </PersonalSurface>
+                        onOpenSettings={() => {
+                          setSettingsTab('general')
+                          setSettingsSubTabs((current) => ({ ...current, general: 'browser' }))
+                          switchToWorkbench('settings')
+                        }}
+                      >
+                        <HomeView
+                          state={homeState}
+                          busy={homeBusy}
+                          onError={notify}
+                          onChanged={refreshHome}
+                          onCaptureScreen={homeCaptureScreen}
+                          onCaptureArea={openLocalAreaCapture}
+                          onCopyCapture={(captureId) => runHomeCaptureAction('capture-copy', captureId)}
+                          onExportCapture={(captureId) => runHomeCaptureAction('capture-export', captureId)}
+                          onAskWithCapture={askWithCapture}
+                          onOpenChat={openSession}
+                          onStartChat={(prompt) => startContextChat(prompt?.trim() || 'Hello ND — this is my personal space.', { kind: 'personal' })}
+                        />
+                      </PersonalSurface>
+                    </Suspense>
                   ) : null}
                 </SurfaceErrorBoundary>
               </section>
 
               <section aria-hidden={view !== 'company'} className={cn('absolute inset-0 overflow-hidden', view === 'company' ? 'block' : 'hidden')}>
                 <SurfaceErrorBoundary label="Company" resetKey={`${companyView}:${company?.id ?? ''}:${project?.id ?? ''}`} onError={notify}>
-                  <OrganizationDashboard workspace={workspace} onOpenDeepSeek={() => switchToWorkbench('agent')} onAskAgent={askAgent} onError={notify} companyView={companyView} onCompanyViewChange={setCompanyView} />
+                  {view === 'company' ? (
+                    <Suspense fallback={null}>
+                      <OrganizationDashboard workspace={workspace} onOpenDeepSeek={() => switchToWorkbench('agent')} onAskAgent={askAgent} onError={notify} companyView={companyView} onCompanyViewChange={setCompanyView} />
+                    </Suspense>
+                  ) : null}
                 </SurfaceErrorBoundary>
               </section>
 
@@ -2226,12 +2251,14 @@ export default function App() {
                           <Panel className="min-h-0 min-w-0 overflow-hidden" minSize={FILES_EDITOR_MIN_PX}>
                             {activeDiff ? (
                               <SurfaceErrorBoundary label="Diff" resetKey={`${activeDiff.relativePath}:${String(activeDiff.staged)}`} onError={notify}>
-                                <DiffView
-                                  relativePath={activeDiff.relativePath}
-                                  staged={activeDiff.staged}
-                                  onClose={() => setActiveDiff(null)}
-                                  onError={notify}
-                                />
+                                <Suspense fallback={null}>
+                                  <DiffView
+                                    relativePath={activeDiff.relativePath}
+                                    staged={activeDiff.staged}
+                                    onClose={() => setActiveDiff(null)}
+                                    onError={notify}
+                                  />
+                                </Suspense>
                               </SurfaceErrorBoundary>
                             ) : (
                               <>
@@ -2268,7 +2295,9 @@ export default function App() {
                                   </div>
                                 ) : null}
                                 <SurfaceErrorBoundary label="Editor" resetKey={selectedFile?.relativePath ?? ''} onError={notify}>
-                                  <EditorPane file={selectedFile} onAgentPrompt={askAgent} onOpenLink={(url) => void openLink(url)} onError={notify} />
+                                  <Suspense fallback={null}>
+                                    <EditorPane file={selectedFile} onAgentPrompt={askAgent} onOpenLink={(url) => void openLink(url)} onError={notify} />
+                                  </Suspense>
                                 </SurfaceErrorBoundary>
                               </>
                             )}
@@ -2319,23 +2348,31 @@ export default function App() {
 
               <section aria-hidden={view !== 'design'} className={cn('absolute inset-0 overflow-hidden', view === 'design' ? 'block' : 'hidden')}>
                 <SurfaceErrorBoundary label="Design" resetKey={`${view}:${workspace?.root ?? ''}`} onError={notify}>
-                  <DesignView
-                    active={view === 'design'}
-                    workspace={workspace}
-                    workspaceSelected={workspaceSelected}
-                    browser={browserState}
-                    harness={harnessStatus}
-                    onWorkspaceChanged={changeWorkspace}
-                    onAskAgent={askAgent}
-                    onError={notify}
-                    onNotify={notify}
-                  />
+                  {view === 'design' || visitedViews.has('design') ? (
+                    <Suspense fallback={null}>
+                      <DesignView
+                        active={view === 'design'}
+                        workspace={workspace}
+                        workspaceSelected={workspaceSelected}
+                        browser={browserState}
+                        harness={harnessStatus}
+                        onWorkspaceChanged={changeWorkspace}
+                        onAskAgent={askAgent}
+                        onError={notify}
+                        onNotify={notify}
+                      />
+                    </Suspense>
+                  ) : null}
                 </SurfaceErrorBoundary>
               </section>
 
               <section aria-hidden={view !== 'qa'} className={cn('absolute inset-0 overflow-hidden', view === 'qa' ? 'block' : 'hidden')}>
                 <SurfaceErrorBoundary label="QA" resetKey={view} onError={notify}>
-                  <QaView active={view === 'qa'} {...(workspace?.root ? { workspaceRoot: workspace.root } : {})} onError={notify} onAskAgent={askAgent} />
+                  {view === 'qa' || visitedViews.has('qa') ? (
+                    <Suspense fallback={null}>
+                      <QaView active={view === 'qa'} {...(workspace?.root ? { workspaceRoot: workspace.root } : {})} onError={notify} onAskAgent={askAgent} />
+                    </Suspense>
+                  ) : null}
                 </SurfaceErrorBoundary>
               </section>
             </Panel>

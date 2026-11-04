@@ -293,13 +293,75 @@ async function createWindow(cdpPort: number): Promise<void> {
     },
   })
 
+  const TERMINAL_OUTPUT_COALESCE_MS = 10
+  const TERMINAL_OUTPUT_IMMEDIATE_CHARS = 64 * 1024
+  const pendingTerminalOutput = new Map<string, {
+    sessionId: string
+    terminalId: string
+    chunks: string[]
+    seq: number
+    chars: number
+    timer: NodeJS.Timeout
+  }>()
+  const flushTerminalOutput = (terminalId: string): void => {
+    const pending = pendingTerminalOutput.get(terminalId)
+    if (!pending) return
+    clearTimeout(pending.timer)
+    pendingTerminalOutput.delete(terminalId)
+    if (!window.isDestroyed()) {
+      window.webContents.send(TERMINAL_IPC.outputEvent, {
+        sessionId: pending.sessionId,
+        terminalId: pending.terminalId,
+        seq: pending.seq,
+        data: pending.chunks.length === 1 ? pending.chunks[0]! : pending.chunks.join(''),
+      })
+    }
+  }
+  const flushAllTerminalOutput = (clearOnly = false): void => {
+    for (const [terminalId, pending] of pendingTerminalOutput) {
+      if (clearOnly) {
+        clearTimeout(pending.timer)
+        pendingTerminalOutput.delete(terminalId)
+      } else {
+        flushTerminalOutput(terminalId)
+      }
+    }
+  }
+
   const terminalManager = new TerminalManager({
     storePath: join(userData, 'terminals.json'),
     workspace,
     spawn: createCorePtySpawner(core),
-    onOutput: (event) => { if (!window.isDestroyed()) window.webContents.send(TERMINAL_IPC.outputEvent, event) },
-    onExit: (event) => { if (!window.isDestroyed()) window.webContents.send(TERMINAL_IPC.exitEvent, event) },
-    onState: (event) => { if (!window.isDestroyed()) window.webContents.send(TERMINAL_IPC.stateEvent, event) },
+    onOutput: (event) => {
+      if (window.isDestroyed()) return
+      const existing = pendingTerminalOutput.get(event.terminalId)
+      if (existing) {
+        existing.chunks.push(event.data)
+        existing.seq = event.seq
+        existing.chars += event.data.length
+        if (existing.chars >= TERMINAL_OUTPUT_IMMEDIATE_CHARS) flushTerminalOutput(event.terminalId)
+        return
+      }
+      const timer = setTimeout(() => flushTerminalOutput(event.terminalId), TERMINAL_OUTPUT_COALESCE_MS)
+      timer.unref()
+      pendingTerminalOutput.set(event.terminalId, {
+        sessionId: event.sessionId,
+        terminalId: event.terminalId,
+        chunks: [event.data],
+        seq: event.seq,
+        chars: event.data.length,
+        timer,
+      })
+      if (event.data.length >= TERMINAL_OUTPUT_IMMEDIATE_CHARS) flushTerminalOutput(event.terminalId)
+    },
+    onExit: (event) => {
+      flushTerminalOutput(event.terminalId)
+      if (!window.isDestroyed()) window.webContents.send(TERMINAL_IPC.exitEvent, event)
+    },
+    onState: (event) => {
+      flushAllTerminalOutput()
+      if (!window.isDestroyed()) window.webContents.send(TERMINAL_IPC.stateEvent, event)
+    },
   })
   await terminalManager.initialize()
   activeTerminalManager = terminalManager
@@ -604,10 +666,13 @@ async function createWindow(cdpPort: number): Promise<void> {
   // from the sidecar's declared capabilities, because `binaryVersion` is a static
   // `CARGO_PKG_VERSION` and cannot tell a fresh build from a stale one.
   const coreOsTheme = createCoreOsTheme(core)
-  const disposeIpc = registerIpc({ window, preloadPath: preload, launcherPopup, shortcuts: shortcutRegistry, browser, browserPlatform, mediaDownloadSpawn, stopProcess: stopCoreManagedChildProcess, dshSurface, engines, engineRouter, nativeToolBroker: nativeBroker, ownsWorktree: (cwd) => taskWorktrees?.ownsRoot(cwd) === true, harness, superagentPrototype, projectWorkspace, workspaces, theme, providers, externalElements, recentPicks, git, corePackageSnapshot: createCorePackageSnapshot(core), coreGit: coreGit.exec.bind(coreGit), coreMedia, coreClipboard, coreMediaKeys, coreSystemVolume, coreVault, coreApiHttp, coreOsTheme, coreDisk: createCoreDiskScan(core), coreComputer: createCoreComputer(core), qa, sessionArchive, usageLedger, capabilities, organizationStore, nineRouterManaged })
-  if (nativeAgent.ready()) void nativeAgent.start().catch((error) => {
-    console.warn('ND Agent private runtime could not initialize:', error instanceof Error ? error.message : String(error))
-  })
+  let currentActiveSessionId: string | undefined
+  const disposeIpc = registerIpc({ window, preloadPath: preload, launcherPopup, shortcuts: shortcutRegistry, browser, browserPlatform, mediaDownloadSpawn, stopProcess: stopCoreManagedChildProcess, dshSurface, engines, engineRouter, nativeToolBroker: nativeBroker, ownsWorktree: (cwd) => taskWorktrees?.ownsRoot(cwd) === true, harness, superagentPrototype, projectWorkspace, workspaces, theme, providers, externalElements, recentPicks, git, corePackageSnapshot: createCorePackageSnapshot(core), coreGit: coreGit.exec.bind(coreGit), coreMedia, coreClipboard, coreMediaKeys, coreSystemVolume, coreVault, coreApiHttp, coreOsTheme, coreDisk: createCoreDiskScan(core), coreComputer: createCoreComputer(core), qa, sessionArchive, usageLedger, capabilities, organizationStore, nineRouterManaged, onSessionSelected: (id) => { currentActiveSessionId = id } })
+  if (nativeAgent.ready() && nativeAgent.hasPersistedSessions()) {
+    void nativeAgent.start().catch((error) => {
+      console.warn('ND Agent private runtime could not initialize:', error instanceof Error ? error.message : String(error))
+    })
+  }
   const disposeBrowserCompanionIpc = registerBrowserCompanionIpc(window, browserCompanion)
   const disposeBrowserPlatformIpc = registerBrowserPlatformIpc(window, browserPlatform)
   browserPlatform.setListener((state) => {
@@ -723,6 +788,26 @@ async function createWindow(cdpPort: number): Promise<void> {
           console.error('Organization approval policy gate failed:', error)
           if (!window.isDestroyed()) window.webContents.send(IPC.dshEvent, frame)
         })
+      return
+    }
+
+    const isBackgroundSession =
+      frame.sessionId !== undefined &&
+      frame.sessionId !== currentActiveSessionId &&
+      (currentActiveSessionId !== undefined || organizationStore.runBySession(frame.sessionId) !== undefined)
+    const isBackgroundStreamingDelta = (
+      isBackgroundSession &&
+      frame.kind === 'session-event' &&
+      frame.event !== undefined &&
+      (frame.event.type === 'assistant/chunk' ||
+       frame.event.type === 'assistant/message' ||
+       frame.event.type === 'agent/thought' ||
+       frame.event.type === 'agent/reasoning' ||
+       frame.event.type === 'agent/status' ||
+       frame.event.type === 'tool/call' ||
+       frame.event.type === 'tool/result')
+    )
+    if (isBackgroundStreamingDelta) {
       return
     }
 
@@ -964,6 +1049,7 @@ async function createWindow(cdpPort: number): Promise<void> {
   })
 
   window.on('closed', () => {
+    flushAllTerminalOutput(true)
     launcherPopup.dispose()
     organizationStore.setOnChanged(undefined)
     broadcastOrganization.cancel()

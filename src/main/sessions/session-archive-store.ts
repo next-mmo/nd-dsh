@@ -22,6 +22,7 @@ export class SessionArchiveStore {
   private loaded = false
   private loadPromise: Promise<void> | undefined
   private saveChain: Promise<void> = Promise.resolve()
+  private pendingSave: Promise<void> | undefined
   private value: SessionArchiveSnapshot = structuredClone(EMPTY)
 
   constructor(private readonly filePath: string) {}
@@ -39,18 +40,46 @@ export class SessionArchiveStore {
 
   /** Exact submitted-wire lookup only: never parse or strip historical envelopes. */
   async restoreSkillMessages<T>(sessionId: string, value: T): Promise<T> {
+    if (value && typeof value === 'object') {
+      const frame = value as Record<string, unknown>
+      if (frame.kind === 'session-event' && frame.event && typeof frame.event === 'object') {
+        const env = frame.event as Record<string, unknown>
+        if (env.type !== 'user/message') return value
+      } else if (frame.kind && frame.kind !== 'session-event') {
+        return value
+      }
+    }
     await this.load()
+    const messages = this.value.messages
+    if (!messages || Object.keys(messages).length === 0) return value
     const visit = (item: unknown): unknown => {
-      if (Array.isArray(item)) return item.map(visit)
+      if (Array.isArray(item)) {
+        let changed = false
+        const next = item.map((child) => {
+          const updated = visit(child)
+          if (updated !== child) changed = true
+          return updated
+        })
+        return changed ? next : item
+      }
       if (!item || typeof item !== 'object') return item
       const record = item as Record<string, unknown>
       if (record.type === 'user/message' && record.data && typeof record.data === 'object') {
         const data = record.data as Record<string, unknown>
         const text = messageText(data.message) ?? messageText(data)
-        const saved = text === undefined ? undefined : this.value.messages?.[this.messageKey(sessionId, text)]
+        const saved = text === undefined ? undefined : messages[this.messageKey(sessionId, text)]
         if (saved) return { ...record, data: { ...data, message: saved.original, skillMention: saved.skill } }
       }
-      return Object.fromEntries(Object.entries(record).map(([key, child]) => [key, visit(child)]))
+      let nextRecord: Record<string, unknown> | undefined
+      for (const key of Object.keys(record)) {
+        const child = record[key]
+        const updated = visit(child)
+        if (updated !== child) {
+          nextRecord ??= { ...record }
+          nextRecord[key] = updated
+        }
+      }
+      return nextRecord ?? record
     }
     return visit(value) as T
   }
@@ -115,22 +144,28 @@ export class SessionArchiveStore {
     this.loaded = true
   }
 
-  private async save(): Promise<void> {
-    const snapshot = structuredClone(this.value)
-    const serialized = `${JSON.stringify(snapshot, null, 2)}\n`
-    const write = this.saveChain.catch(() => undefined).then(async () => {
-      await fs.mkdir(dirname(this.filePath), { recursive: true })
-      const temp = `${this.filePath}.${process.pid}.${randomUUID()}.tmp`
-      try {
-        await fs.writeFile(temp, serialized, 'utf8')
-        await fs.rename(temp, this.filePath)
-      } catch (error) {
-        await fs.rm(temp, { force: true }).catch(() => undefined)
-        throw error
-      }
+  private save(): Promise<void> {
+    if (this.pendingSave) return this.pendingSave
+    const write = this.saveChain.then(async () => {
+      this.pendingSave = undefined
+      await this.flushSave()
     })
-    this.saveChain = write
+    this.pendingSave = write
+    this.saveChain = write.catch(() => undefined)
     return write
+  }
+
+  private async flushSave(): Promise<void> {
+    const serialized = `${JSON.stringify(this.value)}\n`
+    await fs.mkdir(dirname(this.filePath), { recursive: true })
+    const temp = `${this.filePath}.${process.pid}.${randomUUID()}.tmp`
+    try {
+      await fs.writeFile(temp, serialized, 'utf8')
+      await fs.rename(temp, this.filePath)
+    } catch (error) {
+      await fs.rm(temp, { force: true }).catch(() => undefined)
+      throw error
+    }
   }
 }
 

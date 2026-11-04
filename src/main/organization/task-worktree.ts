@@ -275,8 +275,21 @@ function normalizeRoot(path: string): string {
   return process.platform === 'win32' ? resolved.toLowerCase() : resolved
 }
 
+const repoRootCache = new Map<string, string>()
+
 async function repositoryRoot(cwd: string, runGit: WorktreeGitRunner = git): Promise<string> {
-  return resolve((await runGit(resolve(cwd), ['rev-parse', '--show-toplevel'])).stdout.trim())
+  const target = resolve(cwd)
+  if (runGit === git) {
+    const cached = repoRootCache.get(target)
+    if (cached) return cached
+  }
+  const root = resolve((await runGit(target, ['rev-parse', '--show-toplevel'])).stdout.trim())
+  if (runGit === git) {
+    if (repoRootCache.size > 128) repoRootCache.clear()
+    repoRootCache.set(target, root)
+    repoRootCache.set(root, root)
+  }
+  return root
 }
 
 async function bootstrapEmptyRepository(cwd: string, runGit: WorktreeGitRunner = git): Promise<string | undefined> {

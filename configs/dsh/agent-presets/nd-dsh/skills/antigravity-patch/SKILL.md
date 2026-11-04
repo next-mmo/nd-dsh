@@ -9,11 +9,19 @@ Implement the requested local change with a reviewable patch, observed UI verifi
 
 In ND, invoke `/antigravity-patch <request>` through the skill picker or composer. This directory is the repository-owned release bundle. Keep its references, helpers, assets, and recipe together as regular tracked files; do not link to a developer's global skill installation. After intentionally changing the annotation asset, review and update its recipe hash and run the bundled Python tests plus ND's bundled-skill integration test.
 
+## Help, apply, reset, and adoption
+
+Map `/antigravity-patch -h` (or `help`), `status`, `apply`, `reset`, and `adopt` to this resource directory's `scripts/patch.py`. Help is read-only. Read [references/cli.md](references/cli.md) for arguments and recovery. Resolve every helper, recipe, and reference relative to ND's supplied **Skill resource directory**, never a global skill installation.
+
+The helper defaults to `%LOCALAPPDATA%/ND/Patches/Antigravity/`. It supports the inspected 2.29.0 browser-annotate recipe; new versions require inspection. Start with `status` and the requested command's `--dry-run`. Save active work and quit Antigravity normally before `apply` or `reset`. Neither command closes processes or bypasses file locks. After restarting, observe actual UI behavior and record it with `confirm --validation`; do not claim UI checks from code or archive tests.
+
+For a known patch already installed by a different tool, use `adopt --dry-run` before `adopt`. Adoption verifies the exact implementation and underlying preload, saves an ND-owned reconstructed baseline and current snapshot, and leaves the app archive untouched. It does not read another tool's state or assume a pristine vendor archive. Observe the existing feature before confirming. Unknown preloads, patches above the requested patch, or hash mismatches require investigation rather than a forced reset.
+
 ## Establish the current state
 
 - Locate the actual executable/resources; determine the version from the executable and archive package metadata. The known Windows archive is `%LOCALAPPDATA%/Programs/Antigravity/resources/app.asar`; discover rather than assume on other installations.
-- Read `%LOCALAPPDATA%/Codex/Patches/Antigravity/registry.json` when present. Compare its active hash with the installed archive before changing anything. A mismatch may mean an update, another patch, or a partial transaction; investigate rather than overwrite.
-- For browser, preload, or Electron shell work, read [references/antigravity-desktop.md](references/antigravity-desktop.md). Its findings concern 2.28.2 and require reinspection on another version.
+- Read `%LOCALAPPDATA%/ND/Patches/Antigravity/registry.json` and `pending.json` when present. Compare the active/pending hashes with the installed archive before changing anything. A mismatch may mean an update, another patch, or a partial transaction; investigate rather than overwrite.
+- For browser, preload, or Electron shell work, read [references/antigravity-desktop.md](references/antigravity-desktop.md). The original findings concern 2.28.2; the pinned CLI recipe contains the UI-tested 2.29.0 WebContentsView port. Reinspect other versions.
 - Before installation, rollback, or an upgrade, read [references/patch-lifecycle.md](references/patch-lifecycle.md).
 
 ## Implement the smallest integration
@@ -32,7 +40,7 @@ Build from the **verified current archive** so existing patches survive. Before 
 
 `scripts/asar_tool.py` inspects, verifies, extracts a named packed entry, and builds a candidate without changing its source. Run `--help` for syntax. Building requires an exact version and source hash, updates file/block integrity, rejects unsupported entries, and refuses existing output. It deliberately does not install or manage processes.
 
-All supporting files resolve from this skill's resource directory; no global Codex skill installation is required. The scripts require Python 3 and its standard library; the annotation asset uses existing Electron/browser APIs. Check runtime availability rather than installing dependencies automatically. For the known 2.28.2 annotation recipe, `scripts/build_browser_annotate.py` builds a candidate using the bundled asset and recipe; run its `--help`. It is not a live installer or a patch-stack manager.
+All supporting files resolve from this skill's resource directory; no other coding product is required. The scripts use Python 3.9+ and its standard library; CLI apply/adopt requires Node.js for syntax validation. The annotation asset uses existing Electron/browser APIs. Check runtime availability rather than installing dependencies automatically. The older `scripts/build_browser_annotate.py` remains a candidate-only helper for 2.28.2; it is not a live installer or an upgrade recipe.
 
 Never blindly restore `app.asar.orig` or an earlier patch's backup over a newer stack. Preserve existing vendor backups. Use the lifecycle reference to remove an earlier patch or upgrade the app.
 

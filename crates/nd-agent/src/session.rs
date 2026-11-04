@@ -77,15 +77,19 @@ impl Session {
     }
 
     pub fn record(&mut self, event_type: &str, data: Value) -> Value {
-        self.sequence += 1;
-        self.updated_at = now_ms();
-        let event = json!({ "type": event_type, "seq": self.sequence, "time": self.updated_at, "data": data });
+        let event = self.ephemeral_event(event_type, data);
         self.events.push(event.clone());
         if self.events.len() > MAX_DURABLE_EVENTS {
             let drop_count = self.events.len() - MAX_DURABLE_EVENTS;
             self.events.drain(..drop_count);
         }
         event
+    }
+
+    pub fn ephemeral_event(&mut self, event_type: &str, data: Value) -> Value {
+        self.sequence += 1;
+        self.updated_at = now_ms();
+        json!({ "type": event_type, "seq": self.sequence, "time": self.updated_at, "data": data })
     }
 
     /// Keep provider context bounded while preserving the immutable system policy

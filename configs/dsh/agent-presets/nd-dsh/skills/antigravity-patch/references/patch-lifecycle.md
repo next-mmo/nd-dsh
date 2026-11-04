@@ -2,7 +2,9 @@
 
 ## Persistent state
 
-Use `%LOCALAPPDATA%/Codex/Patches/Antigravity/` for this machine's register, backups, recipes, and validation records. Keep reusable instructions/code in the global skill. Do not include credentials, entire app bundles, chat contents, or transient port/CSRF data in skill resources.
+Use `%LOCALAPPDATA%/ND/Patches/Antigravity/` for ND's register, backups, recipes, and validation records. Keep reusable instructions/code in this bundled skill. Do not include credentials, entire app bundles, chat contents, or transient port/CSRF data in skill resources.
+
+The bundled CLI also records `pending.json` before replacement and commits registry changes only after observed UI checks are recorded with `confirm`. Inspect pending state before treating an active-hash mismatch as an update. See [cli.md](cli.md) for interrupted-operation recovery and exact-recipe adoption of a previously installed patch. No external skill installation or another product's patch registry is required.
 
 The register tracks an archive hash chain. Its initial schema is:
 

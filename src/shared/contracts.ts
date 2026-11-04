@@ -810,6 +810,7 @@ export interface DesktopApi {
     rpc(method: string, payload?: unknown): Promise<GatewayRpcResult>
     respond(rpcId: string, value: unknown): Promise<void>
     onEvent(listener: (frame: DshEventFrame) => void): () => void
+    selectSession?(sessionId: string | null): Promise<void>
   }
   surface: {
     state(): Promise<SurfaceState>
@@ -994,6 +995,7 @@ export const IPC = {
   dshRpc: 'dsh:rpc',
   dshRespond: 'dsh:respond',
   dshEvent: 'dsh:event',
+  dshSelectSession: 'dsh:select-session',
   surfaceState: 'surface:state',
   surfaceSet: 'surface:set',
   surfaceChangedEvent: 'surface:changed',

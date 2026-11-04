@@ -971,6 +971,9 @@ export class HarnessService {
           this.runningSessions.add(frame.sessionId)
         } else {
           this.runningSessions.delete(frame.sessionId)
+          if (frame.sessionId !== this.activeSessionId) {
+            this.eventHub.closeSession(frame.sessionId)
+          }
         }
       }
       if (frame.sessionId === this.activeSessionId) {

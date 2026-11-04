@@ -297,10 +297,11 @@ pub fn read(params: ReadParams) -> Result<ReadResult> {
     let truncated = byte_size > max_bytes as u64;
 
     let bytes = if truncated {
-        fs::read(&target)?
-            .into_iter()
-            .take(max_bytes)
-            .collect::<Vec<u8>>()
+        let mut buf = Vec::with_capacity(max_bytes);
+        fs::File::open(&target)?
+            .take(max_bytes as u64)
+            .read_to_end(&mut buf)?;
+        buf
     } else {
         fs::read(&target)?
     };

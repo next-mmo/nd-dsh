@@ -79,7 +79,7 @@ impl Dispatcher {
         let worker_count = std::thread::available_parallelism()
             .map(|value| value.get())
             .unwrap_or(4)
-            .clamp(3, 8);
+            .clamp(4, 12);
         let shared = Arc::new(Shared {
             state: Mutex::new(QueueState {
                 high: VecDeque::new(),
@@ -92,10 +92,13 @@ impl Dispatcher {
             worker_count,
         });
         let mut workers = Vec::with_capacity(worker_count);
-        // Keep one worker dedicated to foreground control traffic so saturated
-        // Git/background work cannot starve input/cancel/health requests.
-        workers.push(spawn_worker(Arc::clone(&shared), true));
-        for _ in 1..worker_count {
+        // Reserve dedicated foreground workers so saturated Git/search/background
+        // work across 10-20 parallel agents cannot starve input/scheduler/journal requests.
+        let foreground_workers = if worker_count >= 6 { 2 } else { 1 };
+        for _ in 0..foreground_workers {
+            workers.push(spawn_worker(Arc::clone(&shared), true));
+        }
+        for _ in foreground_workers..worker_count {
             workers.push(spawn_worker(Arc::clone(&shared), false));
         }
         Self { shared, workers }
@@ -208,10 +211,12 @@ pub fn priority_for_method(method: &str) -> Priority {
         | "terminal.state"
         | "terminal.restart"
         | "terminal.appendHistory"
+        | "sessionJournal.append"
         | "sessionJournal.tail"
         | "process.write"
         | "process.closeStdin"
         | "process.cancel"
+        | "scheduler.acquire"
         | "scheduler.heartbeat"
         | "scheduler.release"
         | "scheduler.bind"

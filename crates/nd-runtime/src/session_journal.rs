@@ -6,6 +6,7 @@ use std::sync::Mutex;
 
 pub const DEFAULT_MAX_EVENTS_PER_SESSION: usize = 10_000;
 pub const DEFAULT_MAX_BYTES_PER_SESSION: usize = 8 * 1024 * 1024;
+pub const DEFAULT_MAX_TOTAL_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -85,20 +86,43 @@ struct StoredEnvelope {
 struct SessionJournal {
     events: VecDeque<StoredEnvelope>,
     bytes: usize,
+    last_touched: u64,
+}
+
+#[derive(Default)]
+struct SessionJournalState {
+    sessions: HashMap<String, SessionJournal>,
+    next_touch: u64,
 }
 
 pub struct SessionJournalStore {
-    sessions: Mutex<HashMap<String, SessionJournal>>,
+    state: Mutex<SessionJournalState>,
     max_events_per_session: usize,
     max_bytes_per_session: usize,
+    max_total_bytes: usize,
 }
 
 impl SessionJournalStore {
     pub fn new(max_events_per_session: usize, max_bytes_per_session: usize) -> Self {
+        let clamped_bytes = max_bytes_per_session.max(1);
+        Self::with_total_limit(
+            max_events_per_session,
+            clamped_bytes,
+            DEFAULT_MAX_TOTAL_BYTES.max(clamped_bytes),
+        )
+    }
+
+    pub fn with_total_limit(
+        max_events_per_session: usize,
+        max_bytes_per_session: usize,
+        max_total_bytes: usize,
+    ) -> Self {
+        let clamped_bytes = max_bytes_per_session.max(1);
         Self {
-            sessions: Mutex::new(HashMap::new()),
+            state: Mutex::new(SessionJournalState::default()),
             max_events_per_session: max_events_per_session.max(1),
-            max_bytes_per_session: max_bytes_per_session.max(1),
+            max_bytes_per_session: clamped_bytes,
+            max_total_bytes: max_total_bytes.max(clamped_bytes),
         }
     }
 
@@ -107,10 +131,12 @@ impl SessionJournalStore {
         if params.events.len() > 1024 {
             bail!("session journal append batch is too large");
         }
-        let mut sessions = self
-            .sessions
+        let mut state = self
+            .state
             .lock()
             .map_err(|_| anyhow::anyhow!("session journal lock poisoned"))?;
+        state.next_touch = state.next_touch.wrapping_add(1);
+        let touch = state.next_touch;
         let max_events = params
             .max_events
             .unwrap_or(self.max_events_per_session)
@@ -119,54 +145,62 @@ impl SessionJournalStore {
             .max_bytes
             .unwrap_or(self.max_bytes_per_session)
             .clamp(1, self.max_bytes_per_session);
-        let journal = sessions.entry(params.session_id).or_default();
-        for envelope in params.events {
-            validate_envelope(&envelope)?;
-            let encoded_bytes = serde_json::to_vec(&envelope)
-                .map(|value| value.len())
-                .unwrap_or_default();
-            journal.bytes = journal.bytes.saturating_add(encoded_bytes);
-            journal.events.push_back(StoredEnvelope {
-                envelope,
-                bytes: encoded_bytes,
-            });
-            trim_journal(journal, max_events, max_bytes);
-        }
-        Ok(SessionJournalAppendResult {
-            first_seq: journal.events.front().map(|stored| stored.envelope.seq),
-            last_seq: journal.events.back().map(|stored| stored.envelope.seq),
-            retained_events: journal.events.len(),
-            retained_bytes: journal.bytes,
-        })
+        let session_id = params.session_id;
+        let result = {
+            let journal = state.sessions.entry(session_id.clone()).or_default();
+            journal.last_touched = touch;
+            for envelope in params.events {
+                validate_envelope(&envelope)?;
+                let encoded_bytes = serde_json::to_vec(&envelope)
+                    .map(|value| value.len())
+                    .unwrap_or_default();
+                journal.bytes = journal.bytes.saturating_add(encoded_bytes);
+                journal.events.push_back(StoredEnvelope {
+                    envelope,
+                    bytes: encoded_bytes,
+                });
+                trim_journal(journal, max_events, max_bytes);
+            }
+            SessionJournalAppendResult {
+                first_seq: journal.events.front().map(|stored| stored.envelope.seq),
+                last_seq: journal.events.back().map(|stored| stored.envelope.seq),
+                retained_events: journal.events.len(),
+                retained_bytes: journal.bytes,
+            }
+        };
+        evict_inactive_sessions(&mut state.sessions, &session_id, self.max_total_bytes);
+        Ok(result)
     }
 
     pub fn drop_session(&self, params: SessionJournalSessionParams) -> Result<bool> {
         validate_session_id(&params.session_id)?;
-        let mut sessions = self
-            .sessions
+        let mut state = self
+            .state
             .lock()
             .map_err(|_| anyhow::anyhow!("session journal lock poisoned"))?;
-        Ok(sessions.remove(&params.session_id).is_some())
+        Ok(state.sessions.remove(&params.session_id).is_some())
     }
 
     pub fn clear(&self) -> Result<usize> {
-        let mut sessions = self
-            .sessions
+        let mut state = self
+            .state
             .lock()
             .map_err(|_| anyhow::anyhow!("session journal lock poisoned"))?;
-        let count = sessions.len();
-        sessions.clear();
+        let count = state.sessions.len();
+        state.sessions.clear();
         Ok(count)
     }
 
     pub fn tail(&self, params: SessionJournalTailParams) -> Result<SessionJournalTailResult> {
         validate_session_id(&params.session_id)?;
         let limit = params.max_messages.clamp(1, self.max_events_per_session);
-        let sessions = self
-            .sessions
+        let mut state = self
+            .state
             .lock()
             .map_err(|_| anyhow::anyhow!("session journal lock poisoned"))?;
-        let Some(journal) = sessions.get(&params.session_id) else {
+        state.next_touch = state.next_touch.wrapping_add(1);
+        let touch = state.next_touch;
+        let Some(journal) = state.sessions.get_mut(&params.session_id) else {
             return Ok(SessionJournalTailResult {
                 events: Vec::new(),
                 retained_events: 0,
@@ -175,18 +209,20 @@ impl SessionJournalStore {
                 last_seq: None,
             });
         };
+        journal.last_touched = touch;
         Ok(tail_result(journal, limit))
     }
 
     pub fn stats(&self) -> SessionJournalStats {
-        let sessions = self
-            .sessions
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
+        let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         SessionJournalStats {
-            session_count: sessions.len(),
-            retained_event_count: sessions.values().map(|journal| journal.events.len()).sum(),
-            retained_bytes: sessions.values().map(|journal| journal.bytes).sum(),
+            session_count: state.sessions.len(),
+            retained_event_count: state
+                .sessions
+                .values()
+                .map(|journal| journal.events.len())
+                .sum(),
+            retained_bytes: state.sessions.values().map(|journal| journal.bytes).sum(),
             max_events_per_session: self.max_events_per_session,
             max_bytes_per_session: self.max_bytes_per_session,
         }
@@ -216,6 +252,31 @@ fn trim_journal(journal: &mut SessionJournal, max_events: usize, max_bytes: usiz
             break;
         };
         journal.bytes = journal.bytes.saturating_sub(removed.bytes);
+    }
+}
+
+fn evict_inactive_sessions(
+    sessions: &mut HashMap<String, SessionJournal>,
+    active_session_id: &str,
+    max_total_bytes: usize,
+) {
+    loop {
+        if sessions.len() <= 1 {
+            break;
+        }
+        let total_bytes: usize = sessions.values().map(|journal| journal.bytes).sum();
+        if total_bytes <= max_total_bytes {
+            break;
+        }
+        let oldest_id = sessions
+            .iter()
+            .filter(|(id, _)| id.as_str() != active_session_id)
+            .min_by_key(|(_, journal)| journal.last_touched)
+            .map(|(id, _)| id.clone());
+        let Some(oldest_id) = oldest_id else {
+            break;
+        };
+        sessions.remove(&oldest_id);
     }
 }
 
@@ -344,6 +405,59 @@ mod tests {
             store
                 .tail(SessionJournalTailParams {
                     session_id: "b".into(),
+                    max_messages: 5,
+                })
+                .unwrap()
+                .events
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn evicts_least_recently_touched_sessions_when_total_bytes_exceed_cap() {
+        let store = SessionJournalStore::with_total_limit(10, 200, 300);
+        for id in ["s1", "s2"] {
+            store
+                .append(SessionJournalAppendParams {
+                    session_id: id.into(),
+                    events: vec![envelope(1, &"x".repeat(80))],
+                    max_events: None,
+                    max_bytes: None,
+                })
+                .unwrap();
+        }
+        // Touch s1 so s2 becomes the oldest untouched session.
+        let _ = store
+            .tail(SessionJournalTailParams {
+                session_id: "s1".into(),
+                max_messages: 5,
+            })
+            .unwrap();
+        store
+            .append(SessionJournalAppendParams {
+                session_id: "s3".into(),
+                events: vec![envelope(1, &"x".repeat(80))],
+                max_events: None,
+                max_bytes: None,
+            })
+            .unwrap();
+        assert!(store.stats().retained_bytes <= 300);
+        assert_eq!(
+            store
+                .tail(SessionJournalTailParams {
+                    session_id: "s2".into(),
+                    max_messages: 5,
+                })
+                .unwrap()
+                .events
+                .len(),
+            0
+        );
+        assert_eq!(
+            store
+                .tail(SessionJournalTailParams {
+                    session_id: "s1".into(),
                     max_messages: 5,
                 })
                 .unwrap()

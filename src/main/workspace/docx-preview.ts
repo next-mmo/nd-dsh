@@ -1,13 +1,31 @@
-import mammoth from 'mammoth'
-import sanitizeHtml from 'sanitize-html'
-import { unzipSync } from 'fflate'
-
 export const MAX_DOCX_BYTES = 2 * 1024 * 1024
 const MAX_EXPANDED_BYTES = 16 * 1024 * 1024
+
+let docxDepsPromise:
+  | Promise<{
+      mammoth: typeof import('mammoth')
+      sanitizeHtml: typeof import('sanitize-html')
+      unzipSync: typeof import('fflate').unzipSync
+    }>
+  | undefined
+
+function loadDocxDeps() {
+  docxDepsPromise ??= Promise.all([
+    import('mammoth'),
+    import('sanitize-html'),
+    import('fflate'),
+  ]).then(([mammothModule, sanitizeModule, fflateModule]) => ({
+    mammoth: mammothModule.default ?? mammothModule,
+    sanitizeHtml: (sanitizeModule.default ?? sanitizeModule) as typeof import('sanitize-html'),
+    unzipSync: fflateModule.unzipSync,
+  }))
+  return docxDepsPromise
+}
 
 /** Semantic DOCX preview, with no Office engine, network access, or active HTML. */
 export async function previewDocx(buffer: Buffer): Promise<{ content: string; previewHtml: string }> {
   if (buffer.length > MAX_DOCX_BYTES) throw new Error('DOCX preview supports files up to 2 MiB.')
+  const { mammoth, sanitizeHtml, unzipSync } = await loadDocxDeps()
   let entries = 0
   let expandedBytes = 0
   let hasDocument = false

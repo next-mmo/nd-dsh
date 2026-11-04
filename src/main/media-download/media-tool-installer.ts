@@ -3,7 +3,6 @@ import { createReadStream } from 'node:fs'
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import process from 'node:process'
-import { unzipSync } from 'fflate'
 import type {
   MediaDownloadSetupView,
   MediaToolView,
@@ -416,7 +415,10 @@ async function writeAll(handle: Awaited<ReturnType<typeof fs.open>>, data: Uint8
 }
 
 async function extractPinnedExecutable(tool: PinnedMediaTool, archivePath: string, targetPath: string): Promise<void> {
-  const archive = await fs.readFile(archivePath)
+  const [{ unzipSync }, archive] = await Promise.all([
+    import('fflate'),
+    fs.readFile(archivePath),
+  ])
   let entries = 0
   let found = false
   const extracted = unzipSync(archive, {

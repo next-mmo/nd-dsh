@@ -142,6 +142,7 @@ and in the product.
 | `accountmgt.accounts.list` / `.create` / `.update` / `.delete` | `accountmgt.read` / `accountmgt.write` | The Account Manager metadata store (service, email, mailbox/site links, status); Personal only. It never stores passwords or verification codes. |
 | `browser.openUrl` / `browser.search` | `browser.navigate` | Navigate the visible embedded ND browser |
 | `browser.openExternal` | `browser.openExternal` | Open an http(s) URL in the system browser |
+| `skill.compose` | `chat.compose` | A user prepares a slash-skill request in the existing ND chat composer. The skill must exist in ND's current catalog. The request remains unsent and existing draft text is preserved; this host never executes the skill or changes the selected engine. |
 | `browser.translate` | `browser.navigate` | Translate text in the ND browser (see §7 for providers and result states) |
 | `browser.translate.history` / `browser.translate.history.clear` | `translate.history` | Read or clear translation history |
 | `os.openTarget` | `os.launch` | Pick and open an app, file, or folder (user selection only; no shell strings) |

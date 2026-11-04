@@ -1,11 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import hljs from 'highlight.js/lib/common'
 import type { WorkspaceFile } from '../../../shared/contracts'
 import { fileAccent } from '../lib/file-accents'
 import { FileIcon, SparkIcon } from './Icons'
 import { SelectionPromptMenu, type SelectionAction } from './SelectionPromptMenu'
 import { MarkdownLite } from './MarkdownLite'
 import { cn } from '../lib/utils'
+
+type HljsApi = typeof import('highlight.js/lib/common').default
+
+let hljsPromise: Promise<HljsApi> | undefined
+const MAX_HIGHLIGHT_CHARS = 200_000
+
+function loadHljs(): Promise<HljsApi> {
+  hljsPromise ??= import('highlight.js/lib/common').then((module) => module.default)
+  return hljsPromise
+}
 
 interface EditorPaneProps {
   file: WorkspaceFile | null
@@ -29,12 +38,18 @@ function languageFromPath(path: string): string {
   if (name.endsWith('.html') || name.endsWith('.htm') || name.endsWith('.svg')) return 'xml'
   if (name.endsWith('.md') || name.endsWith('.markdown')) return 'markdown'
   if (name.endsWith('.yml') || name.endsWith('.yaml')) return 'yaml'
+  if (name.endsWith('.rs')) return 'rust'
+  if (name.endsWith('.py')) return 'python'
+  if (name.endsWith('.sh') || name.endsWith('.bash') || name.endsWith('.zsh')) return 'bash'
+  if (name.endsWith('.sql')) return 'sql'
+  if (name.endsWith('.toml') || name.endsWith('.ini')) return 'ini'
   return 'plaintext'
 }
 
 export function EditorPane({ file, onAgentPrompt, onOpenLink, onError }: EditorPaneProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [viewMode, setViewMode] = useState<'code' | 'preview'>('code')
+  const [hljs, setHljs] = useState<HljsApi | null>(null)
 
   const isMarkdown = file?.relativePath.toLowerCase().endsWith('.md') ?? false
 
@@ -43,17 +58,27 @@ export function EditorPane({ file, onAgentPrompt, onOpenLink, onError }: EditorP
     setViewMode('code')
   }, [file?.relativePath])
 
+  useEffect(() => {
+    if (!file || file.previewHtml !== undefined || hljs) return
+    let alive = true
+    void loadHljs().then((loaded) => {
+      if (alive) setHljs(() => loaded)
+    })
+    return () => { alive = false }
+  }, [file, hljs])
+
   const highlighted = useMemo(() => {
-    if (!file) return ''
+    if (!file || !hljs || file.previewHtml !== undefined || file.content.length > MAX_HIGHLIGHT_CHARS) return null
     const language = languageFromPath(file.relativePath)
+    if (language === 'plaintext') return null
     try {
       return hljs.getLanguage(language)
         ? hljs.highlight(file.content, { language, ignoreIllegals: true }).value
-        : hljs.highlightAuto(file.content).value
+        : null
     } catch {
-      return hljs.highlightAuto(file.content).value
+      return null
     }
-  }, [file])
+  }, [file, hljs])
 
   if (!file) {
     return (
@@ -149,7 +174,7 @@ export function EditorPane({ file, onAgentPrompt, onOpenLink, onError }: EditorP
                 {lineNumbers}
               </div>
               <pre className="m-0 block min-w-0 flex-1 overflow-visible whitespace-pre pt-[13px] pr-[18px] pb-10 font-mono text-[11px]/[1.62] text-soft">
-                <code dangerouslySetInnerHTML={{ __html: highlighted }} />
+                {highlighted !== null ? <code dangerouslySetInnerHTML={{ __html: highlighted }} /> : <code>{file.content}</code>}
               </pre>
             </div>
           </div>

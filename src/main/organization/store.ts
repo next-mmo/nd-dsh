@@ -56,6 +56,7 @@ export class OrganizationStore {
   private saveChain: Promise<void> = Promise.resolve()
   private pendingSave: Promise<void> | undefined
   private value: DurableOrganizationSnapshot = clone(EMPTY)
+  private readonly activeRunsBySession = new Map<string, OrganizationRun>()
   private onChanged: ((state: OrganizationSnapshot) => void) | undefined
 
   constructor(private readonly filePath: string) {}
@@ -202,8 +203,9 @@ export class OrganizationStore {
 
   async runBySession(sessionId: string): Promise<OrganizationRun | undefined> {
     await this.load()
-    const found = this.value.runs.find((item) => item.sessionId === sessionId && item.status === 'running')
-    return found ? clone(found) : undefined
+    const found = this.activeRunsBySession.get(sessionId)
+      ?? this.value.runs.find((item) => item.sessionId === sessionId && item.status === 'running')
+    return found ? { ...found } : undefined
   }
 
   async executionAttemptCount(taskId: string): Promise<number> {
@@ -264,6 +266,7 @@ export class OrganizationStore {
       startedAt: Date.now(),
     }
     this.value.runs.unshift(run)
+    this.activeRunsBySession.set(sessionId, run)
     // Cost measurement starts where the run does, so a run that never reaches a
     // terminal state is still visible as unfinished instead of absent.
     taskMetricsRecorder()?.beginRun({ runId: run.id, sessionId, kind, ...(taskId ? { taskId } : {}), startedAt: run.startedAt })
@@ -290,11 +293,16 @@ export class OrganizationStore {
   async completeRun(runId: string, output?: string, error?: string): Promise<void> {
     await this.load()
     const run = must(this.value.runs.find((item) => item.id === runId), 'Organization run')
+    this.activeRunsBySession.delete(run.sessionId)
     run.status = error ? 'failed' : 'completed'
     if (output) run.output = output.slice(0, 40_000)
     if (error) run.error = error.slice(0, 8_000)
     run.completedAt = Date.now()
     taskMetricsRecorder()?.finishRun(run.id, run.status === 'failed' ? run.error ?? 'Organization run failed.' : undefined)
+    if (this.value.runs.length > 500) {
+      const activeIds = new Set([...this.activeRunsBySession.values()].map((r) => r.id))
+      this.value.runs = this.value.runs.filter((r, idx) => idx < 500 || activeIds.has(r.id))
+    }
     await this.save()
   }
 
@@ -541,6 +549,7 @@ export class OrganizationStore {
     let primaryError: unknown
     try {
       this.value = await this.readSnapshot(this.filePath)
+      this.rebuildActiveRuns()
       this.loaded = true
       return
     } catch (error) {
@@ -550,16 +559,25 @@ export class OrganizationStore {
     const backupPath = this.backupPath()
     try {
       this.value = await this.readSnapshot(backupPath)
+      this.rebuildActiveRuns()
       this.loaded = true
       console.warn(`Recovered organization state from backup after primary load failed: ${errorMessage(primaryError)}`)
       await this.save()
       return
     } catch (backupError) {
       if (isMissing(primaryError) && isMissing(backupError)) {
+        this.rebuildActiveRuns()
         this.loaded = true
         return
       }
       throw new Error(`Organization state could not be loaded. Primary: ${errorMessage(primaryError)}. Backup: ${errorMessage(backupError)}.`)
+    }
+  }
+
+  private rebuildActiveRuns(): void {
+    this.activeRunsBySession.clear()
+    for (const run of this.value.runs) {
+      if (run.status === 'running') this.activeRunsBySession.set(run.sessionId, run)
     }
   }
 
@@ -578,8 +596,7 @@ export class OrganizationStore {
     if (this.pendingSave) return this.pendingSave
     const write = this.saveChain.catch(() => undefined).then(async () => {
       this.pendingSave = undefined
-      const snapshot = clone(this.value)
-      const serialized = `${JSON.stringify(snapshot)}\n`
+      const serialized = `${JSON.stringify(this.value)}\n`
       await fs.mkdir(dirname(this.filePath), { recursive: true })
       await writeAtomic(this.filePath, serialized)
       try {
@@ -587,7 +604,7 @@ export class OrganizationStore {
       } catch (error) {
         console.warn('Failed to persist organization backup:', error)
       }
-      this.onChanged?.(snapshot)
+      this.onChanged?.(this.value)
     })
     this.pendingSave = write
     this.saveChain = write

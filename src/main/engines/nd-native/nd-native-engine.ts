@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync } from 'node:fs'
 import { createInterface } from 'node:readline'
 import type { DshEventFrame, EngineModelOption, EngineSessionSummary, EngineSessionTranscript, SessionEventEnvelope } from '../../../shared/contracts.js'
 import { ND_NATIVE_ENGINE_ID } from '../../../shared/coding-engines.js'
@@ -45,6 +45,16 @@ export class NdNativeEngine {
   setEmitter(emit: (frame: DshEventFrame) => void): void { this.onEvent = emit }
 
   ready(): boolean { return existsSync(this.options.binaryPath ?? ndAgentBinPath()) }
+
+  hasPersistedSessions(): boolean {
+    try {
+      return readdirSync(this.options.dataDir, { withFileTypes: true }).some(
+        (entry) => entry.isDirectory() && entry.name.startsWith('nd-native-'),
+      )
+    } catch {
+      return false
+    }
+  }
 
   ownsSession(sessionId: string): boolean {
     return sessionId.startsWith('nd-native-') || this.sessions.has(sessionId)

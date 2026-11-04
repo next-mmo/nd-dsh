@@ -155,6 +155,7 @@ export class BrowserController {
   private activeTabIdValue: string
   private bounds: Rectangle = { x: 0, y: 0, width: 0, height: 0 }
   private visible = false
+  private agentBindingRequested = false
   private onStateChanged: ((state: BrowserState) => void) | undefined
   private onTabClosed: ((tabId: string) => void) | undefined
   private binding: Promise<void> | undefined
@@ -477,11 +478,12 @@ export class BrowserController {
 
   async initialize(initialUrl = DEFAULT_BROWSER_URL): Promise<void> {
     await this.permissionStore.initialize()
+    await this.agentBrowser.prepareConfig()
     try {
       await this.navigate(initialUrl)
     } catch {
     }
-    await this.ensureAgentBinding()
+    if (this.visible || this.agentBindingRequested) await this.ensureAgentBinding()
   }
 
   setStateListener(listener: (state: BrowserState) => void): void {
@@ -554,7 +556,7 @@ export class BrowserController {
     this.agentBrowser.resetBinding()
     this.syncViewVisibility()
     this.emitState()
-    void this.ensureAgentBinding()
+    if (this.visible || this.agentBindingRequested) void this.ensureAgentBinding()
     return this.describeTab(tab)
   }
 
@@ -591,7 +593,7 @@ export class BrowserController {
       this.lastBoundTarget = undefined
       this.agentBrowser.resetBinding()
       this.syncViewVisibility()
-      void this.ensureAgentBinding()
+      if (this.visible || this.agentBindingRequested) void this.ensureAgentBinding()
     }
     this.emitState()
     return true
@@ -645,6 +647,10 @@ export class BrowserController {
     this.syncViewVisibility()
     if (visible && this.extensionPopup && !this.extensionPopup.contents.isDestroyed()) {
       this.extensionPopup.contents.focus()
+    }
+    if (visible) {
+      this.agentBindingRequested = true
+      void this.ensureAgentBinding()
     }
     this.emitState()
   }
@@ -1050,6 +1056,7 @@ export class BrowserController {
   }
 
   async ensureAgentReady(): Promise<void> {
+    this.agentBindingRequested = true
     await this.ensureAgentBinding()
     const status = this.agentBrowser.status()
     if (status.state !== 'ready') {
@@ -1248,7 +1255,7 @@ export class BrowserController {
       tab.state.loading = false
       this.refreshNavigationState(tab)
       this.emitState()
-      if (tab.id === this.activeTabIdValue) void this.ensureAgentBinding()
+      if (tab.id === this.activeTabIdValue && (this.visible || this.agentBindingRequested)) void this.ensureAgentBinding()
     })
     contents.on('did-navigate', (_event, url) => {
       tab.state.url = url

@@ -112,6 +112,7 @@ import { OsToolkitScheduler } from './os-toolkit-scheduler.js'
 import { ND_TRANSLATE_ID, ND_TRANSLATE_MAX_TEXT, isLlmProvider } from '../../shared/nd-translate.js'
 import { ND_WEBVIEW_URL_SCHEME } from '../../shared/extension-webview.js'
 import type { ProviderStore } from '../providers.js'
+import { registerSkillComposeHost, type SkillCatalogPort } from './skill-compose-host.js'
 
 export interface NdOrganizationPortFull extends NdOrganizationPort {
   mutate(mutation: OrganizationMutation): Promise<unknown>
@@ -129,6 +130,7 @@ export interface NdIpcDependencies {
   host: NativeHostRegistry
   organization: NdOrganizationPortFull
   browser: Pick<BrowserController, 'navigate'> & TranslateBrowserPort
+  skills?: SkillCatalogPort
   /** Multi-tab platform surface for extension hosts that manage real browser tabs. */
   browserPlatform?: Pick<BrowserPlatformService, 'createTab' | 'activateTab' | 'closeTab' | 'tabs'>
   /** nd-core-backed spawner for the media downloader; no background policy is injected. */
@@ -189,6 +191,7 @@ const PAY_GUARD_ID = 'nd.pay-guard'
 const DISK_CLEANER_ID = 'nd.disk-cleaner'
 const API_STUDIO_ID = 'nd.api-studio'
 const COMPUTER_USE_ID = 'nd.computer-use'
+const ANTIGRAVITY_PATCH_ID = 'nd.antigravity-patch'
 const YOUTUBE_DOWNLOADER_ID = 'nd.youtube-downloader'
 export const NINE_ROUTER_ID = 'nd.9router'
 export const EMULATOR_ID = 'nd.emulator'
@@ -219,6 +222,7 @@ const AVAILABLE_PACKAGES: readonly { id: string; path: () => string }[] = app.is
     { id: DISK_CLEANER_ID, path: diskCleanerPackagePath },
     { id: API_STUDIO_ID, path: apiStudioPackagePath },
     { id: COMPUTER_USE_ID, path: computerUsePackagePath },
+    { id: ANTIGRAVITY_PATCH_ID, path: antigravityPatchPackagePath },
     { id: YOUTUBE_DOWNLOADER_ID, path: youtubeDownloaderPackagePath },
     { id: NINE_ROUTER_ID, path: nineRouterPackagePath },
     { id: EMULATOR_ID, path: emulatorPackagePath },
@@ -343,6 +347,10 @@ function computerUsePackagePath(): string {
   return app.isPackaged
     ? join(process.resourcesPath, 'nd-extensions', 'nd-computer-use')
     : join(app.getAppPath(), 'extensions', 'nd-computer-use')
+}
+
+function antigravityPatchPackagePath(): string {
+  return join(app.getAppPath(), 'extensions', 'antigravity-patch')
 }
 
 function emulatorPackagePath(): string {
@@ -490,6 +498,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
           diskCleanerCatalogView(state),
           apiStudioCatalogView(state),
           computerUseCatalogView(state),
+          antigravityPatchCatalogView(state),
           youtubeDownloaderCatalogView(state),
           nineRouterCatalogView(state),
           emulatorCatalogView(state),
@@ -846,6 +855,10 @@ export function registerNativeHostHandlers(
   mediaDownload?: MediaDownloadService | null,
 ): { dispose: () => void } {
   const { host, providers } = deps
+  registerSkillComposeHost(host, deps.skills, (request) => {
+    if (deps.window.isDestroyed()) throw new Error('ND window is unavailable')
+    deps.window.webContents.send(ND_EXTENSIONS_IPC.skillComposeEvent, request)
+  })
   const emulator = new EmulatorService()
   host.register('ninerouter.status', async () => {
     const state = await deps.nineRouterManaged?.state()
@@ -3307,6 +3320,14 @@ async function computerUseCatalogView(state: NdExtensionsStateView): Promise<NdA
     name: 'ND Computer Use',
     description: 'Read a running app window as a screenshot plus an indexed accessibility tree. Read-only: it cannot click, type, launch, or activate anything.',
     permissions: ['computer.read'],
+  })
+}
+
+async function antigravityPatchCatalogView(state: NdExtensionsStateView): Promise<NdAvailablePackageView> {
+  return packageCatalogView(state, ANTIGRAVITY_PATCH_ID, antigravityPatchPackagePath(), {
+    name: 'Antigravity Patch',
+    description: 'Prepare Help, Status, Apply, Reset, or Adopt requests in ND chat using the Antigravity patch skill. Targets the installed Antigravity app.',
+    permissions: ['chat.compose'],
   })
 }
 

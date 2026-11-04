@@ -5,9 +5,34 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
+
+static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+static CLIENT: OnceLock<Client> = OnceLock::new();
+
+fn shared_runtime() -> &'static tokio::runtime::Runtime {
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(4)
+            .enable_all()
+            .build()
+            .expect("create shared ND model runtime")
+    })
+}
+
+fn shared_client() -> &'static Client {
+    CLIENT.get_or_init(|| {
+        Client::builder()
+            .connect_timeout(Duration::from_secs(15))
+            .timeout(Duration::from_secs(180))
+            .pool_idle_timeout(Duration::from_secs(90))
+            .pool_max_idle_per_host(10)
+            .build()
+            .expect("create shared ND model client")
+    })
+}
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -229,11 +254,7 @@ pub fn complete(
     cancel: Arc<AtomicBool>,
     mut on_text: impl FnMut(&str),
 ) -> Result<ModelTurn> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .context("create ND model runtime")?;
-    runtime.block_on(complete_async(route, messages, &cancel, &mut on_text))
+    shared_runtime().block_on(complete_async(route, messages, &cancel, &mut on_text))
 }
 
 async fn complete_async(
@@ -245,10 +266,7 @@ async fn complete_async(
     if cancel.load(Ordering::SeqCst) {
         bail!("ND agent turn canceled");
     }
-    let client = Client::builder()
-        .connect_timeout(Duration::from_secs(15))
-        .timeout(Duration::from_secs(180))
-        .build()?;
+    let client = shared_client();
     let url = endpoint(route)?;
     let body = request_body(route, messages)?;
     let mut last_error = None;

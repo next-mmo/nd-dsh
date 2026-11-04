@@ -777,8 +777,11 @@ export class OrganizationOrchestrator {
           : text
         this.finalText.set(sessionId, accumulated)
         if (!this.structuredHandled.has(sessionId)) {
-          if (run.kind === 'pm-plan') await this.handlePlan(run.projectId, sessionId, accumulated)
-          if (run.kind === 'task-review' && run.taskId) await this.handleReview(run.taskId, run.projectId, sessionId, accumulated)
+          const mayCompleteStructured = frame.event.type === 'assistant/message' || text.includes('}') || text.includes('>')
+          if (mayCompleteStructured) {
+            if (run.kind === 'pm-plan') await this.handlePlan(run.projectId, sessionId, accumulated)
+            if (run.kind === 'task-review' && run.taskId) await this.handleReview(run.taskId, run.projectId, sessionId, accumulated)
+          }
         }
       }
       return

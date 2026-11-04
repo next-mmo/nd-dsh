@@ -10,7 +10,9 @@ const DSH_PARTITION = 'persist:nd-dsh-ui'
  * visible BrowserPane through the pinned agent-browser MCP.
  */
 export class DshSurfaceController {
-  private readonly view: WebContentsView
+  private view: WebContentsView | undefined
+  private bounds: Rectangle = { x: 0, y: 0, width: 0, height: 0 }
+  private backgroundColor: string | undefined
   private stateValue: DshViewState
   private onStateChanged?: (state: DshViewState) => void
   private targetUrl: string | undefined
@@ -18,7 +20,12 @@ export class DshSurfaceController {
   private loaded = false
 
   constructor(private readonly window: BrowserWindow) {
-    this.view = new WebContentsView({
+    this.stateValue = { ready: false, loading: false, title: 'ND Harness', visible: false }
+  }
+
+  private ensureView(): WebContentsView {
+    if (this.view) return this.view
+    const view = new WebContentsView({
       webPreferences: {
         partition: DSH_PARTITION,
         nodeIntegration: false,
@@ -28,12 +35,13 @@ export class DshSurfaceController {
         allowRunningInsecureContent: false,
       },
     })
-    this.window.contentView.addChildView(this.view)
-    this.view.setBounds({ x: 0, y: 0, width: 0, height: 0 })
-    this.view.setVisible(false)
-
-    this.stateValue = { ready: false, loading: false, title: 'ND Harness', visible: false }
-    this.installListeners()
+    this.window.contentView.addChildView(view)
+    view.setBounds(this.bounds)
+    if (this.backgroundColor) view.setBackgroundColor(this.backgroundColor)
+    view.setVisible(this.stateValue.visible)
+    this.view = view
+    this.installListeners(view)
+    return view
   }
 
   setStateListener(listener: (state: DshViewState) => void): void {
@@ -71,19 +79,25 @@ export class DshSurfaceController {
       width: Math.max(0, Math.round(bounds.width)),
       height: Math.max(0, Math.round(bounds.height)),
     }
-    this.view.setBounds(safe)
+    this.bounds = safe
+    this.view?.setBounds(safe)
   }
 
   async setVisible(visible: boolean): Promise<void> {
-    this.view.setVisible(visible)
     this.stateValue.visible = visible
-    if (visible && !this.loaded) await this.load()
+    if (visible) {
+      const view = this.ensureView()
+      view.setVisible(true)
+      if (!this.loaded) await this.load()
+    } else {
+      this.view?.setVisible(false)
+    }
     this.emitState()
   }
 
   async reload(): Promise<void> {
     if (!this.targetUrl) return
-    if (!this.loaded) {
+    if (!this.loaded || !this.view) {
       await this.load()
       return
     }
@@ -91,10 +105,12 @@ export class DshSurfaceController {
   }
 
   setBackgroundColor(color: string): void {
-    this.view.setBackgroundColor(color)
+    this.backgroundColor = color
+    this.view?.setBackgroundColor(color)
   }
 
   destroy(): void {
+    if (!this.view) return
     if (!this.window.isDestroyed()) {
       try {
         this.window.contentView.removeChildView(this.view)
@@ -103,23 +119,25 @@ export class DshSurfaceController {
       }
     }
     if (!this.view.webContents.isDestroyed()) this.view.webContents.close()
+    this.view = undefined
   }
 
   private async load(): Promise<void> {
     if (!this.loadUrl || this.loaded) return
+    const view = this.ensureView()
     this.loaded = true
     try {
       // New DSH releases mint their HttpOnly browser cookie by redirecting
       // this tokenized root URL to a clean `/`. The token never enters state
       // sent to the renderer; state.url remains the loopback origin above.
-      await this.view.webContents.loadURL(this.loadUrl)
+      await view.webContents.loadURL(this.loadUrl)
     } catch {
       this.loaded = false
     }
   }
 
-  private installListeners(): void {
-    const contents = this.view.webContents
+  private installListeners(view: WebContentsView): void {
+    const contents = view.webContents
     contents.setWindowOpenHandler(({ url }) => {
       void this.openExternal(url)
       return { action: 'deny' }

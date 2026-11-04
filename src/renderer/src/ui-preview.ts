@@ -678,6 +678,7 @@ const desktopApi: DesktopApi = {
     deny: async () => undefined,
     onChanged: () => () => undefined,
     onBrowserFocus: () => () => undefined,
+    onSkillCompose: () => () => undefined,
   },
   home: {
     state: async () => previewHomeState(),

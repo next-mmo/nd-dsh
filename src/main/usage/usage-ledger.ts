@@ -443,8 +443,13 @@ export class UsageLedger {
       return
     }
     let skipped = 0
-    for (const raw of text.split('\n')) {
-      if (!raw.trim()) continue
+    let start = 0
+    while (start < text.length) {
+      let end = text.indexOf('\n', start)
+      if (end === -1) end = text.length
+      const raw = text.slice(start, end).trim()
+      start = end + 1
+      if (!raw) continue
       const line = parseLedgerLine(raw)
       if (line === undefined) {
         skipped += 1

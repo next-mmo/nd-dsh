@@ -24,6 +24,8 @@ import { engineEnvironment } from '../agent-cli/agent-cli-support.js'
 const TRANSCRIPT_EVENT_TYPES = new Set(['user/message', 'assistant/message', 'agent/reasoning', 'tool/call', 'tool/result'])
 const LOCAL_TRANSCRIPT_EVENTS = 32
 const RESULT_SNIPPET_MAX_CHARS = 4_000
+const IDLE_CHILD_TTL_MS = 45_000
+const MAX_WARM_IDLE_CHILDREN = 3
 
 interface TurnOutcome {
   status: string
@@ -73,6 +75,7 @@ interface AntigravitySession {
   transcript: SessionEventEnvelope[]
   turnSettled?: Deferred<TurnOutcome>
   child?: ChildProcess
+  idleTimer?: NodeJS.Timeout
   /** Partial stdout line of the active child. */
   buffer: string
   /** Final response text is re-emitted by `result`; skip the duplicate. */
@@ -259,6 +262,7 @@ export class AntigravityEngine {
     }
     if (!session) throw new Error(`${ANTIGRAVITY_ENGINE_ID} session could not be created`)
     const activeSession = session
+    this.cancelIdleTimer(activeSession)
     if (activeSession.running) throw new Error('This Antigravity chat already has an active turn')
     if (options.cwd !== undefined) activeSession.cwd = options.cwd
     if (options.permissionMode !== undefined && options.permissionMode !== activeSession.permissionMode) {
@@ -325,6 +329,7 @@ export class AntigravityEngine {
       : [...this.sessions.values()].filter((item) => item.running)
     for (const session of targets) {
       if (!session) continue
+      this.cancelIdleTimer(session)
       const child = session.child
       if (!child) continue
       delete session.child
@@ -340,6 +345,7 @@ export class AntigravityEngine {
     this.stopping = true
     const children: ChildProcess[] = []
     for (const session of this.sessions.values()) {
+      this.cancelIdleTimer(session)
       if (session.child) {
         children.push(session.child)
         delete session.child
@@ -359,6 +365,7 @@ export class AntigravityEngine {
    * Antigravity-side context stay the same conversation.
    */
   private ensureChild(session: AntigravitySession): ChildProcess {
+    this.cancelIdleTimer(session)
     const existing = session.child
     if (existing && existing.exitCode === null && existing.signalCode === null) return existing
 
@@ -538,10 +545,52 @@ export class AntigravityEngine {
     const wasActive = session.running || session.turnSettled !== undefined
     if (!wasActive) return
     this.finishAssistantResponse(session)
+    delete session.lastAssistantText
+    delete session.lastAssistantStepIndex
+    delete session.assistantResponse
+    delete session.lastToolError
+    session.turnAssistantText = ''
     session.running = false
     delete session.turnSettled
     session.updatedAt = Date.now()
     this.emitFrame({ kind: 'session-status', sessionId: session.sessionId, running: false })
+    this.scheduleIdleEviction(session)
+  }
+
+  private cancelIdleTimer(session: AntigravitySession): void {
+    if (session.idleTimer) {
+      clearTimeout(session.idleTimer)
+      delete session.idleTimer
+    }
+  }
+
+  private evictIdleChild(session: AntigravitySession): void {
+    this.cancelIdleTimer(session)
+    const child = session.child
+    if (!child || session.running) return
+    delete session.child
+    this.options.log?.(`[antigravity] evicting idle child process for session ${session.sessionId}`)
+    void killProcessTree(child).catch(() => undefined)
+  }
+
+  private scheduleIdleEviction(session: AntigravitySession): void {
+    this.cancelIdleTimer(session)
+    if (!session.child || session.running) return
+
+    const idleSessions = [...this.sessions.values()].filter(
+      (s) => s.child && !s.running && s !== session
+    )
+    if (idleSessions.length >= MAX_WARM_IDLE_CHILDREN) {
+      idleSessions.sort((a, b) => a.updatedAt - b.updatedAt)
+      while (idleSessions.length >= MAX_WARM_IDLE_CHILDREN) {
+        const oldest = idleSessions.shift()
+        if (oldest) this.evictIdleChild(oldest)
+      }
+    }
+
+    session.idleTimer = setTimeout(() => {
+      this.evictIdleChild(session)
+    }, IDLE_CHILD_TTL_MS)
   }
 
   private recordUserMessage(session: AntigravitySession, text: string): void {

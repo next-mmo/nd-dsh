@@ -64,6 +64,7 @@ const EXTENSION_ACCENTS: Record<string, { icon: LucideIcon; tileClassName: strin
   'nd.disk-cleaner': { icon: HardDrive, tileClassName: 'border-cyan-500/25 bg-cyan-500/15 text-cyan-500' },
   'nd.api-studio': { icon: Braces, tileClassName: 'border-fuchsia-500/25 bg-fuchsia-500/15 text-fuchsia-500' },
   'nd.computer-use': { icon: MonitorPlay, tileClassName: 'border-lime-500/25 bg-lime-500/15 text-lime-500' },
+  'nd.antigravity-patch': { icon: Puzzle, tileClassName: 'border-blue-500/25 bg-blue-500/15 text-blue-500' },
   'nd.youtube-downloader': { icon: Download, tileClassName: 'border-red-500/25 bg-red-500/15 text-red-500' },
   'nd.9router': { icon: Network, tileClassName: 'border-orange-500/25 bg-orange-500/15 text-orange-500' },
   'nd.emulator': { icon: Smartphone, tileClassName: 'border-emerald-500/25 bg-emerald-500/15 text-emerald-500' },
@@ -3869,6 +3870,7 @@ const PERMISSION_LABELS: Record<string, string> = {
   'vault.write': 'Create and delete vault entries',
   'workflow.read': 'Read the project task board',
   'chat.start': 'Start chats as you',
+  'chat.compose': 'Prepare skill requests in chat',
 }
 
 function describePermissions(permissions: string[]): string {

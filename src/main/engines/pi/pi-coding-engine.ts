@@ -39,6 +39,8 @@ import {
 const LOCAL_TRANSCRIPT_EVENTS = 32
 const MODELS_CACHE_TTL_MS = 5 * 60_000
 const COMMAND_TIMEOUT_MS = 30_000
+const IDLE_CHILD_TTL_MS = 45_000
+const MAX_WARM_IDLE_CHILDREN = 3
 
 const PROVIDER_ENV_MAP: Record<string, string> = {
   deepseek: 'DEEPSEEK_API_KEY',
@@ -85,6 +87,7 @@ interface PiSession {
   transcript: SessionEventEnvelope[]
   turnSettled?: Deferred<TurnOutcome>
   child?: ChildProcess
+  idleTimer?: NodeJS.Timeout
   /** In-flight attach work for the active child; awaited before any command. */
   attachPromise?: Promise<void>
   /** Partial stdout line of the active child. */
@@ -311,6 +314,7 @@ export class PiCodingEngine {
     }
     if (!session) throw new Error(`${PI_CODING_ENGINE_ID} session could not be created`)
     const activeSession = session
+    this.cancelIdleTimer(activeSession)
     if (activeSession.running) throw new Error('This Pi chat already has an active turn')
     if (options.cwd !== undefined) activeSession.cwd = options.cwd
     if (options.model !== undefined) activeSession.model = options.model
@@ -366,6 +370,7 @@ export class PiCodingEngine {
       : [...this.sessions.values()].filter((item) => item.running)
     for (const session of targets) {
       if (!session) continue
+      this.cancelIdleTimer(session)
       const child = session.child
       if (!child || child.exitCode !== null || child.signalCode !== null) continue
       child.stdin?.write(`${JSON.stringify({ type: 'abort' })}\n`)
@@ -376,6 +381,7 @@ export class PiCodingEngine {
     this.stopping = true
     const children: ChildProcess[] = []
     for (const session of this.sessions.values()) {
+      this.cancelIdleTimer(session)
       for (const [, waiter] of session.commandWaiters) {
         clearTimeout(waiter.timer)
         waiter.reject(new Error('Pi engine is shutting down.'))
@@ -555,7 +561,7 @@ export class PiCodingEngine {
     } catch {
       // Electron or app data path not ready yet in test harness
     }
-    env.ND_DSH_AGENT_BROWSER_SESSION = session?.sessionId ?? DEFAULT_AGENT_BROWSER_SESSION
+    env.ND_DSH_AGENT_BROWSER_SESSION = DEFAULT_AGENT_BROWSER_SESSION
     env.AGENT_BROWSER_SESSION = env.ND_DSH_AGENT_BROWSER_SESSION
 
     // 2. Synchronize ND providers and credentials into Pi agent dir
@@ -597,6 +603,7 @@ export class PiCodingEngine {
    * not receive commands until the session's `attachPromise` settles.
    */
   private ensureChild(session: PiSession): ChildProcess {
+    this.cancelIdleTimer(session)
     const existing = session.child
     if (existing && existing.exitCode === null && existing.signalCode === null) return existing
 
@@ -862,10 +869,48 @@ export class PiCodingEngine {
     const wasActive = session.running || session.turnSettled !== undefined
     if (!wasActive) return
     delete session.streamingText
+    session.turnAssistantText = ''
     session.running = false
     delete session.turnSettled
     session.updatedAt = Date.now()
     this.emitFrame({ kind: 'session-status', sessionId: session.sessionId, running: false })
+    this.scheduleIdleEviction(session)
+  }
+
+  private cancelIdleTimer(session: PiSession): void {
+    if (session.idleTimer) {
+      clearTimeout(session.idleTimer)
+      delete session.idleTimer
+    }
+  }
+
+  private evictIdleChild(session: PiSession): void {
+    this.cancelIdleTimer(session)
+    const child = session.child
+    if (!child || session.running) return
+    delete session.child
+    this.options.log?.(`[pi] evicting idle child process for session ${session.sessionId}`)
+    void killProcessTree(child).catch(() => undefined)
+  }
+
+  private scheduleIdleEviction(session: PiSession): void {
+    this.cancelIdleTimer(session)
+    if (!session.child || session.running) return
+
+    const idleSessions = [...this.sessions.values()].filter(
+      (s) => s.child && !s.running && s !== session
+    )
+    if (idleSessions.length >= MAX_WARM_IDLE_CHILDREN) {
+      idleSessions.sort((a, b) => a.updatedAt - b.updatedAt)
+      while (idleSessions.length >= MAX_WARM_IDLE_CHILDREN) {
+        const oldest = idleSessions.shift()
+        if (oldest) this.evictIdleChild(oldest)
+      }
+    }
+
+    session.idleTimer = setTimeout(() => {
+      this.evictIdleChild(session)
+    }, IDLE_CHILD_TTL_MS)
   }
 
   private recordUserMessage(session: PiSession, text: string): void {

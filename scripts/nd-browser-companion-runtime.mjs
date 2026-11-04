@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 import { promises as fs } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { connect } from 'node:net'
 import { randomUUID } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 
 const PROTOCOL = 1
 const DISCOVERY = process.env.ND_BROWSER_COMPANION_DISCOVERY?.trim()
@@ -76,6 +77,8 @@ async function request(method, params = {}) {
   }
 }
 
+export { request }
+
 async function main() {
   const [mode, raw] = process.argv.slice(2)
   if (mode === 'connections') {
@@ -95,7 +98,10 @@ async function main() {
   throw new Error('usage: nd-browser-companion-runtime.mjs <connections|call> ...')
 }
 
-void main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error))
-  process.exitCode = 1
-})
+const isCli = process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])
+if (isCli) {
+  void main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error))
+    process.exitCode = 1
+  })
+}

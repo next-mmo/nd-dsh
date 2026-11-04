@@ -117,8 +117,8 @@ class CoreChildProcess extends EventEmitter {
     this.spawnargs = [command, ...args]
     this.stdio = [this.stdin = this.createStdin(), this.stdout, this.stderr, null, null]
 
-    this.disposeOutput = core.onEvent<ProcessOutputEvent>('process.output', (frame) => this.onOutput(frame))
-    this.disposeExit = core.onEvent<ProcessExitEvent>('process.exit', (frame) => this.onExit(frame))
+    this.disposeOutput = core.onResourceEvent<ProcessOutputEvent>('process.output', this.processId, (frame) => this.onOutput(frame))
+    this.disposeExit = core.onResourceEvent<ProcessExitEvent>('process.exit', this.processId, (frame) => this.onExit(frame))
 
     const environment: Record<string, string> = {}
     const childEnvironment = backgroundPolicyPath

@@ -1,4 +1,5 @@
-import { readFileSync, statSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { open, readFile, stat } from 'node:fs/promises'
 import { basename, extname } from 'node:path'
 
 /**
@@ -29,6 +30,7 @@ export class PageGuardError extends Error {
 
 const WRONG_PAGE_MARKER = 'ND_WRONG_PAGE:'
 const MAX_UPLOAD_BYTES = 48 * 1024 * 1024
+const UPLOAD_CHUNK_BYTES = 2 * 1024 * 1024
 const UPLOAD_MEDIA_TYPES: Record<string, string> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -104,30 +106,98 @@ export class ElectronPageDriver implements PageDriver {
 
   async setFilesOnInput(expression: string, files: string[]): Promise<boolean> {
     let total = 0
-    const payload = files.map((path) => {
-      total += statSync(path).size
+    const metas: Array<{ path: string; name: string; type: string; size: number }> = []
+    for (const path of files) {
+      const stats = await stat(path)
+      total += stats.size
       if (total > MAX_UPLOAD_BYTES) throw new Error('Attachments are too large to hand to the page')
-      return {
+      metas.push({
+        path,
         name: basename(path),
         type: UPLOAD_MEDIA_TYPES[extname(path).toLowerCase()] ?? 'application/octet-stream',
-        data: readFileSync(path).toString('base64'),
-      }
-    })
-    return await this.evaluate<boolean>(`(() => {
+        size: stats.size,
+      })
+    }
+
+    if (total <= UPLOAD_CHUNK_BYTES) {
+      const payload = await Promise.all(metas.map(async (meta) => ({
+        name: meta.name,
+        type: meta.type,
+        data: (await readFile(meta.path)).toString('base64'),
+      })))
+      return await this.evaluate<boolean>(`(() => {
+        const input = ${expression};
+        if (!(input instanceof HTMLInputElement) || input.type !== 'file') return false;
+        const transfer = new DataTransfer();
+        for (const file of ${JSON.stringify(payload)}) {
+          const bytes = Uint8Array.from(atob(file.data), (c) => c.charCodeAt(0));
+          transfer.items.add(new File([bytes], file.name, { type: file.type }));
+        }
+        input.files = transfer.files;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      })()`)
+    }
+
+    const stageId = randomUUID()
+    const stageIdJson = JSON.stringify(stageId)
+    const ready = await this.evaluate<boolean>(`(() => {
       const input = ${expression};
       if (!(input instanceof HTMLInputElement) || input.type !== 'file') return false;
-      const transfer = new DataTransfer();
-      for (const file of ${JSON.stringify(payload)}) {
-        const binary = atob(file.data);
-        const bytes = new Uint8Array(binary.length);
-        for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-        transfer.items.add(new File([bytes], file.name, { type: file.type }));
-      }
-      input.files = transfer.files;
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.dispatchEvent(new Event('change', { bubbles: true }));
+      const stages = (window.__ndUploadStages ??= new Map());
+      stages.set(${stageIdJson}, { transfer: new DataTransfer(), parts: [] });
       return true;
     })()`)
+    if (!ready) return false
+
+    const chunkBuffer = Buffer.allocUnsafe(UPLOAD_CHUNK_BYTES)
+    try {
+      for (const meta of metas) {
+        const handle = await open(meta.path, 'r')
+        try {
+          let offset = 0
+          while (offset < meta.size) {
+            const toRead = Math.min(UPLOAD_CHUNK_BYTES, meta.size - offset)
+            const { bytesRead } = await handle.read(chunkBuffer, 0, toRead, offset)
+            if (bytesRead <= 0) break
+            offset += bytesRead
+            const encoded = chunkBuffer.subarray(0, bytesRead).toString('base64')
+            const appended = await this.evaluate<boolean>(`(() => {
+              const stage = window.__ndUploadStages?.get(${stageIdJson});
+              if (!stage) return false;
+              stage.parts.push(Uint8Array.from(atob(${JSON.stringify(encoded)}), (c) => c.charCodeAt(0)));
+              return true;
+            })()`)
+            if (!appended) return false
+          }
+        } finally {
+          await handle.close()
+        }
+        const finalized = await this.evaluate<boolean>(`(() => {
+          const stage = window.__ndUploadStages?.get(${stageIdJson});
+          if (!stage) return false;
+          stage.transfer.items.add(new File(stage.parts, ${JSON.stringify(meta.name)}, { type: ${JSON.stringify(meta.type)} }));
+          stage.parts = [];
+          return true;
+        })()`)
+        if (!finalized) return false
+      }
+
+      return await this.evaluate<boolean>(`(() => {
+        const stage = window.__ndUploadStages?.get(${stageIdJson});
+        window.__ndUploadStages?.delete(${stageIdJson});
+        if (!stage) return false;
+        const input = ${expression};
+        if (!(input instanceof HTMLInputElement) || input.type !== 'file') return false;
+        input.files = stage.transfer.files;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      })()`)
+    } finally {
+      await this.evaluate(`(() => { window.__ndUploadStages?.delete(${stageIdJson}); return true; })()`).catch(() => undefined)
+    }
   }
 
   async screenshot(): Promise<string> {

@@ -1,5 +1,6 @@
 import { foldEvent, foldHistory, messageText, type HistoryEventEnvelope } from '../../../shared/chat-events'
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type CSSProperties, type DragEvent, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react'
+import { prependSkillDraft } from '../../../shared/skill-compose'
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type CSSProperties, type DragEvent, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react'
 import type {
   CodingEngineDescriptor,
   DshEventFrame,
@@ -80,8 +81,9 @@ import {
   TrashIcon,
 } from './Icons'
 import { cn } from '../lib/utils'
-import { TerminalDock } from './TerminalDock'
 import { ProcessLogsDrawer, formatLogTimestamp, type ProcessLogEntry } from './ProcessLogsDrawer'
+
+const TerminalDock = lazy(() => import('./TerminalDock').then((module) => ({ default: module.TerminalDock })))
 import { ProjectServerControl } from './ProjectServerControl'
 import { ChangedFilesCard } from './ChangedFilesCard'
 import { ChatContextPopover } from './ChatContextPopover'
@@ -130,7 +132,7 @@ interface ChatPanelProps {
   onError(message: string): void
   onOpenSettings?(tab?: SettingsTab): void
   onOpenFile?(path: string): void
-  externalPrompt?: { id: string; text: string } | null
+  externalPrompt?: { id: string; text: string; prepend?: boolean } | null
   onExternalPromptConsumed?(): void
   /** One-shot capture (data URL) from a capture shortcut; attached unsent. */
   incomingImage?: { id: string; dataUrl: string } | null
@@ -1108,13 +1110,17 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
 
   useEffect(() => {
     if (!activeSessionId) return
+    if (threads[activeSessionId]) return
     // Engine-backed threads restore from their ND-side transcript instead of
     // the gateway history store.
-    if (engineSessionIds.has(activeSessionId)) return
+    if (engineSessionIds.has(activeSessionId)) {
+      void loadEngineTranscript(activeSessionId)
+      return
+    }
     // Covers the auto-selected session on startup, not just manual clicks,
     // so an existing thread shows its messages and context immediately.
-    if (!threads[activeSessionId]) void loadHistory(activeSessionId)
-  }, [activeSessionId, threads, loadHistory, engineSessionIds])
+    void loadHistory(activeSessionId)
+  }, [activeSessionId, threads, loadHistory, loadEngineTranscript, engineSessionIds])
 
   // Archiving (or leaving the archived view) must not strand the composer on
   // a hidden thread: fall back to the first visible chat, else the draft state.
@@ -1241,9 +1247,11 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
     if (ids.length > 0) void pingProviders(ids)
   }, [modelMenuOpen, models, pingProviders])
 
+  const consumedExternalPromptId = useRef<string | null>(null)
   useEffect(() => {
-    if (!externalPrompt) return
-    setPrompt(externalPrompt.text)
+    if (!externalPrompt || consumedExternalPromptId.current === externalPrompt.id) return
+    consumedExternalPromptId.current = externalPrompt.id
+    setPrompt((current) => externalPrompt.prepend ? prependSkillDraft(current, externalPrompt.text) : externalPrompt.text)
     onExternalPromptConsumed?.()
   }, [externalPrompt, onExternalPromptConsumed])
 
@@ -1444,17 +1452,24 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
     })
   }, [])
 
+  const handleFrameRef = useRef(handleFrame)
+  handleFrameRef.current = handleFrame
+
   // The live gateway stream: fold session events into the active thread, show
   // approvals/questions as cards, and track per-session busy state.
   useEffect(() => {
-    const offEvent = window.ndDsh.dsh.onEvent((frame) => handleFrame(frame))
+    const offEvent = window.ndDsh.dsh.onEvent((frame) => handleFrameRef.current(frame))
     return offEvent
-  })
+  }, [])
+
+  useEffect(() => {
+    void window.ndDsh.dsh.selectSession?.(activeSessionId)
+  }, [activeSessionId])
 
   function handleFrame(frame: DshEventFrame): void {
     const sessionId = frame.sessionId
     const logSessionId = sessionId ?? activeSessionId
-    if (logSessionId) {
+    if (logSessionId && logSessionId === activeSessionId) {
       let logItem: Omit<ProcessLogEntry, 'id' | 'timestamp' | 'time'> | null = null
 
       if (frame.kind === 'session-status') {
@@ -1474,8 +1489,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
             level: 'tool',
             title: `Tool call: ${name}`,
             subtitle: callId ? `ID: ${callId.slice(0, 8)}` : undefined,
-            detail: data?.args ? JSON.stringify(data.args, null, 2) : undefined,
-            payload: data?.args,
+            detail: data?.args ? (typeof data.args === 'string' ? data.args.slice(0, 2000) : JSON.stringify(data.args, null, 2).slice(0, 2000)) : undefined,
           }
         } else if (env.type === 'tool/result') {
           const data = env.data as Record<string, unknown> | undefined
@@ -1485,8 +1499,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
             level: 'tool',
             title: `Tool result: ${name}`,
             subtitle: status,
-            detail: typeof data?.result === 'string' ? data.result : JSON.stringify(data?.result, null, 2),
-            payload: data?.result,
+            detail: typeof data?.result === 'string' ? data.result.slice(0, 2000) : JSON.stringify(data?.result, null, 2).slice(0, 2000),
           }
         } else if (env.type === 'agent/thought') {
           const data = env.data as Record<string, unknown> | undefined
@@ -1494,7 +1507,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
           logItem = {
             level: 'phase',
             title: 'Agent reasoning thought',
-            detail: text,
+            detail: text.slice(0, 2000),
           }
         } else if (env.type === 'agent/status') {
           const data = env.data as Record<string, unknown> | undefined
@@ -1502,7 +1515,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
           logItem = {
             level: 'status',
             title: `Status: ${msg}`,
-            detail: JSON.stringify(data),
+            detail: JSON.stringify(data).slice(0, 2000),
           }
         }
       } else if (frame.kind === 'approval-requested') {
@@ -1574,6 +1587,14 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
         setEngineSessions((current) =>
           current.map((s) => (s.sessionId === sessionId ? { ...s, running: Boolean(frame.running) } : s))
         )
+        if (sessionId !== activeSessionId) {
+          setThreads((current) => {
+            if (!(sessionId in current)) return current
+            const next = { ...current }
+            delete next[sessionId]
+            return next
+          })
+        }
         return
       }
       if (frame.kind === 'session-added' || frame.kind === 'session-removed') {
@@ -1592,12 +1613,30 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
           const steeredText = messageText(data.message) ?? messageText(envelope.data)
           if (steeredText) settleSteering(sessionId, steeredText)
         }
+        if (sessionId !== activeSessionId && !(activeSessionId === null && draftEngineId !== null)) {
+          setThreads((current) => {
+            if (!(sessionId in current)) return current
+            const next = { ...current }
+            delete next[sessionId]
+            return next
+          })
+          return
+        }
         setThreads((current) => {
           const previous = current[sessionId] ?? []
           const next = foldEvent(previous, envelope)
           if (next === previous) return current
           const updated = { ...current, [sessionId]: next }
           if (sessionId === activeSessionId) setChangedFiles(collectChangedFiles(next))
+          const keys = Object.keys(updated)
+          if (keys.length > 12) {
+            const keep = new Set([activeSessionId, ...keys.slice(-10)].filter(Boolean))
+            const pruned: Record<string, ThreadEntry[]> = {}
+            for (const key of keys) {
+              if (keep.has(key)) pruned[key] = updated[key]!
+            }
+            return pruned
+          }
           return updated
         })
       }
@@ -3185,13 +3224,17 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
           ) : null}
         </div>
 
-        <TerminalDock
-          open={switchAccountTerminalOpen || terminalOpen}
-          sessionId={switchAccountTerminalOpen ? 'antigravity-account' : activeSessionId}
-          {...(switchAccountTerminalOpen || !terminalCwd ? {} : { cwd: terminalCwd })}
-          onOpenChange={switchAccountTerminalOpen ? setSwitchAccountTerminalOpen : setTerminalOpen}
-          onError={onError}
-        />
+        {switchAccountTerminalOpen || terminalOpen ? (
+          <Suspense fallback={null}>
+            <TerminalDock
+              open={switchAccountTerminalOpen || terminalOpen}
+              sessionId={switchAccountTerminalOpen ? 'antigravity-account' : activeSessionId}
+              {...(switchAccountTerminalOpen || !terminalCwd ? {} : { cwd: terminalCwd })}
+              onOpenChange={switchAccountTerminalOpen ? setSwitchAccountTerminalOpen : setTerminalOpen}
+              onError={onError}
+            />
+          </Suspense>
+        ) : null}
 
         <ZcodeModelConfigDialog
           open={zcodeConfigOpen}

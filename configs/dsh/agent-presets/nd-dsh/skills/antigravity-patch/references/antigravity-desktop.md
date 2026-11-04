@@ -22,7 +22,13 @@ Reusable code: [../assets/browser-annotate/annotate.js](../assets/browser-annota
 
 The implementation and [recipe](../assets/browser-annotate/recipe.json) are bundled here. Use [the candidate builder](../scripts/build_browser_annotate.py) for a first installation on the inspected compatible build. No original chat folder, globally installed skill, local registry, or existing backup is required to build a candidate. Create machine-local state when actually installing; do not assume a machine already has this patch.
 
-The original one-off installer is deliberately replaced by this portable candidate builder. It did not support patch-stack removal. Consult the shared register before changing an existing installation and preserve `app.asar.orig`. The legacy register path `%LOCALAPPDATA%/Codex/Patches/Antigravity/registry.json` is shared intentionally with Codex to avoid two hosts independently overwriting the same app.
+The original one-off installer is replaced by the portable candidate builder. It did not support patch-stack removal. ND now maintains `%LOCALAPPDATA%/ND/Patches/Antigravity/` independently. Use the CLI's exact-recipe `adopt` workflow for a recognized existing patch; do not copy another manager's history or blindly restore `app.asar.orig`. All managers must recheck the live archive hash before any write, so a stale registry is refused instead of overwriting another manager's changes.
+
+## Inspected 2.29.0 port
+
+The pinned `assets/browser-annotate/2.29.0-block.js` observes native `electronNative.wcvBrowser.onGuestEvent` snapshots and matches tab identity to the current browser tab. It retains the existing ownership-checked isolated-world execution API and uses native elevation/overlay methods for picking and the comment editor. It adds no IPC or Node capability. Inspect the block hash and expected preload hash in `recipes.json` before changing this recipe.
+
+Observed Windows UI checks on November 4, 2026: element selection, rectangle selection, draft insertion with and without a native screenshot, Escape and panel Cancel; test text/attachment removed without sending messages. All 745 packed-entry hashes and JavaScript syntax passed. Switch-during-selection guards were reviewed but not independently exercised. The remaining recipe details describe the original 2.28.2 implementation.
 
 ### Hook and anchors
 

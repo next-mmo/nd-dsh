@@ -113,6 +113,8 @@ interface IpcDependencies {
   coreMedia?: CoreMedia
   /** nd-core-backed clipboard read/write/watcher surface for extensions. */
   coreClipboard?: CoreClipboard
+  /** Notified when the renderer switches active chat session in ChatPanel. */
+  onSessionSelected?: (sessionId: string | undefined) => void
   /** nd-core-backed OS media transport keys, the launcher transport fallback. */
   coreMediaKeys?: CoreMediaKeys
   coreSystemVolume?: CoreSystemVolume
@@ -354,6 +356,7 @@ export function registerIpc(deps: IpcDependencies): () => void {
     host: nativeHost,
     organization: deps.organizationStore,
     browser: deps.browser,
+    skills,
     ...(deps.browserPlatform ? { browserPlatform: deps.browserPlatform } : {}),
     ...(deps.mediaDownloadSpawn ? { spawnProcess: deps.mediaDownloadSpawn } : {}),
     ...(deps.stopProcess ? { stopProcess: deps.stopProcess } : {}),
@@ -1005,6 +1008,9 @@ export function registerIpc(deps: IpcDependencies): () => void {
     return method === 'session.history' && typeof sessionId === 'string' ? deps.engineRouter.restoreMessages(sessionId, result) : result
   })
   handle(IPC.dshRespond, (_event, rpcId, value) => deps.engineRouter.respond(asString(rpcId, 'RPC id', 128), value))
+  handle(IPC.dshSelectSession, (_event, sessionId: unknown) => {
+    deps.onSessionSelected?.(typeof sessionId === 'string' ? sessionId : undefined)
+  })
 
   handle(IPC.surfaceState, () => ({ surface: deps.theme.surface(), view: deps.dshSurface.state() }))
   handle(IPC.surfaceSet, (_event, value) => {

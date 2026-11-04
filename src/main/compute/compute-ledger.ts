@@ -354,8 +354,13 @@ export class ComputeLedger {
     }
 
     let skipped = 0
-    for (const line of raw.split('\n')) {
-      if (!line.trim()) continue
+    let start = 0
+    while (start < raw.length) {
+      let end = raw.indexOf('\n', start)
+      if (end === -1) end = raw.length
+      const line = raw.slice(start, end).trim()
+      start = end + 1
+      if (!line) continue
       try {
         const record = JSON.parse(line) as ComputeUsageRecord
         validateUsageRecord(record)
@@ -365,7 +370,7 @@ export class ComputeLedger {
           this.accountingKnown = false
           continue
         }
-        this.records.set(record.id, clone(record))
+        this.records.set(record.id, record)
       } catch {
         skipped += 1
         this.accountingKnown = false

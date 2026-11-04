@@ -33,7 +33,18 @@ it('discovers and invokes the complete Antigravity skill from a relocated releas
       'references/antigravity-desktop.md', 'references/patch-lifecycle.md',
       'scripts/asar_tool.py', 'scripts/build_browser_annotate.py',
       'scripts/test_asar_tool.py', 'scripts/test_browser_annotate.py',
+      'scripts/patch.py', 'scripts/test_patch_cli.py', 'references/cli.md',
     ].map((path) => readFile(join(directory, path))))
+    const catalog229 = JSON.parse(await readFile(join(directory, 'assets/browser-annotate/recipes.json'), 'utf8'))
+    const port = catalog229.recipes.find((entry: { app_version: string }) => entry.app_version === '2.29.0')
+    const block = await readFile(join(directory, 'assets/browser-annotate', port.block))
+    expect(createHash('sha256').update(block).digest('hex')).toBe(port.block_sha256)
+    const cli = await readFile(join(directory, 'scripts/patch.py'), 'utf8')
+    expect(cli).toContain("local / 'ND/Patches/Antigravity'")
+    expect(cli).not.toMatch(/\.codex|Codex\/Patches|MT-Staff/)
+    const help = await service.prepare('/antigravity-patch -h', catalog.scope, skill.selectionId)
+    expect(help?.prompt).toContain(`Skill resource directory: ${directory}`)
+    expect(help?.prompt).toContain('/antigravity-patch -h')
   } finally {
     // root is the exact directory created by mkdtemp for this test.
     await rm(root, { recursive: true, force: true })

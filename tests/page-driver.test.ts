@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import {
   ElectronPageDriver,
@@ -64,5 +67,34 @@ describe('ElectronPageDriver', () => {
     }
     const driver = new ElectronPageDriver(host, 'tab-1', ['https://gemini.google.com'])
     await expect(driver.evaluate('1 + 1')).rejects.toThrow(/tab for this turn was closed/)
+  })
+
+  it('streams multi-MiB file uploads in bounded chunks instead of a single giant script', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'nd-page-driver-'))
+    try {
+      const largeFile = join(dir, 'large.png')
+      await writeFile(largeFile, Buffer.alloc(3 * 1024 * 1024 + 512, 0x61))
+
+      const expressions: string[] = []
+      const host: IsolatedTabHost = {
+        evaluateInTab: vi.fn(async (_tabId, expression) => {
+          expressions.push(expression)
+          return { ok: true, value: true }
+        }),
+        tabUrl: vi.fn(() => 'https://gemini.google.com/app'),
+        screenshot: vi.fn(async () => ({ dataUrl: '' })),
+      }
+      const driver = new ElectronPageDriver(host, 'tab-1', ['https://gemini.google.com'])
+      const ok = await driver.setFilesOnInput('document.querySelector("input[type=file]")', [largeFile])
+
+      expect(ok).toBe(true)
+      // 1 init + 2 data chunks (2 MiB + 1 MiB) + 1 finalize + 1 commit + 1 finally cleanup = 6 calls
+      expect(expressions.length).toBe(6)
+      for (const expr of expressions) {
+        expect(expr.length).toBeLessThan(3 * 1024 * 1024)
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 })

@@ -9,8 +9,6 @@ import { quarantineFile } from '../logging/log-file.js'
 const MAX_BUFFER = 512 * 1024
 const MAX_INPUT = 64 * 1024
 const PERSIST_DELAY_MS = 120
-/** Output only moves the recovery tail; each persist reads every native tail back from nd-core. */
-const OUTPUT_PERSIST_DELAY_MS = 1_000
 const RESTORE_MARKER = '\r\n\x1b[2m[ND] Restored terminal after desktop restart; the previous shell process ended with the app.\x1b[0m\r\n'
 
 type StoredSession = TerminalSessionState
@@ -327,7 +325,6 @@ export class TerminalManager {
           terminal.outputSeq += 1; terminal.updatedAt = Date.now()
           if (!pty.tailState) append(terminal, data)
           this.options.onOutput?.({ sessionId: terminal.sessionId, terminalId: terminal.id, seq: terminal.outputSeq, data })
-          this.schedulePersist(OUTPUT_PERSIST_DELAY_MS)
         })
         runtime.exit = pty.onExit((event) => {
           void this.handleRuntimeExit(terminal, runtime, event)
@@ -490,7 +487,7 @@ export class TerminalManager {
     this.persistChain = this.persistChain.catch(() => undefined).then(async () => {
       await fs.mkdir(dirname(this.options.storePath), { recursive: true })
       const temp = `${this.options.storePath}.tmp`
-      await fs.writeFile(temp, `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
+      await fs.writeFile(temp, `${JSON.stringify(payload)}\n`, 'utf8')
       await fs.rename(temp, this.options.storePath)
     })
     return this.persistChain

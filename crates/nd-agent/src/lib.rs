@@ -326,7 +326,7 @@ impl AgentServer {
                 if !flag.load(Ordering::SeqCst) {
                     let event = {
                         let mut session = session.lock().unwrap();
-                        session.record(
+                        session.ephemeral_event(
                             "assistant/chunk",
                             json!({ "chunk": {
                             "content": [{ "type": "text", "text": text }] } }),

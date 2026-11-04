@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Antigravity Patch</title><link rel="stylesheet" href="panel.css"></head>
+<body>
+  <main>
+    <header><div class="mark" aria-hidden="true">A</div><div><p class="eyebrow">ANTIGRAVITY · DESKTOP CUSTOMIZATION</p><h1>Your app. Your tools.</h1><p>Add Inspect / Annotate to your installed Antigravity app.</p></div></header>
+    <section class="workflow" aria-label="How it works"><span>1 <b>Choose an action</b></span><span>2 <b>Open in ND chat</b></span><span>3 <b>Review &amp; send</b></span></section>
+    <div class="actions" role="group" aria-label="Patch actions">
+      <button data-operation="help" aria-pressed="true"><strong>Help</strong><span>See how the skill works</span></button>
+      <button data-operation="status" aria-pressed="false"><strong>Status</strong><span>Check the installed patch</span></button>
+      <button data-operation="apply" aria-pressed="false"><strong>Apply / Reapply</strong><span>Add it back after an update</span></button>
+      <button data-operation="reset" aria-pressed="false"><strong>Reset patch</strong><span>Prepare a verified rollback</span></button>
+      <button data-operation="adopt" aria-pressed="false"><strong>Adopt existing patch</strong><span>Manage a known patch with ND</span></button>
+    </div>
+    <section class="request"><div class="request-header"><label for="preview">ND skill request</label><label class="check"><input id="dry-run" type="checkbox" checked> Preview changes first</label></div><textarea id="preview" aria-label="Skill request preview" readonly rows="2"></textarea><p id="detail">Help prepares the skill's usage instructions.</p></section>
+    <footer><div><strong>Runs through ND's own skill</strong><p>Your engine stays selected. Existing draft text is kept.</p></div><button id="compose" disabled>Open in ND Chat <span aria-hidden="true">↗</span></button></footer>
+    <p class="note">This panel prepares an unsent request. Apply and Reset affect Antigravity only after you review and send it in ND chat.</p>
+    <p id="status" role="status" aria-live="polite">Connecting to ND…</p>
+  </main>
+  <script type="module" src="panel.js"></script>
+</body></html>

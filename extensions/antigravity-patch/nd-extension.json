@@ -1,0 +1,22 @@
+{
+  "protocol": "nd.extension/1",
+  "id": "nd.antigravity-patch",
+  "name": "Antigravity Patch",
+  "description": "Add Inspect / Annotate to the installed Antigravity app. Prepare Help, Status, Apply, Reset, and Adopt requests in ND chat using ND's own skill.",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "tools",
+  "contexts": ["personal"],
+  "permissions": ["chat.compose"],
+  "contributions": {
+    "commands": [
+      { "id": "open", "title": "Antigravity Patch", "description": "Open patch controls for the external Antigravity app.", "host": "skill.compose", "openViewId": "panel", "keywords": ["antigravity", "patch", "inspect", "annotate", "apply", "reset", "skill"], "contexts": ["personal"] }
+    ],
+    "views": [
+      { "id": "panel", "title": "Antigravity Patch", "kind": "web", "entry": "ui/index.html", "contexts": ["personal"], "actions": [{ "id": "prepare-request", "title": "Prepare in ND chat", "host": "skill.compose" }] }
+    ],
+    "skills": [
+      { "id": "patch-panel-guide", "title": "Antigravity Patch panel guide", "contexts": ["personal"], "instructions": "This panel targets the separately installed Antigravity desktop app. It prepares a request for ND's bundled /antigravity-patch skill in ND chat. Choose Help, Status, Apply/Reapply, Reset, or Adopt, review the preview, and click Open in ND Chat. Dry run is on by default for Apply, Reset, and Adopt. No request is sent and no app file is changed by this panel. The user reviews and sends the draft separately; their selected ND engine and runtime permissions remain authoritative. This package does not enable ND's browser inspector. For missing skills, open the ND Skills picker; never route to another product's global skill folder." }
+    ]
+  }
+}

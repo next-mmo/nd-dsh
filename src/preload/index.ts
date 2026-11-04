@@ -116,6 +116,11 @@ const ndExtensionsApi: NdExtensionsDesktopApi = {
     ipcRenderer.on(ND_EXTENSIONS_IPC.browserFocusEvent, handler)
     return () => ipcRenderer.removeListener(ND_EXTENSIONS_IPC.browserFocusEvent, handler)
   },
+  onSkillCompose: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, request: import('../shared/skill-compose.js').SkillComposeRequest) => listener(request)
+    ipcRenderer.on(ND_EXTENSIONS_IPC.skillComposeEvent, handler)
+    return () => ipcRenderer.removeListener(ND_EXTENSIONS_IPC.skillComposeEvent, handler)
+  },
 }
 
 const homeApi: NdHomeDesktopApi = {
@@ -432,6 +437,7 @@ const api: DesktopApi = {
       ipcRenderer.on(IPC.dshEvent, handler)
       return () => ipcRenderer.removeListener(IPC.dshEvent, handler)
     },
+    selectSession: (sessionId) => ipcRenderer.invoke(IPC.dshSelectSession, sessionId),
   },
   surface: {
     state: () => ipcRenderer.invoke(IPC.surfaceState),

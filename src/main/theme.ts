@@ -83,13 +83,14 @@ export class ThemeService {
 
   constructor() {
     this.settingsPath = join(app.getPath('userData'), SETTINGS_FILE)
-    this.mode = this.readMode()
-    this.surfaceValue = this.readSurface()
-    this.permissionModeValue = process.env.ND_DSH_PERMISSION_MODE?.trim() || this.readPermissionMode()
-    this.quickLauncherModeValue = this.readQuickLauncherMode()
-    this.workspaceProfileValue = this.readWorkspaceProfile()
-    this.shortcutsValue = this.readShortcuts()
-    this.captureDelayValue = this.readCaptureDelay()
+    const settings = this.loadSettings()
+    this.mode = this.readMode(settings)
+    this.surfaceValue = this.readSurface(settings)
+    this.permissionModeValue = process.env.ND_DSH_PERMISSION_MODE?.trim() || this.readPermissionMode(settings)
+    this.quickLauncherModeValue = this.readQuickLauncherMode(settings)
+    this.workspaceProfileValue = this.readWorkspaceProfile(settings)
+    this.shortcutsValue = this.readShortcuts(settings)
+    this.captureDelayValue = this.readCaptureDelay(settings)
     if (this.workspaceProfileValue === 'general' && this.surfaceValue === 'dsh') this.surfaceValue = 'workbench'
     nativeTheme.themeSource = this.mode
     nativeTheme.on('updated', () => this.emit())
@@ -229,56 +230,39 @@ export class ThemeService {
     if (this.window && !this.window.isDestroyed()) this.onChanged?.(this.state())
   }
 
-  private readMode(): ThemeMode {
+  private loadSettings(): PersistedSettings {
     try {
-      const settings = JSON.parse(readFileSync(this.settingsPath, 'utf8')) as PersistedSettings
-      if (settings.theme && VALID_MODES.includes(settings.theme)) return settings.theme
+      return JSON.parse(readFileSync(this.settingsPath, 'utf8')) as PersistedSettings
     } catch {
-      // Missing or unreadable settings fall back to following the OS.
+      return {}
     }
+  }
+
+  private readMode(settings: PersistedSettings): ThemeMode {
+    if (settings.theme && VALID_MODES.includes(settings.theme)) return settings.theme
     return 'system'
   }
 
-  private readSurface(): DshSurface {
-    try {
-      const settings = JSON.parse(readFileSync(this.settingsPath, 'utf8')) as PersistedSettings
-      if (settings.surface && VALID_SURFACES.includes(settings.surface)) return settings.surface
-    } catch {
-      // Missing or unreadable settings keep ND as the primary coding surface.
-    }
+  private readSurface(settings: PersistedSettings): DshSurface {
+    if (settings.surface && VALID_SURFACES.includes(settings.surface)) return settings.surface
     return 'workbench'
   }
 
-  private readPermissionMode(): string {
-    try {
-      const settings = JSON.parse(readFileSync(this.settingsPath, 'utf8')) as PersistedSettings
-      if (settings.permissionMode && PERMISSION_MODES.includes(settings.permissionMode as (typeof PERMISSION_MODES)[number])) {
-        return settings.permissionMode
-      }
-    } catch {
-      // Missing or unreadable settings fall back to workspace-write.
+  private readPermissionMode(settings: PersistedSettings): string {
+    if (settings.permissionMode && PERMISSION_MODES.includes(settings.permissionMode as (typeof PERMISSION_MODES)[number])) {
+      return settings.permissionMode
     }
     return DEFAULT_PERMISSION_MODE
   }
 
-  private readWorkspaceProfile(): WorkspaceProfile {
-    try {
-      const settings = JSON.parse(readFileSync(this.settingsPath, 'utf8')) as PersistedSettings
-      if (isWorkspaceProfile(settings.workspaceProfile)) return settings.workspaceProfile
-      if (settings.surface && VALID_SURFACES.includes(settings.surface)) return 'coding'
-    } catch {
-      // Missing settings means a fresh install, whose broadest audience is General.
-    }
+  private readWorkspaceProfile(settings: PersistedSettings): WorkspaceProfile {
+    if (isWorkspaceProfile(settings.workspaceProfile)) return settings.workspaceProfile
+    if (settings.surface && VALID_SURFACES.includes(settings.surface)) return 'coding'
     return DEFAULT_WORKSPACE_PROFILE
   }
 
-  private readQuickLauncherMode(): QuickLauncherShortcutMode {
-    try {
-      const settings = JSON.parse(readFileSync(this.settingsPath, 'utf8')) as PersistedSettings
-      if (isQuickLauncherShortcutMode(settings.quickLauncherMode)) return settings.quickLauncherMode
-    } catch {
-      // Missing or unreadable settings fall back to the popup shortcut.
-    }
+  private readQuickLauncherMode(settings: PersistedSettings): QuickLauncherShortcutMode {
+    if (isQuickLauncherShortcutMode(settings.quickLauncherMode)) return settings.quickLauncherMode
     return DEFAULT_QUICK_LAUNCHER_SHORTCUT_MODE
   }
 
@@ -287,34 +271,24 @@ export class ThemeService {
    * travel between machines, and a combo that was free on Linux can be a shell
    * hotkey on Windows; falling back to the default beats grabbing a system key.
    */
-  private readShortcuts(): GlobalShortcutBindings {
+  private readShortcuts(settings: PersistedSettings): GlobalShortcutBindings {
     const platform = asShortcutPlatform(process.platform)
     const bindings: GlobalShortcutBindings = { ...DEFAULT_GLOBAL_SHORTCUTS }
-    try {
-      const settings = JSON.parse(readFileSync(this.settingsPath, 'utf8')) as PersistedSettings
-      const stored = settings.shortcuts
-      if (!stored || typeof stored !== 'object') return bindings
-      for (const id of GLOBAL_SHORTCUT_IDS) {
-        const value = stored[id]
-        if (typeof value !== 'string') continue
-        const chord = parseAccelerator(value)
-        if (!chord) continue
-        if (findShortcutConflict(chord, platform)) continue
-        bindings[id] = serializeChord(chord)
-      }
-    } catch {
-      // Missing or unreadable settings keep ND's shipped shortcuts.
+    const stored = settings.shortcuts
+    if (!stored || typeof stored !== 'object') return bindings
+    for (const id of GLOBAL_SHORTCUT_IDS) {
+      const value = stored[id]
+      if (typeof value !== 'string') continue
+      const chord = parseAccelerator(value)
+      if (!chord) continue
+      if (findShortcutConflict(chord, platform)) continue
+      bindings[id] = serializeChord(chord)
     }
     return bindings
   }
 
-  private readCaptureDelay(): CaptureDelaySeconds {
-    try {
-      const settings = JSON.parse(readFileSync(this.settingsPath, 'utf8')) as PersistedSettings
-      if (isCaptureDelaySeconds(settings.captureDelaySeconds)) return settings.captureDelaySeconds
-    } catch {
-      // Missing or unreadable settings keep the default countdown.
-    }
+  private readCaptureDelay(settings: PersistedSettings): CaptureDelaySeconds {
+    if (isCaptureDelaySeconds(settings.captureDelaySeconds)) return settings.captureDelaySeconds
     return DEFAULT_CAPTURE_DELAY_SECONDS
   }
 

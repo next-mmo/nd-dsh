@@ -329,6 +329,8 @@ export interface NdExtensionsDesktopApi {
   onChanged(listener: (state: NdExtensionsStateView) => void): () => void
   /** The host opened or focused a real browser tab: the app surfaces it in the tab's own context. */
   onBrowserFocus(listener: (focus: NdBrowserFocusEvent) => void): () => void
+  /** Prepare an unsent skill request in the current ND chat. */
+  onSkillCompose(listener: (request: import('./skill-compose.js').SkillComposeRequest) => void): () => void
 }
 
 export interface NdHomeDesktopApi {
@@ -375,6 +377,7 @@ export const ND_EXTENSIONS_IPC = {
   deny: 'nd-ext:deny',
   changedEvent: 'nd-ext:changed',
   browserFocusEvent: 'nd-ext:browser-focus',
+  skillComposeEvent: 'nd-ext:skill-compose',
 } as const
 
 export const ND_HOME_IPC = {

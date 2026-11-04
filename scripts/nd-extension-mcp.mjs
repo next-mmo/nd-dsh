@@ -9,6 +9,7 @@
  */
 
 import { spawn } from 'node:child_process'
+import { pathToFileURL } from 'node:url'
 
 const NODE = process.env.ND_EXTENSION_NODE?.trim() || process.execPath
 const PROXY = process.env.ND_EXTENSION_PROXY?.trim() || process.env.ND_DSH_EXTENSION_PROXY_ENTRY?.trim() || ''
@@ -128,10 +129,27 @@ async function runEntry(entry, args, label) {
 const runProxy = (args) => runEntry(PROXY, args, 'ND extension proxy')
 const runBrowserProxy = (args) => runEntry(BROWSER_PROXY, args, 'ND unified browser')
 
+let browserCompanionModule = null
+async function getBrowserCompanion() {
+  if (!browserCompanionModule && BROWSER_PROXY) {
+    try {
+      browserCompanionModule = await import(pathToFileURL(BROWSER_PROXY).href)
+    } catch {
+      browserCompanionModule = null
+    }
+  }
+  return browserCompanionModule
+}
+
 async function dispatch(name, args) {
   if (name === 'nd_browser_call') {
     const input = args && typeof args === 'object' && !Array.isArray(args) ? { ...args } : {}
     if (typeof input.method !== 'string' || !input.method.startsWith('browser.')) throw new Error('A browser.* method is required')
+    const companion = await getBrowserCompanion()
+    if (companion && typeof companion.request === 'function') {
+      const { method, ...params } = input
+      return { mode: 'list', value: await companion.request(method, params) }
+    }
     return { mode: 'list', value: await runBrowserProxy(['call', JSON.stringify(input)]) }
   }
   if (name === 'nd_extension_list') {
