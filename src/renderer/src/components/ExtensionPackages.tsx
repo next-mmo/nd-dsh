@@ -1914,6 +1914,9 @@ export function ExtensionViewDialog({
   const [pickerBusy, setPickerBusy] = useState(false)
   const [newCollectionName, setNewCollectionName] = useState('')
   const [createCollectionBusy, setCreateCollectionBusy] = useState(false)
+  const [nineDashboard, setNineDashboard] = useState(false)
+  const [nineDashboardBusy, setNineDashboardBusy] = useState(false)
+  const nineDashboardSurface = useRef<HTMLDivElement>(null)
   // Thumbnails are fetched for rows that actually scroll into view instead of
   // arriving inside the view payload: a 4K library decoded eagerly in the main
   // process froze the whole app for seconds on every open.
@@ -1964,6 +1967,65 @@ export function ExtensionViewDialog({
     setSortBy('name')
   }, [target])
 
+  // The protected 9Router dashboard is a native child view layered over the
+  // window, so the dialog publishes its dock rect and closes the view with the
+  // dock. Coordinates are window-content space, not dialog-local.
+  useEffect(() => {
+    if (!nineDashboard) return
+    const sync = (): void => {
+      const node = nineDashboardSurface.current
+      if (!node) return
+      const rect = node.getBoundingClientRect()
+      const left = Math.max(0, rect.left)
+      const top = Math.max(0, rect.top)
+      const right = Math.min(window.innerWidth, rect.right)
+      const bottom = Math.min(window.innerHeight, rect.bottom)
+      void window.ndDshRouter.nineRouterDashboardBounds({
+        x: left,
+        y: top,
+        width: Math.max(0, right - left),
+        height: Math.max(0, bottom - top),
+      }).catch(() => undefined)
+    }
+    const observer = new ResizeObserver(sync)
+    if (nineDashboardSurface.current) observer.observe(nineDashboardSurface.current)
+    window.addEventListener('resize', sync)
+    window.addEventListener('scroll', sync, true)
+    sync()
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', sync)
+      window.removeEventListener('scroll', sync, true)
+      void window.ndDshRouter.nineRouterDashboardClose().catch(() => undefined)
+    }
+  }, [nineDashboard])
+
+  const toggleNineDashboard = async (): Promise<void> => {
+    if (nineDashboard) {
+      setNineDashboard(false)
+      return
+    }
+    setNineDashboardBusy(true)
+    try {
+      let current = await window.ndDshRouter.nineRouterState()
+      if (!current.running || !current.endpoint) current = await window.ndDshRouter.nineRouterStart()
+      if (!current.running || !current.endpoint) {
+        throw new Error(current.lastError ?? '9Router did not report a gateway endpoint. Check the runtime log in ND Router.')
+      }
+      await window.ndDshRouter.nineRouterDashboardOpen(current.endpoint)
+      setNineDashboard(true)
+      if (target) {
+        void window.ndDsh.ndExtensions.loadView(target.extensionId, target.viewId, target.context)
+          .then(setData)
+          .catch(() => undefined)
+      }
+    } catch (cause) {
+      onError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setNineDashboardBusy(false)
+    }
+  }
+
   useEffect(() => {
     setExpanded(false)
     setData(null)
@@ -1989,6 +2051,8 @@ export function ExtensionViewDialog({
     setPicker(null)
     setPickerChecked(new Set())
     setPickerNewName('')
+    setNineDashboard(false)
+    setNineDashboardBusy(false)
     if (!target || !targetKey) {
       return
     }
@@ -2072,6 +2136,7 @@ export function ExtensionViewDialog({
     && currentData?.extensionId === target.extensionId && currentData.viewId === target.viewId
     && contextKey(currentData.context) === contextKey(target.context)
   const isWallpaperStudio = target?.extensionId === 'nd.wallpaper-manager' && target.viewId === 'wallpaper-studio'
+  const isNineRouter = target?.extensionId === 'nd.9router' && target.viewId === 'overview'
   const globalActions = isDetail
     ? currentData?.actions.filter((action) => action.id !== 'apply' && action.id !== 'preview' && action.id !== 'thumbnails' && !action.id.startsWith('links-') && !action.id.startsWith('collections-') && !action.id.startsWith('folders-') && !action.id.startsWith('play-sources')) ?? []
     : []
@@ -2817,7 +2882,7 @@ export function ExtensionViewDialog({
                   size="sm"
                   variant={action.id === 'next' ? 'default' : 'outline'}
                   className="h-7 text-xs"
-                  disabled={busy}
+                  disabled={busy || nineDashboardBusy}
                   onClick={() => void runAction(action.id, action.host)}
                 >
                   {action.id === 'prev' ? <SkipBack className="mr-1.5 size-3.5" /> : null}
@@ -2828,20 +2893,54 @@ export function ExtensionViewDialog({
                 </Button>
               ))}
             </div>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 text-xs"
-              disabled={busy}
-              onClick={() => {
-                if (!target) return
-                void window.ndDsh.ndExtensions.loadView(target.extensionId, target.viewId, target.context)
-                  .then(setData)
-                  .catch((cause) => onError(cause instanceof Error ? cause.message : String(cause)))
-              }}
-            >
-              <RefreshCw className="mr-1 size-3" /> Refresh
-            </Button>
+            <div className="flex items-center gap-1.5">
+              {isNineRouter ? (
+                <Button
+                  size="sm"
+                  variant={nineDashboard ? 'secondary' : 'default'}
+                  className="h-7 text-xs"
+                  disabled={busy || nineDashboardBusy}
+                  onClick={() => void toggleNineDashboard()}
+                >
+                  {nineDashboardBusy
+                    ? <RefreshCw className="mr-1 size-3 animate-spin" />
+                    : <MonitorPlay className="mr-1.5 size-3.5" />}
+                  {nineDashboardBusy ? 'Opening dashboard…' : nineDashboard ? 'Hide dashboard' : 'Open dashboard'}
+                </Button>
+              ) : null}
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 text-xs"
+                disabled={busy}
+                onClick={() => {
+                  if (!target) return
+                  void window.ndDsh.ndExtensions.loadView(target.extensionId, target.viewId, target.context)
+                    .then(setData)
+                    .catch((cause) => onError(cause instanceof Error ? cause.message : String(cause)))
+                }}
+              >
+                <RefreshCw className={cn('mr-1 size-3', busy && 'animate-spin')} /> Refresh
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
+        {!previewItem && isNineRouter && nineDashboard ? (
+          <div className="overflow-hidden rounded-lg border border-border-strong bg-surface-0">
+            <div className="flex items-center justify-between gap-2 border-b border-border-soft px-3 py-2">
+              <span className="flex items-center gap-2 text-xs font-semibold text-foreground">
+                <MonitorPlay className="size-3.5 text-primary" /> 9Router dashboard
+              </span>
+              <Button size="sm" variant="ghost" className="h-6 px-2 text-[11px]" onClick={() => setNineDashboard(false)}>
+                Close dashboard
+              </Button>
+            </div>
+            <div
+              ref={nineDashboardSurface}
+              aria-label="Embedded 9Router dashboard"
+              className="relative h-[520px] w-full"
+            />
           </div>
         ) : null}
 
