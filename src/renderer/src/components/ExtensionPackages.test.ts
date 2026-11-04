@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { openExtensionProviderTab } from './ExtensionPackages'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { ExtensionDetailRows, openExtensionProviderTab } from './ExtensionPackages'
 import type { NdViewData } from '../../../shared/nd-invocations'
 
 const target = { extensionId: 'nd.translate', viewId: 'translator', context: { kind: 'personal' as const } }
@@ -136,5 +138,24 @@ describe('extension package category filtering', () => {
     expect(filter('studio', 'games')).toHaveLength(0)
     // "game" in games
     expect(filter('game', 'games').map((p) => p.id)).toEqual(['nd.tic-tac-toe'])
+  })
+})
+
+describe('extension detail rows', () => {
+  it('renders status text without wallpaper thumbnail, preview, or apply controls', () => {
+    const html = renderToStaticMarkup(createElement(ExtensionDetailRows, {
+      extensionId: 'nd.9router',
+      rows: [{
+        id: 'row-0',
+        title: '9Router installed (stopped)',
+        body: 'Runtime is ready to start from ND Router or launcher.',
+      }],
+    }))
+    expect(html).toContain('9Router installed (stopped)')
+    expect(html).toContain('Runtime is ready to start from ND Router or launcher.')
+    expect(html).not.toContain('<img')
+    expect(html).not.toContain('Preview')
+    expect(html).not.toContain('>Apply<')
+    expect(html).not.toContain('rows')
   })
 })

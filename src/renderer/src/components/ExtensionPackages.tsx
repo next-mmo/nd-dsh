@@ -85,6 +85,11 @@ function ExtensionIconTile({ id, large = false }: { id: string; large?: boolean 
   )
 }
 
+function ExtensionGlyph({ id, className }: { id: string; className?: string }): React.ReactNode {
+  const Icon = EXTENSION_ACCENTS[id]?.icon ?? Package
+  return <Icon className={className} aria-hidden="true" />
+}
+
 type ExtensionDetailTarget =
   | { kind: 'installed'; item: NdInstalledPackageView }
   | { kind: 'available'; item: NdAvailablePackageView }
@@ -1524,6 +1529,29 @@ function LazyWallpaperThumb({ id, alt, dataUrl, onVisible, imgClassName, iconCla
 }
 
 /**
+ * Status rows for a non-wallpaper `detail` view. These are text records, not
+ * image catalog items: no thumbnail, preview, or wallpaper apply controls.
+ */
+export function ExtensionDetailRows({ extensionId, rows }: { extensionId: string; rows: NdViewRow[] }): React.ReactNode {
+  return (
+    <div className="space-y-2">
+      {rows.map((row) => (
+        <div key={row.id} className="flex items-start gap-3 rounded-lg border border-border-soft bg-surface-0/40 p-4">
+          <ExtensionIconTile id={extensionId} />
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-medium text-foreground">{row.title}</span>
+              {row.meta ? <Badge variant="outline" className="text-[10px]">{row.meta}</Badge> : null}
+            </div>
+            {row.body ? <p className="mt-1 whitespace-pre-wrap text-xs leading-5 text-soft">{row.body}</p> : null}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/**
  * The wallpaper card grid shared by the play-folder library and Discovery's
  * setup-folder listing. Images decode lazily: each cell reports itself through
  * `queueThumbnail` the first time it scrolls near the viewport.
@@ -2743,7 +2771,9 @@ export function ExtensionViewDialog({
         </Button>
         <DialogHeader className="pr-20">
           <DialogTitle className="flex items-center gap-2">
-            {isDetail && !isTranslate ? <Image className="size-4 text-primary" /> : null}
+            {isDetail && !isTranslate
+              ? <ExtensionGlyph id={target?.extensionId ?? ''} className="size-4 text-primary" />
+              : null}
             {previewItem ? `Preview: ${previewItem.title}` : currentData?.title ?? 'Extension view'}
           </DialogTitle>
           <DialogDescription>
@@ -3535,13 +3565,6 @@ export function ExtensionViewDialog({
           </div>
         ) : null}
 
-        {!previewItem && data && !selected && isDetail && visibleRows.length > 0 && !isWallpaperStudio ? (
-          <div className="flex items-center gap-2">
-            <Input aria-label="Search extension view" placeholder="Search" value={query} onChange={(event) => setQuery(event.target.value)} className="h-8 flex-1 text-xs" />
-            <span className="text-xs text-faint shrink-0">{visibleRows.length} rows</span>
-          </div>
-        ) : null}
-
         {previewItem ? (
           <div className="flex flex-col space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border-soft bg-surface-0/60 p-2">
@@ -3691,15 +3714,7 @@ export function ExtensionViewDialog({
         ) : !isWallpaperStudio ? (
           data && visibleRows.length > 0 ? (
             isDetail ? (
-              <WallpaperLibraryGrid
-                rows={visibleRows}
-                thumbs={thumbs}
-                queueThumbnail={queueThumbnail}
-                busy={busy}
-                onPreview={(row) => openPreview(row, 'library')}
-                onApply={(row) => void runAction('apply', 'os.wallpaper.applySelected', row)}
-                onCollect={(row) => openCollectionPicker({ kind: 'file', ref: row.path ?? row.body ?? '', title: row.title }, false)}
-              />
+              <ExtensionDetailRows extensionId={target?.extensionId ?? ''} rows={visibleRows} />
             ) : (
               <div className="max-h-[420px] space-y-2 overflow-y-auto pr-1">
                 {visibleRows.map((row) => (
@@ -3727,29 +3742,12 @@ export function ExtensionViewDialog({
           ) : isDetail ? (
             <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border-soft py-10 px-4 text-center">
               <div className="flex size-12 items-center justify-center rounded-full bg-surface-2 text-primary mb-3">
-                <Image className="size-6" />
+                <ExtensionGlyph id={target?.extensionId ?? ''} className="size-6" />
               </div>
-              <h4 className="text-sm font-medium text-foreground">No wallpapers in current library</h4>
+              <h4 className="text-sm font-medium text-foreground">{currentData?.title ?? 'Nothing to show yet'}</h4>
               <p className="mt-1 max-w-sm text-xs text-faint">
-                {data?.empty ?? 'Select a folder containing images (.png, .jpg, .webp) or pick a single file to set as your desktop wallpaper.'}
+                {data?.empty ?? 'This view has no status to show yet.'}
               </p>
-              <div className="mt-4 flex flex-wrap items-center gap-2">
-                <Button
-                  size="sm"
-                  disabled={busy}
-                  onClick={() => void runAction('folders-add', 'os.wallpaper.folders.add')}
-                >
-                  <FolderOpen className="mr-1.5 size-3.5" /> Link Wallpaper Folder
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={busy}
-                  onClick={() => void runAction('choose', 'os.wallpaper.chooseAndSet')}
-                >
-                  <Image className="mr-1.5 size-3.5" /> Pick Image File...
-                </Button>
-              </div>
             </div>
           ) : (
             <p className="text-xs text-faint">{query && data?.rows.length ? 'No rows match your search.' : data?.empty ?? 'This view has no rows yet.'}</p>
