@@ -7,6 +7,7 @@ import {
   LogsIcon,
   SearchIcon,
   SpinnerIcon,
+  TerminalIcon,
   TrashIcon,
 } from './Icons'
 
@@ -42,6 +43,7 @@ export interface ProcessLogsDrawerProps {
   subtitle?: string | undefined
   className?: string | undefined
   width?: string | undefined
+  onOpenCurl?(): void
 }
 
 function getLevelBadge(level: ProcessLogLevel) {
@@ -109,6 +111,7 @@ export function ProcessLogsDrawer({
   subtitle,
   className,
   width = 'w-[360px] sm:w-[400px]',
+  onOpenCurl,
 }: ProcessLogsDrawerProps) {
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'all' | 'tool' | 'phase' | 'error'>('all')
@@ -365,23 +368,38 @@ export function ProcessLogsDrawer({
             </button>
           </div>
 
-          <button
-            type="button"
-            className={cn(
-              'shrink-0 text-[9px] font-mono transition-colors',
-              autoScroll ? 'text-primary font-semibold' : 'text-fainter hover:text-faint'
-            )}
-            onClick={() => {
-              setAutoScroll((v) => !v)
-              if (!autoScroll && scrollRef.current) {
-                scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-                isUserScrollingRef.current = false
-              }
-            }}
-            title={autoScroll ? 'Auto-scroll enabled' : 'Auto-scroll paused'}
-          >
-            {autoScroll ? '↓ Auto' : '↓ Paused'}
-          </button>
+          <div className="flex items-center gap-1.5">
+            {onOpenCurl ? (
+              <button
+                type="button"
+                className="flex h-5 items-center gap-1 rounded border border-border-soft bg-surface-2 px-1.5 text-[9.5px] font-mono text-faint transition-colors hover:border-primary/40 hover:bg-primary/10 hover:text-primary active:scale-95"
+                onClick={onOpenCurl}
+                title="View and copy cURL command for this model"
+                aria-label="View and copy cURL command"
+              >
+                <TerminalIcon className="size-2.5" />
+                <span>cURL</span>
+              </button>
+            ) : null}
+
+            <button
+              type="button"
+              className={cn(
+                'shrink-0 text-[9px] font-mono transition-colors',
+                autoScroll ? 'text-primary font-semibold' : 'text-fainter hover:text-faint'
+              )}
+              onClick={() => {
+                setAutoScroll((v) => !v)
+                if (!autoScroll && scrollRef.current) {
+                  scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+                  isUserScrollingRef.current = false
+                }
+              }}
+              title={autoScroll ? 'Auto-scroll enabled' : 'Auto-scroll paused'}
+            >
+              {autoScroll ? '↓ Auto' : '↓ Paused'}
+            </button>
+          </div>
         </div>
       </div>
 

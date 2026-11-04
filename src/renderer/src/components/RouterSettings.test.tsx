@@ -95,4 +95,32 @@ describe('RouterSettings UI', () => {
     expect(html).toContain('Approve the next AGY request')
     expect(html).toContain('do not guarantee Google account safety')
   })
+
+  it('renders sub-tabs with Playground but without External API in the navigation bar', () => {
+    vi.stubGlobal('window', {
+      ndDshRouter: {
+        state: vi.fn().mockResolvedValue({ providers: [], combos: [], counters: { requests: 0, ok: 0, failed: 0 } }),
+        usage: vi.fn().mockResolvedValue({ requests: 0, ok: 0, failed: 0, avgLatencyMs: 0, byProvider: {} }),
+        agyPolicy: vi.fn().mockResolvedValue(null),
+        agyUsage: vi.fn().mockResolvedValue(null),
+        safeMode: vi.fn().mockResolvedValue(false),
+      },
+    })
+
+    const html = renderToStaticMarkup(<RouterSettings onError={() => undefined} subTab="overview" />)
+
+    // The nav should include Playground but NOT External API tab
+    expect(html).toContain('Playground')
+    expect(html).toContain('Providers')
+    expect(html).toContain('Routes')
+    expect(html).toContain('9Router')
+    expect(html).toContain('Usage')
+
+    // Inside the nav bar tab list, External API should not be present as a tab
+    const navMatch = html.match(/<nav[^>]*role="tablist"[^>]*>([\s\S]*?)<\/nav>/)
+    expect(navMatch).not.toBeNull()
+    const navContent = navMatch ? navMatch[1] : ''
+    expect(navContent).toContain('Playground')
+    expect(navContent).not.toContain('External API')
+  })
 })

@@ -91,7 +91,6 @@ const ROUTER_SUB_TABS: { id: RouterSubTab; label: string }[] = [
   { id: 'providers', label: 'Providers' },
   { id: 'routes', label: 'Routes' },
   { id: 'playground', label: 'Playground' },
-  { id: 'access', label: 'External API' },
   { id: 'nine-router', label: '9Router' },
   { id: 'usage', label: 'Usage' },
 ]

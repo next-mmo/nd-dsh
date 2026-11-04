@@ -818,6 +818,14 @@ describe('RouterPlayground', () => {
     })
     expect(matchingBtns.length).toBe(2)
   })
+
+  it('renders cURL button in the playground header actions', () => {
+    const onError = vi.fn()
+    const tree = render({ state: mockState, onError })
+    const curlBtn = elements(tree).find((el) => el.type === 'button' && el.props['aria-label'] === 'View and copy cURL command')
+    expect(curlBtn).toBeDefined()
+    expect(elements(curlBtn!).some((el) => el.props.children === 'cURL')).toBe(true)
+  })
 })
 
 describe('detectPlaygroundMention', () => {

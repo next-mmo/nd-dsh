@@ -22,10 +22,12 @@ import {
   SparkIcon,
   SpinnerIcon,
   StopIcon,
+  TerminalIcon,
   TrashIcon,
 } from './Icons'
 import { MarkdownLite } from './MarkdownLite'
 import { ProcessLogsDrawer, formatLogTimestamp, type ProcessLogEntry } from './ProcessLogsDrawer'
+import { RouterCurlDialog } from './RouterCurlDialog'
 import {
   SettingsNote,
   SettingsRow,
@@ -230,6 +232,7 @@ export function RouterPlayground({ state, onError, embedded = false, agyState }:
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const inFlightSkillsRef = useRef<Promise<SkillSuggestion[]> | null>(null)
   const [logsOpen, setLogsOpen] = useState(false)
+  const [curlOpen, setCurlOpen] = useState(false)
   const [logs, setLogs] = useState<ProcessLogEntry[]>([])
   const firstTokenRef = useRef(false)
 
@@ -823,6 +826,17 @@ export function RouterPlayground({ state, onError, embedded = false, agyState }:
 
           <button
             type="button"
+            className="flex h-6 items-center gap-1 rounded border border-border-soft bg-background px-2 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground active:scale-95"
+            onClick={() => setCurlOpen(true)}
+            title="View and copy cURL command for this model"
+            aria-label="View and copy cURL command"
+          >
+            <TerminalIcon className="size-2.5" />
+            <span>cURL</span>
+          </button>
+
+          <button
+            type="button"
             aria-pressed={logsOpen}
             className={cn(
               'flex h-6 items-center gap-1 rounded border px-2 text-[10px] font-medium transition-colors',
@@ -1219,6 +1233,20 @@ export function RouterPlayground({ state, onError, embedded = false, agyState }:
         busy={busy}
         title="Playground Logs"
         subtitle={activeRoute || undefined}
+        onOpenCurl={() => setCurlOpen(true)}
+      />
+
+      <RouterCurlDialog
+        open={curlOpen}
+        onClose={() => setCurlOpen(false)}
+        route={activeRoute}
+        resolvedModel={resolved?.model}
+        resolvedProvider={resolved?.provider}
+        resolvedCombo={resolved?.combo}
+        messages={messages}
+        currentPrompt={input}
+        endpoint={state?.endpoint}
+        onError={onError}
       />
     </div>
   )
