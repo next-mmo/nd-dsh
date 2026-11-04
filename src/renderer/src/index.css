@@ -575,6 +575,17 @@ body.float-mode,
    only the quick launcher card floating over the user's current app, so the
    page background is dropped entirely (mirroring float-mode) and the modal
    backdrop is removed. */
+/* Browser chrome popups (#/browser-popup) paint a card on a transparent native
+   view above the embedded page; every root layer must stay see-through. */
+html.browser-chrome-popup-mode,
+body.browser-chrome-popup-mode,
+#root.browser-chrome-popup-mode,
+.browser-chrome-popup-mode {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+}
+
 html.launcher-popup-mode,
 body.launcher-popup-mode,
 #root.launcher-popup-mode,

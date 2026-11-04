@@ -18,7 +18,7 @@ export interface SettingsSearchEntry {
  * is added.
  */
 export const SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
-  { id: 'general-runtime', title: 'Runtime status', section: 'General · Runtime', tab: 'general', subTab: 'runtime', keywords: ['runtime', 'harness', 'session', 'model route', 'status', 'provider'] },
+  { id: 'general-runtime', title: 'Runtime status', section: 'General · Runtime', tab: 'general', subTab: 'runtime', keywords: ['runtime', 'harness', 'session', 'model route', 'status', 'provider', 'deepseek native', 'oauth', 'account'] },
   { id: 'general-workspace', title: 'Workspace folder', section: 'General · Workspace', tab: 'general', subTab: 'workspace', keywords: ['workspace', 'folder', 'project', 'path'] },
   { id: 'general-browser', title: 'Built-in browser', section: 'General · Browser', tab: 'general', subTab: 'browser', keywords: ['browser', 'chromium', 'agent control', 'cdp', 'tabs'] },
   { id: 'general-browser-profiles', title: 'Browser profiles', section: 'General · Browser', tab: 'general', subTab: 'browser', keywords: ['profile', 'profiles', 'identity', 'switch profile', 'default profile', 'new profile', 'cookies', 'sign in'] },

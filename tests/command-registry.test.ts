@@ -23,6 +23,8 @@ const organization = {
 function actions(): LauncherCommandActions {
   return {
     selectContext: vi.fn(),
+    openLiveItem: vi.fn(),
+    openWorkspace: vi.fn(),
     openKanban: vi.fn(),
     openAgent: vi.fn(),
     activateProject: vi.fn(),
@@ -71,6 +73,48 @@ describe('LauncherCommandRegistry', () => {
     expect(result.find((item) => item.id === 'nd.wallpaper-manager:choose-wallpaper')?.group).toBe('Extensions')
     expect(result.find((item) => item.id === 'capture-url')?.shortcut).toBe('https://example.com')
     expect(result.find((item) => item.id === 'p1')?.group).toBe('Recent projects')
+  })
+
+  it('lists live items above context and saved workspaces below it', async () => {
+    const callbacks = actions()
+    const liveItem = {
+      id: 'chat:s1',
+      kind: 'chat' as const,
+      title: 'Running fix',
+      status: 'Chat',
+      sessionId: 's1',
+      updatedAt: 5,
+    }
+    const workspace = {
+      activeRoot: 'C:/work/nd',
+      activeId: 'w1',
+      saved: [
+        { id: 'w1', name: 'nd-dsh', root: 'C:/work/nd' },
+        { id: 'w2', name: 'docs', root: 'C:/work/docs' },
+      ],
+    }
+    const result = DEFAULT_LAUNCHER_COMMAND_REGISTRY.list({
+      query: '',
+      organization,
+      contexts: [{ id: 'personal', label: 'Personal', detail: 'Personal', context: { kind: 'personal' } }],
+      extensionCommands: [],
+      liveItems: [liveItem],
+      workspaces: workspace,
+      actions: callbacks,
+    })
+
+    const groupOrder = launcherCommandGroups(result).map((group) => group.group)
+    expect(groupOrder.filter((group) => group === 'Active' || group === 'Context' || group === 'Workspaces'))
+      .toEqual(['Active', 'Context', 'Workspaces'])
+    expect(launcherCommandGroups(result).find((group) => group.group === 'Workspaces')?.items).toHaveLength(2)
+    expect(result.find((item) => item.id === 'chat:s1')?.shortcut).toBe('Chat')
+    expect(result.find((item) => item.id === 'w1')?.shortcut).toBe('Active')
+    expect(result.find((item) => item.id === 'w2')?.shortcut).toBe('Workspace')
+
+    await result.find((item) => item.id === 'chat:s1')!.run()
+    expect(callbacks.openLiveItem).toHaveBeenCalledWith(liveItem)
+    await result.find((item) => item.id === 'w2')!.run()
+    expect(callbacks.openWorkspace).toHaveBeenCalledWith('w2')
   })
 
   it('executes the action supplied by a source instead of embedding launcher behavior', async () => {

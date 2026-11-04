@@ -795,6 +795,29 @@ async fn antigravity_lane_is_disabled_by_default() {
     assert_eq!(agy["summary"]["failed"], 1);
     assert_eq!(agy["recent"][0]["blockCode"], "agy_disabled");
 
+    let snapshot = state.snapshot();
+    let agy_provider = snapshot["providers"]
+        .as_array()
+        .and_then(|p| p.iter().find(|item| item["id"] == "agy"))
+        .expect("agy provider in snapshot");
+    assert_eq!(agy_provider["isActive"], false);
+
+    state.set_agy_policy(crate::types::SetAgyPolicyInput {
+        enabled: Some(true),
+        manual_approval_required: None,
+        max_concurrent_jobs: None,
+        max_jobs_per_hour: None,
+        max_jobs_per_day: None,
+        max_tokens_per_day: None,
+        approval_ttl_secs: None,
+    }).expect("set agy policy");
+    let enabled_snapshot = state.snapshot();
+    let agy_enabled = enabled_snapshot["providers"]
+        .as_array()
+        .and_then(|p| p.iter().find(|item| item["id"] == "agy"))
+        .expect("agy provider in snapshot");
+    assert_eq!(agy_enabled["isActive"], true);
+
     unsafe { std::env::remove_var("ND_AGY_BIN") };
 }
 

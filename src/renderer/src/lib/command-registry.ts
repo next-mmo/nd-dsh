@@ -1,13 +1,19 @@
+import type { LauncherLiveItem, LauncherWorkspaceView } from '../../../shared/launcher-live.js'
 import type { NdCommandView } from '../../../shared/nd-invocations.js'
 import type { OrganizationSnapshot } from '../../../shared/organization.js'
 import type { ContextOption } from './nd-context-model.js'
-import { commandSearchText } from './nd-context-model.js'
+import { commandSearchText, describeContextForUi } from './nd-context-model.js'
 import { compactLauncherText, recentLauncherProjects } from './quick-launcher-model.js'
 
 export type LauncherCommandIcon =
   | 'task'
   | 'note'
   | 'agent'
+  | 'chat'
+  | 'run'
+  | 'keepalive'
+  | 'tab'
+  | 'workspace'
   | 'context'
   | 'kanban'
   | 'capture-screen'
@@ -40,6 +46,8 @@ export interface LauncherCommandSource {
 
 export interface LauncherCommandActions {
   selectContext(id: string): void | Promise<void>
+  openLiveItem(item: LauncherLiveItem): void | Promise<void>
+  openWorkspace(id: string): void | Promise<void>
   openKanban(): void | Promise<void>
   openAgent(): void | Promise<void>
   activateProject(projectId: string): void | Promise<void>
@@ -61,6 +69,9 @@ export interface LauncherCommandRegistryInput {
   contexts: ContextOption[]
   activeContextId?: string
   extensionCommands: NdCommandView[]
+  /** Everything alive the launcher can jump back into. */
+  liveItems?: LauncherLiveItem[]
+  workspaces?: LauncherWorkspaceView | null
   actions: LauncherCommandActions
 }
 
@@ -142,6 +153,29 @@ const typedSource: LauncherCommandSource = {
   },
 }
 
+/**
+ * Everything alive right now: running chats and agent runs, retained extension
+ * views, and open browser tabs. Selecting a row jumps back to it.
+ */
+const activeSource: LauncherCommandSource = {
+  id: 'core.active',
+  group: 'Active',
+  order: 15,
+  commands(input) {
+    return (input.liveItems ?? []).map((live) => {
+      const contextLabel = live.context ? describeContextForUi(live.context, input.organization) : ''
+      return item(this.id, this.group, {
+        id: live.id,
+        icon: live.kind === 'chat' ? 'chat' : live.kind === 'run' ? 'run' : live.kind === 'keepalive' ? 'keepalive' : 'tab',
+        title: live.title,
+        searchText: ['active', 'running', live.kind, live.title, live.status, live.url ?? '', contextLabel].join(' ').toLowerCase(),
+        shortcut: live.status,
+        run: () => input.actions.openLiveItem(live),
+      })
+    })
+  },
+}
+
 const contextSource: LauncherCommandSource = {
   id: 'core.context',
   group: 'Context',
@@ -158,6 +192,28 @@ const contextSource: LauncherCommandSource = {
         run: () => input.actions.selectContext(option.id),
       }),
     )
+  },
+}
+
+/** Pinned workspace folders; selecting one opens that folder as the workspace. */
+const workspaceSource: LauncherCommandSource = {
+  id: 'core.workspaces',
+  group: 'Workspaces',
+  order: 25,
+  commands(input) {
+    const workspace = input.workspaces
+    if (!workspace) return []
+    return workspace.saved.map((saved) => {
+      const active = saved.id === workspace.activeId || saved.root === workspace.activeRoot
+      return item(this.id, this.group, {
+        id: saved.id,
+        icon: 'workspace',
+        title: saved.name,
+        searchText: `workspace folder ${saved.name} ${saved.root}`.toLowerCase(),
+        shortcut: active ? 'Active' : 'Workspace',
+        run: () => input.actions.openWorkspace(saved.id),
+      })
+    })
   },
 }
 
@@ -293,7 +349,9 @@ const companiesSource: LauncherCommandSource = {
 
 export const DEFAULT_LAUNCHER_COMMAND_REGISTRY = new LauncherCommandRegistry([
   typedSource,
+  activeSource,
   contextSource,
+  workspaceSource,
   quickActionsSource,
   captureSource,
   extensionSource,

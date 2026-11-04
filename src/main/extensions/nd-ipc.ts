@@ -132,7 +132,7 @@ export interface NdIpcDependencies {
   browser: Pick<BrowserController, 'navigate'> & TranslateBrowserPort
   skills?: SkillCatalogPort
   /** Multi-tab platform surface for extension hosts that manage real browser tabs. */
-  browserPlatform?: Pick<BrowserPlatformService, 'createTab' | 'activateTab' | 'closeTab' | 'tabs'>
+  browserPlatform?: Pick<BrowserPlatformService, 'createTab' | 'activateTab' | 'closeTab' | 'tabs' | 'selection'>
   /** nd-core-backed spawner for the media downloader; no background policy is injected. */
   spawnProcess?: MediaSpawnProcess
   /** Whole-tree teardown for a media-download child (nd-core process.cancel). */
@@ -2651,7 +2651,10 @@ export function registerNativeHostHandlers(
     requirePersonalContext(context)
     if (!deps.browserPlatform) return null
     try {
-      return activeYouTubePage(await deps.browserPlatform.tabs(BUILTIN_BROWSER_TARGET_ID))
+      const selection = deps.browserPlatform.selection?.()
+      const preferredTargetId = selection && selection.mode !== 'auto' ? selection.targetId : undefined
+      const tabs = await deps.browserPlatform.tabs()
+      return activeYouTubePage(tabs, preferredTargetId)
     } catch {
       return null
     }

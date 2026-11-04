@@ -213,4 +213,86 @@ describe('activeYouTubePage', () => {
       tab({ id: 'active', url: 'https://www.youtube.com/feed/subscriptions', active: true }),
     ])).toBeNull()
   })
+  it('detects an active YouTube page from an external Chrome companion target', () => {
+    const companionTab = tab({
+      id: 'chrome-tab',
+      targetId: 'companion:chrome-conn-1',
+      url: `https://www.youtube.com/watch?v=${videoId}`,
+      active: true,
+      title: 'Companion Chrome Video',
+    })
+    const builtinNonYoutubeTab = tab({
+      id: 'builtin-tab',
+      targetId: 'builtin',
+      url: 'https://example.com/',
+      active: true,
+      title: 'Example',
+    })
+    const result = activeYouTubePage([builtinNonYoutubeTab, companionTab])
+    expect(result).toEqual({
+      url: `https://www.youtube.com/watch?v=${videoId}`,
+      videoId,
+      title: 'Companion Chrome Video',
+    })
+  })
+
+  it('prioritizes built-in active YouTube page over companion active YouTube page by default', () => {
+    const companionVideoId = 'comp1234567'
+    const companionTab = tab({
+      id: 'chrome-tab',
+      targetId: 'companion:chrome-conn-1',
+      url: `https://www.youtube.com/watch?v=${companionVideoId}`,
+      active: true,
+      title: 'Chrome Video',
+    })
+    const builtinTab = tab({
+      id: 'builtin-tab',
+      targetId: 'builtin',
+      url: `https://www.youtube.com/watch?v=${videoId}`,
+      active: true,
+      title: 'Builtin Video',
+    })
+    const result = activeYouTubePage([builtinTab, companionTab])
+    expect(result?.videoId).toBe(videoId)
+    expect(result?.title).toBe('Builtin Video')
+  })
+
+  it('respects preferredTargetId when explicitly targeting companion Chrome', () => {
+    const companionVideoId = 'comp1234567'
+    const companionTab = tab({
+      id: 'chrome-tab',
+      targetId: 'companion:chrome-conn-1',
+      url: `https://www.youtube.com/watch?v=${companionVideoId}`,
+      active: true,
+      title: 'Chrome Video',
+    })
+    const builtinTab = tab({
+      id: 'builtin-tab',
+      targetId: 'builtin',
+      url: `https://www.youtube.com/watch?v=${videoId}`,
+      active: true,
+      title: 'Builtin Video',
+    })
+    const result = activeYouTubePage([builtinTab, companionTab], 'companion:chrome-conn-1')
+    expect(result?.videoId).toBe(companionVideoId)
+    expect(result?.title).toBe('Chrome Video')
+  })
+
+  it('does not scan a background companion YouTube tab', () => {
+    const companionBackground = tab({
+      id: 'chrome-bg',
+      targetId: 'companion:chrome-conn-1',
+      url: `https://www.youtube.com/watch?v=${videoId}`,
+      active: false,
+      title: 'Chrome BG',
+    })
+    const companionActive = tab({
+      id: 'chrome-active',
+      targetId: 'companion:chrome-conn-1',
+      url: 'https://github.com/',
+      active: true,
+      title: 'GitHub',
+    })
+    expect(activeYouTubePage([companionBackground, companionActive])).toBeNull()
+  })
 })

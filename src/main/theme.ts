@@ -30,6 +30,7 @@ interface PersistedSettings {
   workspaceProfile?: WorkspaceProfile
   shortcuts?: Partial<Record<GlobalShortcutId, string>>
   captureDelaySeconds?: number
+  deepSeekNativeAccount?: boolean
 }
 
 export type GlobalShortcutBindings = Record<GlobalShortcutId, string>
@@ -76,6 +77,7 @@ export class ThemeService {
   private workspaceProfileValue: WorkspaceProfile
   private shortcutsValue: GlobalShortcutBindings
   private captureDelayValue: CaptureDelaySeconds
+  private deepSeekNativeAccountValue: boolean
   private window: BrowserWindow | undefined
   private setViewBackground: ((color: string) => void) | undefined
   private onChanged: ((state: ThemeState) => void) | undefined
@@ -91,6 +93,7 @@ export class ThemeService {
     this.workspaceProfileValue = this.readWorkspaceProfile(settings)
     this.shortcutsValue = this.readShortcuts(settings)
     this.captureDelayValue = this.readCaptureDelay(settings)
+    this.deepSeekNativeAccountValue = settings.deepSeekNativeAccount === true
     if (this.workspaceProfileValue === 'general' && this.surfaceValue === 'dsh') this.surfaceValue = 'workbench'
     nativeTheme.themeSource = this.mode
     nativeTheme.on('updated', () => this.emit())
@@ -188,6 +191,17 @@ export class ThemeService {
     this.captureDelayValue = seconds
     this.persist()
     return seconds
+  }
+
+  /** Whether the Harness-native DeepSeek OAuth account and its model listing are enabled. Off by default: ND owns models. */
+  deepSeekNativeAccount(): boolean {
+    return this.deepSeekNativeAccountValue
+  }
+
+  setDeepSeekNativeAccount(enabled: boolean): boolean {
+    this.deepSeekNativeAccountValue = enabled
+    this.persist()
+    return enabled
   }
 
   windowBackgroundColor(): string {
@@ -302,6 +316,7 @@ export class ThemeService {
         workspaceProfile: this.workspaceProfileValue,
         shortcuts: this.shortcutsValue,
         captureDelaySeconds: this.captureDelayValue,
+        deepSeekNativeAccount: this.deepSeekNativeAccountValue,
       }
       writeFileSync(this.settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
     } catch (error) {

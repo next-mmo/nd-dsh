@@ -41,3 +41,16 @@ export function isAllowedBrowserUrl(value: string): boolean {
     return false
   }
 }
+
+/**
+ * Chromium rejects `webContents.loadURL` with `ERR_ABORTED (-3)` when the target
+ * page immediately redirects or supersedes its own initial load (for example,
+ * YouTube's `?themeRefresh=1` bootstrap redirect) or when a newer navigation
+ * replaces an in-flight one. That matches `did-fail-load` ignoring `-3`.
+ */
+export function isNavigationAbortedError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  const candidate = error as { errno?: unknown; code?: unknown; message?: unknown }
+  if (candidate.errno === -3 || candidate.code === 'ERR_ABORTED') return true
+  return typeof candidate.message === 'string' && /\bERR_ABORTED\b|\(-3\)/.test(candidate.message)
+}

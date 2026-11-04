@@ -61,7 +61,7 @@ scalability rules before considering any product-core exception.
     only when ND's rendering cannot express the UI (games, canvases, bespoke
     tools). Requires an `entry`; `host`/`itemTitleKey` are not needed; ALL
     privileged operations must be declared as view `actions` — a web view
-    without a named action executes nothing.
+    without a named action executes nothing. All web views MUST follow ND's theme (both light and dark) by default via `nd-webview:hello` and `nd-webview:theme`, applying `document.documentElement.dataset.theme = theme` with full `:root` and `:root[data-theme='light']` CSS styles. Never ship dark-only views.
 - **Skill / tool / workflow**: skills are instruction text, tools need an
   `mcp-stdio` `executable` block, workflows are project-only plugins. Rare;
   see authoring.md.
@@ -155,6 +155,78 @@ animations when hidden or zero-sized, dispose replaced GPU resources, prefer
 events over polling, and prevent overlapping jobs. Heavy native work belongs
 in nd-core. Check idle CPU/GPU and memory for custom UIs; package count and
 keepalive limits alone do not enforce CPU or memory quotas.
+
+### Web View Theme Parity (Mandatory)
+
+All extension web views MUST follow ND's theme (both light and dark modes) by default.
+Because sandboxed iframes do not automatically inherit the parent document's CSS variables,
+ND's host bridge transmits the effective theme on initialization (`nd-webview:hello`) and
+whenever the user toggles theme in ND (`nd-webview:theme`).
+
+Every web view must implement theme synchronization:
+
+```javascript
+const applyTheme = (theme) => {
+  const effective = theme === 'light' ? 'light' : 'dark'
+  document.documentElement.dataset.theme = effective
+  const meta = document.querySelector('meta[name="color-scheme"]')
+  if (meta) meta.setAttribute('content', effective)
+}
+
+window.addEventListener('message', (event) => {
+  const data = event.data
+  if (!data || typeof data !== 'object') return
+  if (data.kind === 'nd-webview:hello' && data.protocol === 'nd.webview/1') {
+    if (data.theme) applyTheme(data.theme)
+    // connect & initialize...
+  }
+  if (data.kind === 'nd-webview:theme' && data.protocol === 'nd.webview/1') {
+    if (data.theme) applyTheme(data.theme)
+    return
+  }
+})
+```
+
+And supply complete dark (default) and light mode CSS variables:
+
+```html
+<meta name="color-scheme" content="light dark" />
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #131519;
+    --panel: #1b1e25;
+    --border: #2a2f3a;
+    --border-strong: #3d4452;
+    --text: #e7e9ee;
+    --faint: #9aa3b2;
+    --accent: #4361ee;
+  }
+  :root[data-theme='light'] {
+    color-scheme: light;
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --border: #d8dde6;
+    --border-strong: #c2c9d6;
+    --text: #1d1d1f;
+    --faint: #6e6e73;
+    --accent: #007aff;
+  }
+</style>
+```
+
+#### ND Taste & Visual Identity Guidelines (No Mixed Styles)
+
+Do NOT import or mix foreign UI frameworks (e.g. Bootstrap, Material Design, oversized mobile ripples, garish neon gradients, or unstyled raw browser widgets).
+All extension UIs must look and feel like native parts of ND:
+- **Quiet Graphite Surfaces**: Deep obsidian/charcoal in dark (`#0b0c0f` canvas, `#161922` card), clean light graphite in light (`#eef0f4` canvas, `#ffffff` card).
+- **Canonical System Accent**: ND system blue (`#0a84ff` in dark, `#007aff` in light). Never substitute random brand colors or loud purples.
+- **Subtle Borders & Separators**: Translucent strokes (`rgba(255, 255, 255, 0.08)` dark, `rgba(30, 30, 35, 0.09)` light).
+- **Restrained Corner Radii**: `8px` for controls, pills, and inputs; `10px`–`12px` for cards and modals.
+- **Typography**: Clean desktop system font stack (`ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`).
+- **Monospace Consoles**: Carbon terminal surfaces (`#090a0f`) with crisp monospace typography (`ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, monospace`).
+
+
 
 ---
 

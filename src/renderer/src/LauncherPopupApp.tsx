@@ -2,16 +2,18 @@ import { useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { launcherBrowserTabPayload, type LauncherHandoffTarget } from '../../shared/quick-launcher'
 import type { ThemeState } from '../../shared/contracts'
-import type { NdContext } from '../../shared/nd-context'
+import { contextKey, type NdContext } from '../../shared/nd-context'
 import type { NdCommandView } from '../../shared/nd-invocations'
+import type { LauncherLiveItem } from '../../shared/launcher-live'
 import type { OrganizationSnapshot } from '../../shared/organization'
 import { QuickLauncher } from './components/QuickLauncher'
 import { Toaster } from './components/ui/sonner'
 import {
   commandRunPlan,
-  contextForOptionId,
   contextOptions,
+  currentContext,
   describeContextForUi,
+  optionIdForContext,
 } from './lib/nd-context-model'
 import { buildLauncherMemoryMutation, buildLauncherTaskMutation } from './lib/quick-launcher-model'
 import { errorMessage } from './lib/qa'
@@ -31,9 +33,6 @@ const DAILY_ESSENTIALS_ID = 'nd.daily-essentials'
 export default function LauncherPopupApp(): React.ReactNode {
   const [orgState, setOrgState] = useState<OrganizationSnapshot | null>(null)
   const [theme, setTheme] = useState<ThemeState | null>(null)
-  // The OS shortcut defaults to Personal on each opening; focusing the popup
-  // resets the selector so a stale project context can never linger.
-  const [launcherContextId, setLauncherContextId] = useState('personal')
   const [extensionCommands, setExtensionCommands] = useState<NdCommandView[]>([])
   // The palette stays mounted for the window's lifetime. Main hides the window
   // and then signals the surface, so the expensive reset (clear query, drop the
@@ -63,7 +62,6 @@ export default function LauncherPopupApp(): React.ReactNode {
       if (list) list.scrollTop = 0
     }
     const onShow = (): void => {
-      setLauncherContextId('personal')
       document.body.dataset.launcherReveal = 'enter'
       // The window becomes focusable during this same tick; retry after the
       // first frame so the search field owns the keyboard, not a stale item.
@@ -71,7 +69,6 @@ export default function LauncherPopupApp(): React.ReactNode {
       requestAnimationFrame(focusSurface)
     }
     const onHide = (): void => {
-      setLauncherContextId('personal')
       setResetSignal((value) => value + 1)
       document.body.dataset.launcherReveal = 'primed'
     }
@@ -133,7 +130,11 @@ export default function LauncherPopupApp(): React.ReactNode {
   }, [])
 
   const contexts = useMemo(() => contextOptions(orgState), [orgState])
-  const selectedContext: NdContext = contextForOptionId(contexts, launcherContextId) ?? { kind: 'personal' }
+  // The popup follows the app's one active context; selecting a row switches
+  // it globally instead of keeping a popup-local scope.
+  const selectedContext = currentContext(orgState)
+  const activeContextId = optionIdForContext(contexts, selectedContext)
+  const selectedContextKey = contextKey(selectedContext)
 
   useEffect(() => {
     let mounted = true
@@ -141,7 +142,7 @@ export default function LauncherPopupApp(): React.ReactNode {
       .then((next) => { if (mounted) setExtensionCommands(next) })
       .catch(() => { if (mounted) setExtensionCommands([]) })
     return () => { mounted = false }
-  }, [launcherContextId, orgState])
+  }, [selectedContextKey, orgState])
 
   const notify = (message: string): void => {
     toast(message, { duration: 5000 })
@@ -273,6 +274,41 @@ export default function LauncherPopupApp(): React.ReactNode {
     }
   }
 
+  /** Context rows switch the app's active context globally and keep the popup open. */
+  const activateContext = async (context: NdContext): Promise<void> => {
+    try {
+      let next: OrganizationSnapshot | null = null
+      if (context.kind === 'personal') {
+        next = await window.ndDshOrganization.mutate({ type: 'project.activate', id: 'personal' })
+      } else if (context.kind === 'company') {
+        next = await window.ndDshOrganization.mutate({ type: 'company.activate', id: context.companyId })
+      } else {
+        if (context.companyId !== orgState?.activeCompanyId) {
+          next = await window.ndDshOrganization.mutate({ type: 'company.activate', id: context.companyId })
+        }
+        next = await window.ndDshOrganization.mutate({ type: 'project.activate', id: context.projectId })
+      }
+      if (next) setOrgState(next)
+    } catch (cause) {
+      notify(errorMessage(cause))
+    }
+  }
+
+  /** Active rows hand off to the full app, which owns chat state and browser tabs. */
+  const openLiveItem = async (item: LauncherLiveItem): Promise<void> => {
+    if ((item.kind === 'chat' || item.kind === 'run') && item.sessionId) {
+      await handoff('session', item.sessionId, item.context ?? selectedContext)
+      return
+    }
+    if (item.kind === 'keepalive' && item.viewKey) {
+      await handoff('keepalive-view', item.viewKey, item.context ?? selectedContext)
+      return
+    }
+    if (item.kind === 'tab' && item.tabId) {
+      await handoff('browser', launcherBrowserTabPayload(item.tabId), selectedContext)
+    }
+  }
+
   /**
    * Extension commands run through the broker with the popup's context. Local
    * results (notes, clipboard, capture) complete in place; anything that needs
@@ -386,11 +422,16 @@ export default function LauncherPopupApp(): React.ReactNode {
         onOpenChange={hidePopup}
         organization={orgState}
         contexts={contexts}
-        activeContextId={launcherContextId}
+        activeContextId={activeContextId}
         contextLabel={describeContextForUi(selectedContext, orgState)}
-        onSelectContext={setLauncherContextId}
+        onSelectContext={(id) => {
+          const option = contexts.find((candidate) => candidate.id === id)
+          if (option) void activateContext(option.context)
+        }}
         extensionCommands={extensionCommands}
         onRunExtensionCommand={runCommand}
+        onOpenLiveItem={openLiveItem}
+        onOpenWorkspace={(id) => handoff('workspace', id, selectedContext)}
         onOpenKanban={() => handoff('kanban', undefined, selectedContext)}
         onOpenAgent={() => handoff('agent', undefined, selectedContext)}
         onOpenMedia={(tabId) => handoff('browser', launcherBrowserTabPayload(tabId), selectedContext)}

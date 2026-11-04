@@ -759,6 +759,10 @@ export interface DesktopApi {
   }
   browserCompanion: import('./browser-companion.js').BrowserCompanionDesktopApi
   browserPlatform: import('./browser-platform.js').BrowserPlatformDesktopApi
+  /** Browser toolbar popups rendered in a native view above the live page. */
+  browserChromePopup?: import('./browser-chrome-popup.js').BrowserChromePopupDesktopApi
+  /** Used only by the popup surface renderer itself (#/browser-popup). */
+  browserChromePopupSurface?: import('./browser-chrome-popup.js').BrowserChromePopupSurfaceApi
   /** ND extension packages: contexts, activation, grants, commands, typed views. */
   ndExtensions: import('./nd-invocations.js').NdExtensionsDesktopApi
   /** ND Home personal storage: notes, captures, and context-bound chats. */
@@ -767,6 +771,11 @@ export interface DesktopApi {
     state(): Promise<BrowserState>
     setBounds(bounds: BrowserBounds): Promise<void>
     setVisible(visible: boolean): Promise<void>
+    /**
+     * Capture the visible page, then hide the native view, so the shell can
+     * paint a still of the page under a DOM overlay. Null when nothing showed.
+     */
+    freezeFrame?(): Promise<string | null>
     navigate(url: string): Promise<BrowserState>
     back(): Promise<BrowserState>
     forward(): Promise<BrowserState>
@@ -804,6 +813,9 @@ export interface DesktopApi {
     stopSession(sessionId: string): Promise<void>
     getPermissionMode(): Promise<string>
     setPermissionMode(mode: string): Promise<string>
+    /** Harness-native DeepSeek OAuth sign-in and its native model listing; ND keeps it off by default. */
+    getDeepSeekNativeAccount(): Promise<boolean>
+    setDeepSeekNativeAccount(enabled: boolean): Promise<boolean>
     onStatus(listener: (status: HarnessStatus) => void): () => void
   }
   dsh: {
@@ -931,6 +943,8 @@ export interface DesktopApi {
     /** Pass null to restore the shipped default for that action. */
     rebind(id: GlobalShortcutId, accelerator: string | null): Promise<GlobalShortcutState>
   }
+  /** Everything alive the launcher can jump back into, plus saved workspaces. */
+  launcher?: import('./launcher-live.js').LauncherDesktopApi
 }
 
 export const IPC = {
@@ -950,9 +964,12 @@ export const IPC = {
   windowLauncherPopupHideEvent: 'window:launcher-popup-hide-event',
   windowLauncherHandoff: 'window:launcher-handoff',
   windowLauncherHandoffEvent: 'window:launcher-handoff-event',
+  launcherLive: 'launcher:live',
+  launcherKeepaliveReport: 'launcher:keepalive-report',
   browserState: 'browser:state',
   browserSetBounds: 'browser:set-bounds',
   browserSetVisible: 'browser:set-visible',
+  browserFreezeFrame: 'browser:freeze-frame',
   browserNavigate: 'browser:navigate',
   browserBack: 'browser:back',
   browserForward: 'browser:forward',
@@ -991,6 +1008,8 @@ export const IPC = {
   harnessStopSession: 'harness:stop-session',
   harnessPermissionGet: 'harness:permission:get',
   harnessPermissionSet: 'harness:permission:set',
+  harnessDeepSeekNativeGet: 'harness:deepseek-native:get',
+  harnessDeepSeekNativeSet: 'harness:deepseek-native:set',
   harnessStatusEvent: 'harness:status-event',
   dshRpc: 'dsh:rpc',
   dshRespond: 'dsh:respond',

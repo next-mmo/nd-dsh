@@ -452,6 +452,22 @@ export function ExtensionKeepAliveHost({ theme, onError }: {
     const timer = window.setInterval(() => pruneKeepAliveViews(), 15_000)
     return () => window.clearInterval(timer)
   }, [views, dockedKey])
+  // The launcher popup runs in its own renderer and cannot see this store, so
+  // main keeps the latest report and serves it to the launcher snapshot. Only
+  // the full app window owns views; the float overlay must not report its own
+  // empty copy over the main window's list.
+  useEffect(() => {
+    if (window.location.hash.replace(/^#\/?/, '').split(/[/?]/)[0] === 'float') return
+    const report = views.map((view) => ({
+      key: view.key,
+      extensionId: view.data.extensionId,
+      viewId: view.data.viewId,
+      title: view.data.title,
+      context: view.data.context,
+      backgrounded: view.key !== dockedKey,
+    }))
+    void Promise.resolve(window.ndDsh.launcher?.reportKeepalive(report)).catch(() => undefined)
+  }, [views, dockedKey])
   return <>{views.map((view) => (
     <KeepAliveFrame key={view.key} view={view} docked={view.key === dockedKey} theme={theme} onError={onError} />
   ))}</>

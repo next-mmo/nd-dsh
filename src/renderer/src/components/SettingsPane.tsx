@@ -260,7 +260,7 @@ export function SettingsPane({
               </nav>
             </div>
             <div className="min-h-0 flex-1 overflow-auto px-[26px] pb-[42px] pt-1.5">
-              {activeSubTab === 'runtime' && <RuntimeSettings harness={harness} />}
+              {activeSubTab === 'runtime' && <RuntimeSettings harness={harness} onError={onError} />}
               {activeSubTab === 'workspace' && (
                 <WorkspaceSettings workspace={workspace} onWorkspaceChanged={onWorkspaceChanged} onError={onError} />
               )}

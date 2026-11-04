@@ -58,6 +58,9 @@ export type LauncherHandoffTarget =
   | 'capture-tools'
   | 'capture-clipboard'
   | 'extension-view'
+  | 'session'
+  | 'keepalive-view'
+  | 'workspace'
 
 export const LAUNCHER_HANDOFF_TARGETS: readonly LauncherHandoffTarget[] = [
   'launcher',
@@ -69,6 +72,9 @@ export const LAUNCHER_HANDOFF_TARGETS: readonly LauncherHandoffTarget[] = [
   'capture-tools',
   'capture-clipboard',
   'extension-view',
+  'session',
+  'keepalive-view',
+  'workspace',
 ]
 
 export function isLauncherHandoffTarget(value: unknown): value is LauncherHandoffTarget {

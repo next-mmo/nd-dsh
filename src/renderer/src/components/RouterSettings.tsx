@@ -179,9 +179,10 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
   const updateAgy = (action: () => Promise<RouterAgyState>): void => {
     setAgyBusy(true)
     void action()
-      .then((next) => {
+      .then(async (next) => {
         setAgyState(next)
         refreshAgy()
+        setState(await window.ndDshRouter.state())
       })
       .catch((cause) => onError(message(cause)))
       .finally(() => setAgyBusy(false))
@@ -416,7 +417,7 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
 
       {activeSubTab === 'playground' ? (
         <div className="flex min-h-0 flex-1 flex-col p-2.5">
-          <RouterPlayground state={state} onError={onError} embedded />
+          <RouterPlayground state={state} onError={onError} embedded agyState={agyState} />
         </div>
       ) : (
         <div className="min-h-0 flex-1 overflow-auto px-[26px] pb-[42px] pt-1.5">
@@ -652,7 +653,14 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
                     disabled={disabled}
                     busy={busy}
                     test={tests[provider.id]}
-                    onToggle={(enabled) => apply(`toggle:${provider.id}`, () => window.ndDshRouter.saveProvider({ id: provider.id, isActive: enabled }))}
+                    onToggle={(enabled) => apply(`toggle:${provider.id}`, async () => {
+                      const next = await window.ndDshRouter.saveProvider({ id: provider.id, isActive: enabled })
+                      if (provider.kind === 'antigravity') {
+                        await window.ndDshRouter.setAgyPolicy({ enabled })
+                        refreshAgy()
+                      }
+                      return next
+                    })}
                     onTest={() => runTest(provider.id)}
                     onRemove={() => apply(`remove:${provider.id}`, () => window.ndDshRouter.deleteProvider(provider.id))}
                     onAddAccount={(input) => apply(`account:${provider.id}`, () => window.ndDshRouter.saveAccount({

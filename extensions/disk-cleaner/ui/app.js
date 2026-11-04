@@ -26,12 +26,27 @@ function createBridge() {
   const pending = new Map()
   const connectQueue = []
 
+  const applyTheme = (theme) => {
+    const effective = theme === 'light' ? 'light' : 'dark'
+    document.documentElement.dataset.theme = effective
+    const meta = document.querySelector('meta[name="color-scheme"]')
+    if (meta) meta.setAttribute('content', effective)
+    PALETTE.text = effective === 'light' ? '#1d1d1f' : '#e7e9ee'
+    PALETTE.faint = effective === 'light' ? '#6e6e73' : '#9aa3b2'
+    drawSunburst()
+  }
+
   window.addEventListener('message', (event) => {
     const data = event.data
     if (!data || typeof data !== 'object') return
     if (data.kind === 'nd-webview:hello' && data.protocol === 'nd.webview/1') {
+      if (data.theme) applyTheme(data.theme)
       hello = data
       while (connectQueue.length > 0) connectQueue.shift()()
+      return
+    }
+    if (data.kind === 'nd-webview:theme' && data.protocol === 'nd.webview/1') {
+      if (data.theme) applyTheme(data.theme)
       return
     }
     if (data.kind === 'nd-webview:result') {
@@ -188,7 +203,7 @@ function drawSunburst() {
     ctx.globalAlpha = hovered ? 1 : segment.depth === 0 ? 0.9 : 0.65
     ctx.fill()
     ctx.globalAlpha = 1
-    ctx.strokeStyle = '#131519'
+    ctx.strokeStyle = document.documentElement.dataset.theme === 'light' ? '#f6f7f9' : '#131519'
     ctx.lineWidth = 1
     ctx.stroke()
   }
@@ -196,7 +211,7 @@ function drawSunburst() {
   // Center: the focus label and its exact delivered total.
   ctx.beginPath()
   ctx.arc(cx, cy, inner, 0, Math.PI * 2)
-  ctx.fillStyle = '#1b1e25'
+  ctx.fillStyle = document.documentElement.dataset.theme === 'light' ? '#ffffff' : '#1b1e25'
   ctx.fill()
   ctx.fillStyle = PALETTE.text
   ctx.font = '600 13px system-ui, sans-serif'

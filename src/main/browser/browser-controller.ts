@@ -29,7 +29,7 @@ import { BrowserDownloadManager, type BrowserDownloadAuthorizationRequest } from
 import { privacyRequestHeaders, shouldBlockTrackerRequest } from './browser-safe-mode.js'
 import { BrowserHistoryStore } from './browser-history-store.js'
 import { BrowserPermissionStore } from './browser-permission-store.js'
-import { DEFAULT_BROWSER_URL, isAllowedBrowserUrl, normalizeBrowserUrl, sanitizeBrowserUserAgent } from './browser-url.js'
+import { DEFAULT_BROWSER_URL, isAllowedBrowserUrl, isNavigationAbortedError, normalizeBrowserUrl, sanitizeBrowserUserAgent } from './browser-url.js'
 import { BrowserMediaTracker } from './media-session-tracker.js'
 import { UiAnnotator, type UiAnnotationImage } from './ui-annotator.js'
 import { UiInspector } from './ui-inspector.js'
@@ -155,6 +155,8 @@ export class BrowserController {
   private activeTabIdValue: string
   private bounds: Rectangle = { x: 0, y: 0, width: 0, height: 0 }
   private visible = false
+  /** Bumped on every visibility request so a slow freeze-frame capture cannot override a newer one. */
+  private visibilityGeneration = 0
   private agentBindingRequested = false
   private onStateChanged: ((state: BrowserState) => void) | undefined
   private onTabClosed: ((tabId: string) => void) | undefined
@@ -575,7 +577,6 @@ export class BrowserController {
     this.backgroundAttached.delete(tabId)
     this.routerHeadless.delete(tabId)
     if (this.lastTabByProfile.get(tab.profileId) === tabId) this.lastTabByProfile.delete(tab.profileId)
-    this.onTabClosed?.(tabId)
 
     if (this.tabs.size === 0) {
       const replacement = this.createTabRuntime(this.activeProfileValue)
@@ -583,11 +584,13 @@ export class BrowserController {
       this.activeTabIdValue = replacement.id
       this.lastTabByProfile.set(replacement.profileId, replacement.id)
     } else if (wasActive) {
-      const next = this.tabs.get(this.tabs.keys().next().value as string)!
+      const sameProfile = [...this.tabs.values()].filter((item) => item.profileId === tab.profileId)
+      const next = sameProfile[sameProfile.length - 1] ?? this.tabs.get(this.tabs.keys().next().value as string)!
       this.activeTabIdValue = next.id
       this.activeProfileValue = next.profileId
       this.lastTabByProfile.set(next.profileId, next.id)
     }
+    this.onTabClosed?.(tabId)
 
     if (wasActive) {
       this.lastBoundTarget = undefined
@@ -641,7 +644,37 @@ export class BrowserController {
     this.syncExtensionPopupBounds()
   }
 
+  /**
+   * Capture the page the user is looking at, then hide the native view. DOM
+   * overlays (dialogs, menus) cannot paint above a native view, so the shell
+   * shows this still in the pane while the overlay is open instead of a blank
+   * canvas. Returns null when no page was showing. A visibility change that
+   * lands during the capture wins, so a quickly closed overlay never hides
+   * the page after the fact.
+   */
+  async freezeFrame(): Promise<string | null> {
+    const generation = ++this.visibilityGeneration
+    const tab = this.activeTab()
+    const showing = this.visible
+      && tab.state.url !== DEFAULT_BROWSER_URL
+      && !this.routerHeadless.has(tab.id)
+      && !tab.view.webContents.isDestroyed()
+    let frame: string | null = null
+    if (showing) {
+      try {
+        const image = await tab.view.webContents.capturePage()
+        if (!image.isEmpty()) frame = `data:image/jpeg;base64,${image.toJPEG(85).toString('base64')}`
+      } catch {
+        frame = null
+      }
+    }
+    if (generation !== this.visibilityGeneration) return null
+    await this.setVisible(false)
+    return frame
+  }
+
   async setVisible(visible: boolean): Promise<void> {
+    this.visibilityGeneration += 1
     this.visible = visible
     if (!visible) this.closeExtensionPopup()
     this.syncViewVisibility()
@@ -664,7 +697,11 @@ export class BrowserController {
     const tab = this.requireTab(tabId)
     const url = normalizeBrowserUrl(input)
     this.assertNotSelfHosted(url)
-    await tab.view.webContents.loadURL(url)
+    try {
+      await tab.view.webContents.loadURL(url)
+    } catch (error) {
+      if (!isNavigationAbortedError(error)) throw error
+    }
     return this.state()
   }
 
@@ -910,25 +947,31 @@ export class BrowserController {
   }
 
   async discoverSiteTools(tabId = this.activeTabIdValue): Promise<BrowserSiteToolDescriptor[]> {
-    const contents = this.requireTab(tabId).view.webContents
-    const result = await contents.executeJavaScript(`(async () => {
-      const context = document.modelContext;
-      if (!context || typeof context.getTools !== 'function') return [];
-      const tools = await context.getTools();
-      return tools.slice(0, 128).map((tool) => ({
-        name: String(tool.name || ''),
-        title: typeof tool.title === 'string' ? tool.title : undefined,
-        description: String(tool.description || ''),
-        inputSchema: (() => { try { return JSON.parse(JSON.stringify(tool.inputSchema ?? {})); } catch { return {}; } })(),
-        origin: typeof tool.origin === 'string' ? tool.origin : location.origin,
-        annotations: tool.annotations ? {
-          readOnlyHint: tool.annotations.readOnlyHint === true,
-          consequentialHint: tool.annotations.consequentialHint === true,
-          untrustedContentHint: tool.annotations.untrustedContentHint === true
-        } : undefined
-      })).filter((tool) => tool.name);
-    })()`, true)
-    return Array.isArray(result) ? result as BrowserSiteToolDescriptor[] : []
+    const tab = this.tabs.get(tabId) ?? this.tabs.get(this.activeTabIdValue)
+    if (!tab || tab.view.webContents.isDestroyed()) return []
+    const contents = tab.view.webContents
+    try {
+      const result = await contents.executeJavaScript(`(async () => {
+        const context = document.modelContext;
+        if (!context || typeof context.getTools !== 'function') return [];
+        const tools = await context.getTools();
+        return tools.slice(0, 128).map((tool) => ({
+          name: String(tool.name || ''),
+          title: typeof tool.title === 'string' ? tool.title : undefined,
+          description: String(tool.description || ''),
+          inputSchema: (() => { try { return JSON.parse(JSON.stringify(tool.inputSchema ?? {})); } catch { return {}; } })(),
+          origin: typeof tool.origin === 'string' ? tool.origin : location.origin,
+          annotations: tool.annotations ? {
+            readOnlyHint: tool.annotations.readOnlyHint === true,
+            consequentialHint: tool.annotations.consequentialHint === true,
+            untrustedContentHint: tool.annotations.untrustedContentHint === true
+          } : undefined
+        })).filter((tool) => tool.name);
+      })()`, true)
+      return Array.isArray(result) ? result as BrowserSiteToolDescriptor[] : []
+    } catch {
+      return []
+    }
   }
 
   async callSiteTool(tabId: string, name: string, input: unknown): Promise<unknown> {

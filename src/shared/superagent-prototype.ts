@@ -76,6 +76,13 @@ export function buildSuperagentProfilePatch(options: { port: number; stateDir: s
     "    model: !!js process.env.ND_DSH_DEFAULT_MODEL ?? ''",
     '- id: llm-deepseek',
     "  disabled: !!js process.env.ND_DSH_DEEPSEEK_ENABLED !== '1'",
+    '# The prototype has no ND settings surface, so the native DeepSeek account stack stays off.',
+    '- id: llm-deepseek-account',
+    '  disabled: true',
+    '- id: ui-settings-account',
+    '  disabled: true',
+    '- id: account-controller',
+    '  disabled: true',
     '',
   ].join('\n')
 }

@@ -8,8 +8,8 @@ const OVERLAY_SLOTS = [
   'alert-dialog-content',
 ]
 
-const OVERLAY_SELECTOR = [
-  ...OVERLAY_SLOTS.map((slot) => `[data-slot="${slot}"]`),
+export const NATIVE_VIEW_OVERLAY_SELECTOR = [
+  ...OVERLAY_SLOTS.map((slot) => `[data-slot="${slot}"]:not([data-browser-overlay="true"])`),
   '[data-slot="dialog-content"]:not([data-browser-dialog="true"])',
 ].join(',')
 
@@ -17,7 +17,7 @@ const OVERLAY_SELECTOR = [
 export function useNativeViewOcclusion(): boolean {
   const [occluded, setOccluded] = useState(false)
   useLayoutEffect(() => {
-    const update = () => setOccluded(document.querySelector(OVERLAY_SELECTOR) !== null)
+    const update = () => setOccluded(document.querySelector(NATIVE_VIEW_OVERLAY_SELECTOR) !== null)
     const observer = new MutationObserver(update)
     observer.observe(document.body, { childList: true, subtree: true })
     update()

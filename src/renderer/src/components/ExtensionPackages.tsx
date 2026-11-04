@@ -2862,7 +2862,7 @@ export function ExtensionViewDialog({
             ref={dockWebViewSlot}
             title={currentData.title}
             className={cn(
-              'w-full rounded-md border border-border-soft bg-black',
+              'w-full rounded-md border border-border-soft bg-surface-0',
               expanded
                 ? 'h-full min-h-0 [&>div]:h-full [&>div>div]:h-full [&_iframe]:h-full!'
                 : 'h-[480px] sm:h-[540px]',

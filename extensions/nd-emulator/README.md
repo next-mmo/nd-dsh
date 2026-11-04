@@ -5,6 +5,7 @@ Unified Android device and emulator management inside ND.
 ## Features
 
 - **Device Manager** — Scan, connect, and manage physical Android devices and emulators via ADB
+- **Emulators & Tools Hub** — Download, configure, and one-click connect to popular Android emulators (LDPlayer, BlueStacks, MuMu Player, NoxPlayer, Google AVD, Windows Subsystem for Android) and essential tools (scrcpy, Android SDK Platform-Tools)
 - **Screen Mirroring** — Stream the device inside ND (embedded, with click/drag control) or open a native scrcpy window (external, full scrcpy control), with configurable bitrate, FPS, and codec
 - **ADB Shell** — Integrated terminal for running ADB commands with autocomplete
 - **Quick Actions** — Install APK, capture screenshots, record screen, push/pull files, view logcat
@@ -29,6 +30,7 @@ Unified Android device and emulator management inside ND.
 
 - `emulator.read` — List devices, capture screenshots, read logcat
 - `emulator.write` — Connect devices, execute ADB commands, install APKs, start/stop mirroring, send taps and swipes
+- `browser.openExternal` — Open official download websites and setup guides for emulators and tools in the system browser
 
 ## Architecture
 

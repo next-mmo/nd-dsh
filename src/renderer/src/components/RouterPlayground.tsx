@@ -2,9 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { BrowserPlatformState, BrowserProfileSummary } from '../../../shared/browser-platform'
 import {
   isRouterWebProviderKind,
+  type RouterAgyState,
   type RouterPlaygroundEvent,
   type RouterPlaygroundMessage,
   type RouterPlaygroundRoute,
+  type RouterProviderView,
   type RouterState,
 } from '../../../shared/router'
 import { openSkillPicker, parseSkillCatalog, type SkillSuggestion } from '../../../shared/skill-catalog'
@@ -33,10 +35,26 @@ import {
   rowValueText,
 } from './settings-primitives'
 
+export function isRouterPlaygroundProviderActive(
+  provider: RouterProviderView,
+  agyState?: RouterAgyState | null
+): boolean {
+  if (!provider.isActive) return false
+  if (
+    provider.kind === 'antigravity' &&
+    agyState &&
+    (!agyState.policy?.enabled || agyState.locked)
+  ) {
+    return false
+  }
+  return true
+}
+
 interface RouterPlaygroundProps {
   state: RouterState | null
   onError(message: string): void
   embedded?: boolean
+  agyState?: RouterAgyState | null
 }
 
 interface ChatTurn {
@@ -169,7 +187,27 @@ export function detectPlaygroundMention(
   return { query, start, end, prefix: marker as '/' | '@' }
 }
 
-export function RouterPlayground({ state, onError, embedded = false }: RouterPlaygroundProps) {
+export function RouterPlayground({ state, onError, embedded = false, agyState }: RouterPlaygroundProps) {
+  const [internalAgyState, setInternalAgyState] = useState<RouterAgyState | null>(agyState ?? null)
+
+  useEffect(() => {
+    if (agyState !== undefined) {
+      setInternalAgyState(agyState)
+      return
+    }
+    let alive = true
+    window.ndDshRouter?.agyPolicy?.()
+      .then((policy) => {
+        if (alive && policy) setInternalAgyState(policy)
+      })
+      .catch(() => undefined)
+    return () => { alive = false }
+  }, [agyState])
+
+  const activeProviders = useMemo(() => {
+    return (state?.providers ?? []).filter((provider) => isRouterPlaygroundProviderActive(provider, internalAgyState))
+  }, [state, internalAgyState])
+
   const [selectedProvider, setSelectedProvider] = useState('all')
   const [routeValue, setRouteValue] = useState('')
   const [input, setInput] = useState('')
@@ -379,7 +417,7 @@ export function RouterPlayground({ state, onError, embedded = false }: RouterPla
       shortLabel: combo.hiddenFromChat ? `${combo.name} · Private` : combo.name,
       group: 'combos' as const,
     }))
-    const models = (state?.providers ?? []).flatMap((provider) =>
+    const models = activeProviders.flatMap((provider) =>
       provider.models.map((model) => ({
         value: `model:${provider.id}/${model}`,
         label: `${provider.name} / ${model}${isRouterWebProviderKind(provider.kind) ? ' · Web' : ''}`,
@@ -389,7 +427,7 @@ export function RouterPlayground({ state, onError, embedded = false }: RouterPla
       }))
     )
     return { combos, models }
-  }, [state])
+  }, [state, activeProviders])
 
   const filteredOptions = useMemo(() => {
     if (selectedProvider === 'combos') {
@@ -410,9 +448,9 @@ export function RouterPlayground({ state, onError, embedded = false }: RouterPla
   useEffect(() => {
     if (selectedProvider === 'all' || selectedProvider === 'combos') return
     const providerId = selectedProvider.startsWith('provider:') ? selectedProvider.slice('provider:'.length) : selectedProvider
-    const exists = (state?.providers ?? []).some((p) => p.id === providerId)
+    const exists = activeProviders.some((p) => p.id === providerId)
     if (!exists) setSelectedProvider('all')
-  }, [state, selectedProvider])
+  }, [activeProviders, selectedProvider])
 
   const activeRoute = useMemo(() => {
     if (routeValue && filteredOptions.some((option) => option.value === routeValue)) {
@@ -424,14 +462,14 @@ export function RouterPlayground({ state, onError, embedded = false }: RouterPla
   const isWebRelated = useMemo(() => {
     if (selectedProvider.startsWith('provider:')) {
       const providerId = selectedProvider.slice('provider:'.length)
-      const provider = state?.providers.find((p) => p.id === providerId)
+      const provider = activeProviders.find((p) => p.id === providerId)
       if (provider && isRouterWebProviderKind(provider.kind)) return true
     }
     if (activeRoute.startsWith('model:')) {
       const target = activeRoute.slice('model:'.length)
       const slash = target.indexOf('/')
       const providerId = slash > 0 ? target.slice(0, slash) : ''
-      const provider = state?.providers.find((p) => p.id === providerId)
+      const provider = activeProviders.find((p) => p.id === providerId)
       if (provider && isRouterWebProviderKind(provider.kind)) return true
       if (isRouterWebProviderKind(providerId)) return true
     }
@@ -440,7 +478,7 @@ export function RouterPlayground({ state, onError, embedded = false }: RouterPla
       const combo = state?.combos.find((c) => c.name === comboName)
       if (combo) {
         const usesWeb = combo.models.some((entry) => {
-          const provider = state?.providers.find((p) => p.id === entry.providerId)
+          const provider = activeProviders.find((p) => p.id === entry.providerId)
           return (provider && isRouterWebProviderKind(provider.kind)) || isRouterWebProviderKind(entry.providerId)
         })
         if (usesWeb) return true
@@ -448,7 +486,7 @@ export function RouterPlayground({ state, onError, embedded = false }: RouterPla
       if (comboName.toLowerCase().includes('web')) return true
     }
     return false
-  }, [state, selectedProvider, activeRoute])
+  }, [state, selectedProvider, activeRoute, activeProviders])
 
   useEffect(() => {
     const dispose = window.ndDshRouter.onPlaygroundEvent((event) => {
@@ -691,7 +729,7 @@ export function RouterPlayground({ state, onError, embedded = false }: RouterPla
             >
               <option value="all">All providers</option>
               {(state?.combos?.length ?? 0) > 0 ? <option value="combos">Route combos</option> : null}
-              {(state?.providers ?? []).map((provider) => (
+              {activeProviders.map((provider) => (
                 <option key={provider.id} value={`provider:${provider.id}`}>
                   {`${provider.name}${isRouterWebProviderKind(provider.kind) ? ' · Web' : ''}`}
                 </option>

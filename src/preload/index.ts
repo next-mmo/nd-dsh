@@ -21,6 +21,12 @@ import {
   type BrowserSiteToolDescriptor,
   type BrowserTabDescriptor,
 } from '../shared/browser-platform.js'
+import {
+  BROWSER_CHROME_POPUP_IPC,
+  type BrowserChromePopupAction,
+  type BrowserChromePopupKind,
+  type BrowserChromePopupModel,
+} from '../shared/browser-chrome-popup.js'
 import { IPC, type DesktopApi, type ModelProvider } from '../shared/contracts.js'
 import type { WebBrowserModeSettings } from '../shared/browser-modes.js'
 import { EXTENSIONS_IPC, type AgentExtensionManifest, type ExtensionsDesktopApi } from '../shared/extensions.js'
@@ -40,6 +46,7 @@ import {
   type NdBrowserFocusEvent,
 } from '../shared/nd-invocations.js'
 import { USAGE_IPC, type UsageDesktopApi, type UsageScope, type UsageSummary } from '../shared/usage.js'
+import type { LauncherKeepaliveView, LauncherLiveState } from '../shared/launcher-live.js'
 import { SUPERAGENT_PROTOTYPE_IPC, type SuperagentPrototypeDesktopApi } from '../shared/superagent-prototype.js'
 import {
   WORKFLOW_PLUGINS_IPC,
@@ -244,6 +251,11 @@ const api: DesktopApi = {
     volumeState: () => ipcRenderer.invoke(IPC.mediaVolumeState),
     setVolume: (update) => ipcRenderer.invoke(IPC.mediaVolumeSet, update),
   },
+  launcher: {
+    live: () => ipcRenderer.invoke(IPC.launcherLive) as Promise<LauncherLiveState>,
+    reportKeepalive: (views: LauncherKeepaliveView[]) =>
+      ipcRenderer.invoke(IPC.launcherKeepaliveReport, views) as Promise<void>,
+  },
   shortcuts: {
     state: () => ipcRenderer.invoke(IPC.shortcutsState),
     rebind: (id, accelerator) => ipcRenderer.invoke(IPC.shortcutsRebind, id, accelerator),
@@ -375,12 +387,39 @@ const api: DesktopApi = {
       return () => ipcRenderer.removeListener(BROWSER_PLATFORM_IPC.changedEvent, handler)
     },
   },
+  browserChromePopup: {
+    open: (request) => ipcRenderer.invoke(BROWSER_CHROME_POPUP_IPC.open, request) as Promise<boolean>,
+    update: (model) => ipcRenderer.invoke(BROWSER_CHROME_POPUP_IPC.update, model) as Promise<void>,
+    close: () => ipcRenderer.invoke(BROWSER_CHROME_POPUP_IPC.close) as Promise<void>,
+    onAction: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, action: BrowserChromePopupAction) => listener(action)
+      ipcRenderer.on(BROWSER_CHROME_POPUP_IPC.actionEvent, handler)
+      return () => ipcRenderer.removeListener(BROWSER_CHROME_POPUP_IPC.actionEvent, handler)
+    },
+    onClosed: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, kind: BrowserChromePopupKind) => listener(kind)
+      ipcRenderer.on(BROWSER_CHROME_POPUP_IPC.closedEvent, handler)
+      return () => ipcRenderer.removeListener(BROWSER_CHROME_POPUP_IPC.closedEvent, handler)
+    },
+  },
+  browserChromePopupSurface: {
+    getModel: () => ipcRenderer.invoke(BROWSER_CHROME_POPUP_IPC.getModel) as Promise<BrowserChromePopupModel | null>,
+    resize: (size) => ipcRenderer.invoke(BROWSER_CHROME_POPUP_IPC.resize, size) as Promise<void>,
+    action: (action) => ipcRenderer.invoke(BROWSER_CHROME_POPUP_IPC.action, action) as Promise<void>,
+    close: () => ipcRenderer.invoke(BROWSER_CHROME_POPUP_IPC.close) as Promise<void>,
+    onModel: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, model: BrowserChromePopupModel | null) => listener(model)
+      ipcRenderer.on(BROWSER_CHROME_POPUP_IPC.modelEvent, handler)
+      return () => ipcRenderer.removeListener(BROWSER_CHROME_POPUP_IPC.modelEvent, handler)
+    },
+  },
   ndExtensions: ndExtensionsApi,
   home: homeApi,
   browser: {
     state: () => ipcRenderer.invoke(IPC.browserState),
     setBounds: (bounds) => ipcRenderer.invoke(IPC.browserSetBounds, bounds),
     setVisible: (visible) => ipcRenderer.invoke(IPC.browserSetVisible, visible),
+    freezeFrame: () => ipcRenderer.invoke(IPC.browserFreezeFrame) as Promise<string | null>,
     navigate: (url) => ipcRenderer.invoke(IPC.browserNavigate, url),
     back: () => ipcRenderer.invoke(IPC.browserBack),
     forward: () => ipcRenderer.invoke(IPC.browserForward),
@@ -423,6 +462,8 @@ const api: DesktopApi = {
     stopSession: (sessionId) => ipcRenderer.invoke(IPC.harnessStopSession, sessionId),
     getPermissionMode: () => ipcRenderer.invoke(IPC.harnessPermissionGet),
     setPermissionMode: (mode) => ipcRenderer.invoke(IPC.harnessPermissionSet, mode),
+    getDeepSeekNativeAccount: () => ipcRenderer.invoke(IPC.harnessDeepSeekNativeGet),
+    setDeepSeekNativeAccount: (enabled: boolean) => ipcRenderer.invoke(IPC.harnessDeepSeekNativeSet, enabled),
     onStatus: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, status: Parameters<typeof listener>[0]) => listener(status)
       ipcRenderer.on(IPC.harnessStatusEvent, handler)

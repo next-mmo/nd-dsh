@@ -6,7 +6,7 @@
   "version": "1.2.0",
   "apiVersion": 1,
   "contexts": ["personal"],
-  "permissions": ["emulator.read", "emulator.write"],
+  "permissions": ["emulator.read", "emulator.write", "browser.openExternal"],
   "category": "tools",
   "settings": [
     {
@@ -71,7 +71,8 @@
           { "id": "logcat-read", "title": "Read device logcat output", "host": "emulator.logcat.read" },
           { "id": "input-tap", "title": "Tap a device screen coordinate", "host": "emulator.input.tap" },
           { "id": "input-swipe", "title": "Swipe across a device screen", "host": "emulator.input.swipe" },
-          { "id": "mirror-resume", "title": "Resume the embedded mirror stream", "host": "emulator.mirror.resume" }
+          { "id": "mirror-resume", "title": "Resume the embedded mirror stream", "host": "emulator.mirror.resume" },
+          { "id": "open-external", "title": "Open an external emulator or tool link", "host": "browser.openExternal" }
         ]
       }
     ],

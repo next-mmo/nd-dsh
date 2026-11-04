@@ -88,6 +88,7 @@ export class BrowserPlatformService {
     this.router.setOnChanged(() => { void this.emit() })
     this.browser.setTabClosedListener((tabId) => {
       this.leases.releaseTab(BUILTIN_BROWSER_TARGET_ID, tabId)
+      this.router.handleTabClosed(BUILTIN_BROWSER_TARGET_ID, tabId)
       void this.emit()
     })
   }
@@ -275,6 +276,10 @@ export class BrowserPlatformService {
   /** Blocks identity switches while another owner drives the visible browser. */
   setProfileSwitchGuard(guard: (() => string | undefined) | undefined): void {
     this.profileSwitchGuard = guard
+  }
+
+  selection(): BrowserSelection {
+    return this.router.selection()
   }
 
   async select(selection: BrowserSelection): Promise<BrowserPlatformState> {

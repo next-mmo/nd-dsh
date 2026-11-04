@@ -17,6 +17,7 @@ import { asNdContext, isNdContext } from '../shared/nd-context.js'
 import { DEFAULT_WEB_BROWSER_MODE_SETTINGS, type WebBrowserModeSettings } from '../shared/browser-modes.js'
 import { CHATGPT_WEB_ENGINE_ID, DEEPSEEK_WEB_ENGINE_ID, GEMINI_WEB_ENGINE_ID, GROK_WEB_ENGINE_ID } from '../shared/coding-engines.js'
 import type { LauncherPopupController } from './launcher-popup.js'
+import { createLauncherLive } from './launcher-live.js'
 import type { ShortcutRegistry } from './shortcut-registry.js'
 import { projectRoot, presetSourceDir, bundledResourceRoot, harnessNodeBinPath } from './app-paths.js'
 import { NdSkillService } from './skills/nd-skill-service.js'
@@ -68,6 +69,14 @@ import type { ProviderStore } from './providers.js'
 import type { QaService } from './qa/qa-service.js'
 import type { SessionArchiveStore } from './sessions/session-archive-store.js'
 import type { ThemeService } from './theme.js'
+import { BrowserChromePopupHost } from './browser/browser-chrome-popup-host.js'
+import {
+  BROWSER_CHROME_POPUP_IPC,
+  asBrowserChromePopupAction,
+  asBrowserChromePopupModel,
+  asBrowserChromePopupOpenRequest,
+  asBrowserChromePopupSize,
+} from '../shared/browser-chrome-popup.js'
 import { WorkflowPluginStore } from './workflows/workflow-plugin-store.js'
 import { registerWorkflowIpc } from './workflows/ipc.js'
 import { WorkflowService } from './workflows/workflow-service.js'
@@ -84,7 +93,7 @@ interface IpcDependencies {
   shortcuts: ShortcutRegistry
   browser: BrowserController
   /** Multi-tab browser platform, for extension hosts that manage real browser tabs. */
-  browserPlatform?: Pick<BrowserPlatformService, 'createTab' | 'activateTab' | 'closeTab' | 'tabs'>
+  browserPlatform?: Pick<BrowserPlatformService, 'createTab' | 'activateTab' | 'closeTab' | 'tabs' | 'selection'>
   /** nd-core-backed spawner for the media downloader; no background policy is injected. */
   mediaDownloadSpawn?: MediaSpawnProcess
   /** Whole-tree teardown for a media-download child. */
@@ -326,6 +335,7 @@ export function registerIpc(deps: IpcDependencies): () => void {
       console.warn('ND vault CLI broker could not start:', error instanceof Error ? error.message : String(error))
     })
   }
+  deps.harness.setDeepSeekNativeAccountProvider(() => deps.theme.deepSeekNativeAccount())
   deps.nativeToolBroker?.setExtensionInvoker(async ({ sessionId, cwd, worktree, extensionId, contributionId, input }) => {
     const organization = await deps.organizationStore.state()
     const context = nativeExtensionProjectContext(organization, sessionId, cwd, worktree)
@@ -612,6 +622,23 @@ export function registerIpc(deps: IpcDependencies): () => void {
     )
   })
 
+  // The launcher lists everything alive — running chats/agent runs, retained
+  // extension views, browser tabs — plus saved workspaces. Keep-alive views
+  // live in the main-window renderer, so it reports them here; the popup only
+  // reads the merged snapshot while it is open.
+  const launcherLive = createLauncherLive({
+    engineSessions: () => deps.engineRouter.sessions(),
+    harness: deps.harness,
+    organization: () => deps.organizationStore.state(),
+    browserTabs: () => deps.browserPlatform?.tabs() ?? Promise.resolve([]),
+    workspaceRegistry: () => deps.workspaces.list(),
+    workspaceRoot: () => deps.projectWorkspace.state().root,
+  })
+  handleLauncherSurface(IPC.launcherLive, () => launcherLive.state())
+  handle(IPC.launcherKeepaliveReport, (_event, value) => {
+    launcherLive.reportKeepalive(value)
+  })
+
   // OS-style media transport: the row drives the tab ND is playing; when the
   // page offers no button of its own to press, the OS media key takes over,
   // which also reaches media playing outside ND like the OS flyout does.
@@ -826,6 +853,29 @@ export function registerIpc(deps: IpcDependencies): () => void {
   handle(IPC.browserState, () => deps.browser.state())
   handle(IPC.browserSetBounds, (_event, value) => deps.browser.setBounds(asBounds(value)))
   handle(IPC.browserSetVisible, (_event, visible) => deps.browser.setVisible(Boolean(visible)))
+  handle(IPC.browserFreezeFrame, () => deps.browser.freezeFrame())
+
+  // Toolbar popups paint in their own native view above the live page. The
+  // primary renderer opens and feeds them; the popup renderer may only resize
+  // itself, forward an intent, or close.
+  const chromePopup = new BrowserChromePopupHost({ window: deps.window, preloadPath: deps.preloadPath })
+  const handleChromePopupSurface = (channel: string, allowPrimary: boolean, listener: Handler): void => {
+    ipcMain.removeHandler(channel)
+    ipcMain.handle(channel, async (event: IpcMainInvokeEvent, ...args: unknown[]) => {
+      const primary = !deps.window.isDestroyed() && event.sender === deps.window.webContents && event.senderFrame === deps.window.webContents.mainFrame
+      if (!(allowPrimary && primary) && !chromePopup.isPopupSender(event)) {
+        throw new Error('Rejected IPC from an untrusted browser popup frame')
+      }
+      return listener(event, ...args)
+    })
+    channels.push(channel)
+  }
+  handle(BROWSER_CHROME_POPUP_IPC.open, (_event, value) => chromePopup.show(asBrowserChromePopupOpenRequest(value)))
+  handle(BROWSER_CHROME_POPUP_IPC.update, (_event, value) => chromePopup.update(asBrowserChromePopupModel(value)))
+  handleChromePopupSurface(BROWSER_CHROME_POPUP_IPC.getModel, false, () => chromePopup.getModel())
+  handleChromePopupSurface(BROWSER_CHROME_POPUP_IPC.close, true, (event) => chromePopup.close(chromePopup.isPopupSender(event) ? 'escape' : 'host'))
+  handleChromePopupSurface(BROWSER_CHROME_POPUP_IPC.resize, false, (_event, value) => chromePopup.resize(asBrowserChromePopupSize(value)))
+  handleChromePopupSurface(BROWSER_CHROME_POPUP_IPC.action, false, (_event, value) => chromePopup.action(asBrowserChromePopupAction(value)))
   handle(IPC.browserNavigate, (_event, value) => deps.browser.navigate(asString(value, 'Browser URL', 8_192)))
   handle(IPC.browserBack, () => deps.browser.back())
   handle(IPC.browserForward, () => deps.browser.forward())
@@ -1001,6 +1051,11 @@ export function registerIpc(deps: IpcDependencies): () => void {
     const mode = deps.theme.setPermissionMode(asPermissionMode(value))
     return deps.harness.restartWithPermissionMode(mode)
   })
+  handle(IPC.harnessDeepSeekNativeGet, () => deps.theme.deepSeekNativeAccount())
+  handle(IPC.harnessDeepSeekNativeSet, async (_event, value) => {
+    deps.theme.setDeepSeekNativeAccount(value === true)
+    return deps.harness.restartWithDeepSeekNativeAccount()
+  })
 
   handle(IPC.dshRpc, async (_event, method, payload) => {
     const result = await deps.harness.gatewayRpc(asGatewayMethod(method), payload)
@@ -1070,6 +1125,7 @@ export function registerIpc(deps: IpcDependencies): () => void {
   handle(IPC.qaStop, () => deps.qa.stop())
 
   return () => {
+    chromePopup.dispose()
     deps.nativeToolBroker?.setExtensionInvoker(undefined)
     setEngineVaultEnvironmentProvider(undefined)
     deps.harness.setVaultEnvironmentProvider(undefined)

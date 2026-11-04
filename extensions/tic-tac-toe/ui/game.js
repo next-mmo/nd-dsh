@@ -29,12 +29,25 @@ function createBridge() {
   const pending = new Map()
   const connectQueue = []
 
+  const applyTheme = (theme) => {
+    const effective = theme === 'light' ? 'light' : 'dark'
+    document.documentElement.dataset.theme = effective
+    const meta = document.querySelector('meta[name="color-scheme"]')
+    if (meta) meta.setAttribute('content', effective)
+    if (renderer) renderer.setClearColor(effective === 'light' ? 0xf6f7f9 : 0x131519, 1)
+  }
+
   window.addEventListener('message', (event) => {
     const data = event.data
     if (!data || typeof data !== 'object') return
     if (data.kind === 'nd-webview:hello' && data.protocol === 'nd.webview/1') {
+      if (data.theme) applyTheme(data.theme)
       hello = data
       while (connectQueue.length > 0) connectQueue.shift()()
+      return
+    }
+    if (data.kind === 'nd-webview:theme' && data.protocol === 'nd.webview/1') {
+      if (data.theme) applyTheme(data.theme)
       return
     }
     if (data.kind === 'nd-webview:result') {

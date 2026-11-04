@@ -40,6 +40,20 @@ export class BrowserTargetRouter {
     return structuredClone(this.selectionValue)
   }
 
+  handleTabClosed(targetId: string, tabId: string): void {
+    if (this.selectionValue.mode !== 'tab' || this.selectionValue.targetId !== targetId || this.selectionValue.tabId !== tabId) {
+      return
+    }
+    if (targetId === 'builtin') {
+      const nextTabId = this.browser.activeTabId()
+      this.selectionValue = nextTabId && nextTabId !== tabId
+        ? { mode: 'tab', targetId: 'builtin', tabId: nextTabId }
+        : { mode: 'target', targetId: 'builtin' }
+      return
+    }
+    this.selectionValue = { mode: 'target', targetId }
+  }
+
   async select(selection: BrowserSelection): Promise<void> {
     if (selection.mode === 'target') {
       if (!selection.targetId) throw new Error('Target selection requires targetId')
@@ -168,6 +182,7 @@ export class BrowserTargetRouter {
         origin: tab.origin,
       }, () => target.closeTab(tabId))
       this.leases.releaseTab(targetId, tabId)
+      this.handleTabClosed(targetId, tabId)
       this.onChanged?.()
       return result
     }
@@ -484,12 +499,16 @@ export class BrowserTargetRouter {
   }> {
     const targetId = await this.resolveTargetId(params)
     const target = await this.target(targetId)
-    const requestedTab = tabString(params.tabId)
-      ?? (this.selectionValue.mode === 'tab' && this.selectionValue.targetId === targetId ? this.selectionValue.tabId : undefined)
+    const explicitTab = tabString(params.tabId)
+    const selectedTab = !explicitTab && this.selectionValue.mode === 'tab' && this.selectionValue.targetId === targetId
+      ? this.selectionValue.tabId
+      : undefined
     const tabs = await target.listTabs()
-    const tab = requestedTab
-      ? tabs.find((item) => item.id === requestedTab)
-      : tabs.find((item) => item.active) ?? tabs[0]
+    const tab = explicitTab
+      ? tabs.find((item) => item.id === explicitTab)
+      : (selectedTab ? tabs.find((item) => item.id === selectedTab) : undefined)
+        ?? tabs.find((item) => item.active)
+        ?? tabs[0]
     if (!tab) throw new Error('Selected browser target has no tabs')
     return { target, targetId, tabId: tab.id, tab }
   }

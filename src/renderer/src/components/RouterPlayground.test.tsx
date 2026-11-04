@@ -81,7 +81,11 @@ function elements(node: ReactNode, path = 'root'): TestElement[] {
   return [item, ...elements(item.props.children as ReactNode, identity)]
 }
 
-function render(props: { state: RouterState; onError: (msg: string) => void }): TestElement {
+function render(props: {
+  state: RouterState
+  onError: (msg: string) => void
+  agyState?: import('../../../shared/router').RouterAgyState | null
+}): TestElement {
   hooks.enter('root')
   try {
     return RouterPlayground(props) as TestElement
@@ -304,6 +308,121 @@ describe('RouterPlayground', () => {
     expect(routeOptions.some((o) => o.value === 'model:trae/agent')).toBe(true)
     expect(routeOptions.some((o) => o.value === 'model:trae/ask')).toBe(true)
     expect(routeOptions.some((o) => o.value === 'model:trae/edit')).toBe(true)
+  })
+
+  it('excludes disabled (isActive: false) providers from provider list and route options', () => {
+    const onError = vi.fn()
+    const stateWithDisabled: RouterState = {
+      ...mockState,
+      providers: [
+        ...mockState.providers,
+        {
+          id: 'disabled-provider',
+          kind: 'codex-cli',
+          name: 'Codex CLI',
+          baseUrl: '',
+          models: ['o3-mini'],
+          isActive: false,
+          priority: 4,
+          hasSecret: false,
+          accounts: [],
+        },
+      ],
+    }
+    const tree = render({ state: stateWithDisabled, onError })
+    const providerSelect = findSelectByAriaLabel(tree, 'Filter provider')!
+    const providerOptions = getOptions(providerSelect)
+    expect(providerOptions.some((o) => o.value === 'provider:disabled-provider')).toBe(false)
+
+    const routeSelect = findSelectByAriaLabel(tree, 'Playground route')!
+    const routeOptions = getOptions(routeSelect)
+    expect(routeOptions.some((o) => o.value.includes('disabled-provider'))).toBe(false)
+  })
+
+  it('excludes Antigravity provider when Antigravity lane is disabled', () => {
+    const onError = vi.fn()
+    const disabledAgy: import('../../../shared/router').RouterAgyState = {
+      policy: {
+        enabled: false,
+        manualApprovalRequired: true,
+        maxConcurrentJobs: 1,
+        maxJobsPerHour: 2,
+        maxJobsPerDay: 10,
+        maxTokensPerDay: 200000,
+        approvalTtlSecs: 600,
+        maxRetries: 0,
+        maxTimeoutSecs: 300,
+      },
+      locked: false,
+      lockReason: null,
+      window: { startMs: 0, jobs: 0, limit: 2 },
+      day: { startMs: 0, jobs: 0, jobsLimit: 10, tokens: 0, tokensLimit: 200000 },
+      pendingApprovals: 0,
+    }
+    const tree = render({ state: mockState, onError, agyState: disabledAgy })
+    const providerSelect = findSelectByAriaLabel(tree, 'Filter provider')!
+    const providerOptions = getOptions(providerSelect)
+    expect(providerOptions.some((o) => o.value === 'provider:agy-1')).toBe(false)
+
+    const routeSelect = findSelectByAriaLabel(tree, 'Playground route')!
+    const routeOptions = getOptions(routeSelect)
+    expect(routeOptions.some((o) => o.value === 'model:agy-1/gemini-3.8-flash-low')).toBe(false)
+  })
+
+  it('excludes Antigravity provider when Antigravity lane is locked', () => {
+    const onError = vi.fn()
+    const lockedAgy: import('../../../shared/router').RouterAgyState = {
+      policy: {
+        enabled: true,
+        manualApprovalRequired: true,
+        maxConcurrentJobs: 1,
+        maxJobsPerHour: 2,
+        maxJobsPerDay: 10,
+        maxTokensPerDay: 200000,
+        approvalTtlSecs: 600,
+        maxRetries: 0,
+        maxTimeoutSecs: 300,
+      },
+      locked: true,
+      lockReason: 'kill switch',
+      window: { startMs: 0, jobs: 0, limit: 2 },
+      day: { startMs: 0, jobs: 0, jobsLimit: 10, tokens: 0, tokensLimit: 200000 },
+      pendingApprovals: 0,
+    }
+    const tree = render({ state: mockState, onError, agyState: lockedAgy })
+    const providerSelect = findSelectByAriaLabel(tree, 'Filter provider')!
+    const providerOptions = getOptions(providerSelect)
+    expect(providerOptions.some((o) => o.value === 'provider:agy-1')).toBe(false)
+  })
+
+  it('includes Antigravity provider when Antigravity lane is enabled and unlocked', () => {
+    const onError = vi.fn()
+    const enabledAgy: import('../../../shared/router').RouterAgyState = {
+      policy: {
+        enabled: true,
+        manualApprovalRequired: true,
+        maxConcurrentJobs: 1,
+        maxJobsPerHour: 2,
+        maxJobsPerDay: 10,
+        maxTokensPerDay: 200000,
+        approvalTtlSecs: 600,
+        maxRetries: 0,
+        maxTimeoutSecs: 300,
+      },
+      locked: false,
+      lockReason: null,
+      window: { startMs: 0, jobs: 0, limit: 2 },
+      day: { startMs: 0, jobs: 0, jobsLimit: 10, tokens: 0, tokensLimit: 200000 },
+      pendingApprovals: 0,
+    }
+    const tree = render({ state: mockState, onError, agyState: enabledAgy })
+    const providerSelect = findSelectByAriaLabel(tree, 'Filter provider')!
+    const providerOptions = getOptions(providerSelect)
+    expect(providerOptions.some((o) => o.value === 'provider:agy-1')).toBe(true)
+
+    const routeSelect = findSelectByAriaLabel(tree, 'Playground route')!
+    const routeOptions = getOptions(routeSelect)
+    expect(routeOptions.some((o) => o.value === 'model:agy-1/gemini-3.8-flash-low')).toBe(true)
   })
 
   it('filters routes when a specific provider is selected', () => {

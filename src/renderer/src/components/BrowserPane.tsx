@@ -1,13 +1,20 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react'
 import type { BrowserPlatformState, BrowserTabDescriptor } from '../../../shared/browser-platform'
 import type { BrowserState } from '../../../shared/contracts'
-import { ArrowLeftIcon, ArrowRightIcon, CameraIcon, CheckIcon, ChevronDownIcon, CloseIcon, ContextIcon, ExternalIcon, GlobeIcon, PencilIcon, PlusIcon, PuzzleIcon, ReloadIcon, SpinnerIcon, StarIcon } from './Icons'
+import { ArrowLeftIcon, ArrowRightIcon, CameraIcon, ChevronDownIcon, CloseIcon, ContextIcon, ExternalIcon, GlobeIcon, PencilIcon, PlusIcon, PuzzleIcon, ReloadIcon, SpinnerIcon, StarIcon } from './Icons'
 import { BridgePill } from './bridge-pill'
 import { BrowserProfileAvatar } from './BrowserProfileAvatar'
 import { BrowserProfileDialog } from './BrowserProfileDialog'
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover'
-import { SettingsSwitch } from './settings-primitives'
+import { BrowserExtensionsMenu, BrowserProfilesMenu } from './browser-chrome-menus'
 import { cn } from '../lib/utils'
+import { useBrowserFrozenFrame } from '../lib/browser-frozen-frame'
+import {
+  browserChromePopupActionDismisses,
+  type BrowserChromePopupAction,
+  type BrowserChromePopupKind,
+  type BrowserChromePopupModel,
+} from '../../../shared/browser-chrome-popup'
 
 interface BrowserPaneProps {
   active: boolean
@@ -72,6 +79,15 @@ export function BrowserPane({ active, state, onSnapshot, onError, onOpenSettings
   const [extensionsMenuOpen, setExtensionsMenuOpen] = useState(false)
   const [profileMenuOpen, setProfileMenuOpen] = useState(false)
   const [profileDialogOpen, setProfileDialogOpen] = useState(false)
+  // Desktop shell: toolbar menus open in the native popup surface above the
+  // live page. Absent (UI preview or an un-restarted dev main process) falls
+  // back to DOM popovers excluded from full-view occlusion.
+  const [nativePopupUnavailable, setNativePopupUnavailable] = useState(false)
+  const chromePopup = nativePopupUnavailable ? undefined : window.ndDsh.browserChromePopup
+  const [nativePopupKind, setNativePopupKind] = useState<BrowserChromePopupKind | null>(null)
+  const nativePopupKindRef = useRef<BrowserChromePopupKind | null>(null)
+  nativePopupKindRef.current = nativePopupKind
+  const frozenFrame = useBrowserFrozenFrame()
 
   // Tabs of every profile stay alive, but the strip shows the visible identity.
   const builtinTabs = useMemo(
@@ -114,11 +130,17 @@ export function BrowserPane({ active, state, onSnapshot, onError, onOpenSettings
 
   useEffect(() => {
     let mounted = true
-    const selectedTabId = platform?.selection.mode === 'tab' && platform.selection.targetId === targetForTabs
-      ? platform.selection.tabId
-      : targetForTabs === 'builtin'
+    const candidateTabId = platform?.selection.mode === 'tab' && platform.selection.targetId === targetForTabs
+      ? targetTabs.find((tab) => tab.id === platform.selection.tabId)?.id
+      : undefined
+    const selectedTabId = candidateTabId
+      ?? (targetForTabs === 'builtin'
         ? state?.activeTabId
-        : targetTabs.find((tab) => tab.active)?.id
+        : targetTabs.find((tab) => tab.active)?.id)
+    if (!selectedTabId) {
+      setSiteToolCount(0)
+      return () => { mounted = false }
+    }
     void window.ndDsh.browserPlatform.siteTools(targetForTabs, selectedTabId)
       .then((tools) => { if (mounted) setSiteToolCount(tools.length) })
       .catch(() => { if (mounted) setSiteToolCount(0) })
@@ -229,6 +251,115 @@ export function BrowserPane({ active, state, onSnapshot, onError, onOpenSettings
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [active, activeTabId, builtinTabs])
 
+  const popupTheme = (): 'light' | 'dark' => document.documentElement.dataset.theme === 'light' ? 'light' : 'dark'
+  const extensionsModel = useMemo((): Extract<BrowserChromePopupModel, { kind: 'extensions' }> => ({
+    kind: 'extensions',
+    theme: popupTheme(),
+    developerMode: Boolean(platform?.developerMode),
+    canManage: Boolean(onOpenSettings),
+    extensions: (platform?.extensions ?? []).map((extension) => ({
+      id: extension.id,
+      title: extension.actionTitle || extension.name,
+      subtitle: `${extension.name} · ${extension.version} · ${extension.status}`,
+      enabled: extension.enabled,
+      canOpen: Boolean(extension.enabled && extension.status !== 'error' && extension.actionPopup),
+    })),
+  }), [platform?.developerMode, platform?.extensions, onOpenSettings])
+  const profilesModel = useMemo((): Extract<BrowserChromePopupModel, { kind: 'profiles' }> => ({
+    kind: 'profiles',
+    theme: popupTheme(),
+    canManage: Boolean(onOpenSettings),
+    profiles: profiles.map((profile) => ({
+      id: profile.id,
+      name: profile.name,
+      color: profile.color,
+      tabCount: profile.tabCount,
+      isDefault: Boolean(profile.isDefault),
+      active: Boolean(profile.active),
+    })),
+  }), [profiles, onOpenSettings])
+
+  const runChromeAction = (action: BrowserChromePopupAction): void => {
+    if (browserChromePopupActionDismisses(action)) {
+      setExtensionsMenuOpen(false)
+      setProfileMenuOpen(false)
+    }
+    switch (action.type) {
+      case 'extension-open':
+        void runBrowserAction(() => window.ndDsh.browserPlatform.showExtensionPopup(action.id))
+        return
+      case 'extension-toggle':
+        void runBrowserAction(() => window.ndDsh.browserPlatform.setExtensionEnabled(action.id, action.enabled))
+        return
+      case 'extension-load-unpacked':
+        void runBrowserAction(() => window.ndDsh.browserPlatform.installExtension())
+        return
+      case 'profile-select':
+        switchProfile(action.id)
+        return
+      case 'profile-create':
+        setProfileDialogOpen(true)
+        return
+      case 'open-settings':
+        onOpenSettings?.()
+        return
+    }
+  }
+  const runChromeActionRef = useRef(runChromeAction)
+  runChromeActionRef.current = runChromeAction
+
+  const toggleNativePopup = (kind: BrowserChromePopupKind, trigger: HTMLElement): void => {
+    if (!chromePopup) return
+    if (nativePopupKindRef.current === kind) {
+      void chromePopup.close().catch(() => undefined)
+      return
+    }
+    if (kind === 'extensions' && platform?.extensionPopupId) {
+      void window.ndDsh.browserPlatform.closeExtensionPopup().catch(() => undefined)
+    }
+    const rect = trigger.getBoundingClientRect()
+    const model = kind === 'extensions' ? extensionsModel : profilesModel
+    void chromePopup.open({ anchor: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }, model })
+      .then((opened) => { if (opened) setNativePopupKind(kind) })
+      .catch(() => {
+        setNativePopupUnavailable(true)
+        setNativePopupKind(null)
+        if (kind === 'extensions') setExtensionsMenuOpen(true)
+        else setProfileMenuOpen(true)
+      })
+  }
+
+  // Many panes stay mounted; only the one that opened the popup owns its
+  // intents and close notification.
+  useEffect(() => {
+    if (!chromePopup) return
+    const offAction = chromePopup.onAction((action) => {
+      if (nativePopupKindRef.current) runChromeActionRef.current(action)
+    })
+    const offClosed = chromePopup.onClosed((kind) => {
+      if (nativePopupKindRef.current === kind) setNativePopupKind(null)
+    })
+    return () => {
+      offAction()
+      offClosed()
+    }
+  }, [chromePopup])
+
+  useEffect(() => {
+    if (!chromePopup || !nativePopupKind) return
+    void chromePopup.update(nativePopupKind === 'extensions' ? extensionsModel : profilesModel).catch(() => undefined)
+  }, [chromePopup, nativePopupKind, extensionsModel, profilesModel])
+
+  // A pane that stops being the surface (or unmounts) takes its popup with it.
+  useEffect(() => {
+    if (!chromePopup || active || !nativePopupKindRef.current) return
+    setNativePopupKind(null)
+    void chromePopup.close().catch(() => undefined)
+  }, [active, chromePopup])
+  useEffect(() => () => {
+    if (nativePopupKindRef.current) void chromePopup?.close().catch(() => undefined)
+  }, [chromePopup])
+
   /**
    * Bounds only: the native view is one shared child view, so the app shell
    * owns whether it is visible (see the shell's surface decision). A pane that
@@ -238,26 +369,62 @@ export function BrowserPane({ active, state, onSnapshot, onError, onOpenSettings
     const surface = surfaceRef.current
     if (!surface) return
     let animationFrame = 0
+    const fallbackOpen = extensionsMenuOpen || profileMenuOpen
     const syncBounds = (): void => {
       if (!active) return
       cancelAnimationFrame(animationFrame)
       animationFrame = requestAnimationFrame(() => {
         const rect = surface.getBoundingClientRect()
         if (rect.width === 0 || rect.height === 0) return
-        void window.ndDsh.browser.setBounds({ x: rect.x, y: rect.y, width: rect.width, height: rect.height })
+        let topInset = 0
+        if (fallbackOpen) {
+          const overlay = document.querySelector<HTMLElement>('[data-browser-overlay="true"]')
+          if (overlay) {
+            const overlayRect = overlay.getBoundingClientRect()
+            topInset = Math.max(0, Math.min(rect.height, Math.ceil(overlayRect.bottom - rect.top + 8)))
+          }
+        }
+        void window.ndDsh.browser.setBounds({
+          x: rect.x,
+          y: rect.y + topInset,
+          width: rect.width,
+          height: Math.max(0, rect.height - topInset),
+        })
           .catch((cause) => onError(cause instanceof Error ? cause.message : String(cause)))
       })
     }
     const observer = new ResizeObserver(syncBounds)
     observer.observe(surface)
+    let observedOverlay: HTMLElement | null = null
+    const attachOverlayObserver = (): void => {
+      const overlay = document.querySelector<HTMLElement>('[data-browser-overlay="true"]')
+      if (overlay && overlay !== observedOverlay) {
+        observedOverlay = overlay
+        observer.observe(overlay)
+        syncBounds()
+      }
+    }
+    let bodyObserver: MutationObserver | undefined
+    const onWindowBlur = (): void => {
+      setExtensionsMenuOpen(false)
+      setProfileMenuOpen(false)
+    }
+    if (fallbackOpen) {
+      attachOverlayObserver()
+      bodyObserver = new MutationObserver(attachOverlayObserver)
+      bodyObserver.observe(document.body, { childList: true, subtree: true })
+      window.addEventListener('blur', onWindowBlur)
+    }
     window.addEventListener('resize', syncBounds)
     if (active) syncBounds()
     return () => {
       cancelAnimationFrame(animationFrame)
+      bodyObserver?.disconnect()
       observer.disconnect()
+      window.removeEventListener('blur', onWindowBlur)
       window.removeEventListener('resize', syncBounds)
     }
-  }, [active, onError])
+  }, [active, extensionsMenuOpen, profileMenuOpen, onError])
 
   const navigate = async (): Promise<void> => {
     try {
@@ -317,6 +484,17 @@ export function BrowserPane({ active, state, onSnapshot, onError, onOpenSettings
     ? `${annotation.marks.length} mark${annotation.marks.length === 1 ? '' : 's'} · ${annotation.elements.length} referenced element${annotation.elements.length === 1 ? '' : 's'} · click to clear`
     : undefined
   const approval = platform?.approvals[0]
+  const profileTriggerContent = (
+    <>
+      <BrowserProfileAvatar
+        name={activeProfile?.name ?? 'Default'}
+        color={activeProfile?.color ?? '#65717b'}
+        size={16}
+      />
+      <span className="max-w-[76px] truncate text-[9px]">{activeProfile?.name ?? 'Default'}</span>
+      <ChevronDownIcon className="size-[11px] shrink-0" />
+    </>
+  )
 
   return (
     <section className={cn("flex flex-1 flex-col h-full w-full min-h-0 min-w-0 bg-background", mode === 'dialog' && "rounded-xl overflow-hidden")} aria-label="Built-in browser">
@@ -480,6 +658,7 @@ export function BrowserPane({ active, state, onSnapshot, onError, onOpenSettings
         <Popover
           open={extensionsMenuOpen}
           onOpenChange={(open) => {
+            if (chromePopup && open) return
             setExtensionsMenuOpen(open)
             if (open && platform?.extensionPopupId) {
               void window.ndDsh.browserPlatform.closeExtensionPopup().catch(() => undefined)
@@ -488,94 +667,24 @@ export function BrowserPane({ active, state, onSnapshot, onError, onOpenSettings
         >
           <PopoverTrigger asChild>
             <button
-              className={platform?.extensionPopupId ? activeIconButtonClasses : iconButtonClasses}
+              type="button"
+              className={platform?.extensionPopupId || nativePopupKind === 'extensions' || extensionsMenuOpen ? activeIconButtonClasses : iconButtonClasses}
               disabled={Boolean(state?.annotationMode)}
+              onClick={(event) => {
+                if (!chromePopup) return
+                event.preventDefault()
+                toggleNativePopup('extensions', event.currentTarget)
+              }}
+              aria-expanded={chromePopup ? nativePopupKind === 'extensions' : extensionsMenuOpen}
+              aria-haspopup="dialog"
               title="Extensions in the ND built-in browser"
               aria-label="Built-in browser extensions"
             >
               <PuzzleIcon />
             </button>
           </PopoverTrigger>
-          <PopoverContent align="end" sideOffset={6} className="w-[320px] p-0">
-            <div className="border-b border-border-soft px-3 py-2.5">
-              <strong className="block text-[11px] font-semibold text-strong">Extensions</strong>
-              <span className="text-[9px] text-faint">Runs inside ND's built-in Chromium browser</span>
-            </div>
-            <div className="max-h-[300px] space-y-1 overflow-auto p-2">
-              {(platform?.extensions ?? []).length === 0 ? (
-                <div className="rounded-md px-2 py-4 text-center text-[9px] text-faint">
-                  No built-in browser extensions installed.
-                </div>
-              ) : (
-                (platform?.extensions ?? []).map((extension) => (
-                  <div key={extension.id} className="flex items-center gap-2 rounded-md px-2 py-2 hover:bg-accent/70">
-                    <div className="grid size-7 shrink-0 place-items-center rounded-md border border-border bg-secondary text-soft">
-                      <PuzzleIcon className="size-3.5" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <strong className="block truncate text-[10px] font-semibold text-strong">
-                        {extension.actionTitle || extension.name}
-                      </strong>
-                      <span className="block truncate text-[8px] text-faint">
-                        {extension.name} · {extension.version} · {extension.status}
-                      </span>
-                    </div>
-                    {extension.enabled && extension.status !== 'error' && extension.actionPopup ? (
-                      <button
-                        type="button"
-                        className="shrink-0 rounded border border-border bg-secondary px-2 py-1 text-[8px] font-semibold text-soft hover:bg-accent"
-                        onClick={() => {
-                          setExtensionsMenuOpen(false)
-                          void runBrowserAction(() => window.ndDsh.browserPlatform.showExtensionPopup(extension.id))
-                        }}
-                      >
-                        Open
-                      </button>
-                    ) : null}
-                    <SettingsSwitch
-                      label={`Enable ${extension.name}`}
-                      checked={extension.enabled}
-                      onCheckedChange={(enabled) => {
-                        void runBrowserAction(() =>
-                          window.ndDsh.browserPlatform.setExtensionEnabled(extension.id, enabled)
-                        )
-                      }}
-                    />
-                  </div>
-                ))
-              )}
-            </div>
-            <div className="flex items-center justify-between gap-2 border-t border-border-soft px-3 py-2">
-              <span className="min-w-0 truncate text-[8px] text-faint">
-                {platform?.developerMode ? 'Developer mode on' : ''}
-              </span>
-              <div className="flex shrink-0 items-center gap-1.5">
-                {platform?.developerMode ? (
-                  <button
-                    type="button"
-                    className="rounded border border-border bg-secondary px-2 py-1 text-[8px] font-semibold text-soft hover:bg-accent"
-                    onClick={() => {
-                      setExtensionsMenuOpen(false)
-                      void runBrowserAction(() => window.ndDsh.browserPlatform.installExtension())
-                    }}
-                  >
-                    Load unpacked
-                  </button>
-                ) : null}
-                {onOpenSettings ? (
-                  <button
-                    type="button"
-                    className="rounded border border-border bg-secondary px-2 py-1 text-[8px] font-semibold text-soft hover:bg-accent"
-                    onClick={() => {
-                      setExtensionsMenuOpen(false)
-                      onOpenSettings()
-                    }}
-                  >
-                    Manage in Settings
-                  </button>
-                ) : null}
-              </div>
-            </div>
+          <PopoverContent data-browser-overlay="true" align="end" sideOffset={6} className="w-[320px] p-0">
+            <BrowserExtensionsMenu model={extensionsModel} onAction={runChromeAction} />
           </PopoverContent>
         </Popover>
         <button
@@ -586,71 +695,32 @@ export function BrowserPane({ active, state, onSnapshot, onError, onOpenSettings
         >
           <ExternalIcon />
         </button>
-        <Popover open={profileMenuOpen} onOpenChange={setProfileMenuOpen}>
+        <Popover
+          open={profileMenuOpen}
+          onOpenChange={(open) => {
+            if (chromePopup && open) return
+            setProfileMenuOpen(open)
+          }}
+        >
           <PopoverTrigger asChild>
             <button
+              type="button"
               className={cn(activeIconButtonClasses, 'max-w-[132px]')}
+              onClick={(event) => {
+                if (!chromePopup) return
+                event.preventDefault()
+                toggleNativePopup('profiles', event.currentTarget)
+              }}
+              aria-expanded={chromePopup ? nativePopupKind === 'profiles' : profileMenuOpen}
+              aria-haspopup="dialog"
               title={`Browser profile: ${activeProfile?.name ?? 'Default'}`}
               aria-label="Browser profile"
             >
-              <BrowserProfileAvatar
-                name={activeProfile?.name ?? 'Default'}
-                color={activeProfile?.color ?? '#65717b'}
-                size={16}
-              />
-              <span className="max-w-[76px] truncate text-[9px]">{activeProfile?.name ?? 'Default'}</span>
-              <ChevronDownIcon className="size-[11px] shrink-0" />
+              {profileTriggerContent}
             </button>
           </PopoverTrigger>
-          <PopoverContent align="end" sideOffset={6} className="w-[272px] p-0">
-            <div className="border-b border-border-soft px-3 py-2.5">
-              <strong className="block text-[11px] font-semibold text-strong">Browser profiles</strong>
-              <span className="text-[9px] text-faint">Each profile keeps its own cookies and sign-ins</span>
-            </div>
-            <div className="max-h-[300px] space-y-0.5 overflow-auto p-2">
-              {profiles.length === 0 ? (
-                <div className="rounded-md px-2 py-4 text-center text-[9px] text-faint">Profiles are loading…</div>
-              ) : profiles.map((profile) => (
-                <button
-                  key={profile.id}
-                  type="button"
-                  aria-pressed={profile.active}
-                  onClick={() => switchProfile(profile.id)}
-                  className={cn(
-                    'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent/70',
-                    profile.active && 'bg-accent/50',
-                  )}
-                >
-                  <BrowserProfileAvatar name={profile.name} color={profile.color} size={20} />
-                  <span className="min-w-0 flex-1">
-                    <strong className="block truncate text-[10px] font-semibold text-strong">{profile.name}</strong>
-                    <span className="block text-[8px] text-faint">
-                      {profile.tabCount} tab{profile.tabCount === 1 ? '' : 's'}
-                      {profile.isDefault ? ' · Default' : ''}
-                    </span>
-                  </span>
-                  {profile.active ? <CheckIcon className="size-3.5 shrink-0 text-primary" /> : null}
-                </button>
-              ))}
-            </div>
-            <div className="flex items-center justify-between gap-2 border-t border-border-soft px-3 py-2">
-              <button
-                type="button"
-                className="rounded border border-border bg-secondary px-2 py-1 text-[8px] font-semibold text-soft hover:bg-accent"
-                onClick={() => { setProfileMenuOpen(false); setProfileDialogOpen(true) }}
-              >
-                New profile
-              </button>
-              {onOpenSettings ? (
-                <button
-                  type="button"
-                  className="rounded border border-border bg-secondary px-2 py-1 text-[8px] font-semibold text-soft hover:bg-accent"
-                  onClick={() => { setProfileMenuOpen(false); onOpenSettings() }}
-                >
-                  Manage in Settings
-                </button>
-              ) : null}
-            </div>
+          <PopoverContent data-browser-overlay="true" align="end" sideOffset={6} className="w-[272px] p-0">
+            <BrowserProfilesMenu model={profilesModel} onAction={runChromeAction} />
           </PopoverContent>
         </Popover>
         {state?.annotationMode ? (
@@ -725,6 +795,17 @@ export function BrowserPane({ active, state, onSnapshot, onError, onOpenSettings
             <span>{state?.loading ? `Loading ${state.url}` : uiPreview ? 'Browser canvas is desktop-only; controls are simulated in UI preview.' : state?.url === 'about:blank' ? 'Enter a URL to open the ND browser.' : 'ND built-in browser surface'}</span>
           </div>
         )}
+        {active && frozenFrame && !showsNewTabPage ? (
+          // The page under a DOM overlay: the native view is hidden, so the
+          // pane paints the still captured just before it stepped aside.
+          <img
+            src={frozenFrame}
+            alt=""
+            aria-hidden="true"
+            draggable={false}
+            className="pointer-events-none absolute inset-0 size-full select-none object-fill"
+          />
+        ) : null}
       </div>
     </section>
   )

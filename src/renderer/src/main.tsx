@@ -76,10 +76,12 @@ async function boot(): Promise<void> {
     return
   }
 
-  const isLauncher = window.location.hash.replace(/^#\/?/, '').split(/[/?]/)[0] === 'launcher'
-  const RootView = isLauncher
+  const route = window.location.hash.replace(/^#\/?/, '').split(/[/?]/)[0]
+  const RootView = route === 'launcher'
     ? (await import('./LauncherPopupApp')).default
-    : (await import('./App')).default
+    : route === 'browser-popup'
+      ? (await import('./BrowserChromePopupApp')).default
+      : (await import('./App')).default
 
   root.render(
     <React.StrictMode>

@@ -945,6 +945,8 @@ const desktopApi: DesktopApi = {
     stopSession: async () => undefined,
     getPermissionMode: async () => 'ask',
     setPermissionMode: async (mode) => mode,
+    getDeepSeekNativeAccount: async () => false,
+    setDeepSeekNativeAccount: async (enabled) => enabled,
     onStatus: harnessEvents.on,
   },
   dsh: {

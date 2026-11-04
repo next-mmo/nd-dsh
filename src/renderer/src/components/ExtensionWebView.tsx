@@ -232,7 +232,7 @@ export function ExtensionWebView({ data, theme, onError }: {
         src={webView.url}
         title={data.title}
         referrerPolicy="no-referrer"
-        className={cn('h-[480px] w-full rounded-md border border-border-soft bg-black sm:h-[540px]', ready ? 'block' : 'hidden')}
+        className={cn('h-[480px] w-full rounded-md border border-border-soft bg-surface-0 sm:h-[540px]', ready ? 'block' : 'hidden')}
       />
     </div>
   )

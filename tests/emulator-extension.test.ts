@@ -9,7 +9,7 @@ import { NativeHostRegistry } from '../src/main/extensions/native-host.js'
 import { InvocationBroker, type NdOrganizationPort } from '../src/main/extensions/invocation-broker.js'
 import { manifestPermissionIssues, validateNdExtensionManifest, type NdExtensionManifest } from '../src/shared/extension-package.js'
 import { personalContext } from '../src/shared/nd-context.js'
-import { formatDeviceInfo, formatTimestamp, parseDeviceList } from '../extensions/nd-emulator/ui/emulator-core.js'
+import { formatDeviceInfo, formatTimestamp, parseDeviceList, EMULATOR_PROVIDERS, filterProviders, detectProvider } from '../extensions/nd-emulator/ui/emulator-core.js'
 import { EmulatorService, parseDisplaySize } from '../src/main/extensions/emulator-service.js'
 
 const packagePath = fileURLToPath(new URL('../extensions/nd-emulator/', import.meta.url))
@@ -37,6 +37,7 @@ describe('ND Emulator extension package', () => {
     expect(manifest.contexts).toEqual(['personal'])
     expect(manifest.permissions).toContain('emulator.read')
     expect(manifest.permissions).toContain('emulator.write')
+    expect(manifest.permissions).toContain('browser.openExternal')
     expect(manifest.executable).toBeUndefined()
     expect(manifestPermissionIssues(manifest)).toEqual([])
 
@@ -56,6 +57,7 @@ describe('ND Emulator extension package', () => {
       ['input-tap', 'emulator.input.tap'],
       ['input-swipe', 'emulator.input.swipe'],
       ['mirror-resume', 'emulator.mirror.resume'],
+      ['open-external', 'browser.openExternal'],
     ])
     expect(manifest.contributions.commands[0]?.openViewId).toBe('main')
     expect(manifest.contributions.commands[0]?.host).toBe('emulator.devices.list')
@@ -110,6 +112,26 @@ describe('ND Emulator pure logic helpers', () => {
   it('formats timestamp as HH:MM:SS', () => {
     const ts = formatTimestamp()
     expect(ts).toMatch(/^\d{2}:\d{2}:\d{2}$/)
+  })
+
+  it('provides emulator provider catalog and filtering', () => {
+    expect(EMULATOR_PROVIDERS.length).toBeGreaterThanOrEqual(8)
+    const ld = EMULATOR_PROVIDERS.find((p) => p.id === 'ldplayer')
+    expect(ld).toBeDefined()
+    expect(ld?.defaultPort).toBe(5555)
+
+    const emulators = filterProviders('emulators')
+    expect(emulators.some((p) => p.id === 'ldplayer')).toBe(true)
+    expect(emulators.some((p) => p.id === 'bluestacks')).toBe(true)
+    expect(emulators.some((p) => p.id === 'scrcpy')).toBe(false)
+
+    const searchTools = filterProviders('all', 'scrcpy')
+    expect(searchTools).toHaveLength(1)
+    expect(searchTools[0]?.id).toBe('scrcpy')
+
+    expect(detectProvider('127.0.0.1:16384')).toBe('mumu')
+    expect(detectProvider('127.0.0.1:62001')).toBe('nox')
+    expect(detectProvider('127.0.0.1:58526')).toBe('wsa')
   })
 })
 

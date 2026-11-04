@@ -1,7 +1,9 @@
+import { useEffect, useState } from 'react'
 import type { HarnessStatus } from '../../../shared/contracts'
 import {
   SettingsRow,
   SettingsSection,
+  SettingsSwitch,
   StatusChip,
   rowDesc,
   rowPathText,
@@ -13,10 +15,33 @@ import { cn } from '../lib/utils'
 
 interface RuntimeSettingsProps {
   harness: HarnessStatus | null
+  onError?(message: string): void
 }
 
 /** General → Runtime: ND Harness status and product architecture notes. */
-export function RuntimeSettings({ harness }: RuntimeSettingsProps) {
+export function RuntimeSettings({ harness, onError }: RuntimeSettingsProps) {
+  const [deepSeekNativeAccount, setDeepSeekNativeAccount] = useState(false)
+  const [nativeBusy, setNativeBusy] = useState(false)
+
+  useEffect(() => {
+    let live = true
+    window.ndDsh.harness.getDeepSeekNativeAccount()
+      .then((enabled) => { if (live) setDeepSeekNativeAccount(enabled === true) })
+      .catch(() => undefined)
+    return () => { live = false }
+  }, [])
+
+  const toggleDeepSeekNativeAccount = async (enabled: boolean): Promise<void> => {
+    setNativeBusy(true)
+    try {
+      setDeepSeekNativeAccount(await window.ndDsh.harness.setDeepSeekNativeAccount(enabled) === true)
+    } catch (cause) {
+      onError?.(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setNativeBusy(false)
+    }
+  }
+
   const dotClass = harness?.state === 'ready'
     ? 'bg-primary'
     : harness?.state === 'running' || harness?.state === 'starting'
@@ -69,6 +94,18 @@ export function RuntimeSettings({ harness }: RuntimeSettingsProps) {
               <StatusChip warn>Attention</StatusChip>
             </SettingsRow>
           ) : null}
+          <SettingsRow>
+            <div className={rowStack}>
+              <strong className={rowTitle}>DeepSeek native account</strong>
+              <span className={rowDesc}>Off by default: ND provider routes own the model list. On: the runtime's native DeepSeek OAuth sign-in and its default account models return in the coding surface. Changing this restarts the ND runtime.</span>
+            </div>
+            <SettingsSwitch
+              label="DeepSeek native account"
+              checked={deepSeekNativeAccount}
+              disabled={nativeBusy}
+              onCheckedChange={(enabled) => void toggleDeepSeekNativeAccount(enabled)}
+            />
+          </SettingsRow>
         </div>
       </SettingsSection>
 

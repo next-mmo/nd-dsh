@@ -14,6 +14,7 @@ import { Toaster } from './components/ui/sonner'
 import { ChatPanel } from './components/ChatPanel'
 import { SurfaceErrorBoundary } from './components/surface-error-boundary'
 import { useNativeViewOcclusion } from './lib/use-native-view-occlusion'
+import { setBrowserFrozenFrame } from './lib/browser-frozen-frame'
 import { setMiniBrowserActive, useMiniBrowserActive } from './lib/use-mini-browser'
 import { Explorer } from './components/Explorer'
 import { BrowserIcon, CameraIcon, CompanyIcon, CrosshairIcon, ExternalIcon, FileIcon, GridIcon, HomeIcon, MonitorIcon, PencilIcon, PuzzleIcon, QualityIcon, SettingsIcon, SidebarToggleIcon, SparkIcon, TrashIcon } from './components/Icons'
@@ -26,7 +27,7 @@ import { ModalInspectDock } from './components/modal-inspect-dock'
 import { ScreenshotDropdown } from './components/ScreenshotDropdown'
 import { QuickLauncher } from './components/QuickLauncher'
 import type { PersonalPane } from './components/personal-surface'
-import { reconcileExtensionKeepAlive, ExtensionKeepAliveHost, ExtensionKeepAliveTabs, useExtensionKeepAliveReopenHandler } from './components/extension-view-keepalive'
+import { reconcileExtensionKeepAlive, reopenKeepAliveView, ExtensionKeepAliveHost, ExtensionKeepAliveTabs, useExtensionKeepAliveReopenHandler } from './components/extension-view-keepalive'
 import { cn } from './lib/utils'
 import { fileAccent } from './lib/file-accents'
 import { isWorkspaceSelected } from './lib/workspace-selection'
@@ -359,7 +360,25 @@ export default function App() {
     // The float overlay owns no surface; letting it claim the shared native
     // browser view would both reject and fight the full window for it.
     if (isFloatOverlay) return
-    void window.ndDsh.browser.setVisible(browserSurface !== null && !nativeOverlayOpen).catch(() => undefined)
+    const browserApi = window.ndDsh.browser
+    let cancelled = false
+    if (browserSurface !== null && nativeOverlayOpen && browserApi.freezeFrame) {
+      // A DOM overlay cannot paint above the native view, so the view steps
+      // aside — but leaves a still of the page behind instead of a blank pane.
+      void browserApi.freezeFrame()
+        .then((frame) => { if (!cancelled) setBrowserFrozenFrame(frame) })
+        .catch(() => browserApi.setVisible(false).catch(() => undefined))
+      return () => { cancelled = true }
+    }
+    let clearTimer: number | undefined
+    void browserApi.setVisible(browserSurface !== null && !nativeOverlayOpen)
+      .catch(() => undefined)
+      // Keep the still until the live view has had a frame to composite.
+      .finally(() => { if (!cancelled) clearTimer = window.setTimeout(() => setBrowserFrozenFrame(null), 60) })
+    return () => {
+      cancelled = true
+      window.clearTimeout(clearTimer)
+    }
   }, [browserSurface, nativeOverlayOpen, isFloatOverlay])
   // PRD 0006: ND Home personal records, extension packages, and the launcher's
   // explicit context selector (Personal by default, independent of the active
@@ -1104,7 +1123,11 @@ export default function App() {
   /** Opens an existing session in the Agent workbench from another surface. */
   const openSession = (sessionId: string): void => {
     const targetProject = runSessionProjects[sessionId]
-    if (targetProject && (targetProject === PERSONAL_PROJECT_ID || orgState?.projects.some((p) => p.id === targetProject))) {
+    // A running session already in the active project must not re-trigger a
+    // context mutation: live org runs legitimately block project switches.
+    if (targetProject
+      && targetProject !== orgState?.activeProjectId
+      && (targetProject === PERSONAL_PROJECT_ID || orgState?.projects.some((p) => p.id === targetProject))) {
       switchProject(targetProject)
     }
     setSessionOpenRequest({ id: crypto.randomUUID(), sessionId })
@@ -1646,6 +1669,19 @@ export default function App() {
           return
         case 'capture-clipboard':
           void captureClipboardToNote(context)
+          return
+        case 'session':
+          if (text) openSession(text)
+          return
+        case 'keepalive-view':
+          if (text) reopenKeepAliveView(text)
+          return
+        case 'workspace':
+          if (text) {
+            void window.ndDsh.workspace.openSaved(text)
+              .then(() => notify('Workspace opened.'))
+              .catch((cause) => notify(errorMessage(cause)))
+          }
           return
         case 'extension-view': {
           const match = /^([a-z0-9][a-z0-9._-]{1,127}):([a-z0-9][a-z0-9._-]{0,127})(?:#(.*))?$/.exec(text ?? '')
@@ -2479,6 +2515,22 @@ export default function App() {
           onSelectContext={setLauncherContextId}
           extensionCommands={extensionCommands}
           onRunExtensionCommand={(command, text) => runExtensionCommand(command, text)}
+          onOpenLiveItem={(item) => {
+            if ((item.kind === 'chat' || item.kind === 'run') && item.sessionId) {
+              openSession(item.sessionId)
+              return
+            }
+            if (item.kind === 'keepalive' && item.viewKey) {
+              reopenKeepAliveView(item.viewKey)
+              return
+            }
+            if (item.kind === 'tab' && item.tabId) void openMediaTab(item.tabId)
+          }}
+          onOpenWorkspace={(id) => {
+            void window.ndDsh.workspace.openSaved(id)
+              .then(() => notify('Workspace opened.'))
+              .catch((cause) => notify(errorMessage(cause)))
+          }}
           onQuickNote={launcherQuickNote}
           onAskAgent={(text) => {
             const context = activeLauncherContext()

@@ -1,6 +1,6 @@
 # YouTube Downloader for ND
 
-An on-demand ND extension that saves a **single YouTube video** as a single-file MP4 (up to roughly 720p) or its audio as M4A. It uses the ND embedded browser to find the active video and saves the result to your Downloads folder.
+An on-demand ND extension that saves a **single YouTube video** as a single-file MP4 (up to roughly 720p) or its audio as M4A. It uses the ND embedded browser or connected Chrome companion to find the active video and saves the result to your Downloads folder.
 
 This package is fully external: it is not bundled with ND. Install it from **Settings → Extensions → Discover**, then open it from **Ctrl+K → "YouTube Downloader"**.
 
@@ -19,7 +19,7 @@ Deno is the JavaScript runtime yt-dlp requires for full YouTube support. EJS cha
 
 ## What it does
 
-- Reads the **active** YouTube tab, or accepts a pasted watch, Shorts, live, or `youtu.be` link.
+- Reads the **active** YouTube tab (in ND built-in browser or connected Chrome companion), or accepts a pasted watch, Shorts, live, or `youtu.be` link.
 - Video: one progressive MP4 with AAC audio, capped at 720p and 4 GiB.
 - Audio: one M4A (AAC) file, capped at 512 MiB.
 - Moves a verified file into the OS Downloads folder using a Windows-safe filename and never overwrites an existing file.

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="color-scheme" content="dark" />
+  <meta name="color-scheme" content="light dark" />
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'none'; script-src nd-extension-ui:; style-src nd-extension-ui: 'unsafe-inline'; img-src nd-extension-ui: data: blob:; font-src nd-extension-ui:; connect-src 'none'; base-uri 'none'; form-action 'none'" />
   <title>ND Pay Guard</title>
@@ -28,6 +28,28 @@
       --warning-soft: rgba(245, 158, 11, 0.15);
       --danger: #ef4444;
       --danger-soft: rgba(239, 68, 68, 0.15);
+      --radius: 8px;
+    }
+    :root[data-theme='light'] {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --surface-1: #ffffff;
+      --surface-2: #f1f3f7;
+      --border: #d8dde6;
+      --border-subtle: #e2e6ee;
+      --text: #1d1d1f;
+      --text-muted: #555e6d;
+      --text-faint: #8a94a6;
+      --accent: #4f46e5;
+      --accent-hover: #4338ca;
+      --accent-soft: rgba(79, 70, 229, 0.12);
+      --accent-border: rgba(79, 70, 229, 0.25);
+      --success: #059669;
+      --success-soft: rgba(5, 150, 105, 0.12);
+      --warning: #d97706;
+      --warning-soft: rgba(217, 119, 6, 0.12);
+      --danger: #dc2626;
+      --danger-soft: rgba(220, 38, 38, 0.12);
       --radius: 8px;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }

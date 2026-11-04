@@ -8,6 +8,9 @@ import {
   formatDeviceInfo,
   formatTimestamp,
   parseDeviceList,
+  EMULATOR_PROVIDERS,
+  filterProviders,
+  detectProvider,
 } from './emulator-core.js'
 
 /* ── Bridge Implementation ── */
@@ -18,6 +21,13 @@ function createBridge() {
   let slow = false
   const pending = new Map()
   const connectQueue = []
+
+  const applyTheme = (theme) => {
+    const effective = theme === 'light' ? 'light' : 'dark'
+    document.documentElement.dataset.theme = effective
+    const meta = document.querySelector('meta[name="color-scheme"]')
+    if (meta) meta.setAttribute('content', effective)
+  }
 
   window.addEventListener('message', (event) => {
     const data = event.data
@@ -46,11 +56,16 @@ function createBridge() {
     }
 
     if (data.kind === 'nd-webview:hello' && data.protocol === 'nd.webview/1') {
+      if (data.theme) applyTheme(data.theme)
       hello = data
       while (connectQueue.length > 0) {
         const fn = connectQueue.shift()
         if (fn) fn()
       }
+      return
+    }
+    if (data.kind === 'nd-webview:theme' && data.protocol === 'nd.webview/1') {
+      if (data.theme) applyTheme(data.theme)
       return
     }
     if (data.kind === 'nd-webview:result') {
@@ -91,7 +106,7 @@ function createBridge() {
       if (hello) fn()
       else connectQueue.push(fn)
     },
-    invoke(input, timeoutMs = 20000) {
+    invoke(input, timeoutMs = 25000) {
       if (!hello) {
         return Promise.resolve({ ok: false, error: { message: 'Not connected to ND' } })
       }
@@ -115,6 +130,7 @@ const bridge = createBridge()
 const statusText = document.getElementById('status-text')
 const statusBar = document.getElementById('status-bar')
 const deviceCount = document.getElementById('device-count')
+const tabBadgeDevices = document.getElementById('tab-badge-devices')
 const deviceGrid = document.getElementById('device-grid')
 const mirrorDevice = document.getElementById('mirror-device')
 const shellDevice = document.getElementById('shell-device')
@@ -131,6 +147,12 @@ const mirrorStats = document.getElementById('mirror-stats')
 const btnMirrorStart = document.getElementById('btn-mirror-start')
 const btnMirrorStop = document.getElementById('btn-mirror-stop')
 const btnMirrorSnap = document.getElementById('btn-mirror-snap')
+const adbStatusPill = document.getElementById('adb-status-pill')
+const adbStatusText = document.getElementById('adb-status-text')
+const wirelessBar = document.getElementById('wireless-bar')
+const providerGrid = document.getElementById('provider-grid')
+const hubSearchInput = document.getElementById('hub-search')
+const toastContainer = document.getElementById('toast-container')
 
 let busy = false
 let devices = []
@@ -140,6 +162,59 @@ let mirrorMode = 'embedded'
 let snapshotTimer = null
 let tapStart = null
 let mirrorFallback = false
+let currentCategory = 'all'
+let currentSearch = ''
+let commandHistory = []
+let historyIndex = -1
+
+/* ── Toast Notifications ── */
+function showToast(message, duration = 3000) {
+  if (!toastContainer) return
+  const toast = document.createElement('div')
+  toast.className = 'toast'
+  toast.textContent = message
+  toastContainer.appendChild(toast)
+  setTimeout(() => {
+    toast.style.transition = 'opacity 0.2s ease, transform 0.2s ease'
+    toast.style.opacity = '0'
+    toast.style.transform = 'translateY(10px)'
+    setTimeout(() => toast.remove(), 200)
+  }, duration)
+}
+
+/* ── Copy Helper ── */
+async function copyToClipboard(text, label = 'Command') {
+  try {
+    await navigator.clipboard.writeText(text)
+    showToast(`✓ Copied ${label} to clipboard!`)
+    return true
+  } catch {
+    const el = document.createElement('textarea')
+    el.value = text
+    el.style.position = 'fixed'
+    el.style.opacity = '0'
+    document.body.appendChild(el)
+    el.select()
+    const ok = document.execCommand('copy')
+    el.remove()
+    if (ok) showToast(`✓ Copied ${label} to clipboard!`)
+    return ok
+  }
+}
+
+/* ── External Link Opener ── */
+async function openExternalUrl(url) {
+  if (!url) return
+  addLog(`Opening link: ${url}`, 'info')
+  try {
+    const res = await bridge.invoke({ action: 'open-external', url }, 8000)
+    if (!res.ok) {
+      window.open(url, '_blank')
+    }
+  } catch {
+    window.open(url, '_blank')
+  }
+}
 
 /* ── Status & Log Helpers ── */
 function setStatus(message, isError = false) {
@@ -149,7 +224,7 @@ function setStatus(message, isError = false) {
 
 function setBusy(value) {
   busy = value
-  document.querySelectorAll('button:not(.tab-btn)').forEach((btn) => {
+  document.querySelectorAll('button:not(.tab-btn):not(.filter-chip)').forEach((btn) => {
     if (!btn.dataset.alwaysEnabled) btn.disabled = value
   })
   syncModeButtons()
@@ -182,21 +257,34 @@ function addLog(message, level = 'info') {
 }
 
 /* ── Tab Switching ── */
+function switchTab(tabId) {
+  document.querySelectorAll('.tab-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === tabId))
+  document.querySelectorAll('.tab-panel').forEach((p) => p.classList.toggle('active', p.id === `tab-${tabId}`))
+}
+
 document.querySelectorAll('.tab-btn').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.tab-btn').forEach((b) => b.classList.remove('active'))
-    document.querySelectorAll('.tab-panel').forEach((p) => p.classList.remove('active'))
-    btn.classList.add('active')
-    const target = document.getElementById(`tab-${btn.dataset.tab}`)
-    if (target) target.classList.add('active')
-  })
+  btn.addEventListener('click', () => switchTab(btn.dataset.tab))
 })
 
+document.getElementById('btn-nav-emulators')?.addEventListener('click', () => switchTab('emulators'))
+
 /* ── Render Devices ── */
-function renderDevices(deviceList) {
+function renderDevices(deviceList, adbAvailable = true) {
   devices = deviceList
   const count = deviceList.length
-  if (deviceCount) deviceCount.textContent = `${count} device${count !== 1 ? 's' : ''} connected`
+  if (deviceCount) deviceCount.textContent = `${count} device${count !== 1 ? 's' : ''}`
+  if (tabBadgeDevices) tabBadgeDevices.textContent = String(count)
+
+  // Update ADB status pill
+  if (adbStatusPill && adbStatusText) {
+    if (adbAvailable) {
+      adbStatusPill.className = 'indicator-pill ready'
+      adbStatusText.textContent = 'ADB Ready'
+    } else {
+      adbStatusPill.className = 'indicator-pill warn'
+      adbStatusText.textContent = 'ADB Not Installed'
+    }
+  }
 
   for (const sel of [mirrorDevice, shellDevice]) {
     if (!sel) continue
@@ -209,7 +297,9 @@ function renderDevices(deviceList) {
     for (const d of deviceList) {
       const opt = document.createElement('option')
       opt.value = d.serial
-      opt.textContent = `${d.model || d.serial} (${d.type})`
+      const providerId = detectProvider(d.serial)
+      const providerName = providerId ? ` [${providerId.toUpperCase()}]` : ''
+      opt.textContent = `${d.model || d.serial} (${d.type})${providerName}`
       sel.append(opt)
     }
     if (prev && deviceList.some((d) => d.serial === prev)) {
@@ -224,13 +314,32 @@ function renderDevices(deviceList) {
   if (!deviceGrid) return
   if (count === 0) {
     deviceGrid.innerHTML = `
-      <div class="empty-state">
-        <div class="icon">📱</div>
-        <h3>No devices found</h3>
-        <p>Connect an Android device via USB or enter an IP address for wireless ADB.</p>
-        <button id="btn-scan-empty" class="primary" style="margin-top: 8px;">🔍 Scan for devices</button>
+      <div class="empty-hero" style="grid-column: 1 / -1;">
+        <div class="hero-icon">📱</div>
+        <h3>No Android Devices Connected</h3>
+        <p>Connect a physical phone via USB with USB Debugging enabled, connect to wireless ADB, or launch a desktop Android emulator below.</p>
+
+        <div class="quick-connect-section">
+          <div class="quick-connect-title">⚡ Quick Connect Running Emulators:</div>
+          <div class="quick-connect-pills">
+            <button class="qc-pill" data-connect="127.0.0.1:5555"><span>⚡</span> LDPlayer / BlueStacks (5555)</button>
+            <button class="qc-pill" data-connect="127.0.0.1:16384"><span>🐮</span> MuMu Player (16384)</button>
+            <button class="qc-pill" data-connect="127.0.0.1:62001"><span>🔮</span> NoxPlayer (62001)</button>
+            <button class="qc-pill" data-connect="127.0.0.1:58526"><span>🪟</span> WSA Windows Subsystem (58526)</button>
+          </div>
+        </div>
+
+        <div style="margin-top: 18px; display: flex; gap: 8px; flex-wrap: wrap; justify-content: center;">
+          <button id="btn-scan-empty" class="primary">🔍 Scan for devices</button>
+          <button id="btn-open-hub-empty" class="outline">📦 Download Emulators &amp; Tools →</button>
+        </div>
       </div>`
+
     document.getElementById('btn-scan-empty')?.addEventListener('click', () => void scanDevices())
+    document.getElementById('btn-open-hub-empty')?.addEventListener('click', () => switchTab('emulators'))
+    deviceGrid.querySelectorAll('[data-connect]').forEach((btn) => {
+      btn.addEventListener('click', () => void connectToEmulator(btn.dataset.connect))
+    })
     return
   }
 
@@ -240,22 +349,40 @@ function renderDevices(deviceList) {
     const isConn = device.type === 'device'
     const statusClass = isConn ? 'badge-success' : device.type === 'offline' ? 'badge-danger' : 'badge-warning'
     const statusLabel = isConn ? 'Connected' : device.type === 'offline' ? 'Offline' : device.type
+    const providerId = detectProvider(device.serial)
+    const isEmulator = Boolean(providerId) || device.serial.startsWith('emulator-') || device.serial.includes(':')
+
+    let icon = '📱'
+    let providerLabel = isEmulator ? 'Android Emulator' : 'Hardware Phone'
+    if (providerId === 'ldplayer') { icon = '⚡'; providerLabel = 'LDPlayer' }
+    else if (providerId === 'bluestacks') { icon = '🔷'; providerLabel = 'BlueStacks' }
+    else if (providerId === 'mumu') { icon = '🐮'; providerLabel = 'MuMu Player' }
+    else if (providerId === 'nox') { icon = '🔮'; providerLabel = 'NoxPlayer' }
+    else if (providerId === 'wsa') { icon = '🪟'; providerLabel = 'Windows Subsystem' }
+    else if (providerId === 'android-studio') { icon = '🤖'; providerLabel = 'Google AVD' }
+
     const card = document.createElement('article')
     card.className = 'device-card'
     card.innerHTML = `
       <div class="device-header">
-        <div class="device-icon">📱</div>
+        <div class="device-icon">${icon}</div>
         <div style="flex:1;min-width:0">
           <div class="device-name">${device.model || device.serial}</div>
-          <span class="badge ${statusClass}">${statusLabel}</span>
+          <div class="device-sub">${providerLabel} · ${device.serial}</div>
         </div>
+        <span class="badge ${statusClass}">${statusLabel}</span>
       </div>
-      <div class="device-info">${info}</div>
+      <div class="device-tags">
+        <span class="device-tag">${device.serial.includes(':') ? 'Wireless TCP/IP' : 'Direct USB'}</span>
+        ${device.product ? `<span class="device-tag">${device.product}</span>` : ''}
+        ${device.transportId ? `<span class="device-tag">Transport #${device.transportId}</span>` : ''}
+      </div>
       <div class="device-actions">
-        <button class="small primary" data-serial="${device.serial}" data-cmd="mirror">🪞 Mirror</button>
+        <button class="small primary" data-serial="${device.serial}" data-cmd="mirror">🪞 Mirror Screen</button>
         <button class="small" data-serial="${device.serial}" data-cmd="screenshot">📷 Screenshot</button>
         <button class="small" data-serial="${device.serial}" data-cmd="shell">⚡ Shell</button>
-        <button class="small danger" data-serial="${device.serial}" data-cmd="disconnect">❌ Disconnect</button>
+        <button class="small outline" data-serial="${device.serial}" data-cmd="reboot">🔄 Reboot</button>
+        ${device.serial.includes(':') ? `<button class="small danger" data-serial="${device.serial}" data-cmd="disconnect">❌ Disconnect</button>` : ''}
       </div>`
     deviceGrid.append(card)
   }
@@ -267,12 +394,15 @@ function renderDevices(deviceList) {
       if (!serial) return
       if (cmd === 'mirror') {
         if (mirrorDevice) mirrorDevice.value = serial
-        document.querySelector('[data-tab="mirror"]')?.click()
+        switchTab('mirror')
+        void startMirror()
       } else if (cmd === 'shell') {
         if (shellDevice) shellDevice.value = serial
-        document.querySelector('[data-tab="shell"]')?.click()
+        switchTab('shell')
       } else if (cmd === 'screenshot') {
         void captureScreenshot(serial)
+      } else if (cmd === 'reboot') {
+        void execAdb(serial, 'reboot')
       } else if (cmd === 'disconnect') {
         void execAdb(serial, 'disconnect')
       }
@@ -280,22 +410,111 @@ function renderDevices(deviceList) {
   })
 }
 
-/* ── Actions ── */
+/* ── Render Emulators & Tools Hub ── */
+function renderProviders(category = 'all', query = '') {
+  if (!providerGrid) return
+  const filtered = filterProviders(category, query)
+
+  if (filtered.length === 0) {
+    providerGrid.innerHTML = `
+      <div class="empty-hero" style="grid-column: 1 / -1; padding: 24px;">
+        <div style="font-size: 32px; margin-bottom: 8px;">🔍</div>
+        <h3>No matching emulators or tools found</h3>
+        <p>Try searching with a different keyword or reset the category filter.</p>
+        <button class="small outline" id="btn-reset-filters">Reset Filters</button>
+      </div>`
+    document.getElementById('btn-reset-filters')?.addEventListener('click', () => {
+      currentCategory = 'all'
+      currentSearch = ''
+      if (hubSearchInput) hubSearchInput.value = ''
+      document.querySelectorAll('.filter-chip').forEach((c) => c.classList.toggle('active', c.dataset.cat === 'all'))
+      renderProviders('all', '')
+    })
+    return
+  }
+
+  providerGrid.innerHTML = ''
+  for (const p of filtered) {
+    const card = document.createElement('div')
+    card.className = 'provider-card'
+    card.innerHTML = `
+      <div class="card-head">
+        <div class="provider-icon">${p.icon}</div>
+        <div style="flex:1;min-width:0;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
+            <div class="provider-title">${p.name}</div>
+            <span class="badge badge-accent">${p.badge}</span>
+          </div>
+          <div class="provider-meta" style="margin-top: 4px;">
+            <span class="meta-item">📁 ${p.category.toUpperCase()}</span>
+            ${p.defaultPort ? `<span class="meta-item">🔌 Port: <b>${p.defaultPort}</b></span>` : ''}
+          </div>
+        </div>
+      </div>
+      <div class="provider-desc">${p.description}</div>
+      <div class="setup-tip"><b>💡 Setup:</b> ${p.setupGuide}</div>
+      <div class="provider-actions">
+        ${p.hostAddress ? `<button class="small primary" data-connect-hub="${p.hostAddress}">⚡ Connect Port (${p.defaultPort})</button>` : ''}
+        <button class="small" data-url="${p.downloadUrl}">🌐 Download / Site</button>
+        ${p.installCmd ? `<button class="small outline" data-copy="${p.installCmd}" title="Copy CLI install command">📋 Command</button>` : ''}
+      </div>`
+    providerGrid.appendChild(card)
+  }
+
+  providerGrid.querySelectorAll('[data-connect-hub]').forEach((btn) => {
+    btn.addEventListener('click', () => void connectToEmulator(btn.dataset.connectHub))
+  })
+  providerGrid.querySelectorAll('[data-url]').forEach((btn) => {
+    btn.addEventListener('click', () => void openExternalUrl(btn.dataset.url))
+  })
+  providerGrid.querySelectorAll('[data-copy]').forEach((btn) => {
+    btn.addEventListener('click', () => void copyToClipboard(btn.dataset.copy, 'CLI command'))
+  })
+}
+
+/* ── Actions: Device Management ── */
 async function scanDevices() {
   if (busy) return
   setBusy(true)
   setStatus('Scanning for devices via ADB…')
+  const lastScanned = document.getElementById('last-scanned-text')
   try {
     const result = await bridge.invoke({ action: 'devices-list' }, 15000)
     if (!result.ok) throw new Error(result.error?.message || 'Could not list devices')
     const list = parseDeviceList(result.value)
-    renderDevices(list)
+    const adbAvailable = result.value && typeof result.value === 'object' && result.value.adbAvailable !== false
+    renderDevices(list, adbAvailable)
     setStatus(`Found ${list.length} device${list.length !== 1 ? 's' : ''}.`)
     addLog(`Scanned ${list.length} device(s)`, 'success')
+    if (lastScanned) lastScanned.textContent = `Scanned ${formatTimestamp()}`
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Could not scan devices'
     setStatus(msg, true)
     addLog(msg, 'error')
+    renderDevices([], false)
+  } finally {
+    setBusy(false)
+  }
+}
+
+async function connectToEmulator(address) {
+  if (!address || busy) return
+  setStatus(`Connecting to ${address}…`)
+  addLog(`Connecting to ${address}…`, 'info')
+  setBusy(true)
+  try {
+    const result = await bridge.invoke({ action: 'devices-connect', address }, 15000)
+    if (!result.ok) throw new Error(result.error?.message || `Failed to connect to ${address}`)
+    showToast(`✓ Connected to ${address}!`)
+    setStatus(`Connected to ${address}`, false)
+    addLog(`Connected to ${address}`, 'success')
+    await scanDevices()
+    switchTab('devices')
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    showToast(`Connection error: ${msg}`)
+    setStatus(msg, true)
+    addLog(`Connect to ${address} failed: ${msg}`, 'error')
   } finally {
     setBusy(false)
   }
@@ -317,7 +536,7 @@ async function execAdb(serial, command) {
     }
     addLog(`adb ${command}`, 'success')
     setStatus('ADB command executed.')
-    if (command === 'disconnect') void scanDevices()
+    if (command === 'disconnect' || command === 'reboot') void scanDevices()
     return value
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'ADB command failed'
@@ -329,18 +548,13 @@ async function execAdb(serial, command) {
   }
 }
 
-async function rotateScreen(target) {
-  const prepared = await execAdb(target, 'shell settings put system accelerometer_rotation 0')
-  if (prepared === null) return
-  await execAdb(target, 'shell settings put system user_rotation 1')
-}
-
 async function captureScreenshot(serial) {
   if (!serial) return
   setStatus('Capturing screenshot…')
   try {
     const result = await bridge.invoke({ action: 'screenshot', serial }, 20000)
     if (!result.ok) throw new Error(result.error?.message || 'Screenshot failed')
+    showToast('✓ Screenshot captured!')
     addLog(`Screenshot captured for ${serial}`, 'success')
     setStatus('Screenshot captured successfully.')
     if (result.value && result.value.dataUrl && mirrorImg) {
@@ -363,7 +577,7 @@ async function captureScreenshot(serial) {
         mirrorImg.style.display = 'block'
         if (mirrorPlaceholder) mirrorPlaceholder.style.display = 'none'
       }
-      document.querySelector('[data-tab="mirror"]')?.click()
+      switchTab('mirror')
     }
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Screenshot failed'
@@ -372,6 +586,7 @@ async function captureScreenshot(serial) {
   }
 }
 
+/* ── Screen Mirror Controller ── */
 async function startMirror() {
   const serial = mirrorDevice?.value
   if (!serial || busy) return
@@ -412,7 +627,6 @@ async function startMirror() {
     mirrorFallback = false
 
     if (startedMode === 'embedded') {
-      // Prefer continuous getUserMedia capture when the source ID is available.
       if (typeof value.windowSourceId === 'string' && mirrorCanvas) {
         mirrorCanvas.style.display = 'block'
         mirrorCanvas.width = value.device?.width || 1080
@@ -422,7 +636,6 @@ async function startMirror() {
         addLog(`Embedded mirror started (live capture): ${serial}`, 'success')
         setStatus(`Embedded mirror active: ${serial}`)
       } else {
-        // No source ID or no canvas — fall back to MJPEG immediately.
         mirrorFallback = true
         if (mirrorStream) {
           mirrorStream.onload = () => { setStatus(`Embedded mirror active: ${serial}`) }
@@ -480,19 +693,25 @@ async function stopMirror() {
     const result = await bridge.invoke({ action: 'scrcpy-stop', serial }, 15000)
     if (!result.ok) throw new Error(result.error?.message || 'Could not stop mirror')
     if (result.value && result.value.stopped === false) {
-      throw new Error('No active mirror process was found; try Start again.')
+      throw new Error('No active mirror process was found.')
     }
     addLog(`Mirror stopped: ${serial}`, 'info')
     setStatus('Mirror session ended.')
     if (activeMode === 'embedded' && !mirrorFallback) {
       window.parent.postMessage({ kind: 'nd-webview:mirror-stop' }, '*')
     }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Stop mirror failed'
+    setStatus(msg, true)
+    addLog(msg, 'error')
+  } finally {
     activeMirror = null
     activeMode = null
-    tapStart = null
     mirrorFallback = false
-    if (btnMirrorStop) btnMirrorStop.disabled = true
-    if (mirrorStats) mirrorStats.textContent = ''
+    if (snapshotTimer) {
+      clearTimeout(snapshotTimer)
+      snapshotTimer = null
+    }
     if (mirrorStream) {
       mirrorStream.onload = null
       mirrorStream.onerror = null
@@ -501,287 +720,69 @@ async function stopMirror() {
     }
     if (mirrorCanvas) {
       mirrorCanvas.style.display = 'none'
-      mirrorCanvas.width = 0
-      mirrorCanvas.height = 0
+      mirrorCtx?.clearRect(0, 0, mirrorCanvas.width, mirrorCanvas.height)
     }
     if (mirrorImg) {
       mirrorImg.classList.remove('snapshot-overlay')
       mirrorImg.style.display = 'none'
       mirrorImg.src = ''
     }
-    if (snapshotTimer) {
-      clearTimeout(snapshotTimer)
-      snapshotTimer = null
-    }
     if (mirrorPlaceholder) mirrorPlaceholder.style.display = ''
-  } catch (error) {
-    setStatus(error instanceof Error ? error.message : 'Could not stop mirror', true)
-  } finally {
+    if (mirrorStats) mirrorStats.textContent = ''
     setBusy(false)
+    syncMirrorButtons()
     syncModeButtons()
   }
 }
 
-/* ── Mirror fallback: switch from continuous capture to MJPEG ── */
 function fallbackToMjpeg() {
-  if (!activeMirror || activeMode !== 'embedded') return
-  const session = activeMirror
-  // Ask the host to resume the paused MJPEG session and return the stream URL.
-  bridge.invoke({ action: 'mirror-resume', serial: session }, 20000)
-    .then((result) => {
-      if (!result.ok || !result.value?.resumed || typeof result.value.streamUrl !== 'string') {
-        setStatus('Fallback stream unavailable', true)
-        return
-      }
-      if (mirrorCanvas) mirrorCanvas.style.display = 'none'
-      if (mirrorStream) {
-        mirrorStream.onload = () => { setStatus(`Embedded mirror (MJPEG fallback): ${session}`) }
-        mirrorStream.onerror = () => { setStatus('MJPEG fallback failed', true) }
-        mirrorStream.src = result.value.streamUrl
-        mirrorStream.style.display = 'block'
-      }
-      addLog('Switched to MJPEG fallback', 'info')
-    })
-    .catch(() => { setStatus('Fallback stream unavailable', true) })
-}
-const cmdHistory = []
-let historyIndex = -1
-
-function appendTermLine(text, cls = '') {
-  if (!termOutput) return
-  const span = document.createElement('span')
-  span.className = cls
-  span.textContent = text + '\n'
-  termOutput.append(span)
-  termOutput.scrollTop = termOutput.scrollHeight
-}
-
-async function runShellCommand(command) {
-  const serial = shellDevice?.value
-  if (!serial) {
-    appendTermLine('Error: No target device selected. Select a device first.', 'err')
-    return
-  }
-  appendTermLine(`$ ${command}`, 'cmd')
-  try {
-    const result = await bridge.invoke({ action: 'adb-exec', serial, command }, 30000)
-    if (!result.ok) {
-      appendTermLine(result.error?.message || 'Command failed', 'err')
-      addLog(`Shell: ${command} failed`, 'error')
-    } else {
-      const value = result.value
-      const output = typeof value === 'string'
-        ? value
-        : (value?.output ?? JSON.stringify(value, null, 2))
-      const failed = value && typeof value === 'object' && typeof value.exitCode === 'number' && value.exitCode !== 0
-      appendTermLine(output, failed ? 'err' : '')
-      addLog(`Shell: ${command}${failed ? ' failed' : ''}`, failed ? 'error' : 'success')
+  const serial = activeMirror
+  if (!serial) return
+  void bridge.invoke({ action: 'mirror-resume', serial }).then((res) => {
+    if (!res.ok || !res.value?.streamUrl) return
+    if (mirrorCanvas) mirrorCanvas.style.display = 'none'
+    if (mirrorStream) {
+      mirrorStream.src = res.value.streamUrl
+      mirrorStream.style.display = 'block'
     }
-  } catch (error) {
-    appendTermLine(error instanceof Error ? error.message : 'Command failed', 'err')
-  }
-}
-
-if (termInput) {
-  termInput.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
-      const cmd = termInput.value.trim()
-      if (!cmd) return
-      cmdHistory.unshift(cmd)
-      historyIndex = -1
-      termInput.value = ''
-      void runShellCommand(cmd)
-    } else if (event.key === 'ArrowUp') {
-      event.preventDefault()
-      if (historyIndex < cmdHistory.length - 1) {
-        historyIndex++
-        termInput.value = cmdHistory[historyIndex]
-      }
-    } else if (event.key === 'ArrowDown') {
-      event.preventDefault()
-      if (historyIndex > 0) {
-        historyIndex--
-        termInput.value = cmdHistory[historyIndex]
-      } else {
-        historyIndex = -1
-        termInput.value = ''
-      }
-    }
+    addLog('Switched to fallback MJPEG mirror capture', 'info')
   })
 }
 
-/* ── Nav Key Event Helpers ── */
-const KEY_MAP = {
-  back: 'KEYCODE_BACK',
-  home: 'KEYCODE_HOME',
-  recents: 'KEYCODE_APP_SWITCH',
-  volup: 'KEYCODE_VOLUME_UP',
-  voldown: 'KEYCODE_VOLUME_DOWN',
-  power: 'KEYCODE_POWER',
-}
-
-document.querySelectorAll('#mirror-nav button[data-key]').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    const key = btn.dataset.key
-    const target = activeMirror || mirrorDevice?.value
-    if (!target) {
-      setStatus('Select a device first.', true)
-      return
-    }
-    if (key === 'screenshot') {
-      void captureScreenshot(target)
-    } else if (key === 'rotate') {
-      void rotateScreen(target)
-    } else if (key && KEY_MAP[key]) {
-      void execAdb(target, `shell input keyevent ${KEY_MAP[key]}`)
-    }
-  })
-})
-
-/* ── Quick Actions ── */
-document.querySelectorAll('.quick-btn[data-action]').forEach((btn) => {
-  btn.addEventListener('click', async () => {
-    const serial = shellDevice?.value
-    if (!serial) {
-      setStatus('Select a target device first.', true)
-      return
-    }
-    const action = btn.dataset.action
-    if (action === 'screenshot') {
-      void captureScreenshot(serial)
-    } else if (action === 'install-apk') {
-      const apk = prompt('Enter path to APK file on your computer:')
-      if (apk) void execAdb(serial, `install -r "${apk}"`)
-    } else if (action === 'clear-data') {
-      const pkg = prompt('Enter package name to clear (e.g. com.example.app):')
-      if (pkg) void execAdb(serial, `shell pm clear ${pkg}`)
-    } else if (action === 'screen-record') {
-      void execAdb(serial, 'shell screenrecord /sdcard/nd_recording.mp4')
-      setStatus('Screen recording started on device (/sdcard/nd_recording.mp4). Press Ctrl+C or reboot to stop.')
-    } else if (action === 'push-file') {
-      const src = prompt('Local file path:')
-      const dst = prompt('Device path (e.g. /sdcard/Download/):')
-      if (src && dst) void execAdb(serial, `push "${src}" "${dst}"`)
-    } else if (action === 'pull-file') {
-      const src = prompt('Device file path (e.g. /sdcard/Download/file.txt):')
-      const dst = prompt('Local destination directory:')
-      if (src && dst) void execAdb(serial, `pull "${src}" "${dst}"`)
-    } else if (action === 'reboot') {
-      if (confirm(`Reboot device ${serial}?`)) void execAdb(serial, 'reboot')
-    } else if (action === 'logcat') {
-      void runShellCommand('logcat -d -t 100')
-    }
-  })
-})
-
-/* ── Top-level Controls ── */
-document.getElementById('btn-scan')?.addEventListener('click', () => void scanDevices())
-btnMirrorStart?.addEventListener('click', () => void startMirror())
-btnMirrorStop?.addEventListener('click', () => void stopMirror())
-btnMirrorSnap?.addEventListener('click', () => {
-  const serial = mirrorDevice?.value
-  if (serial) void captureScreenshot(serial)
-})
-
-document.getElementById('btn-clear-term')?.addEventListener('click', () => {
-  if (termOutput) termOutput.innerHTML = '<span class="info">Terminal cleared.\n</span>'
-})
-
-document.getElementById('btn-connect-wifi')?.addEventListener('click', async () => {
-  const address = prompt('Enter device IP and port for wireless ADB (e.g. 192.168.1.100:5555):')
-  if (!address) return
-  setBusy(true)
-  try {
-    const result = await bridge.invoke({ action: 'devices-connect', address }, 15000)
-    if (!result.ok) throw new Error(result.error?.message || 'Connection failed')
-    addLog(`Wireless ADB: ${address}`, 'success')
-    void scanDevices()
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : 'Connection failed'
-    setStatus(msg, true)
-    addLog(msg, 'error')
-  } finally {
-    setBusy(false)
-  }
-})
-
-document.getElementById('btn-launch-emu')?.addEventListener('click', () => {
-  setStatus('Tip: Launch an AVD via Android Studio or command line `emulator -avd <name>`, then click Scan.', false)
-  addLog('AVD launch hint displayed', 'info')
-})
-
-mirrorDevice?.addEventListener('change', () => {
-  syncMirrorButtons()
-})
-
-mirrorModeEl?.querySelectorAll('.mode-btn').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    if (busy || activeMirror) return
-    mirrorMode = btn.dataset.mode === 'external' ? 'external' : 'embedded'
-    syncModeButtons()
-    setStatus(
-      mirrorMode === 'embedded'
-        ? 'Embedded mirror selected. Click Start to stream inside ND.'
-        : 'External window selected. Click Start to open scrcpy.',
-    )
-  })
-})
-
-function clamp01(value) {
-  return Math.max(0, Math.min(1, value))
-}
-
-/** The element that currently shows the live mirror (canvas or MJPEG img). */
-function mirrorSurface() {
-  if (activeMode === 'embedded' && !mirrorFallback && mirrorCanvas && mirrorCanvas.style.display !== 'none') return mirrorCanvas
-  if (activeMode === 'embedded' && mirrorStream && mirrorStream.style.display !== 'none') return mirrorStream
-  return null
-}
-
-function mirrorNaturalSize() {
-  const surface = mirrorSurface()
-  if (surface === mirrorCanvas) {
-    return { naturalWidth: mirrorCanvas.width || 1080, naturalHeight: mirrorCanvas.height || 2340 }
-  }
-  return { naturalWidth: surface?.naturalWidth || 1080, naturalHeight: surface?.naturalHeight || 2340 }
-}
-
+/* ── Interactive Pointer / Tap Input ── */
 function normalizedStreamPoint(event) {
-  const surface = mirrorSurface()
+  const surface = activeMode === 'embedded' && !mirrorFallback && mirrorCanvas?.style.display !== 'none'
+    ? mirrorCanvas
+    : mirrorStream
   if (!surface) return null
   const rect = surface.getBoundingClientRect()
-  const { naturalWidth, naturalHeight } = mirrorNaturalSize()
-  if (rect.width <= 0 || rect.height <= 0 || naturalWidth <= 0 || naturalHeight <= 0) return null
-  const scale = Math.min(rect.width / naturalWidth, rect.height / naturalHeight)
-  const width = naturalWidth * scale
-  const height = naturalHeight * scale
-  const left = rect.left + (rect.width - width) / 2
-  const top = rect.top + (rect.height - height) / 2
-  return {
-    x: clamp01((event.clientX - left) / width),
-    y: clamp01((event.clientY - top) / height),
-  }
+  if (rect.width <= 0 || rect.height <= 0) return null
+  const relX = event.clientX - rect.left
+  const relY = event.clientY - rect.top
+  if (relX < 0 || relX > rect.width || relY < 0 || relY > rect.height) return null
+  return { x: relX / rect.width, y: relY / rect.height }
 }
 
 function addTapRipple(event) {
   const screen = document.getElementById('mirror-screen')
   if (!screen) return
   const rect = screen.getBoundingClientRect()
-  const ripple = document.createElement('span')
+  const ripple = document.createElement('div')
   ripple.className = 'tap-ripple'
   ripple.style.left = `${event.clientX - rect.left}px`
   ripple.style.top = `${event.clientY - rect.top}px`
-  screen.append(ripple)
+  screen.appendChild(ripple)
   setTimeout(() => ripple.remove(), 400)
 }
 
-function handleInputResult(result) {
-  if (!result.ok) setStatus(result.error?.message || 'Device input failed', true)
+function handleInputResult(res) {
+  if (!res.ok && res.error) {
+    addLog(`Touch error: ${res.error.message}`, 'error')
+  }
 }
 
 function bindPointerInput(surface) {
-  if (!surface || surface.dataset.mirrorInputBound) return
-  surface.dataset.mirrorInputBound = '1'
+  if (!surface) return
   surface.addEventListener('pointerdown', (event) => {
     if (activeMode !== 'embedded' || !activeMirror || busy) return
     const point = normalizedStreamPoint(event)
@@ -816,9 +817,7 @@ function bindPointerInput(surface) {
     }
   })
 
-  surface.addEventListener('pointercancel', () => {
-    tapStart = null
-  })
+  surface.addEventListener('pointercancel', () => { tapStart = null })
 
   surface.addEventListener('wheel', (event) => {
     if (activeMode !== 'embedded' || !activeMirror || busy) return
@@ -841,27 +840,202 @@ function bindPointerInput(surface) {
 bindPointerInput(mirrorStream)
 bindPointerInput(mirrorCanvas)
 
+/* ── Mirror Navigation Buttons ── */
+const KEY_MAP = {
+  back: 'shell input keyevent KEYCODE_BACK',
+  home: 'shell input keyevent KEYCODE_HOME',
+  recents: 'shell input keyevent KEYCODE_APP_SWITCH',
+  volup: 'shell input keyevent KEYCODE_VOLUME_UP',
+  voldown: 'shell input keyevent KEYCODE_VOLUME_DOWN',
+  power: 'shell input keyevent KEYCODE_POWER',
+}
+
+document.querySelectorAll('#mirror-nav [data-key]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const key = btn.dataset.key
+    const serial = activeMirror || mirrorDevice?.value
+    if (!serial) {
+      setStatus('Select a device to send navigation input.', true)
+      return
+    }
+    if (key === 'screenshot') {
+      void captureScreenshot(serial)
+    } else if (key === 'rotate') {
+      void execAdb(serial, 'shell settings put system accelerometer_rotation 0 && adb shell settings put system user_rotation 1')
+    } else if (key && KEY_MAP[key]) {
+      void execAdb(serial, KEY_MAP[key])
+    }
+  })
+})
+
+/* ── Shell Terminal Controller ── */
+function appendTermLine(text, cls = '') {
+  if (!termOutput) return
+  const line = document.createElement('div')
+  if (cls) line.className = cls
+  line.textContent = text
+  termOutput.appendChild(line)
+  termOutput.scrollTop = termOutput.scrollHeight
+}
+
+async function runShellCommand(cmd) {
+  const serial = shellDevice?.value
+  if (!serial) {
+    appendTermLine('Error: No target device selected in dropdown above.', 'err')
+    return
+  }
+  appendTermLine(`$ adb -s ${serial} ${cmd}`, 'cmd')
+  const res = await execAdb(serial, cmd)
+  if (res && typeof res === 'object') {
+    if (res.output) appendTermLine(res.output)
+    if (res.error) appendTermLine(res.error, 'err')
+  }
+}
+
+if (termInput) {
+  termInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      const val = termInput.value.trim()
+      if (!val) return
+      commandHistory.push(val)
+      historyIndex = commandHistory.length
+      termInput.value = ''
+      const cleaned = val.replace(/^adb(\s+-s\s+\S+)?\s+/, '')
+      void runShellCommand(cleaned)
+    } else if (event.key === 'ArrowUp') {
+      if (historyIndex > 0) {
+        historyIndex -= 1
+        termInput.value = commandHistory[historyIndex] || ''
+      }
+    } else if (event.key === 'ArrowDown') {
+      if (historyIndex < commandHistory.length - 1) {
+        historyIndex += 1
+        termInput.value = commandHistory[historyIndex] || ''
+      } else {
+        historyIndex = commandHistory.length
+        termInput.value = ''
+      }
+    }
+  })
+}
+
+document.getElementById('btn-clear-term')?.addEventListener('click', () => {
+  if (termOutput) termOutput.innerHTML = '<span class="info">Terminal cleared.</span>'
+})
+
+document.getElementById('btn-copy-term')?.addEventListener('click', () => {
+  if (termOutput) void copyToClipboard(termOutput.innerText, 'terminal text')
+})
+
+// Quick ADB command presets
+const PRESET_MAP = {
+  battery: 'shell dumpsys battery',
+  ip: 'shell ip addr show wlan0',
+  packages: 'shell pm list packages -3',
+  screenshot: 'shell screencap -p /sdcard/screenshot.png',
+  wake: 'shell input keyevent KEYCODE_WAKEUP',
+  reboot: 'reboot',
+  logcat: 'logcat -d -t 50',
+  'restart-adb': 'kill-server',
+}
+
+document.querySelectorAll('.quick-btn[data-action]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const act = btn.dataset.action
+    if (act && PRESET_MAP[act]) void runShellCommand(PRESET_MAP[act])
+  })
+})
+
+/* ── Hub Search & Filter Events ── */
+document.querySelectorAll('.filter-chip').forEach((chip) => {
+  chip.addEventListener('click', () => {
+    document.querySelectorAll('.filter-chip').forEach((c) => c.classList.remove('active'))
+    chip.classList.add('active')
+    currentCategory = chip.dataset.cat || 'all'
+    renderProviders(currentCategory, currentSearch)
+  })
+})
+
+if (hubSearchInput) {
+  hubSearchInput.addEventListener('input', () => {
+    currentSearch = hubSearchInput.value
+    renderProviders(currentCategory, currentSearch)
+  })
+}
+
+/* ── Wireless ADB Drawer Events ── */
+document.getElementById('btn-toggle-wireless')?.addEventListener('click', () => {
+  wirelessBar?.classList.toggle('active')
+})
+document.getElementById('btn-connect-wifi')?.addEventListener('click', () => {
+  wirelessBar?.classList.add('active')
+})
+document.getElementById('btn-cancel-wifi')?.addEventListener('click', () => {
+  wirelessBar?.classList.remove('active')
+})
+document.getElementById('btn-do-connect-wifi')?.addEventListener('click', () => {
+  const ip = document.getElementById('wireless-ip')?.value?.trim()
+  const port = document.getElementById('wireless-port')?.value?.trim() || '5555'
+  if (!ip) {
+    setStatus('Enter an IP address (e.g. 192.168.1.100).', true)
+    return
+  }
+  wirelessBar?.classList.remove('active')
+  void connectToEmulator(`${ip}:${port}`)
+})
+
+/* ── Mirror Controls ── */
+document.getElementById('btn-scan')?.addEventListener('click', () => void scanDevices())
+document.getElementById('btn-quick-scan')?.addEventListener('click', () => void scanDevices())
+document.getElementById('btn-mirror-start')?.addEventListener('click', () => void startMirror())
+document.getElementById('btn-mirror-stop')?.addEventListener('click', () => void stopMirror())
+document.getElementById('btn-mirror-snap')?.addEventListener('click', () => {
+  const serial = activeMirror || mirrorDevice?.value
+  if (serial) void captureScreenshot(serial)
+})
+
+mirrorModeEl?.querySelectorAll('.mode-btn').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    if (activeMirror) return
+    mirrorMode = btn.dataset.mode === 'external' ? 'external' : 'embedded'
+    syncModeButtons()
+  })
+})
+
+mirrorDevice?.addEventListener('change', () => {
+  syncMirrorButtons()
+  const label = document.getElementById('term-device-label')
+  if (label && mirrorDevice?.value) label.textContent = `Target: ${mirrorDevice.value}`
+})
+
+shellDevice?.addEventListener('change', () => {
+  const label = document.getElementById('term-device-label')
+  if (label && shellDevice?.value) label.textContent = `Target: ${shellDevice.value}`
+})
+
+/* ── Agent Tasks ── */
 document.getElementById('btn-run-tests')?.addEventListener('click', () => {
   const serial = shellDevice?.value
   if (!serial) {
-    setStatus('Select a device first.', true)
+    setStatus('Select a target device first.', true)
     return
   }
-  const runner = prompt('Test runner command (e.g. "shell am instrument -w ..."):', 'shell am instrument -w')
+  const runner = prompt('Enter test runner command:', 'shell am instrument -w -r ...')
   if (runner) void runShellCommand(runner)
 })
 
 document.getElementById('btn-install-test')?.addEventListener('click', () => {
   const serial = shellDevice?.value
   if (!serial) {
-    setStatus('Select a device first.', true)
+    setStatus('Select a target device first.', true)
     return
   }
-  appendTermLine('[Agent Task] 1-Click Install & Test initiated…', 'cmd')
-  void runShellCommand('devices -l')
+  appendTermLine('[Agent Task] Sideload & Test sequence initiated…', 'cmd')
+  void runShellCommand('shell pm list packages -3')
 })
 
-/* ── Startup Handshake ── */
+/* ── Startup ── */
+renderProviders('all', '')
 bridge.start()
 bridge.whenConnected(() => {
   setStatus('Connected to ND. Scanning for devices…')

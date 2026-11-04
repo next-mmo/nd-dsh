@@ -179,6 +179,7 @@ export class HarnessService {
   private extraVisibleSessionIds: (() => ReadonlySet<string>) | undefined
   private sessionCwdGuard: ((cwd: string) => boolean) | undefined
   private vaultEnvironmentProvider: (() => NodeJS.ProcessEnv) | undefined
+  private deepSeekNativeAccountProvider: (() => boolean) | undefined
 
   constructor(
     private readonly workspace: WorkspaceService,
@@ -196,6 +197,11 @@ export class HarnessService {
 
   setVaultEnvironmentProvider(provider: (() => NodeJS.ProcessEnv) | undefined): void {
     this.vaultEnvironmentProvider = provider
+  }
+
+  /** Product switch behind the Harness-native DeepSeek OAuth account route; default off. */
+  setDeepSeekNativeAccountProvider(provider: (() => boolean) | undefined): void {
+    this.deepSeekNativeAccountProvider = provider
   }
 
   setListeners(listeners: {
@@ -548,6 +554,16 @@ export class HarnessService {
     return mode
   }
 
+  /**
+   * Apply the DeepSeek native-account switch: the patch overlay reads it at
+   * child launch, so the runtime restarts with the new gate (sessions are
+   * durable and survive the restart).
+   */
+  async restartWithDeepSeekNativeAccount(): Promise<boolean> {
+    await this.close()
+    return this.deepSeekNativeAccountEnabled()
+  }
+
   /** Tear down the runtime subprocess (app shutdown / workspace change / provider refresh). */
   async close(): Promise<void> {
     this.stopping = true
@@ -646,6 +662,10 @@ export class HarnessService {
     return settings ? settings.ndEnabled && settings.mode !== 'off' : true
   }
 
+  private deepSeekNativeAccountEnabled(): boolean {
+    return this.deepSeekNativeAccountProvider?.() === true
+  }
+
   /**
    * One gateway call with a single transparent recovery attempt: the runtime
    * child may have exited (or been replaced) between calls, and a dead
@@ -718,6 +738,7 @@ export class HarnessService {
     const providerRuntime = this.providers.runtimeConfig()
     const deepseekProvider = this.providers.list().find((item) => item.id === 'deepseek')
     const deepseekEnabled = deepseekProvider?.enabled === true
+    const deepSeekNativeAccount = this.deepSeekNativeAccountEnabled()
     const port = await pickFreePort()
     assertCurrentLaunch()
     const environment: NodeJS.ProcessEnv = {
@@ -725,6 +746,7 @@ export class HarnessService {
       ...providerRuntime.environment,
       ND_DSH_LLM_PROVIDERS_JSON: JSON.stringify(providerRuntime.profiles),
       ND_DSH_DEEPSEEK_ENABLED: deepseekEnabled ? '1' : '0',
+      ND_DSH_DEEPSEEK_NATIVE_ACCOUNT: deepSeekNativeAccount ? '1' : '0',
       ...(providerRuntime.defaultProvider ? { ND_DSH_DEFAULT_PROVIDER: providerRuntime.defaultProvider } : {}),
       ...(providerRuntime.defaultModel ? { ND_DSH_DEFAULT_MODEL: providerRuntime.defaultModel } : {}),
       ND_DSH_TOKEN_SAVER_ENABLED: tokenSaverEnabled ? '1' : '0',

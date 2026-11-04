@@ -209,13 +209,22 @@ test('launcher popup window toggles like Raycast and creates a task without open
   await expect(dialog).toBeVisible()
   const popupInput = dialog.getByPlaceholder('Search ND or type something to capture…')
   await expect(popupInput).toBeFocused()
+  const contextLabel = `${COMPANY_B} · ${PROJECT_B}`
+  // The popup follows the app's one active context rather than inventing a
+  // Personal scope that diverges from the header.
+  await expect(dialog.getByText(contextLabel, { exact: true }).first()).toBeVisible()
+
+  // Selecting a CONTEXT row switches the app globally and keeps the popup open.
+  await popupInput.fill('')
+  await dialog.getByText('Personal', { exact: true }).first().click()
+  await expect.poll(async () => (await state()).activeProjectId).toBe('personal')
+  await expect(dialog).toBeVisible()
   // Built-in native extensions contribute through the same command registry as
   // core actions; do not execute the wallpaper command in automation because it
   // intentionally opens a real OS picker and changes the user's desktop.
   await expect(dialog.getByText('Choose wallpaper', { exact: true })).toBeVisible()
 
-  // The popup always opens on Personal: a typed task therefore needs an
-  // explicit project context first, and never inherits the window's active one.
+  // A typed task still needs a project context.
   await popupInput.fill('Launcher E2E popup task')
   await dialog.getByText(/Create task · Launcher E2E popup task/).click()
   await expect(popup.getByText('Tasks need a project context. Pick one in Context first.')).toBeVisible()
@@ -223,10 +232,10 @@ test('launcher popup window toggles like Raycast and creates a task without open
   expect((await state()).tasks.find((item) => item.title === 'Launcher E2E popup task')).toBeUndefined()
 
   // Failed validation keeps the popup focused so the user can correct context.
-  const contextLabel = `${COMPANY_B} · ${PROJECT_B}`
   await expect(dialog).toBeVisible()
   await popupInput.fill('')
   await dialog.getByText(contextLabel, { exact: true }).first().click()
+  await expect.poll(async () => (await state()).activeProjectId).toBe(projectBId)
   await popupInput.fill('Launcher E2E popup task')
   await dialog.getByText(/Create task · Launcher E2E popup task/).click()
 
@@ -284,4 +293,37 @@ test('media click hands off to the existing tab in Personal browser', async () =
   await expect.poll(() => app.evaluate(({ BrowserWindow }) => {
     return BrowserWindow.getAllWindows().find((window) => window.webContents.getURL().includes('#/launcher'))?.isVisible()
   })).toBe(false)
+})
+
+test('launcher lists open browser tabs under Active and jumps to one', async () => {
+  const { page, app } = launched
+  await page.evaluate(async () => {
+    const desktop = (globalThis as typeof globalThis & { ndDsh: DesktopApi }).ndDsh
+    const created = await desktop.browserPlatform.createTab('builtin', 'about:blank')
+    await desktop.browserPlatform.activateTab('builtin', created.id)
+  })
+
+  let popup = app.windows().find((window) => !window.isClosed() && window.url().includes('#/launcher'))
+  if (!popup) {
+    const opened = app.waitForEvent('window')
+    await page.evaluate(() => (globalThis as LauncherDesktopWindow).ndDsh.window?.toggleLauncherPopup?.())
+    popup = await opened
+  } else {
+    await page.evaluate(() => (globalThis as LauncherDesktopWindow).ndDsh.window?.toggleLauncherPopup?.())
+  }
+  const dialog = popup.getByRole('dialog', { name: 'ND Quick Launcher' })
+  await expect(dialog).toBeVisible()
+  // Live tabs are aggregated in main and listed through the same registry.
+  await expect(dialog.getByText('Active', { exact: true }).first()).toBeVisible()
+  const tabRow = dialog.getByRole('option', { name: 'Browser Active tab' })
+  await expect(tabRow).toBeVisible()
+
+  // Selecting the row hands off to the full app in Personal browser.
+  await tabRow.click()
+  await expect(page.getByRole('region', { name: 'Personal browser' })).toBeVisible()
+  await expect.poll(() => app.evaluate(({ BrowserWindow }) => {
+    return BrowserWindow.getAllWindows().find((window) => window.webContents.getURL().includes('#/launcher'))?.isVisible()
+  })).toBe(false)
+
+  expect(rendererErrors).toEqual([])
 })

@@ -401,7 +401,19 @@ async function createWindow(cdpPort: number): Promise<void> {
         return undefined
       }
     }
+    // ND's own renderer keeps its copy/paste affordances on the async Clipboard
+    // API (copy info, diagnostics, clipboard capture). Electron surfaces those as
+    // permission requests, so a handler that only allows media also rejects
+    // writeText/readText with "permission denied". Grant the clipboard pair to
+    // ND's own windows only; project runtime pages and browser panes run in
+    // their own profile sessions and never inherit these grants.
+    const isOwnWindowClipboard = (webContents: Electron.WebContents, permission: string): boolean =>
+      isOwnWindow(webContents) && (permission === 'clipboard-sanitized-write' || permission === 'clipboard-read')
     appSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+      if (isOwnWindowClipboard(webContents, permission)) {
+        callback(true)
+        return
+      }
       if (permission !== 'media' || !isOwnWindow(webContents)) {
         callback(false)
         return
@@ -698,6 +710,12 @@ async function createWindow(cdpPort: number): Promise<void> {
   // workbench from full state, so only the latest snapshot per window is sent.
   const broadcastOrganization = throttleLatest<OrganizationSnapshot>(ORGANIZATION_BROADCAST_INTERVAL_MS, (state) => {
     if (!window.isDestroyed()) window.webContents.send(ORGANIZATION_IPC.changed, state)
+    // The launcher popup switches the app's active context globally, so it must
+    // see the same snapshot the header does.
+    const popup = launcherPopup.window()
+    if (popup && !popup.isDestroyed() && !popup.webContents.isDestroyed()) {
+      popup.webContents.send(ORGANIZATION_IPC.changed, state)
+    }
   })
   organizationStore.setOnChanged(broadcastOrganization)
   let lastWorkspaceRoot = workspace.state().root

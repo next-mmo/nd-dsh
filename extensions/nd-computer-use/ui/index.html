@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="color-scheme" content="dark" />
+  <meta name="color-scheme" content="light dark" />
   <!-- Mirrors the CSP the ND asset server sets on this document; defense in depth. -->
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'none'; script-src nd-extension-ui:; style-src nd-extension-ui: 'unsafe-inline'; img-src nd-extension-ui: data: blob:; font-src nd-extension-ui:; connect-src 'none'; base-uri 'none'; form-action 'none'" />
@@ -18,6 +18,18 @@
       --faint: #9aa3b2;
       --accent: #a3e635;
       --danger: #f87171;
+      --border-strong: #3d4452;
+    }
+    :root[data-theme='light'] {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --border: #d8dde6;
+      --border-strong: #c2c9d6;
+      --text: #1d1d1f;
+      --faint: #6e6e73;
+      --accent: #65a30d;
+      --danger: #dc2626;
     }
     * { box-sizing: border-box; }
     html, body { height: 100%; }
@@ -64,7 +76,7 @@
       padding: 6px 11px;
       cursor: pointer;
     }
-    button:hover { border-color: #3d4452; }
+    button:hover { border-color: var(--border-strong); }
     button:disabled { opacity: 0.45; cursor: default; }
     button.primary { border-color: var(--accent); color: var(--accent); }
     label.toggle { display: inline-flex; align-items: center; gap: 6px; color: var(--faint); }

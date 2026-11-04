@@ -59,8 +59,22 @@
 - id: llm-deepseek
   disabled: !!js process.env.ND_DSH_DEEPSEEK_ENABLED !== '1'
 
+# ── DeepSeek native account (OAuth sign-in + native model listing) ────────────
+# Upstream Harness ships account OAuth sign-in and lists the signed-in
+# account's native models through the `deepseek-account` provider. ND owns the
+# model surface, so the whole native account stack (LLM route, settings sign-in
+# page, account API controller) stays off unless the user enables
+# Settings → General → Runtime → "DeepSeek native account". With the route
+# plugin disabled but the sign-in UI left mounted, a signed-in account lands on
+# an empty "No models available" picker, so all three rows move together.
 - id: llm-deepseek-account
-  disabled: true
+  disabled: !!js process.env.ND_DSH_DEEPSEEK_NATIVE_ACCOUNT !== '1'
+
+- id: ui-settings-account
+  disabled: !!js process.env.ND_DSH_DEEPSEEK_NATIVE_ACCOUNT !== '1'
+
+- id: account-controller
+  disabled: !!js process.env.ND_DSH_DEEPSEEK_NATIVE_ACCOUNT !== '1'
 
 # ND uses lightweight DOCX content previews in its own workspace viewer.
 # PDF and spreadsheet previews remain available; no native Office engine ships.

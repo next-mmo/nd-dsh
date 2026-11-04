@@ -150,8 +150,20 @@ impl RouterState {
     pub fn snapshot(&self) -> Value {
         let store = self.store.lock().unwrap_or_else(|error| error.into_inner());
         let counters = self.counters.lock().unwrap_or_else(|error| error.into_inner()).clone();
+        let agy_active = store.agy.policy.enabled && !store.agy.locked;
+        let providers = store
+            .providers
+            .iter()
+            .map(|p| {
+                let mut view = ProviderView::of(p);
+                if p.kind == catalog::KIND_ANTIGRAVITY && !agy_active {
+                    view.is_active = false;
+                }
+                view
+            })
+            .collect::<Vec<_>>();
         json!({
-            "providers": store.providers.iter().map(ProviderView::of).collect::<Vec<_>>(),
+            "providers": providers,
             "combos": store.combos,
             "counters": {
                 "requests": counters.requests,
@@ -190,7 +202,12 @@ impl RouterState {
             guard.providers.push(record.clone());
         }
         store::save(&self.store_path, &guard).map_err(|error| RouterError::internal(error.to_string()))?;
-        Ok(serde_json::to_value(ProviderView::of(&record)).unwrap_or(Value::Null))
+        let agy_active = guard.agy.policy.enabled && !guard.agy.locked;
+        let mut view = ProviderView::of(&record);
+        if record.kind == catalog::KIND_ANTIGRAVITY && !agy_active {
+            view.is_active = false;
+        }
+        Ok(serde_json::to_value(view).unwrap_or(Value::Null))
     }
 
     pub fn delete_provider(&self, provider_id: &str) -> Result<Value, RouterError> {

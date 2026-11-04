@@ -255,7 +255,7 @@ function renderCurrent() {
   els.currentTitle.textContent = current && current.title ? current.title : 'No YouTube video detected'
   els.currentUrl.textContent = current && current.url
     ? current.url
-    : 'Open a watch, Shorts, or live page in the ND browser.'
+    : 'Open a watch, Shorts, or live page in ND or connected Chrome browser.'
   els.useCurrent.disabled = !current || state.busy
 }
 

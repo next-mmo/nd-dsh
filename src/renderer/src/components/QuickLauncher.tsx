@@ -1,5 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import {
+  AppWindow,
+  Bot,
   Building2,
   Camera,
   Check,
@@ -23,10 +25,12 @@ import {
   StickyNote,
   Zap,
 } from 'lucide-react'
+import type { LauncherLiveItem } from '../../../shared/launcher-live'
 import type { OrganizationSnapshot } from '../../../shared/organization'
 import type { NdMediaSessionState } from '../../../shared/media-session'
 import type { NdCommandView } from '../../../shared/nd-invocations'
 import { commandRunPlan, type ContextOption } from '../lib/nd-context-model'
+import { useLauncherLive } from '../lib/use-launcher-live'
 import { cn } from '@renderer/lib/utils'
 import { MediaArtwork } from './MediaArtwork'
 import { SystemVolumeControl } from './SystemVolumeControl'
@@ -57,12 +61,16 @@ interface Props {
   currentUrl?: string | undefined
   /** Explicit context selector; the popup defaults to Personal, the in-app launcher to the current context. */
   contexts?: ContextOption[]
-  activeContextId?: string
+  activeContextId?: string | undefined
   contextLabel?: string
   onSelectContext?(id: string): void
   /** Extension commands available in the selected context. */
   extensionCommands?: NdCommandView[]
   onRunExtensionCommand?(command: NdCommandView, typed: string): void | Promise<void>
+  /** Jump back into a running chat, agent run, keep-alive view, or browser tab. */
+  onOpenLiveItem?(item: LauncherLiveItem): void | Promise<void>
+  /** Open one of the saved workspace folders. */
+  onOpenWorkspace?(id: string): void | Promise<void>
   onOpenKanban(): void
   onOpenAgent(): void
   onOpenMedia(tabId: string): void | Promise<void>
@@ -84,6 +92,11 @@ function launcherIcon(command: LauncherCommandItem): ReactNode {
     task: <ListTodo />,
     note: <StickyNote />,
     agent: <MessageSquare />,
+    chat: <MessageSquare />,
+    run: <Bot />,
+    keepalive: <AppWindow />,
+    tab: <Globe />,
+    workspace: <FolderOpen />,
     context: <Building2 />,
     kanban: <ListTodo />,
     'capture-screen': <Camera />,
@@ -241,6 +254,8 @@ export function QuickLauncher({
   onSelectContext,
   extensionCommands = [],
   onRunExtensionCommand,
+  onOpenLiveItem,
+  onOpenWorkspace,
   onOpenKanban,
   onOpenAgent,
   onOpenMedia,
@@ -257,6 +272,7 @@ export function QuickLauncher({
 }: Props) {
   const [query, setQuery] = useState('')
   const [media, setMedia] = useState<NdMediaSessionState | null>(null)
+  const live = useLauncherLive(open)
   const running = useRef(false)
   // Reset while the popup window is hidden; the next reveal is already clean.
   useLayoutEffect(() => {
@@ -275,8 +291,12 @@ export function QuickLauncher({
     contexts,
     ...(activeContextId ? { activeContextId } : {}),
     extensionCommands,
+    ...(onOpenLiveItem && live ? { liveItems: live.items } : {}),
+    ...(onOpenWorkspace && live ? { workspaces: live.workspace } : {}),
     actions: {
       selectContext: (id) => onSelectContext?.(id),
+      openLiveItem: (liveItem) => onOpenLiveItem?.(liveItem),
+      openWorkspace: (id) => onOpenWorkspace?.(id),
       openKanban: onOpenKanban,
       openAgent: onOpenAgent,
       activateProject: onActivateProject,

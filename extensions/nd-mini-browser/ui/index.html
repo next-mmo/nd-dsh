@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="color-scheme" content="dark" />
+  <meta name="color-scheme" content="light dark" />
   <!-- Mirrors the CSP the ND asset server sets on this document; defense in depth. -->
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'none'; script-src nd-extension-ui:; style-src nd-extension-ui: 'unsafe-inline'; img-src nd-extension-ui: data: blob:; font-src nd-extension-ui:; connect-src 'none'; base-uri 'none'; form-action 'none'" />
@@ -17,6 +17,17 @@
       --text: #e7e9ee;
       --faint: #9aa3b2;
       --accent: #38bdf8;
+      --border-strong: #3d4452;
+    }
+    :root[data-theme='light'] {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --border: #d8dde6;
+      --border-strong: #c2c9d6;
+      --text: #1d1d1f;
+      --faint: #6e6e73;
+      --accent: #0284c7;
     }
     * { box-sizing: border-box; }
     html, body { height: 100%; }
@@ -52,7 +63,7 @@
       padding: 5px 11px;
       cursor: pointer;
     }
-    button:hover { border-color: #3d4452; }
+    button:hover { border-color: var(--border-strong); }
     button:disabled { opacity: 0.45; cursor: default; }
     #status { min-height: 19px; font-weight: 600; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     #status.error { color: var(--accent); }
