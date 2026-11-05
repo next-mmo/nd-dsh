@@ -1402,3 +1402,57 @@ async fn test_trae_cli_binary_detection() {
         Err(err) => assert!(err.message.contains("not installed") || err.message.contains("timed out")),
     }
 }
+
+#[test]
+fn save_account_rejects_invalid_env_dir_and_selector() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let state = RouterState::new(temp.path().to_path_buf()).expect("state");
+    state.save_provider(qoder_input("qoder-test", &["auto"])).expect("provider");
+
+    let bad_dir = state.save_account(SaveAccountInput {
+        provider_id: "qoder-test".to_owned(),
+        id: None,
+        label: "bad-dir".to_owned(),
+        kind: Some("cli".to_owned()),
+        api_key: None,
+        env_dir: Some("path/with/\0null".to_owned()),
+        selector: None,
+        is_active: Some(true),
+        priority: Some(0),
+        clear_secret: false,
+    });
+    assert!(bad_dir.is_err());
+    assert!(bad_dir.unwrap_err().message.contains("env_dir"));
+
+    let bad_selector = state.save_account(SaveAccountInput {
+        provider_id: "qoder-test".to_owned(),
+        id: None,
+        label: "bad-sel".to_owned(),
+        kind: Some("cli".to_owned()),
+        api_key: None,
+        env_dir: None,
+        selector: Some("selector\nnewline".to_owned()),
+        is_active: Some(true),
+        priority: Some(0),
+        clear_secret: false,
+    });
+    assert!(bad_selector.is_err());
+    assert!(bad_selector.unwrap_err().message.contains("selector"));
+}
+
+#[tokio::test]
+async fn generic_cli_rejects_overbudget_prompt() {
+    let long_prompt = "a".repeat(crate::cli::GENERIC_CLI_MAX_PROMPT_CHARS + 1);
+    let result = crate::cli::run_generic_cli("codex-cli", "default", &long_prompt).await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().message.contains("budget"));
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn generic_cli_windows_cmd_rejects_shell_metacharacters() {
+    let injected = "hello & calc.exe";
+    let result = crate::cli::run_generic_cli("trae-cli", "agent", injected).await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().message.contains("shell metacharacters"));
+}

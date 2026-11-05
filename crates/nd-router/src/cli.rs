@@ -23,7 +23,9 @@ pub const QODER_PRINT_TIMEOUT_SECS: u64 = 120;
 // The prompt travels as a command-line argument and Windows caps a process
 // command line at ~32k characters, so the qoder budget stays well below it.
 const QODER_MAX_PROMPT_CHARS: usize = 24_000;
+pub const GENERIC_CLI_MAX_PROMPT_CHARS: usize = 30_000;
 
+#[derive(Clone, Debug)]
 pub struct CliCompletion {
     pub text: String,
     pub prompt_tokens: u64,
@@ -142,20 +144,49 @@ pub async fn run_generic_cli(
     if prompt.is_empty() {
         return Err(RouterError::bad_request("the CLI lane needs a non-empty prompt"));
     }
+    if prompt.chars().count() > GENERIC_CLI_MAX_PROMPT_CHARS {
+        return Err(RouterError::bad_request("prompt exceeds the generic CLI lane budget"));
+    }
     let bin = cli_binary_for_kind(kind);
+    #[cfg(windows)]
+    {
+        if bin.ends_with(".cmd") || bin.ends_with(".bat") || bin.eq_ignore_ascii_case("trae") {
+            if prompt.contains('\n')
+                || prompt.contains('\r')
+                || prompt.contains('&')
+                || prompt.contains('|')
+                || prompt.contains('^')
+                || prompt.contains('%')
+                || prompt.contains('<')
+                || prompt.contains('>')
+            {
+                return Err(RouterError::bad_request(
+                    "prompts sent to Windows batch/cmd CLI shims must not contain newlines or shell metacharacters (&, |, ^, %, <, >)",
+                ));
+            }
+            if prompt.len() > 8000 {
+                return Err(RouterError::bad_request("prompt exceeds Windows command shell length limit"));
+            }
+        }
+    }
+    let safe_prompt = if prompt.starts_with('-') {
+        format!(" {prompt}")
+    } else {
+        prompt.to_owned()
+    };
     let mut command = create_command(&bin);
     match kind {
         catalog::KIND_CLAUDE_CLI => {
-            command.arg("-p").arg(prompt);
+            command.arg("-p").arg(&safe_prompt);
             if !model.is_empty() && model != "default" {
                 command.arg("--model").arg(model);
             }
         }
         catalog::KIND_CODEX_CLI => {
-            command.arg("exec").arg(prompt);
+            command.arg("exec").arg(&safe_prompt);
         }
         catalog::KIND_OPENCODE_CLI => {
-            command.arg("run").arg(prompt);
+            command.arg("run").arg(&safe_prompt);
             if !model.is_empty() && model != "default" {
                 command.arg("--model").arg(model);
             }
@@ -167,17 +198,17 @@ pub async fn run_generic_cli(
                 _ => "agent",
             };
             command.arg("-m").arg(mode);
-            command.arg(prompt);
+            command.arg(&safe_prompt);
         }
         catalog::KIND_GOOSE_CLI
         | catalog::KIND_HERMES_CLI
         | catalog::KIND_ZCODE_CLI
         | catalog::KIND_JCODE_CLI
         | catalog::KIND_MINIMAX_CLI => {
-            command.arg("run").arg(prompt);
+            command.arg("run").arg(&safe_prompt);
         }
         _ => {
-            command.arg(prompt);
+            command.arg(&safe_prompt);
         }
     }
     command.stdin(std::process::Stdio::null());

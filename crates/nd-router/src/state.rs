@@ -249,6 +249,30 @@ impl RouterState {
             .id
             .as_ref()
             .and_then(|id| guard.providers[provider_index].accounts.iter().find(|account| account.id == *id).cloned());
+        let env_dir = input
+            .env_dir
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .or_else(|| existing.as_ref().and_then(|account| account.env_dir.clone()));
+        if let Some(ref dir) = env_dir {
+            if dir.len() > 1024 || dir.contains('\0') || dir.contains('\r') || dir.contains('\n') {
+                return Err(RouterError::bad_request("account env_dir contains invalid characters or exceeds 1024 characters"));
+            }
+        }
+        let selector = input
+            .selector
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .or_else(|| existing.as_ref().and_then(|account| account.selector.clone()));
+        if let Some(ref sel) = selector {
+            if sel.len() > 256 || sel.contains('\0') || sel.contains('\r') || sel.contains('\n') {
+                return Err(RouterError::bad_request("account selector contains invalid characters or exceeds 256 characters"));
+            }
+        }
         let mut record = AccountRecord {
             id: input
                 .id
@@ -261,14 +285,8 @@ impl RouterState {
             label: label.to_owned(),
             kind,
             secret_ref: existing.as_ref().and_then(|account| account.secret_ref.clone()),
-            env_dir: input.env_dir.clone().or_else(|| existing.as_ref().and_then(|account| account.env_dir.clone())),
-            selector: input
-                .selector
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned)
-                .or_else(|| existing.as_ref().and_then(|account| account.selector.clone())),
+            env_dir,
+            selector,
             is_active: input.is_active.or_else(|| existing.as_ref().map(|account| account.is_active)).unwrap_or(true),
             priority: input.priority.or_else(|| existing.as_ref().map(|account| account.priority)).unwrap_or(0),
             cooldown_until_ms: existing.as_ref().and_then(|account| account.cooldown_until_ms),
@@ -1196,7 +1214,26 @@ async fn forward(upstream: reqwest::Response, wants_stream: bool) -> Result<Resp
         response.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
         return Ok(response);
     }
-    let bytes = upstream.bytes().await.map_err(|error| RouterError::bad_gateway(error.to_string()))?;
+    if let Some(content_length) = upstream.content_length() {
+        if content_length > crate::types::MAX_BODY_BYTES as u64 {
+            return Err(RouterError::bad_gateway(format!(
+                "upstream response body exceeded maximum limit of {} bytes",
+                crate::types::MAX_BODY_BYTES
+            )));
+        }
+    }
+    let mut stream = upstream.bytes_stream();
+    let mut collected = Vec::new();
+    while let Some(chunk) = stream.try_next().await.map_err(|error| RouterError::bad_gateway(error.to_string()))? {
+        if collected.len() + chunk.len() > crate::types::MAX_BODY_BYTES {
+            return Err(RouterError::bad_gateway(format!(
+                "upstream response body exceeded maximum limit of {} bytes",
+                crate::types::MAX_BODY_BYTES
+            )));
+        }
+        collected.extend_from_slice(&chunk);
+    }
+    let bytes = axum::body::Bytes::from(collected);
     let mut response = Response::new(Body::from(bytes));
     *response.status_mut() = status;
     if let Some(content_type) = content_type.and_then(|value| HeaderValue::from_str(&value).ok()) {
