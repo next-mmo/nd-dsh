@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { BrowserPlatformState, BrowserProfileSummary } from '../../../shared/browser-platform'
 import {
+  isRouterTtsProviderKind,
   isRouterWebProviderKind,
   type RouterAgyState,
   type RouterPlaygroundEvent,
@@ -62,6 +63,15 @@ interface RouterPlaygroundProps {
 interface ChatTurn {
   role: 'user' | 'assistant'
   content: string
+}
+
+export function extractInlineAudioDataUri(text: string): { cleanText: string; audioDataUri: string | null } {
+  const match = /\b(data:audio\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+)/.exec(text)
+  if (!match || !match[1]) {
+    return { cleanText: text, audioDataUri: null }
+  }
+  const cleanText = text.replace(match[1], '').trim()
+  return { cleanText, audioDataUri: match[1] }
 }
 
 function extractThinkingAndSegments(text: string): Array<{ kind: 'reasoning' | 'text'; text: string }> {
@@ -423,7 +433,7 @@ export function RouterPlayground({ state, onError, embedded = false, agyState }:
     const models = activeProviders.flatMap((provider) =>
       provider.models.map((model) => ({
         value: `model:${provider.id}/${model}`,
-        label: `${provider.name} / ${model}${isRouterWebProviderKind(provider.kind) ? ' · Web' : ''}`,
+        label: `${provider.name} / ${model}${isRouterWebProviderKind(provider.kind) ? ' · Web' : isRouterTtsProviderKind(provider.kind) ? ' · TTS' : ''}`,
         shortLabel: model,
         providerId: provider.id,
         group: 'model' as const,
@@ -734,7 +744,7 @@ export function RouterPlayground({ state, onError, embedded = false, agyState }:
               {(state?.combos?.length ?? 0) > 0 ? <option value="combos">Route combos</option> : null}
               {activeProviders.map((provider) => (
                 <option key={provider.id} value={`provider:${provider.id}`}>
-                  {`${provider.name}${isRouterWebProviderKind(provider.kind) ? ' · Web' : ''}`}
+                  {`${provider.name}${isRouterWebProviderKind(provider.kind) ? ' · Web' : isRouterTtsProviderKind(provider.kind) ? ' · TTS' : ''}`}
                 </option>
               ))}
             </select>
@@ -923,7 +933,8 @@ export function RouterPlayground({ state, onError, embedded = false, agyState }:
                   </div>
                 )
               }
-              const segments = extractThinkingAndSegments(turn.content)
+              const { cleanText, audioDataUri } = extractInlineAudioDataUri(turn.content)
+              const segments = extractThinkingAndSegments(cleanText)
               return (
                 <article key={`${turn.role}-${index}`} className="group flex items-start gap-2.5 rounded-lg border border-border-soft/80 bg-surface-1 p-2.5 shadow-xs">
                   <span className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-full bg-primary/15 text-primary [&_svg]:size-3">
@@ -943,6 +954,23 @@ export function RouterPlayground({ state, onError, embedded = false, agyState }:
                         }
                         return <MarkdownLite key={sIndex} text={segment.text} onOpenLink={handleOpenLink} />
                       })}
+                      {audioDataUri ? (
+                        <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-border-soft bg-surface-0/80 p-2">
+                          <audio
+                            controls
+                            src={audioDataUri}
+                            aria-label="Synthesized TTS audio"
+                            className="h-8 max-w-full flex-1"
+                          />
+                          <a
+                            href={audioDataUri}
+                            download="nd-router-speech.mp3"
+                            className="rounded border border-border-soft bg-background px-2 py-1 text-[10px] font-semibold text-foreground transition-colors hover:bg-accent"
+                          >
+                            Download MP3
+                          </a>
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                 </article>

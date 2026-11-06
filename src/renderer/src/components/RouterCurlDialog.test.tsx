@@ -73,6 +73,24 @@ describe('RouterCurlDialog', () => {
     expect(html).toContain('http://127.0.0.1:8326/v1/chat/completions')
     expect(html).toContain('Combo Route')
   })
+
+  it('formats edge-tts route as /v1/audio/speech with voice and --output speech.mp3', () => {
+    const html = renderToStaticMarkup(
+      <RouterCurlDialog
+        open={true}
+        onClose={() => undefined}
+        route="model:edge-tts/en-US-AriaNeural"
+        endpoint="http://127.0.0.1:3130"
+        currentPrompt="Hello Edge TTS"
+      />
+    )
+
+    expect(html).toContain('TTS Audio Route')
+    expect(html).toContain('http://127.0.0.1:3130/v1/audio/speech')
+    expect(html).toContain('en-US-AriaNeural')
+    expect(html).toContain('Hello Edge TTS')
+    expect(html).toContain('--output speech.mp3')
+  })
 })
 
 describe('ProcessLogsDrawer cURL button', () => {

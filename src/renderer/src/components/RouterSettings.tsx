@@ -4,12 +4,15 @@ import {
   ROUTER_AI_STUDIO_MODELS,
   ROUTER_FREE_API_BASE_URLS,
   ROUTER_FREE_API_MODELS,
+  ROUTER_TTS_LANE_MODELS,
   ROUTER_WEB_LANE_MODELS,
   isRouterCliProviderKind,
   isRouterFreeApiKind,
+  isRouterTtsProviderKind,
   isRouterWebProviderKind,
   ROUTER_CLI_LANE_MODELS,
   type RouterCliProviderKind,
+  type RouterTtsProviderKind,
   providerAuthMode,
   providerCategory,
   type RouterAgyApproval,
@@ -71,6 +74,7 @@ type ProviderKindChoice =
   | 'ovh-kepler'
   | 'free-ai'
   | 'kilo-gateway'
+  | RouterTtsProviderKind
   | RouterCliProviderKind
   | 'chatgpt-web'
   | 'gemini-web'
@@ -229,6 +233,10 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
       setProviderName('Google AI Studio')
       setProviderBaseUrl(ROUTER_AI_STUDIO_BASE_URL)
       setProviderModels(ROUTER_AI_STUDIO_MODELS.join(', '))
+    } else if (isRouterTtsProviderKind(kind)) {
+      setProviderName(kindLabel(kind))
+      setProviderBaseUrl('')
+      setProviderModels((ROUTER_TTS_LANE_MODELS[kind] ?? []).join(', '))
     } else if (isRouterFreeApiKind(kind)) {
       setProviderName(kindLabel(kind))
       setProviderBaseUrl(ROUTER_FREE_API_BASE_URLS[kind] ?? '')
@@ -252,6 +260,14 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
         baseUrl,
         models: models.length > 0 ? models : ROUTER_AI_STUDIO_MODELS,
         ...(providerKey.trim() ? { apiKey: providerKey.trim() } : {}),
+      }
+    }
+    if (isRouterTtsProviderKind(providerKind)) {
+      return {
+        kind: providerKind,
+        name: providerName.trim() || kindLabel(providerKind),
+        ...(providerBaseUrl.trim() ? { baseUrl: providerBaseUrl.trim() } : {}),
+        models: models.length > 0 ? models : (ROUTER_TTS_LANE_MODELS[providerKind] ?? []),
       }
     }
     if (isRouterFreeApiKind(providerKind)) {
@@ -969,6 +985,9 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
                 disabled={disabled || draftPing.testing}
                 onChange={(event) => changeProviderKind(event.target.value as ProviderKindChoice)}
               >
+                <optgroup label="Text-to-Speech (TTS — Free Default)">
+                  <option value="edge-tts">Edge TTS (Microsoft Edge Read Aloud · Free · No Key)</option>
+                </optgroup>
                 <optgroup label="Free API (Zero Auth Required)">
                   <option value="pollinations">Pollinations AI (Fast · No Key)</option>
                   <option value="ovh-kepler">OVH Kepler Cloud (120B / Qwen 3.6 · No Key)</option>
@@ -1012,9 +1031,11 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
                 </optgroup>
               </select>
               <span className="text-[11px] leading-relaxed text-muted-foreground">
-                {isRouterFreeApiKind(providerKind)
-                  ? 'Free public API: zero authentication required.'
-                  : isRouterWebProviderKind(providerKind)
+                {isRouterTtsProviderKind(providerKind)
+                  ? 'Free neural Text-to-Speech via Microsoft Edge Read Aloud: zero authentication required (/v1/audio/speech).'
+                  : isRouterFreeApiKind(providerKind)
+                    ? 'Free public API: zero authentication required.'
+                    : isRouterWebProviderKind(providerKind)
                     ? 'Web chat lane: uses the embedded browser session; no key is stored.'
                     : providerKind === 'ai-studio'
                       ? 'API lane: Google AI Studio Gemini models via official OpenAI-compatible endpoint.'
@@ -1218,6 +1239,7 @@ function ProviderRow({
   const isAgy = provider.kind === 'antigravity'
   const isQoder = provider.kind === 'qoder'
   const isWeb = isRouterWebProviderKind(provider.kind)
+  const isTts = isRouterTtsProviderKind(provider.kind)
   const [label, setLabel] = useState('')
   const [key, setKey] = useState('')
   const [selector, setSelector] = useState('')
@@ -1260,9 +1282,11 @@ function ProviderRow({
                 ? 'agy CLI · Google OAuth accounts or Antigravity app sign-in'
                 : isQoder
                   ? 'qoder CLI (per-account profiles or personal access tokens)'
-                  : isWeb
-                    ? 'Embedded browser · signed-in session'
-                    : provider.baseUrl || '—'}
+                  : isTts
+                    ? provider.baseUrl || 'Edge Read Aloud WebSocket · /v1/audio/speech'
+                    : isWeb
+                      ? 'Embedded browser · signed-in session'
+                      : provider.baseUrl || '—'}
             </span>
             {provider.models.length > 0 ? <span className={rowDesc}>{provider.models.join(', ')}</span> : null}
             {test ? (
@@ -1283,7 +1307,7 @@ function ProviderRow({
         </div>
       </div>
 
-      {!isWeb && provider.accounts.length > 0 ? (
+      {!isWeb && !isTts && provider.accounts.length > 0 ? (
         <div className="mt-2 space-y-1 border-t border-border-soft pt-2">
           {provider.accounts.map((account) => (
             <div key={account.id} className="flex items-center justify-between gap-3">
@@ -1324,7 +1348,7 @@ function ProviderRow({
         </div>
       ) : null}
 
-      {!isWeb ? (
+      {!isWeb && !isTts ? (
         <div className="mt-2 flex items-center gap-2 border-t border-border-soft pt-2">
           <Input aria-label={`${provider.name} account label`} placeholder="Account label" value={label} disabled={disabled} onChange={(event) => setLabel(event.target.value)} className="max-w-[180px]" />
           {isAgy ? (
@@ -1354,6 +1378,7 @@ function ProviderRow({
 }
 
 function providerBadge(kind: string): string {
+  if (isRouterTtsProviderKind(kind)) return 'TTS'
   if (isRouterWebProviderKind(kind)) return 'WEB'
   if (kind === 'antigravity' || kind === 'qoder') return 'CLI'
   return 'API'
@@ -1366,13 +1391,14 @@ function plural(count: number, singular: string): string {
 function categoryBadge(kind: string): { category: string; auth: string; authLabel: string } {
   const cat = providerCategory(kind)
   const auth = providerAuthMode(kind)
-  const category = cat === 'cli' ? 'CLI' : cat === 'web' ? 'Web Chat' : 'API'
+  const category = cat === 'tts' ? 'TTS' : cat === 'cli' ? 'CLI' : cat === 'web' ? 'Web Chat' : 'API'
   const authLabel = auth === 'none' ? 'No Auth (Free)' : auth === 'browser' ? 'Browser Session' : auth === 'cli' ? 'CLI / OS Sign-in' : 'API Key'
   return { category, auth, authLabel }
 }
 
 function kindLabel(kind: string): string {
   switch (kind) {
+    case 'edge-tts': return 'Edge TTS (Free)'
     case 'ai-studio': return 'Google AI Studio'
     case 'aistudio-web': return 'Google AI Studio Web'
     case 'pollinations': return 'Pollinations AI (Free)'

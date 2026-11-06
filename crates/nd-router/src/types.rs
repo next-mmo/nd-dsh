@@ -34,6 +34,8 @@ pub struct PersistedStore {
     pub round_robin: HashMap<String, usize>,
     #[serde(default)]
     pub agy: AgyStateRecord,
+    #[serde(default)]
+    pub default_tts_seeded: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -138,27 +140,51 @@ pub struct RouterError {
 
 impl RouterError {
     pub fn bad_request(message: impl Into<String>) -> Self {
-        Self { status: StatusCode::BAD_REQUEST, code: "invalid_request", message: message.into() }
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            code: "invalid_request",
+            message: message.into(),
+        }
     }
 
     pub fn unauthorized(message: impl Into<String>) -> Self {
-        Self { status: StatusCode::UNAUTHORIZED, code: "unauthorized", message: message.into() }
+        Self {
+            status: StatusCode::UNAUTHORIZED,
+            code: "unauthorized",
+            message: message.into(),
+        }
     }
 
     pub fn not_found(message: impl Into<String>) -> Self {
-        Self { status: StatusCode::NOT_FOUND, code: "not_found", message: message.into() }
+        Self {
+            status: StatusCode::NOT_FOUND,
+            code: "not_found",
+            message: message.into(),
+        }
     }
 
     pub fn internal(message: impl Into<String>) -> Self {
-        Self { status: StatusCode::INTERNAL_SERVER_ERROR, code: "router_error", message: message.into() }
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "router_error",
+            message: message.into(),
+        }
     }
 
     pub fn bad_gateway(message: impl Into<String>) -> Self {
-        Self { status: StatusCode::BAD_GATEWAY, code: "upstream_unavailable", message: message.into() }
+        Self {
+            status: StatusCode::BAD_GATEWAY,
+            code: "upstream_unavailable",
+            message: message.into(),
+        }
     }
 
     pub fn not_implemented(message: impl Into<String>) -> Self {
-        Self { status: StatusCode::NOT_IMPLEMENTED, code: "lane_not_implemented", message: message.into() }
+        Self {
+            status: StatusCode::NOT_IMPLEMENTED,
+            code: "lane_not_implemented",
+            message: message.into(),
+        }
     }
 }
 
@@ -172,7 +198,10 @@ impl std::error::Error for RouterError {}
 
 impl IntoResponse for RouterError {
     fn into_response(self) -> Response {
-        (self.status, Json(json!({"error": {"message": self.message, "code": self.code}})))
+        (
+            self.status,
+            Json(json!({"error": {"message": self.message, "code": self.code}})),
+        )
             .into_response()
     }
 }
@@ -237,7 +266,11 @@ impl ProviderView {
             models: record.models.clone(),
             is_active: record.is_active,
             priority: record.priority,
-            has_secret: record.secret_ref.is_some() || record.accounts.iter().any(|account| account.secret_ref.is_some()),
+            has_secret: record.secret_ref.is_some()
+                || record
+                    .accounts
+                    .iter()
+                    .any(|account| account.secret_ref.is_some()),
             accounts: record.accounts.iter().map(AccountView::of).collect(),
         }
     }
@@ -324,6 +357,19 @@ pub struct SetSafeModeInput {
     pub enabled: bool,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+pub struct SpeechRequestInput {
+    #[serde(default)]
+    pub model: Option<String>,
+    pub input: String,
+    #[serde(default)]
+    pub voice: Option<String>,
+    #[serde(default, alias = "responseFormat")]
+    pub response_format: Option<String>,
+    #[serde(default)]
+    pub speed: Option<f64>,
+}
+
 /// Conservative operating budget for the Antigravity CLI lane. These are
 /// internal limits, not Google-validated safe thresholds: the lane runs a
 /// consumer Google account through the user's own `agy` CLI, so ND defaults
@@ -359,13 +405,27 @@ pub struct AgyPolicyRecord {
     pub max_timeout_secs: u64,
 }
 
-fn agy_default_true() -> bool { true }
-fn agy_default_one() -> u32 { 1 }
-fn agy_default_two() -> u32 { 2 }
-fn agy_default_ten() -> u32 { 10 }
-fn agy_default_token_budget() -> u64 { 200_000 }
-fn agy_default_ttl() -> u64 { 600 }
-fn agy_default_timeout() -> u64 { 300 }
+fn agy_default_true() -> bool {
+    true
+}
+fn agy_default_one() -> u32 {
+    1
+}
+fn agy_default_two() -> u32 {
+    2
+}
+fn agy_default_ten() -> u32 {
+    10
+}
+fn agy_default_token_budget() -> u64 {
+    200_000
+}
+fn agy_default_ttl() -> u64 {
+    600
+}
+fn agy_default_timeout() -> u64 {
+    300
+}
 
 impl Default for AgyPolicyRecord {
     fn default() -> Self {

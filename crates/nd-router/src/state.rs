@@ -1,14 +1,15 @@
 use crate::catalog;
 use crate::store;
 use crate::types::{
-    AccountRecord, AccountView, ComboRecord, ProviderRecord, ProviderView, RoutedEntry,
-    RouterError, SaveAccountInput, SaveComboInput, SaveProviderInput, UsageEntry, MAX_USAGE_LINES,
-    REQUEST_TIMEOUT_SECS, STORE_SCHEMA_VERSION, USAGE_FILE, WEB_REQUEST_TIMEOUT_SECS,
+    AccountRecord, AccountView, ComboRecord, MAX_USAGE_LINES, ProviderRecord, ProviderView,
+    REQUEST_TIMEOUT_SECS, RoutedEntry, RouterError, STORE_SCHEMA_VERSION, SaveAccountInput,
+    SaveComboInput, SaveProviderInput, USAGE_FILE, UsageEntry, WEB_REQUEST_TIMEOUT_SECS,
     WEB_TEST_TIMEOUT_SECS, WebBridgeConfig,
 };
 use axum::body::Body;
 use axum::http::{HeaderValue, StatusCode, header::CONTENT_TYPE};
 use axum::response::Response;
+use base64::Engine as _;
 use futures_util::TryStreamExt;
 use nd_runtime::vault::{
     VaultEntryInput, VaultIdParams, VaultRegistry, VaultUpdateParams, VaultWriteParams,
@@ -31,6 +32,8 @@ pub struct RouterOptions {
     /// Experimental network lockdown. Off by default until the mode is stable.
     pub safe_mode: bool,
     pub preferred_port: Option<u16>,
+    /// Seed default built-in providers (such as `edge-tts`) on first initialization.
+    pub seed_defaults: bool,
 }
 
 pub struct RouterState {
@@ -80,8 +83,12 @@ impl RouterState {
             .no_proxy()
             .build()?;
         let key = format!("ndr_{}", uuid::Uuid::new_v4().simple());
+        let mut initial_store = store::load(&store_path);
+        if options.seed_defaults && store::ensure_default_tts_provider(&mut initial_store) {
+            let _ = store::save(&store_path, &initial_store);
+        }
         Ok(Arc::new(Self {
-            store: Mutex::new(store::load(&store_path)),
+            store: Mutex::new(initial_store),
             store_path,
             data_dir,
             vault: VaultRegistry::new_platform(),
@@ -118,7 +125,11 @@ impl RouterState {
         if self.safe_mode.load(Ordering::Acquire) {
             return false;
         }
-        let external = self.external_key.lock().unwrap_or_else(|error| error.into_inner()).clone();
+        let external = self
+            .external_key
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
         external
             .as_deref()
             .map(|key| constant_time_eq(token.as_bytes(), key.as_bytes()))
@@ -137,9 +148,14 @@ impl RouterState {
     pub fn set_external_key(&self, key: &str) -> Result<(), RouterError> {
         let trimmed = key.trim();
         if trimmed.len() < 16 || trimmed.len() > 256 || !trimmed.starts_with("ndr_ext_") {
-            return Err(RouterError::bad_request("external key must be an ndr_ext_ credential (16-256 characters)"));
+            return Err(RouterError::bad_request(
+                "external key must be an ndr_ext_ credential (16-256 characters)",
+            ));
         }
-        *self.external_key.lock().unwrap_or_else(|error| error.into_inner()) = Some(trimmed.to_owned());
+        *self
+            .external_key
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Some(trimmed.to_owned());
         Ok(())
     }
 
@@ -149,7 +165,11 @@ impl RouterState {
 
     pub fn snapshot(&self) -> Value {
         let store = self.store.lock().unwrap_or_else(|error| error.into_inner());
-        let counters = self.counters.lock().unwrap_or_else(|error| error.into_inner()).clone();
+        let counters = self
+            .counters
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
         let agy_active = store.agy.policy.enabled && !store.agy.locked;
         let providers = store
             .providers
@@ -177,18 +197,26 @@ impl RouterState {
 
     pub fn save_provider(&self, input: SaveProviderInput) -> Result<Value, RouterError> {
         let mut guard = self.store.lock().unwrap_or_else(|error| error.into_inner());
-        let existing = input
-            .id
-            .as_ref()
-            .and_then(|id| guard.providers.iter().find(|provider| provider.id == *id).cloned());
+        let existing = input.id.as_ref().and_then(|id| {
+            guard
+                .providers
+                .iter()
+                .find(|provider| provider.id == *id)
+                .cloned()
+        });
         let mut record = store::sanitize_provider(&input, existing.as_ref())
             .map_err(RouterError::bad_request)?;
-        if input.clear_secret {
-            if let Some(entry_id) = record.secret_ref.take() {
-                self.delete_secret(&entry_id);
-            }
+        if input.clear_secret
+            && let Some(entry_id) = record.secret_ref.take()
+        {
+            self.delete_secret(&entry_id);
         }
-        if let Some(secret) = input.api_key.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+        if let Some(secret) = input
+            .api_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
             record.secret_ref = Some(self.write_secret(
                 record.secret_ref.as_deref(),
                 &format!("ND Router · {}", record.name),
@@ -196,12 +224,17 @@ impl RouterState {
                 secret,
             )?);
         }
-        if let Some(index) = guard.providers.iter().position(|provider| provider.id == record.id) {
+        if let Some(index) = guard
+            .providers
+            .iter()
+            .position(|provider| provider.id == record.id)
+        {
             guard.providers[index] = record.clone();
         } else {
             guard.providers.push(record.clone());
         }
-        store::save(&self.store_path, &guard).map_err(|error| RouterError::internal(error.to_string()))?;
+        store::save(&self.store_path, &guard)
+            .map_err(|error| RouterError::internal(error.to_string()))?;
         let agy_active = guard.agy.policy.enabled && !guard.agy.locked;
         let mut view = ProviderView::of(&record);
         if record.kind == catalog::KIND_ANTIGRAVITY && !agy_active {
@@ -212,7 +245,11 @@ impl RouterState {
 
     pub fn delete_provider(&self, provider_id: &str) -> Result<Value, RouterError> {
         let mut guard = self.store.lock().unwrap_or_else(|error| error.into_inner());
-        let Some(index) = guard.providers.iter().position(|provider| provider.id == provider_id) else {
+        let Some(index) = guard
+            .providers
+            .iter()
+            .position(|provider| provider.id == provider_id)
+        else {
             return Err(RouterError::not_found("provider_not_found"));
         };
         let removed = guard.providers.remove(index);
@@ -225,41 +262,66 @@ impl RouterState {
             }
         }
         for combo in &mut guard.combos {
-            combo.models.retain(|entry| entry.provider_id != provider_id);
+            combo
+                .models
+                .retain(|entry| entry.provider_id != provider_id);
         }
         guard.combos.retain(|combo| !combo.models.is_empty());
-        store::save(&self.store_path, &guard).map_err(|error| RouterError::internal(error.to_string()))?;
+        store::save(&self.store_path, &guard)
+            .map_err(|error| RouterError::internal(error.to_string()))?;
         Ok(json!({"deleted": true}))
     }
 
     pub fn save_account(&self, input: SaveAccountInput) -> Result<Value, RouterError> {
         let mut guard = self.store.lock().unwrap_or_else(|error| error.into_inner());
-        let Some(provider_index) = guard.providers.iter().position(|provider| provider.id == input.provider_id) else {
+        let Some(provider_index) = guard
+            .providers
+            .iter()
+            .position(|provider| provider.id == input.provider_id)
+        else {
             return Err(RouterError::not_found("provider_not_found"));
         };
         let label = input.label.trim();
         if label.is_empty() || label.chars().count() > 80 {
-            return Err(RouterError::bad_request("account label must be 1-80 characters"));
+            return Err(RouterError::bad_request(
+                "account label must be 1-80 characters",
+            ));
         }
-        let kind = input.kind.as_deref().unwrap_or("api-key").trim().to_ascii_lowercase();
+        let kind = input
+            .kind
+            .as_deref()
+            .unwrap_or("api-key")
+            .trim()
+            .to_ascii_lowercase();
         if kind != "api-key" && kind != "cli" {
-            return Err(RouterError::bad_request("account kind must be api-key or cli"));
+            return Err(RouterError::bad_request(
+                "account kind must be api-key or cli",
+            ));
         }
-        let existing = input
-            .id
-            .as_ref()
-            .and_then(|id| guard.providers[provider_index].accounts.iter().find(|account| account.id == *id).cloned());
+        let existing = input.id.as_ref().and_then(|id| {
+            guard.providers[provider_index]
+                .accounts
+                .iter()
+                .find(|account| account.id == *id)
+                .cloned()
+        });
         let env_dir = input
             .env_dir
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned)
-            .or_else(|| existing.as_ref().and_then(|account| account.env_dir.clone()));
-        if let Some(ref dir) = env_dir {
-            if dir.len() > 1024 || dir.contains('\0') || dir.contains('\r') || dir.contains('\n') {
-                return Err(RouterError::bad_request("account env_dir contains invalid characters or exceeds 1024 characters"));
-            }
+            .or_else(|| {
+                existing
+                    .as_ref()
+                    .and_then(|account| account.env_dir.clone())
+            });
+        if let Some(ref dir) = env_dir
+            && (dir.len() > 1024 || dir.contains('\0') || dir.contains('\r') || dir.contains('\n'))
+        {
+            return Err(RouterError::bad_request(
+                "account env_dir contains invalid characters or exceeds 1024 characters",
+            ));
         }
         let selector = input
             .selector
@@ -267,11 +329,17 @@ impl RouterState {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned)
-            .or_else(|| existing.as_ref().and_then(|account| account.selector.clone()));
-        if let Some(ref sel) = selector {
-            if sel.len() > 256 || sel.contains('\0') || sel.contains('\r') || sel.contains('\n') {
-                return Err(RouterError::bad_request("account selector contains invalid characters or exceeds 256 characters"));
-            }
+            .or_else(|| {
+                existing
+                    .as_ref()
+                    .and_then(|account| account.selector.clone())
+            });
+        if let Some(ref sel) = selector
+            && (sel.len() > 256 || sel.contains('\0') || sel.contains('\r') || sel.contains('\n'))
+        {
+            return Err(RouterError::bad_request(
+                "account selector contains invalid characters or exceeds 256 characters",
+            ));
         }
         let mut record = AccountRecord {
             id: input
@@ -284,23 +352,43 @@ impl RouterState {
                 .unwrap_or_else(|| store::new_id("account")),
             label: label.to_owned(),
             kind,
-            secret_ref: existing.as_ref().and_then(|account| account.secret_ref.clone()),
+            secret_ref: existing
+                .as_ref()
+                .and_then(|account| account.secret_ref.clone()),
             env_dir,
             selector,
-            is_active: input.is_active.or_else(|| existing.as_ref().map(|account| account.is_active)).unwrap_or(true),
-            priority: input.priority.or_else(|| existing.as_ref().map(|account| account.priority)).unwrap_or(0),
-            cooldown_until_ms: existing.as_ref().and_then(|account| account.cooldown_until_ms),
-            last_status: existing.as_ref().and_then(|account| account.last_status.clone()),
+            is_active: input
+                .is_active
+                .or_else(|| existing.as_ref().map(|account| account.is_active))
+                .unwrap_or(true),
+            priority: input
+                .priority
+                .or_else(|| existing.as_ref().map(|account| account.priority))
+                .unwrap_or(0),
+            cooldown_until_ms: existing
+                .as_ref()
+                .and_then(|account| account.cooldown_until_ms),
+            last_status: existing
+                .as_ref()
+                .and_then(|account| account.last_status.clone()),
         };
-        if input.clear_secret {
-            if let Some(entry_id) = record.secret_ref.take() {
-                self.delete_secret(&entry_id);
-            }
+        if input.clear_secret
+            && let Some(entry_id) = record.secret_ref.take()
+        {
+            self.delete_secret(&entry_id);
         }
-        if let Some(secret) = input.api_key.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+        if let Some(secret) = input
+            .api_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
             record.secret_ref = Some(self.write_secret(
                 record.secret_ref.as_deref(),
-                &format!("ND Router · {} · {}", guard.providers[provider_index].name, record.label),
+                &format!(
+                    "ND Router · {} · {}",
+                    guard.providers[provider_index].name, record.label
+                ),
                 &record.id,
                 secret,
             )?);
@@ -311,30 +399,50 @@ impl RouterState {
         } else {
             accounts.push(record.clone());
         }
-        store::save(&self.store_path, &guard).map_err(|error| RouterError::internal(error.to_string()))?;
+        store::save(&self.store_path, &guard)
+            .map_err(|error| RouterError::internal(error.to_string()))?;
         Ok(serde_json::to_value(AccountView::of(&record)).unwrap_or(Value::Null))
     }
 
-    pub fn delete_account(&self, provider_id: &str, account_id: &str) -> Result<Value, RouterError> {
+    pub fn delete_account(
+        &self,
+        provider_id: &str,
+        account_id: &str,
+    ) -> Result<Value, RouterError> {
         let mut guard = self.store.lock().unwrap_or_else(|error| error.into_inner());
-        let Some(provider) = guard.providers.iter_mut().find(|provider| provider.id == provider_id) else {
+        let Some(provider) = guard
+            .providers
+            .iter_mut()
+            .find(|provider| provider.id == provider_id)
+        else {
             return Err(RouterError::not_found("provider_not_found"));
         };
-        let Some(index) = provider.accounts.iter().position(|account| account.id == account_id) else {
+        let Some(index) = provider
+            .accounts
+            .iter()
+            .position(|account| account.id == account_id)
+        else {
             return Err(RouterError::not_found("account_not_found"));
         };
         let removed = provider.accounts.remove(index);
         if let Some(entry_id) = removed.secret_ref.as_deref() {
             self.delete_secret(entry_id);
         }
-        store::save(&self.store_path, &guard).map_err(|error| RouterError::internal(error.to_string()))?;
+        store::save(&self.store_path, &guard)
+            .map_err(|error| RouterError::internal(error.to_string()))?;
         Ok(json!({"deleted": true}))
     }
 
     pub fn save_combo(&self, input: SaveComboInput) -> Result<Value, RouterError> {
         let mut guard = self.store.lock().unwrap_or_else(|error| error.into_inner());
-        if guard.combos.iter().any(|combo| combo.name == input.name.trim() && Some(&combo.id) != input.id.as_ref()) {
-            return Err(RouterError::bad_request("a combo with that name already exists"));
+        if guard
+            .combos
+            .iter()
+            .any(|combo| combo.name == input.name.trim() && Some(&combo.id) != input.id.as_ref())
+        {
+            return Err(RouterError::bad_request(
+                "a combo with that name already exists",
+            ));
         }
         let existing = input
             .id
@@ -347,7 +455,8 @@ impl RouterState {
         } else {
             guard.combos.push(record.clone());
         }
-        store::save(&self.store_path, &guard).map_err(|error| RouterError::internal(error.to_string()))?;
+        store::save(&self.store_path, &guard)
+            .map_err(|error| RouterError::internal(error.to_string()))?;
         Ok(serde_json::to_value(&record).unwrap_or(Value::Null))
     }
 
@@ -357,7 +466,8 @@ impl RouterState {
             return Err(RouterError::not_found("combo_not_found"));
         };
         guard.combos.remove(index);
-        store::save(&self.store_path, &guard).map_err(|error| RouterError::internal(error.to_string()))?;
+        store::save(&self.store_path, &guard)
+            .map_err(|error| RouterError::internal(error.to_string()))?;
         Ok(json!({"deleted": true}))
     }
 
@@ -385,50 +495,113 @@ impl RouterState {
         json!({"object": "list", "data": data})
     }
 
-    pub fn resolve(&self, combo_hint: Option<&str>, model_hint: Option<&str>) -> Result<(String, Vec<RoutedEntry>), RouterError> {
+    pub fn voice_catalog(&self) -> Value {
+        let guard = self.store.lock().unwrap_or_else(|error| error.into_inner());
+        crate::tts::voice_catalog(&guard.providers)
+    }
+
+    pub fn resolve(
+        &self,
+        combo_hint: Option<&str>,
+        model_hint: Option<&str>,
+    ) -> Result<(String, Vec<RoutedEntry>), RouterError> {
         let mut guard = self.store.lock().unwrap_or_else(|error| error.into_inner());
         let combo = combo_hint
             .and_then(|hint| find_combo(&guard.combos, hint))
             .or_else(|| model_hint.and_then(|hint| find_combo(&guard.combos, hint)))
             .or_else(|| guard.combos.first())
             .cloned();
-        let mut entries = combo.as_ref().map(|combo| combo.models.clone()).unwrap_or_default();
-        let strategy = combo.as_ref().map(|combo| combo.strategy.as_str()).unwrap_or(catalog::STRATEGY_PRIORITY);
-        let mut combo_name = combo.as_ref().map(|combo| combo.name.clone()).unwrap_or_else(|| "default".to_owned());
+        let mut entries = combo
+            .as_ref()
+            .map(|combo| combo.models.clone())
+            .unwrap_or_default();
+        let strategy = combo
+            .as_ref()
+            .map(|combo| combo.strategy.as_str())
+            .unwrap_or(catalog::STRATEGY_PRIORITY);
+        let mut combo_name = combo
+            .as_ref()
+            .map(|combo| combo.name.clone())
+            .unwrap_or_else(|| "default".to_owned());
 
         if entries.is_empty() {
             entries = guard
                 .providers
                 .iter()
-                .filter(|provider| provider.is_active)
+                .filter(|provider| provider.is_active && !catalog::is_tts_kind(&provider.kind))
                 .flat_map(|provider| {
-                    provider.models.first().map(|model| crate::types::ComboEntry {
-                        provider_id: provider.id.clone(),
-                        model: model.clone(),
-                        weight: None,
-                        account_id: None,
-                    })
+                    provider
+                        .models
+                        .first()
+                        .map(|model| crate::types::ComboEntry {
+                            provider_id: provider.id.clone(),
+                            model: model.clone(),
+                            weight: None,
+                            account_id: None,
+                        })
                 })
                 .collect();
+            if entries.is_empty() {
+                entries = guard
+                    .providers
+                    .iter()
+                    .filter(|provider| provider.is_active)
+                    .flat_map(|provider| {
+                        provider
+                            .models
+                            .first()
+                            .map(|model| crate::types::ComboEntry {
+                                provider_id: provider.id.clone(),
+                                model: model.clone(),
+                                weight: None,
+                                account_id: None,
+                            })
+                    })
+                    .collect();
+            }
         }
 
-        if let Some((provider_id, model)) = model_hint.and_then(|hint| hint.split_once('/')) {
-            if guard.providers.iter().any(|provider| provider.id == provider_id) {
+        if let Some(hint) = model_hint.map(str::trim).filter(|value| !value.is_empty()) {
+            if let Some((provider_id, model)) = hint.split_once('/') {
+                if guard
+                    .providers
+                    .iter()
+                    .any(|provider| provider.id == provider_id)
+                {
+                    entries = vec![crate::types::ComboEntry {
+                        provider_id: provider_id.to_owned(),
+                        model: model.to_owned(),
+                        weight: None,
+                        account_id: None,
+                    }];
+                    // An explicit provider/model pick is a direct route. Without
+                    // this, the first saved combo's name leaked into the response
+                    // headers and the playground reported a route it never used.
+                    combo_name = "direct".to_owned();
+                }
+            } else if let Some(provider) = guard.providers.iter().find(|provider| {
+                provider.is_active && (provider.id == hint || provider.kind == hint)
+            }) {
+                let default_model = provider
+                    .models
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "default".to_owned());
                 entries = vec![crate::types::ComboEntry {
-                    provider_id: provider_id.to_owned(),
-                    model: model.to_owned(),
+                    provider_id: provider.id.clone(),
+                    model: default_model,
                     weight: None,
                     account_id: None,
                 }];
-                // An explicit provider/model pick is a direct route. Without
-                // this, the first saved combo's name leaked into the response
-                // headers and the playground reported a route it never used.
                 combo_name = "direct".to_owned();
             }
         }
 
         if strategy == catalog::STRATEGY_ROUND_ROBIN && entries.len() > 1 {
-            let key = combo.as_ref().map(|combo| combo.id.clone()).unwrap_or_else(|| "default".to_owned());
+            let key = combo
+                .as_ref()
+                .map(|combo| combo.id.clone())
+                .unwrap_or_else(|| "default".to_owned());
             let index = guard.round_robin.entry(key).or_insert(0);
             let start = *index % entries.len();
             entries.rotate_left(start);
@@ -438,18 +611,34 @@ impl RouterState {
         let now = store::now_ms();
         let mut routed = Vec::new();
         for entry in entries {
-            let Some(provider) = guard.providers.iter().find(|provider| provider.id == entry.provider_id && provider.is_active).cloned() else {
+            let Some(provider) = guard
+                .providers
+                .iter()
+                .find(|provider| provider.id == entry.provider_id && provider.is_active)
+                .cloned()
+            else {
                 continue;
             };
             let mut accounts: Vec<AccountRecord> = provider
                 .accounts
                 .iter()
                 .filter(|account| account.is_active)
-                .filter(|account| account.cooldown_until_ms.map(|until| until <= now).unwrap_or(true))
-                .filter(|account| entry.account_id.as_ref().map(|id| id == &account.id).unwrap_or(true))
+                .filter(|account| {
+                    account
+                        .cooldown_until_ms
+                        .map(|until| until <= now)
+                        .unwrap_or(true)
+                })
+                .filter(|account| {
+                    entry
+                        .account_id
+                        .as_ref()
+                        .map(|id| id == &account.id)
+                        .unwrap_or(true)
+                })
                 .cloned()
                 .collect();
-            accounts.sort_by(|left, right| right.priority.cmp(&left.priority));
+            accounts.sort_by_key(|left| std::cmp::Reverse(left.priority));
             if strategy == catalog::STRATEGY_ROUND_ROBIN && accounts.len() > 1 {
                 let key = format!("account:{}", provider.id);
                 let index = guard.round_robin.entry(key).or_insert(0);
@@ -458,10 +647,18 @@ impl RouterState {
                 *index = (*index + 1) % accounts.len();
             }
             if accounts.is_empty() {
-                routed.push(RoutedEntry { provider, account: None, model: entry.model });
+                routed.push(RoutedEntry {
+                    provider,
+                    account: None,
+                    model: entry.model,
+                });
             } else {
                 for account in accounts {
-                    routed.push(RoutedEntry { provider: provider.clone(), account: Some(account), model: entry.model.clone() });
+                    routed.push(RoutedEntry {
+                        provider: provider.clone(),
+                        account: Some(account),
+                        model: entry.model.clone(),
+                    });
                 }
             }
         }
@@ -471,8 +668,352 @@ impl RouterState {
         Ok((combo_name, routed))
     }
 
-    pub async fn chat(&self, body: Value, combo_hint: Option<&str>, path: &str) -> Result<Response, RouterError> {
-        self.chat_with_request(body, combo_hint, path, None, None).await
+    pub fn resolve_tts(
+        &self,
+        combo_hint: Option<&str>,
+        model_hint: Option<&str>,
+    ) -> Result<(String, Vec<RoutedEntry>), RouterError> {
+        let mut guard = self.store.lock().unwrap_or_else(|error| error.into_inner());
+        let combo = combo_hint
+            .and_then(|hint| find_combo(&guard.combos, hint))
+            .or_else(|| model_hint.and_then(|hint| find_combo(&guard.combos, hint)))
+            .cloned();
+        let mut entries = combo
+            .as_ref()
+            .map(|combo| combo.models.clone())
+            .unwrap_or_default();
+        let strategy = combo
+            .as_ref()
+            .map(|combo| combo.strategy.as_str())
+            .unwrap_or(catalog::STRATEGY_PRIORITY);
+        let mut combo_name = combo
+            .as_ref()
+            .map(|combo| combo.name.clone())
+            .unwrap_or_else(|| "default".to_owned());
+
+        if let Some((provider_id, model)) = model_hint.and_then(|hint| hint.split_once('/')) {
+            if guard
+                .providers
+                .iter()
+                .any(|provider| provider.id == provider_id)
+            {
+                entries = vec![crate::types::ComboEntry {
+                    provider_id: provider_id.to_owned(),
+                    model: model.to_owned(),
+                    weight: None,
+                    account_id: None,
+                }];
+                combo_name = "direct".to_owned();
+            } else if provider_id.eq_ignore_ascii_case(catalog::KIND_EDGE_TTS) {
+                let fallback_provider = guard
+                    .providers
+                    .iter()
+                    .find(|provider| provider.kind == catalog::KIND_EDGE_TTS)
+                    .cloned()
+                    .unwrap_or_else(store::default_edge_tts_provider);
+                if fallback_provider.is_active {
+                    return Ok((
+                        "direct".to_owned(),
+                        vec![RoutedEntry {
+                            provider: fallback_provider,
+                            account: None,
+                            model: model.to_owned(),
+                        }],
+                    ));
+                }
+            }
+        }
+
+        if entries.is_empty() {
+            let requested_model = model_hint
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned);
+            let mut tts_providers: Vec<ProviderRecord> = guard
+                .providers
+                .iter()
+                .filter(|provider| provider.is_active && catalog::is_tts_kind(&provider.kind))
+                .cloned()
+                .collect();
+            tts_providers.sort_by_key(|provider| std::cmp::Reverse(provider.priority));
+
+            for provider in &tts_providers {
+                let model = requested_model
+                    .clone()
+                    .or_else(|| provider.models.first().cloned())
+                    .unwrap_or_else(|| crate::tts::DEFAULT_VOICE.to_owned());
+                entries.push(crate::types::ComboEntry {
+                    provider_id: provider.id.clone(),
+                    model,
+                    weight: None,
+                    account_id: None,
+                });
+            }
+
+            if entries.is_empty() {
+                let has_configured_edge = guard
+                    .providers
+                    .iter()
+                    .any(|provider| provider.kind == catalog::KIND_EDGE_TTS);
+                if !has_configured_edge {
+                    let default_edge = store::default_edge_tts_provider();
+                    let model =
+                        requested_model.unwrap_or_else(|| crate::tts::DEFAULT_VOICE.to_owned());
+                    return Ok((
+                        combo_name,
+                        vec![RoutedEntry {
+                            provider: default_edge,
+                            account: None,
+                            model,
+                        }],
+                    ));
+                }
+            }
+        }
+
+        if strategy == catalog::STRATEGY_ROUND_ROBIN && entries.len() > 1 {
+            let key = combo
+                .as_ref()
+                .map(|combo| combo.id.clone())
+                .unwrap_or_else(|| "tts-default".to_owned());
+            let index = guard.round_robin.entry(key).or_insert(0);
+            let start = *index % entries.len();
+            entries.rotate_left(start);
+            *index = (*index + 1) % entries.len();
+        }
+
+        let mut routed = Vec::new();
+        for entry in entries {
+            let Some(provider) = guard
+                .providers
+                .iter()
+                .find(|provider| provider.id == entry.provider_id && provider.is_active)
+                .cloned()
+            else {
+                continue;
+            };
+            routed.push(RoutedEntry {
+                provider,
+                account: None,
+                model: entry.model,
+            });
+        }
+        if routed.is_empty() {
+            return Err(RouterError::bad_request(
+                "no active TTS provider configured",
+            ));
+        }
+        Ok((combo_name, routed))
+    }
+
+    pub async fn speech_with_request(
+        &self,
+        body: Value,
+        combo_hint: Option<&str>,
+        path: &str,
+    ) -> Result<Response, RouterError> {
+        let input = body
+            .get("input")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                RouterError::bad_request("speech request requires a non-empty 'input' string")
+            })?
+            .to_owned();
+        let model_hint = body
+            .get("model")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned);
+        let voice_hint = body
+            .get("voice")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned);
+        let response_format = body
+            .get("response_format")
+            .or_else(|| body.get("responseFormat"))
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned);
+        let speed = body.get("speed").and_then(Value::as_f64);
+
+        let (combo_name, entries) = self.resolve_tts(combo_hint, model_hint.as_deref())?;
+        let mut last: Option<(u16, String)> = None;
+
+        for entry in entries {
+            let lane = entry.provider.kind.as_str();
+            if catalog::is_tts_kind(lane) {
+                let started = Instant::now();
+                match crate::tts::synthesize_edge_tts(
+                    &entry.provider,
+                    &input,
+                    voice_hint.as_deref(),
+                    Some(&entry.model),
+                    response_format.as_deref(),
+                    speed,
+                )
+                .await
+                {
+                    Ok(result) => {
+                        let resolved_entry = RoutedEntry {
+                            provider: entry.provider.clone(),
+                            account: entry.account.clone(),
+                            model: result.voice.clone(),
+                        };
+                        self.record_usage(
+                            &resolved_entry,
+                            &combo_name,
+                            path,
+                            200,
+                            true,
+                            started.elapsed(),
+                            None,
+                            &json!({"input": input}),
+                            result.audio.len() as u64,
+                        );
+                        let mut response = Response::new(Body::from(result.audio));
+                        *response.status_mut() = StatusCode::OK;
+                        response
+                            .headers_mut()
+                            .insert(CONTENT_TYPE, HeaderValue::from_static(result.content_type));
+                        if let Ok(voice_val) = HeaderValue::from_str(&result.voice) {
+                            response
+                                .headers_mut()
+                                .insert("x-nd-router-voice", voice_val);
+                        }
+                        return Ok(with_route_headers(
+                            response,
+                            &combo_name,
+                            &resolved_entry,
+                            started,
+                        ));
+                    }
+                    Err(error) => {
+                        let status = error.status.as_u16();
+                        let message = error.message.clone();
+                        self.record_usage(
+                            &entry,
+                            &combo_name,
+                            path,
+                            status,
+                            false,
+                            started.elapsed(),
+                            Some(message.clone()),
+                            &json!({"input": input}),
+                            0,
+                        );
+                        last = Some((status, message));
+                        if !catalog::is_retryable_status(status) {
+                            break;
+                        }
+                    }
+                }
+                continue;
+            }
+            if catalog::is_http_kind(lane) {
+                let secret = self.entry_secret(&entry);
+                let url = match catalog::join_provider_url(&entry.provider.base_url, path) {
+                    Ok(url) => url,
+                    Err(error) => {
+                        last = Some((400, error));
+                        continue;
+                    }
+                };
+                let mut payload = body.clone();
+                if let Some(object) = payload.as_object_mut() {
+                    object.insert("model".to_owned(), Value::String(entry.model.clone()));
+                }
+                let started = Instant::now();
+                let mut request = self
+                    .client
+                    .post(&url)
+                    .header(CONTENT_TYPE, "application/json")
+                    .json(&payload);
+                if let Some(secret) = secret.as_deref().filter(|value| !value.is_empty()) {
+                    request = request.bearer_auth(secret);
+                }
+                match request.send().await {
+                    Ok(upstream) if upstream.status().is_success() => {
+                        self.record_usage(
+                            &entry,
+                            &combo_name,
+                            path,
+                            upstream.status().as_u16(),
+                            true,
+                            started.elapsed(),
+                            None,
+                            &payload,
+                            0,
+                        );
+                        let response = forward(upstream, false).await?;
+                        return Ok(with_route_headers(response, &combo_name, &entry, started));
+                    }
+                    Ok(upstream) => {
+                        let status = upstream.status().as_u16();
+                        let text = upstream.text().await.unwrap_or_default();
+                        let error = catalog::truncate(text.trim(), 300);
+                        self.record_usage(
+                            &entry,
+                            &combo_name,
+                            path,
+                            status,
+                            false,
+                            started.elapsed(),
+                            Some(error.clone()),
+                            &payload,
+                            0,
+                        );
+                        self.mark_account_failure(&entry, status);
+                        last = Some((status, error));
+                        if !catalog::is_retryable_status(status) {
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        let message = format!("provider could not be reached: {error}");
+                        self.record_usage(
+                            &entry,
+                            &combo_name,
+                            path,
+                            502,
+                            false,
+                            started.elapsed(),
+                            Some(message.clone()),
+                            &payload,
+                            0,
+                        );
+                        self.mark_account_failure(&entry, 502);
+                        last = Some((502, message));
+                    }
+                }
+                continue;
+            }
+            last = Some((
+                501,
+                format!("{lane} lane does not support speech synthesis"),
+            ));
+        }
+
+        let (status, message) =
+            last.unwrap_or((502, "no TTS provider accepted the request".to_owned()));
+        Err(RouterError {
+            status: StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
+            code: "upstream_failed",
+            message: if message.is_empty() {
+                "upstream rejected the speech request".to_owned()
+            } else {
+                message
+            },
+        })
+    }
+
+    pub async fn chat(
+        &self,
+        body: Value,
+        combo_hint: Option<&str>,
+        path: &str,
+    ) -> Result<Response, RouterError> {
+        self.chat_with_request(body, combo_hint, path, None, None)
+            .await
     }
 
     pub async fn chat_with_request(
@@ -483,7 +1024,10 @@ impl RouterState {
         request_id: Option<&str>,
         agy_approval: Option<&str>,
     ) -> Result<Response, RouterError> {
-        let model_hint = body.get("model").and_then(Value::as_str).map(ToOwned::to_owned);
+        let model_hint = body
+            .get("model")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned);
         let streaming = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
         if let Some(object) = body.as_object_mut() {
             object.remove("combo");
@@ -493,6 +1037,100 @@ impl RouterState {
 
         for entry in entries {
             let lane = entry.provider.kind.as_str();
+            if catalog::is_tts_kind(lane) {
+                let messages = body.get("messages").and_then(Value::as_array);
+                let prompt =
+                    crate::cli::prompt_from_messages(messages.map(Vec::as_slice).unwrap_or(&[]));
+                if prompt.trim().is_empty() {
+                    last = Some((400, format!("the {lane} lane needs messages")));
+                    continue;
+                }
+                let started = Instant::now();
+                let voice_hint = body.get("voice").and_then(Value::as_str);
+                match crate::tts::synthesize_edge_tts(
+                    &entry.provider,
+                    &prompt,
+                    voice_hint,
+                    Some(&entry.model),
+                    Some("mp3"),
+                    None,
+                )
+                .await
+                {
+                    Ok(result) => {
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(&result.audio);
+                        let text = format!(
+                            "Synthesized speech (`{}` · {} bytes)\n\ndata:{};base64,{}",
+                            result.voice,
+                            result.audio.len(),
+                            result.content_type,
+                            b64
+                        );
+                        let completion = crate::cli::completion_from_text(&prompt, &text);
+                        let resolved_entry = RoutedEntry {
+                            provider: entry.provider.clone(),
+                            account: entry.account.clone(),
+                            model: result.voice.clone(),
+                        };
+                        self.record_usage(
+                            &resolved_entry,
+                            &combo_name,
+                            path,
+                            200,
+                            true,
+                            started.elapsed(),
+                            None,
+                            &json!({"messages": [{"role": "user", "content": prompt}]}),
+                            result.audio.len() as u64,
+                        );
+                        let mut response = if streaming {
+                            cli_response(
+                                StatusCode::OK,
+                                crate::cli::sse_body(lane, &result.voice, &completion),
+                                "text/event-stream",
+                            )
+                        } else {
+                            cli_response(
+                                StatusCode::OK,
+                                crate::cli::completion_body(lane, &result.voice, &completion)
+                                    .to_string(),
+                                "application/json",
+                            )
+                        };
+                        if let Ok(voice_val) = HeaderValue::from_str(&result.voice) {
+                            response
+                                .headers_mut()
+                                .insert("x-nd-router-voice", voice_val);
+                        }
+                        return Ok(with_route_headers(
+                            response,
+                            &combo_name,
+                            &resolved_entry,
+                            started,
+                        ));
+                    }
+                    Err(error) => {
+                        let status = error.status.as_u16();
+                        let message = error.message.clone();
+                        self.record_usage(
+                            &entry,
+                            &combo_name,
+                            path,
+                            status,
+                            false,
+                            started.elapsed(),
+                            Some(message.clone()),
+                            &json!({"messages": [{"role": "user", "content": prompt}]}),
+                            0,
+                        );
+                        last = Some((status, message));
+                        if !catalog::is_retryable_status(status) {
+                            break;
+                        }
+                    }
+                }
+                continue;
+            }
             if catalog::is_web_kind(lane) {
                 if self.safe_mode_enabled() {
                     last = Some((
@@ -502,13 +1140,17 @@ impl RouterState {
                     continue;
                 }
                 let messages = body.get("messages").and_then(Value::as_array);
-                let prompt = crate::cli::prompt_from_messages(messages.map(Vec::as_slice).unwrap_or(&[]));
+                let prompt =
+                    crate::cli::prompt_from_messages(messages.map(Vec::as_slice).unwrap_or(&[]));
                 if prompt.trim().is_empty() {
                     last = Some((400, format!("the {lane} lane needs messages")));
                     continue;
                 }
                 let started = Instant::now();
-                match self.run_web_lane(&entry, &prompt, request_id, WEB_REQUEST_TIMEOUT_SECS).await {
+                match self
+                    .run_web_lane(&entry, &prompt, request_id, WEB_REQUEST_TIMEOUT_SECS)
+                    .await
+                {
                     Ok(text) => {
                         let completion = crate::cli::completion_from_text(&prompt, &text);
                         self.record_usage(
@@ -531,7 +1173,8 @@ impl RouterState {
                         } else {
                             cli_response(
                                 StatusCode::OK,
-                                crate::cli::completion_body(lane, &entry.model, &completion).to_string(),
+                                crate::cli::completion_body(lane, &entry.model, &completion)
+                                    .to_string(),
                                 "application/json",
                             )
                         };
@@ -559,7 +1202,8 @@ impl RouterState {
             }
             if catalog::is_cli_kind(lane) {
                 let messages = body.get("messages").and_then(Value::as_array);
-                let prompt = crate::cli::prompt_from_messages(messages.map(Vec::as_slice).unwrap_or(&[]));
+                let prompt =
+                    crate::cli::prompt_from_messages(messages.map(Vec::as_slice).unwrap_or(&[]));
                 if prompt.trim().is_empty() {
                     last = Some((400, format!("the {lane} lane needs messages")));
                     continue;
@@ -567,7 +1211,13 @@ impl RouterState {
                 let started = Instant::now();
                 let outcome = if lane == catalog::KIND_QODER {
                     let secret = self.entry_secret(&entry);
-                    crate::cli::run_qoder(&entry.model, &prompt, entry.account.as_ref(), secret.as_deref()).await
+                    crate::cli::run_qoder(
+                        &entry.model,
+                        &prompt,
+                        entry.account.as_ref(),
+                        secret.as_deref(),
+                    )
+                    .await
                 } else if lane == catalog::KIND_ANTIGRAVITY {
                     // Consumer Google account: every job passes the safety
                     // guard (enabled, lock, concurrency, limits, approval).
@@ -579,7 +1229,9 @@ impl RouterState {
                             continue;
                         }
                     };
-                    let result = crate::cli::run_antigravity(&entry.model, &prompt, entry.account.as_ref()).await;
+                    let result =
+                        crate::cli::run_antigravity(&entry.model, &prompt, entry.account.as_ref())
+                            .await;
                     let agy_outcome = match &result {
                         Ok(completion) => crate::types::AgyOutcome {
                             status: 200,
@@ -629,7 +1281,8 @@ impl RouterState {
                             Ok(with_route_headers(
                                 cli_response(
                                     StatusCode::OK,
-                                    crate::cli::completion_body(lane, &entry.model, &completion).to_string(),
+                                    crate::cli::completion_body(lane, &entry.model, &completion)
+                                        .to_string(),
                                     "application/json",
                                 ),
                                 &combo_name,
@@ -662,7 +1315,10 @@ impl RouterState {
                 continue;
             }
             if !catalog::is_http_kind(&entry.provider.kind) {
-                last = Some((501, format!("{} lane is not implemented yet", entry.provider.kind)));
+                last = Some((
+                    501,
+                    format!("{} lane is not implemented yet", entry.provider.kind),
+                ));
                 continue;
             }
             let secret = self.entry_secret(&entry);
@@ -678,13 +1334,27 @@ impl RouterState {
                 object.insert("model".to_owned(), Value::String(entry.model.clone()));
             }
             let started = Instant::now();
-            let mut request = self.client.post(&url).header(CONTENT_TYPE, "application/json").json(&payload);
+            let mut request = self
+                .client
+                .post(&url)
+                .header(CONTENT_TYPE, "application/json")
+                .json(&payload);
             if let Some(secret) = secret.as_deref().filter(|value| !value.is_empty()) {
                 request = request.bearer_auth(secret);
             }
             match request.send().await {
                 Ok(upstream) if upstream.status().is_success() => {
-                    self.record_usage(&entry, &combo_name, path, upstream.status().as_u16(), true, started.elapsed(), None, &payload, 0);
+                    self.record_usage(
+                        &entry,
+                        &combo_name,
+                        path,
+                        upstream.status().as_u16(),
+                        true,
+                        started.elapsed(),
+                        None,
+                        &payload,
+                        0,
+                    );
                     let response = forward(upstream, streaming).await?;
                     return Ok(with_route_headers(response, &combo_name, &entry, started));
                 }
@@ -692,7 +1362,17 @@ impl RouterState {
                     let status = upstream.status().as_u16();
                     let text = upstream.text().await.unwrap_or_default();
                     let error = catalog::truncate(text.trim(), 300);
-                    self.record_usage(&entry, &combo_name, path, status, false, started.elapsed(), Some(error.clone()), &payload, 0);
+                    self.record_usage(
+                        &entry,
+                        &combo_name,
+                        path,
+                        status,
+                        false,
+                        started.elapsed(),
+                        Some(error.clone()),
+                        &payload,
+                        0,
+                    );
                     self.mark_account_failure(&entry, status);
                     last = Some((status, error));
                     if !catalog::is_retryable_status(status) {
@@ -701,22 +1381,37 @@ impl RouterState {
                 }
                 Err(error) => {
                     let message = format!("provider could not be reached: {error}");
-                    self.record_usage(&entry, &combo_name, path, 502, false, started.elapsed(), Some(message.clone()), &payload, 0);
+                    self.record_usage(
+                        &entry,
+                        &combo_name,
+                        path,
+                        502,
+                        false,
+                        started.elapsed(),
+                        Some(message.clone()),
+                        &payload,
+                        0,
+                    );
                     self.mark_account_failure(&entry, 502);
                     last = Some((502, message));
                 }
             }
         }
-        let (status, message) = last.unwrap_or((502, "no provider accepted the request".to_owned()));
+        let (status, message) =
+            last.unwrap_or((502, "no provider accepted the request".to_owned()));
         Err(RouterError {
             status: StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
             code: "upstream_failed",
-            message: if message.is_empty() { "upstream rejected the request".to_owned() } else { message },
+            message: if message.is_empty() {
+                "upstream rejected the request".to_owned()
+            } else {
+                message
+            },
         })
     }
 
     /// Drive one web engine turn through the trusted Electron bridge. The bridge
-/// owns the visible browser tab and returns the finished assistant text.
+    /// owns the visible browser tab and returns the finished assistant text.
     async fn run_web_lane(
         &self,
         entry: &RoutedEntry,
@@ -725,12 +1420,16 @@ impl RouterState {
         timeout_secs: u64,
     ) -> Result<String, (u16, String)> {
         if self.safe_mode_enabled() {
-            return Err((403, "ND Router Safe Mode is on: web lanes are disabled".to_owned()));
+            return Err((
+                403,
+                "ND Router Safe Mode is on: web lanes are disabled".to_owned(),
+            ));
         }
         let Some(bridge) = self.web_bridge.as_ref() else {
             return Err((
                 503,
-                "ND Router's web lane bridge is not connected. Restart ND and try again.".to_owned(),
+                "ND Router's web lane bridge is not connected. Restart ND and try again."
+                    .to_owned(),
             ));
         };
         let url = format!("{}/v1/web/chat", bridge.url.trim_end_matches('/'));
@@ -779,7 +1478,10 @@ impl RouterState {
                     .unwrap_or_else(|| catalog::truncate(raw.trim(), 300));
                 Err((status, message))
             }
-            Err(error) => Err((504, format!("web lane bridge could not be reached: {error}"))),
+            Err(error) => Err((
+                504,
+                format!("web lane bridge could not be reached: {error}"),
+            )),
         }
     }
 
@@ -791,6 +1493,37 @@ impl RouterState {
         account: Option<&AccountRecord>,
     ) -> Result<Value, RouterError> {
         let provider_id = &provider.id;
+        if catalog::is_tts_kind(&provider.kind) {
+            let started = Instant::now();
+            return match crate::tts::synthesize_edge_tts(
+                provider,
+                "ND Router Edge TTS ready.",
+                None,
+                Some(model),
+                Some("mp3"),
+                None,
+            )
+            .await
+            {
+                Ok(result) => Ok(json!({
+                    "id": provider_id,
+                    "ok": true,
+                    "statusCode": 200,
+                    "latencyMs": started.elapsed().as_millis() as u64,
+                    "model": result.voice,
+                    "error": Value::Null,
+                    "preview": format!("Audio OK ({} bytes · {})", result.audio.len(), result.voice),
+                })),
+                Err(error) => Ok(json!({
+                    "id": provider_id,
+                    "ok": false,
+                    "statusCode": error.status.as_u16(),
+                    "latencyMs": started.elapsed().as_millis() as u64,
+                    "model": model,
+                    "error": error.message,
+                })),
+            };
+        }
         if catalog::is_cli_kind(&provider.kind) {
             let started = Instant::now();
             let outcome = if provider.kind == catalog::KIND_QODER {
@@ -810,7 +1543,8 @@ impl RouterState {
                         }));
                     }
                 };
-                let result = crate::cli::run_antigravity(model, "Reply with exactly: OK", None).await;
+                let result =
+                    crate::cli::run_antigravity(model, "Reply with exactly: OK", None).await;
                 let agy_outcome = match &result {
                     Ok(completion) => crate::types::AgyOutcome {
                         status: 200,
@@ -830,12 +1564,14 @@ impl RouterState {
                 self.agy_finish(gate, &provider.name, model, &agy_outcome);
                 result
             } else {
-                crate::cli::test_cli_binary(&provider.kind).await.map(|preview| crate::cli::CliCompletion {
-                    text: preview,
-                    prompt_tokens: 0,
-                    completion_tokens: 0,
-                    total_tokens: 0,
-                })
+                crate::cli::test_cli_binary(&provider.kind)
+                    .await
+                    .map(|preview| crate::cli::CliCompletion {
+                        text: preview,
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        total_tokens: 0,
+                    })
             };
             return match outcome {
                 Ok(completion) => Ok(json!({
@@ -858,9 +1594,21 @@ impl RouterState {
             };
         }
         if catalog::is_web_kind(&provider.kind) {
-            let entry = RoutedEntry { provider: provider.clone(), account: None, model: model.to_owned() };
+            let entry = RoutedEntry {
+                provider: provider.clone(),
+                account: None,
+                model: model.to_owned(),
+            };
             let started = Instant::now();
-            return match self.run_web_lane(&entry, "Reply with exactly: OK", None, WEB_TEST_TIMEOUT_SECS).await {
+            return match self
+                .run_web_lane(
+                    &entry,
+                    "Reply with exactly: OK",
+                    None,
+                    WEB_TEST_TIMEOUT_SECS,
+                )
+                .await
+            {
                 Ok(text) => Ok(json!({
                     "id": provider_id,
                     "ok": true,
@@ -899,11 +1647,17 @@ impl RouterState {
         let url = match catalog::join_provider_url(&provider.base_url, "/v1/chat/completions") {
             Ok(url) => url,
             Err(error) => {
-                return Ok(json!({"id": provider_id, "ok": false, "statusCode": 400, "latencyMs": 0, "model": model, "error": error}));
+                return Ok(
+                    json!({"id": provider_id, "ok": false, "statusCode": 400, "latencyMs": 0, "model": model, "error": error}),
+                );
             }
         };
         let started = Instant::now();
-        let mut request = self.client.post(&url).header(CONTENT_TYPE, "application/json").json(&body);
+        let mut request = self
+            .client
+            .post(&url)
+            .header(CONTENT_TYPE, "application/json")
+            .json(&body);
         if let Some(secret) = secret.filter(|value| !value.is_empty()) {
             request = request.bearer_auth(secret);
         }
@@ -912,8 +1666,16 @@ impl RouterState {
                 let status = upstream.status().as_u16();
                 let ok = upstream.status().is_success();
                 let raw_text = upstream.text().await.unwrap_or_default();
-                let error = if ok { None } else { Some(catalog::truncate(&raw_text, 300)) };
-                let preview = if ok { Some(catalog::truncate(raw_text.trim(), 80)) } else { None };
+                let error = if ok {
+                    None
+                } else {
+                    Some(catalog::truncate(&raw_text, 300))
+                };
+                let preview = if ok {
+                    Some(catalog::truncate(raw_text.trim(), 80))
+                } else {
+                    None
+                };
                 Ok(json!({
                     "id": provider_id,
                     "ok": ok,
@@ -944,16 +1706,25 @@ impl RouterState {
                 .find(|provider| provider.id == provider_id)
                 .cloned()
                 .ok_or_else(|| RouterError::not_found("provider_not_found"))?;
-            let model = provider.models.first().cloned().unwrap_or_else(|| "default".to_owned());
-            let account = provider.accounts.iter().find(|account| account.is_active).cloned();
+            let model = provider
+                .models
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "default".to_owned());
+            let account = provider
+                .accounts
+                .iter()
+                .find(|account| account.is_active)
+                .cloned();
             let secret = account
                 .as_ref()
                 .and_then(|account| account.secret_ref.as_deref())
-                .or_else(|| provider.secret_ref.as_deref())
+                .or(provider.secret_ref.as_deref())
                 .and_then(|entry_id| self.read_secret(entry_id));
             (provider, model, secret, account)
         };
-        self.run_provider_test(&provider, &model, secret.as_deref(), account.as_ref()).await
+        self.run_provider_test(&provider, &model, secret.as_deref(), account.as_ref())
+            .await
     }
 
     pub async fn test_candidate(&self, input: SaveProviderInput) -> Result<Value, RouterError> {
@@ -977,8 +1748,17 @@ impl RouterState {
                 }));
             }
         };
-        let model = record.models.first().cloned().unwrap_or_else(|| "default".to_owned());
-        let secret = if let Some(key) = input.api_key.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+        let model = record
+            .models
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "default".to_owned());
+        let secret = if let Some(key) = input
+            .api_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
             Some(key.to_owned())
         } else if let Some(existing_record) = existing.as_ref() {
             existing_record
@@ -988,12 +1768,21 @@ impl RouterState {
         } else {
             None
         };
-        let account = record.accounts.iter().find(|account| account.is_active).cloned();
-        self.run_provider_test(&record, &model, secret.as_deref(), account.as_ref()).await
+        let account = record
+            .accounts
+            .iter()
+            .find(|account| account.is_active)
+            .cloned();
+        self.run_provider_test(&record, &model, secret.as_deref(), account.as_ref())
+            .await
     }
 
     pub fn usage_summary(&self) -> Value {
-        let counters = self.counters.lock().unwrap_or_else(|error| error.into_inner()).clone();
+        let counters = self
+            .counters
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
         let mut total = 0u64;
         let mut ok = 0u64;
         let mut failed = 0u64;
@@ -1001,9 +1790,15 @@ impl RouterState {
         let mut by_provider: HashMap<String, u64> = HashMap::new();
         if let Ok(file) = std::fs::File::open(self.data_dir.join(USAGE_FILE)) {
             for line in std::io::BufReader::new(file).lines().map_while(Result::ok) {
-                let Ok(entry) = serde_json::from_str::<UsageEntry>(&line) else { continue };
+                let Ok(entry) = serde_json::from_str::<UsageEntry>(&line) else {
+                    continue;
+                };
                 total += 1;
-                if entry.ok { ok += 1 } else { failed += 1 }
+                if entry.ok {
+                    ok += 1
+                } else {
+                    failed += 1
+                }
                 latency_total += entry.latency_ms;
                 *by_provider.entry(entry.provider).or_insert(0) += 1;
             }
@@ -1012,7 +1807,7 @@ impl RouterState {
             "requests": total,
             "ok": ok,
             "failed": failed,
-            "avgLatencyMs": if total == 0 { 0 } else { latency_total / total },
+            "avgLatencyMs": latency_total.checked_div(total).unwrap_or(0),
             "byProvider": by_provider,
             "session": {
                 "requests": counters.requests,
@@ -1026,7 +1821,10 @@ impl RouterState {
     pub fn reset_usage(&self) -> Result<Value, RouterError> {
         let path = self.data_dir.join(USAGE_FILE);
         std::fs::write(&path, "").map_err(|error| RouterError::internal(error.to_string()))?;
-        *self.counters.lock().unwrap_or_else(|error| error.into_inner()) = Counters::default();
+        *self
+            .counters
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Counters::default();
         Ok(json!({"reset": true}))
     }
 
@@ -1041,13 +1839,22 @@ impl RouterState {
 
     fn read_secret(&self, entry_id: &str) -> Option<String> {
         self.vault
-            .get(VaultIdParams { vault_path: self.vault_path.to_string_lossy().to_string(), id: entry_id.to_owned() })
+            .get(VaultIdParams {
+                vault_path: self.vault_path.to_string_lossy().to_string(),
+                id: entry_id.to_owned(),
+            })
             .ok()
             .map(|result| result.entry.secret)
             .filter(|secret| !secret.is_empty())
     }
 
-    fn write_secret(&self, existing: Option<&str>, title: &str, username: &str, secret: &str) -> Result<String, RouterError> {
+    fn write_secret(
+        &self,
+        existing: Option<&str>,
+        title: &str,
+        username: &str,
+        secret: &str,
+    ) -> Result<String, RouterError> {
         let vault_path = self.vault_path.to_string_lossy().to_string();
         if let Some(entry_id) = existing {
             let entry = VaultEntryInput {
@@ -1057,7 +1864,11 @@ impl RouterState {
                 notes: "Managed by ND Router".to_owned(),
                 secret: secret.to_owned(),
             };
-            if let Ok(updated) = self.vault.update(VaultUpdateParams { vault_path: vault_path.clone(), id: entry_id.to_owned(), entry }) {
+            if let Ok(updated) = self.vault.update(VaultUpdateParams {
+                vault_path: vault_path.clone(),
+                id: entry_id.to_owned(),
+                entry,
+            }) {
                 return Ok(updated.entry.id);
             }
         }
@@ -1088,15 +1899,30 @@ impl RouterState {
         if !catalog::is_retryable_status(status) {
             return;
         }
-        let Some(account) = entry.account.as_ref() else { return };
+        let Some(account) = entry.account.as_ref() else {
+            return;
+        };
         let mut guard = self.store.lock().unwrap_or_else(|error| error.into_inner());
-        let Some(provider) = guard.providers.iter_mut().find(|provider| provider.id == entry.provider.id) else { return };
-        let Some(record) = provider.accounts.iter_mut().find(|candidate| candidate.id == account.id) else { return };
+        let Some(provider) = guard
+            .providers
+            .iter_mut()
+            .find(|provider| provider.id == entry.provider.id)
+        else {
+            return;
+        };
+        let Some(record) = provider
+            .accounts
+            .iter_mut()
+            .find(|candidate| candidate.id == account.id)
+        else {
+            return;
+        };
         record.cooldown_until_ms = Some(store::now_ms() + catalog::cooldown_ms_for_status(status));
         record.last_status = Some(format!("HTTP {status}"));
         let _ = store::save(&self.store_path, &guard);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn record_usage(
         &self,
         entry: &RoutedEntry,
@@ -1110,9 +1936,14 @@ impl RouterState {
         completion_chars: u64,
     ) {
         {
-            let mut counters = self.counters.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut counters = self
+                .counters
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             counters.requests += 1;
-            if ok { counters.ok += 1 } else {
+            if ok {
+                counters.ok += 1
+            } else {
                 counters.failed += 1;
                 counters.last_error = error.clone();
             }
@@ -1132,11 +1963,21 @@ impl RouterState {
             completion_chars,
         };
         let path = self.data_dir.join(USAGE_FILE);
-        let Ok(line) = serde_json::to_string(&usage) else { return };
-        if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let Ok(line) = serde_json::to_string(&usage) else {
+            return;
+        };
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
             let _ = writeln!(file, "{line}");
         }
-        if std::fs::metadata(&path).map(|metadata| metadata.len()).unwrap_or(0) > 4 * 1024 * 1024 {
+        if std::fs::metadata(&path)
+            .map(|metadata| metadata.len())
+            .unwrap_or(0)
+            > 4 * 1024 * 1024
+        {
             prune_usage(&path);
         }
     }
@@ -1145,10 +1986,17 @@ impl RouterState {
 fn find_combo<'a>(combos: &'a [ComboRecord], hint: &str) -> Option<&'a ComboRecord> {
     let trimmed = hint.trim();
     let normalized = trimmed.strip_prefix("combo:").unwrap_or(trimmed);
-    combos.iter().find(|combo| combo.id == normalized || combo.name == normalized)
+    combos
+        .iter()
+        .find(|combo| combo.id == normalized || combo.name == normalized)
 }
 
-fn with_route_headers(mut response: Response, combo: &str, entry: &RoutedEntry, started: Instant) -> Response {
+fn with_route_headers(
+    mut response: Response,
+    combo: &str,
+    entry: &RoutedEntry,
+    started: Instant,
+) -> Response {
     if let Ok(value) = HeaderValue::from_str(combo) {
         response.headers_mut().insert("x-nd-router-combo", value);
     }
@@ -1159,14 +2007,19 @@ fn with_route_headers(mut response: Response, combo: &str, entry: &RoutedEntry, 
         response.headers_mut().insert("x-nd-router-model", value);
     }
     if let Ok(value) = HeaderValue::from_str(&started.elapsed().as_millis().to_string()) {
-        response.headers_mut().insert("x-nd-router-latency-ms", value);
+        response
+            .headers_mut()
+            .insert("x-nd-router-latency-ms", value);
     }
     response
 }
 
 fn bridge_error_message(raw: &str) -> Option<String> {
     let value: Value = serde_json::from_str(raw).ok()?;
-    value.get("error").and_then(Value::as_str).map(ToOwned::to_owned)
+    value
+        .get("error")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
 }
 
 fn validate_web_bridge(bridge: &WebBridgeConfig) -> anyhow::Result<()> {
@@ -1204,27 +2057,40 @@ fn cli_response(status: StatusCode, body: String, content_type: &str) -> Respons
 }
 
 async fn forward(upstream: reqwest::Response, wants_stream: bool) -> Result<Response, RouterError> {
-    let status = StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
-    let content_type = upstream.headers().get(CONTENT_TYPE).and_then(|value| value.to_str().ok()).map(ToOwned::to_owned);
-    let is_sse = content_type.as_deref().is_some_and(|value| value.starts_with("text/event-stream"));
+    let status =
+        StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    let content_type = upstream
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+    let is_sse = content_type
+        .as_deref()
+        .is_some_and(|value| value.starts_with("text/event-stream"));
     if wants_stream && is_sse {
         let stream = upstream.bytes_stream().map_err(std::io::Error::other);
         let mut response = Response::new(Body::from_stream(stream));
         *response.status_mut() = status;
-        response.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
+        response
+            .headers_mut()
+            .insert(CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
         return Ok(response);
     }
-    if let Some(content_length) = upstream.content_length() {
-        if content_length > crate::types::MAX_BODY_BYTES as u64 {
-            return Err(RouterError::bad_gateway(format!(
-                "upstream response body exceeded maximum limit of {} bytes",
-                crate::types::MAX_BODY_BYTES
-            )));
-        }
+    if let Some(content_length) = upstream.content_length()
+        && content_length > crate::types::MAX_BODY_BYTES as u64
+    {
+        return Err(RouterError::bad_gateway(format!(
+            "upstream response body exceeded maximum limit of {} bytes",
+            crate::types::MAX_BODY_BYTES
+        )));
     }
     let mut stream = upstream.bytes_stream();
     let mut collected = Vec::new();
-    while let Some(chunk) = stream.try_next().await.map_err(|error| RouterError::bad_gateway(error.to_string()))? {
+    while let Some(chunk) = stream
+        .try_next()
+        .await
+        .map_err(|error| RouterError::bad_gateway(error.to_string()))?
+    {
         if collected.len() + chunk.len() > crate::types::MAX_BODY_BYTES {
             return Err(RouterError::bad_gateway(format!(
                 "upstream response body exceeded maximum limit of {} bytes",
@@ -1252,8 +2118,13 @@ fn text_chars(value: &Value) -> u64 {
 }
 
 fn prune_usage(path: &std::path::Path) {
-    let Ok(file) = std::fs::File::open(path) else { return };
-    let lines: Vec<String> = std::io::BufReader::new(file).lines().map_while(Result::ok).collect();
+    let Ok(file) = std::fs::File::open(path) else {
+        return;
+    };
+    let lines: Vec<String> = std::io::BufReader::new(file)
+        .lines()
+        .map_while(Result::ok)
+        .collect();
     let keep = lines.len().saturating_sub(MAX_USAGE_LINES);
     if keep == 0 {
         return;

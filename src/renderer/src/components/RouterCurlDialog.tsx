@@ -88,14 +88,23 @@ export function RouterCurlDialog({
     return route || 'default'
   }, [route, resolvedCombo, resolvedProvider, resolvedModel])
 
+  const isTtsRoute = useMemo(() => {
+    return (
+      modelIdentifier === 'edge-tts' ||
+      modelIdentifier.startsWith('edge-tts/') ||
+      resolvedProvider === 'edge-tts'
+    )
+  }, [modelIdentifier, resolvedProvider])
+
   const routeType = useMemo(() => {
+    if (isTtsRoute) return 'TTS Audio Route'
     if (route.startsWith('combo:') || resolvedCombo) return 'Combo Route'
     if (route.startsWith('model:')) return 'Direct Provider Model'
     return 'Route'
-  }, [route, resolvedCombo])
+  }, [isTtsRoute, route, resolvedCombo])
 
   const endpoint = (keyInfo?.endpoint || initialEndpoint || 'http://127.0.0.1:4000').replace(/\/+$/, '')
-  const apiUrl = `${endpoint}/v1/chat/completions`
+  const apiUrl = isTtsRoute ? `${endpoint}/v1/audio/speech` : `${endpoint}/v1/chat/completions`
 
   const payloadMessages = useMemo(() => {
     if (includeHistory && messages && messages.length > 0) {
@@ -115,6 +124,23 @@ export function RouterCurlDialog({
   }, [includeHistory, messages, currentPrompt])
 
   const jsonPayload = useMemo(() => {
+    if (isTtsRoute) {
+      const slash = modelIdentifier.indexOf('/')
+      const voice = slash > 0 ? modelIdentifier.slice(slash + 1) : 'en-US-AriaNeural'
+      const lastUserText =
+        currentPrompt?.trim() ||
+        [...(messages ?? [])].reverse().find((m) => m.role === 'user')?.content ||
+        'Hello from ND Router'
+      return JSON.stringify(
+        {
+          model: 'edge-tts',
+          input: lastUserText,
+          voice,
+        },
+        null,
+        2
+      )
+    }
     const body: Record<string, unknown> = {
       model: modelIdentifier,
       messages: payloadMessages,
@@ -123,20 +149,22 @@ export function RouterCurlDialog({
       body.stream = true
     }
     return JSON.stringify(body, null, 2)
-  }, [modelIdentifier, payloadMessages, includeStream])
+  }, [isTtsRoute, modelIdentifier, payloadMessages, includeStream, currentPrompt, messages])
 
   const actualKey = keyInfo?.key || '<YOUR_ND_ROUTER_KEY>'
   const displayKey = revealedKey ? actualKey : 'ndr_ext_••••••••••••'
 
   const fullCurlCommand = useMemo(() => {
     const escapedJson = jsonPayload.replace(/'/g, "'\\''")
-    return `curl ${apiUrl} \\\n  -H "Content-Type: application/json" \\\n  -H "Authorization: Bearer ${actualKey}" \\\n  -d '${escapedJson}'`
-  }, [apiUrl, actualKey, jsonPayload])
+    const outFlag = isTtsRoute ? ' \\\n  --output speech.mp3' : ''
+    return `curl ${apiUrl} \\\n  -H "Content-Type: application/json" \\\n  -H "Authorization: Bearer ${actualKey}" \\\n  -d '${escapedJson}'${outFlag}`
+  }, [apiUrl, actualKey, jsonPayload, isTtsRoute])
 
   const displayCurlCommand = useMemo(() => {
     const escapedJson = jsonPayload.replace(/'/g, "'\\''")
-    return `curl ${apiUrl} \\\n  -H "Content-Type: application/json" \\\n  -H "Authorization: Bearer ${displayKey}" \\\n  -d '${escapedJson}'`
-  }, [apiUrl, displayKey, jsonPayload])
+    const outFlag = isTtsRoute ? ' \\\n  --output speech.mp3' : ''
+    return `curl ${apiUrl} \\\n  -H "Content-Type: application/json" \\\n  -H "Authorization: Bearer ${displayKey}" \\\n  -d '${escapedJson}'${outFlag}`
+  }, [apiUrl, displayKey, jsonPayload, isTtsRoute])
 
   const copyToClipboard = async (text: string, target: 'curl' | 'url' | 'key') => {
     try {

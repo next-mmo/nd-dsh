@@ -123,4 +123,13 @@ describe('RouterSettings UI', () => {
     expect(navContent).toContain('Playground')
     expect(navContent).not.toContain('External API')
   })
+
+  it('categorizes edge-tts as a free TTS provider with no auth required', async () => {
+    const { isRouterTtsProviderKind, providerAuthMode, providerCategory, ROUTER_TTS_LANE_MODELS } = await import('../../../shared/router')
+    expect(isRouterTtsProviderKind('edge-tts')).toBe(true)
+    expect(providerCategory('edge-tts')).toBe('tts')
+    expect(providerAuthMode('edge-tts')).toBe('none')
+    expect(ROUTER_TTS_LANE_MODELS['edge-tts']).toContain('en-US-AriaNeural')
+    expect(ROUTER_TTS_LANE_MODELS['edge-tts']).toContain('km-KH-SreymomNeural')
+  })
 })

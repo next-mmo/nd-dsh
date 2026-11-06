@@ -31,6 +31,7 @@ pub const KIND_POE_WEB: &str = "poe-web";
 pub const KIND_ARENA_WEB: &str = "arena-web";
 pub const KIND_META_WEB: &str = "meta-web";
 pub const KIND_DUCK_WEB: &str = "duck-web";
+pub const KIND_EDGE_TTS: &str = "edge-tts";
 
 pub const STRATEGY_PRIORITY: &str = "priority";
 pub const STRATEGY_ROUND_ROBIN: &str = "round-robin";
@@ -39,9 +40,15 @@ pub fn normalize_kind(value: &str) -> Result<String, String> {
     let normalized = value.trim().to_ascii_lowercase();
     match normalized.as_str() {
         "" | "custom" | "openai" | "openai-compatible" => Ok(KIND_OPENAI.to_owned()),
-        "ai-studio" | "aistudio" | "google-ai-studio" | "google-aistudio" => Ok(KIND_AI_STUDIO.to_owned()),
-        "aistudio-web" | "ai-studio-web" | "google-ai-studio-web" => Ok(KIND_AI_STUDIO_WEB.to_owned()),
-        "pollinations" | "pollinations-ai" | "pollinations-free" => Ok(KIND_POLLINATIONS.to_owned()),
+        "ai-studio" | "aistudio" | "google-ai-studio" | "google-aistudio" => {
+            Ok(KIND_AI_STUDIO.to_owned())
+        }
+        "aistudio-web" | "ai-studio-web" | "google-ai-studio-web" => {
+            Ok(KIND_AI_STUDIO_WEB.to_owned())
+        }
+        "pollinations" | "pollinations-ai" | "pollinations-free" => {
+            Ok(KIND_POLLINATIONS.to_owned())
+        }
         "ovh" | "ovh-kepler" | "ovh-cloud" | "ovh-anonymous" => Ok(KIND_OVH_KEPLER.to_owned()),
         "free-ai" | "freeai" => Ok(KIND_FREE_AI.to_owned()),
         "kilo" | "kilo-gateway" | "kilo-ai" => Ok(KIND_KILO.to_owned()),
@@ -49,7 +56,9 @@ pub fn normalize_kind(value: &str) -> Result<String, String> {
         "gemini-cli" | "gemini" => Ok(KIND_GEMINI_CLI.to_owned()),
         "qoder" | "qoder-cli" => Ok(KIND_QODER.to_owned()),
         "codex-cli" | "codex" => Ok(KIND_CODEX_CLI.to_owned()),
-        "claude-code-cli" | "claude-code" | "claude-cli" | "claude" => Ok(KIND_CLAUDE_CLI.to_owned()),
+        "claude-code-cli" | "claude-code" | "claude-cli" | "claude" => {
+            Ok(KIND_CLAUDE_CLI.to_owned())
+        }
         "pi-coding" | "pi" | "pi-cli" => Ok(KIND_PI_CLI.to_owned()),
         "zcode-cli" | "zcode" => Ok(KIND_ZCODE_CLI.to_owned()),
         "cursor-cli" | "cursor" | "cursor-agent" => Ok(KIND_CURSOR_CLI.to_owned()),
@@ -71,6 +80,7 @@ pub fn normalize_kind(value: &str) -> Result<String, String> {
         "arena-web" | "arena" | "lmsys" => Ok(KIND_ARENA_WEB.to_owned()),
         "meta-web" | "meta" => Ok(KIND_META_WEB.to_owned()),
         "duck-web" | "duck" | "duck-ai" => Ok(KIND_DUCK_WEB.to_owned()),
+        "edge-tts" | "edgetts" | "edge-read-aloud" | "ms-edge-tts" => Ok(KIND_EDGE_TTS.to_owned()),
         other => Err(format!("provider kind is not supported: {other}")),
     }
 }
@@ -109,10 +119,7 @@ pub fn is_http_kind(kind: &str) -> bool {
 pub fn is_free_api_kind(kind: &str) -> bool {
     matches!(
         kind,
-        KIND_POLLINATIONS
-            | KIND_OVH_KEPLER
-            | KIND_FREE_AI
-            | KIND_KILO
+        KIND_POLLINATIONS | KIND_OVH_KEPLER | KIND_FREE_AI | KIND_KILO
     )
 }
 
@@ -136,8 +143,14 @@ pub fn is_cli_kind(kind: &str) -> bool {
     )
 }
 
+pub fn is_tts_kind(kind: &str) -> bool {
+    matches!(kind, KIND_EDGE_TTS)
+}
+
 pub fn provider_category(kind: &str) -> &'static str {
-    if is_web_kind(kind) {
+    if is_tts_kind(kind) {
+        "tts"
+    } else if is_web_kind(kind) {
         "web"
     } else if is_cli_kind(kind) {
         "cli"
@@ -147,7 +160,7 @@ pub fn provider_category(kind: &str) -> &'static str {
 }
 
 pub fn provider_auth_mode(kind: &str) -> &'static str {
-    if is_free_api_kind(kind) {
+    if is_free_api_kind(kind) || is_tts_kind(kind) {
         "none"
     } else if is_web_kind(kind) {
         "browser"

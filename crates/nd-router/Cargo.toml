@@ -9,14 +9,20 @@ publish = false
 [dependencies]
 anyhow = "1"
 axum = "0.7"
+base64 = "0.22"
 futures-util = "0.3"
 nd-runtime = { path = "../nd-runtime" }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pki-types = "1"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["macros", "net", "process", "rt-multi-thread", "sync", "time"] }
+sha2 = "0.10"
+tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 url = "2"
 uuid = { version = "1.20", features = ["v4"] }
+webpki-roots = "1"
 
 [dev-dependencies]
 tempfile = "3"

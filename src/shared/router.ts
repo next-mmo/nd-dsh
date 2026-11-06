@@ -1,7 +1,9 @@
 import type { NineRouterDesktopApi } from './nine-router.js'
 
-export type RouterProviderCategory = 'api' | 'cli' | 'web'
+export type RouterProviderCategory = 'api' | 'cli' | 'web' | 'tts'
 export type RouterAuthMode = 'none' | 'api-key' | 'cli' | 'browser'
+
+export type RouterTtsProviderKind = 'edge-tts'
 
 export type RouterCliProviderKind =
   | 'antigravity'
@@ -26,6 +28,7 @@ export type RouterProviderKind =
   | 'ovh-kepler'
   | 'free-ai'
   | 'kilo-gateway'
+  | RouterTtsProviderKind
   | RouterCliProviderKind
   | 'chatgpt-web'
   | 'gemini-web'
@@ -165,18 +168,37 @@ export const ROUTER_AI_STUDIO_MODELS: string[] = [
 
 export const ROUTER_AI_STUDIO_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/openai/'
 
+export const ROUTER_TTS_LANE_MODELS: Record<RouterTtsProviderKind, string[]> = {
+  'edge-tts': [
+    'en-US-AriaNeural',
+    'en-US-AvaMultilingualNeural',
+    'en-US-GuyNeural',
+    'en-US-JennyNeural',
+    'en-GB-SoniaNeural',
+    'zh-CN-XiaoxiaoNeural',
+    'ja-JP-NanamiNeural',
+    'km-KH-SreymomNeural',
+    'km-KH-PisethNeural',
+  ],
+}
+
+export function isRouterTtsProviderKind(kind: string): kind is RouterTtsProviderKind {
+  return kind === 'edge-tts'
+}
+
 export function isRouterFreeApiKind(kind: string): boolean {
   return kind === 'pollinations' || kind === 'ovh-kepler' || kind === 'free-ai' || kind === 'kilo-gateway'
 }
 
 export function providerCategory(kind: string): RouterProviderCategory {
+  if (isRouterTtsProviderKind(kind)) return 'tts'
   if (isRouterWebProviderKind(kind)) return 'web'
   if (isRouterCliProviderKind(kind)) return 'cli'
   return 'api'
 }
 
 export function providerAuthMode(kind: string): RouterAuthMode {
-  if (isRouterFreeApiKind(kind)) return 'none'
+  if (isRouterFreeApiKind(kind) || isRouterTtsProviderKind(kind)) return 'none'
   if (isRouterWebProviderKind(kind)) return 'browser'
   if (isRouterCliProviderKind(kind)) return 'cli'
   return 'api-key'
@@ -190,6 +212,7 @@ export const ROUTER_HEADERS = {
   resolvedCombo: 'x-nd-router-combo',
   resolvedProvider: 'x-nd-router-provider',
   resolvedModel: 'x-nd-router-model',
+  resolvedVoice: 'x-nd-router-voice',
   latencyMs: 'x-nd-router-latency-ms',
 } as const
 

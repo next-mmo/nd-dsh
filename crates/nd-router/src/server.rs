@@ -38,7 +38,9 @@ impl RouterServer {
             match tokio::net::TcpListener::bind(("127.0.0.1", 0)).await {
                 Ok(listener) => Ok(listener),
                 Err(error) => Err(match last_error {
-                    Some(previous) => anyhow::anyhow!("ND Router could not bind loopback: {error} (preferred port: {previous})"),
+                    Some(previous) => anyhow::anyhow!(
+                        "ND Router could not bind loopback: {error} (preferred port: {previous})"
+                    ),
                     None => anyhow::anyhow!("ND Router could not bind loopback: {error}"),
                 }),
             }

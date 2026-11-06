@@ -58,7 +58,7 @@ vi.mock('react', async (original) => ({
   },
 }))
 
-import { detectPlaygroundMention, RouterPlayground } from './RouterPlayground'
+import { detectPlaygroundMention, extractInlineAudioDataUri, RouterPlayground } from './RouterPlayground'
 
 type TestElement = ReactElement<Record<string, unknown>>
 
@@ -875,5 +875,20 @@ describe('detectPlaygroundMention', () => {
     expect(detectPlaygroundMention('user@domain.com', 10)).toBeNull()
     expect(detectPlaygroundMention('folder/file.ts', 8)).toBeNull()
     expect(detectPlaygroundMention('', 0)).toBeNull()
+  })
+})
+
+describe('extractInlineAudioDataUri', () => {
+  it('extracts inline base64 audio data URI and strips it from assistant text', () => {
+    const sample = 'Synthesized speech (`en-US-AriaNeural` · 42 bytes)\n\ndata:audio/mpeg;base64,SUQzBAAAAAA='
+    const parsed = extractInlineAudioDataUri(sample)
+    expect(parsed.audioDataUri).toBe('data:audio/mpeg;base64,SUQzBAAAAAA=')
+    expect(parsed.cleanText).toBe('Synthesized speech (`en-US-AriaNeural` · 42 bytes)')
+  })
+
+  it('returns null audioDataUri when no audio data URI is present', () => {
+    const parsed = extractInlineAudioDataUri('Normal assistant message')
+    expect(parsed.audioDataUri).toBeNull()
+    expect(parsed.cleanText).toBe('Normal assistant message')
   })
 })

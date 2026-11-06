@@ -60,17 +60,39 @@ pub fn cli_binary_for_kind(kind: &str) -> String {
     match kind {
         catalog::KIND_ANTIGRAVITY => agy_binary(),
         catalog::KIND_QODER => qoder_binary(),
-        catalog::KIND_GEMINI_CLI => std::env::var("ND_DSH_GEMINI_BINARY").unwrap_or_else(|_| "gemini".to_owned()),
-        catalog::KIND_CODEX_CLI => std::env::var("ND_DSH_CODEX_BINARY").unwrap_or_else(|_| "codex".to_owned()),
-        catalog::KIND_CLAUDE_CLI => std::env::var("ND_DSH_CLAUDE_BINARY").unwrap_or_else(|_| "claude".to_owned()),
-        catalog::KIND_PI_CLI => std::env::var("ND_DSH_PI_BINARY").unwrap_or_else(|_| "pi".to_owned()),
-        catalog::KIND_ZCODE_CLI => std::env::var("ND_DSH_ZCODE_BINARY").unwrap_or_else(|_| "zcode".to_owned()),
-        catalog::KIND_CURSOR_CLI => std::env::var("ND_DSH_CURSOR_BINARY").unwrap_or_else(|_| "cursor-agent".to_owned()),
-        catalog::KIND_OPENCODE_CLI => std::env::var("ND_DSH_OPENCODE_BINARY").unwrap_or_else(|_| "opencode".to_owned()),
-        catalog::KIND_GOOSE_CLI => std::env::var("ND_DSH_GOOSE_BINARY").unwrap_or_else(|_| "goose".to_owned()),
-        catalog::KIND_HERMES_CLI => std::env::var("ND_DSH_HERMES_BINARY").unwrap_or_else(|_| "hermes".to_owned()),
-        catalog::KIND_JCODE_CLI => std::env::var("ND_DSH_JCODE_BINARY").unwrap_or_else(|_| "jcode".to_owned()),
-        catalog::KIND_MINIMAX_CLI => std::env::var("ND_DSH_MINIMAX_BINARY").unwrap_or_else(|_| "minimax".to_owned()),
+        catalog::KIND_GEMINI_CLI => {
+            std::env::var("ND_DSH_GEMINI_BINARY").unwrap_or_else(|_| "gemini".to_owned())
+        }
+        catalog::KIND_CODEX_CLI => {
+            std::env::var("ND_DSH_CODEX_BINARY").unwrap_or_else(|_| "codex".to_owned())
+        }
+        catalog::KIND_CLAUDE_CLI => {
+            std::env::var("ND_DSH_CLAUDE_BINARY").unwrap_or_else(|_| "claude".to_owned())
+        }
+        catalog::KIND_PI_CLI => {
+            std::env::var("ND_DSH_PI_BINARY").unwrap_or_else(|_| "pi".to_owned())
+        }
+        catalog::KIND_ZCODE_CLI => {
+            std::env::var("ND_DSH_ZCODE_BINARY").unwrap_or_else(|_| "zcode".to_owned())
+        }
+        catalog::KIND_CURSOR_CLI => {
+            std::env::var("ND_DSH_CURSOR_BINARY").unwrap_or_else(|_| "cursor-agent".to_owned())
+        }
+        catalog::KIND_OPENCODE_CLI => {
+            std::env::var("ND_DSH_OPENCODE_BINARY").unwrap_or_else(|_| "opencode".to_owned())
+        }
+        catalog::KIND_GOOSE_CLI => {
+            std::env::var("ND_DSH_GOOSE_BINARY").unwrap_or_else(|_| "goose".to_owned())
+        }
+        catalog::KIND_HERMES_CLI => {
+            std::env::var("ND_DSH_HERMES_BINARY").unwrap_or_else(|_| "hermes".to_owned())
+        }
+        catalog::KIND_JCODE_CLI => {
+            std::env::var("ND_DSH_JCODE_BINARY").unwrap_or_else(|_| "jcode".to_owned())
+        }
+        catalog::KIND_MINIMAX_CLI => {
+            std::env::var("ND_DSH_MINIMAX_BINARY").unwrap_or_else(|_| "minimax".to_owned())
+        }
         catalog::KIND_TRAE_CLI => std::env::var("ND_DSH_TRAE_BINARY").unwrap_or_else(|_| {
             if cfg!(windows) {
                 if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
@@ -121,7 +143,9 @@ pub async fn test_cli_binary(kind: &str) -> Result<String, RouterError> {
             )));
         }
         Err(_) => {
-            return Err(RouterError::bad_gateway(format!("'{bin} --version' timed out")));
+            return Err(RouterError::bad_gateway(format!(
+                "'{bin} --version' timed out"
+            )));
         }
     };
 
@@ -142,10 +166,14 @@ pub async fn run_generic_cli(
 ) -> Result<CliCompletion, RouterError> {
     let prompt = prompt.trim();
     if prompt.is_empty() {
-        return Err(RouterError::bad_request("the CLI lane needs a non-empty prompt"));
+        return Err(RouterError::bad_request(
+            "the CLI lane needs a non-empty prompt",
+        ));
     }
     if prompt.chars().count() > GENERIC_CLI_MAX_PROMPT_CHARS {
-        return Err(RouterError::bad_request("prompt exceeds the generic CLI lane budget"));
+        return Err(RouterError::bad_request(
+            "prompt exceeds the generic CLI lane budget",
+        ));
     }
     let bin = cli_binary_for_kind(kind);
     #[cfg(windows)]
@@ -165,7 +193,9 @@ pub async fn run_generic_cli(
                 ));
             }
             if prompt.len() > 8000 {
-                return Err(RouterError::bad_request("prompt exceeds Windows command shell length limit"));
+                return Err(RouterError::bad_request(
+                    "prompt exceeds Windows command shell length limit",
+                ));
             }
         }
     }
@@ -219,19 +249,26 @@ pub async fn run_generic_cli(
     let output = tokio::time::timeout(Duration::from_secs(120), command.output())
         .await
         .map_err(|_| RouterError::bad_gateway(format!("{bin} CLI did not finish in time")))?
-        .map_err(|error| RouterError::bad_gateway(format!("{bin} CLI could not be started: {error}")))?;
+        .map_err(|error| {
+            RouterError::bad_gateway(format!("{bin} CLI could not be started: {error}"))
+        })?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
     if !output.status.success() && stdout.is_empty() {
-        return Err(RouterError::bad_gateway(format!("{bin} CLI failed: {stderr}")));
+        return Err(RouterError::bad_gateway(format!(
+            "{bin} CLI failed: {stderr}"
+        )));
     }
     let text = if !stdout.is_empty() {
         stdout
     } else if !stderr.is_empty() {
         stderr
     } else if kind == catalog::KIND_TRAE_CLI {
-        format!("Dispatched prompt to Trae IDE (mode: {model}, {} characters). Trae window is active.", prompt.len())
+        format!(
+            "Dispatched prompt to Trae IDE (mode: {model}, {} characters). Trae window is active.",
+            prompt.len()
+        )
     } else {
         String::new()
     };
@@ -244,7 +281,10 @@ pub async fn run_generic_cli(
 pub fn prompt_from_messages(messages: &[Value]) -> String {
     let mut parts: Vec<String> = Vec::new();
     for message in messages {
-        let role = message.get("role").and_then(Value::as_str).unwrap_or("user");
+        let role = message
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or("user");
         let content = stringify_content(message.get("content").unwrap_or(&Value::Null));
         if content.trim().is_empty() {
             continue;
@@ -258,7 +298,10 @@ pub fn prompt_from_messages(messages: &[Value]) -> String {
     }
     if parts.len() == 1 {
         let only = parts.remove(0);
-        return only.split_once(": ").map(|(_, rest)| rest.to_owned()).unwrap_or(only);
+        return only
+            .split_once(": ")
+            .map(|(_, rest)| rest.to_owned())
+            .unwrap_or(only);
     }
     parts.join("\n\n")
 }
@@ -269,7 +312,9 @@ fn stringify_content(content: &Value) -> String {
         Value::Array(items) => items
             .iter()
             .filter_map(|item| {
-                item.get("text").and_then(Value::as_str).or_else(|| item.as_str())
+                item.get("text")
+                    .and_then(Value::as_str)
+                    .or_else(|| item.as_str())
             })
             .collect::<Vec<_>>()
             .join("\n"),
@@ -285,10 +330,14 @@ pub async fn run_antigravity(
 ) -> Result<CliCompletion, RouterError> {
     let prompt = prompt.trim();
     if prompt.is_empty() {
-        return Err(RouterError::bad_request("the antigravity lane needs a non-empty prompt"));
+        return Err(RouterError::bad_request(
+            "the antigravity lane needs a non-empty prompt",
+        ));
     }
     if prompt.chars().count() > MAX_PROMPT_CHARS {
-        return Err(RouterError::bad_request("prompt exceeds the antigravity lane budget"));
+        return Err(RouterError::bad_request(
+            "prompt exceeds the antigravity lane budget",
+        ));
     }
     let mut command = Command::new(agy_binary());
     command.arg(format!("--print={prompt}"));
@@ -299,12 +348,22 @@ pub async fn run_antigravity(
     command.arg("--output-format=json");
     command.arg(format!("--print-timeout={AGY_PRINT_TIMEOUT_SECS}s"));
     if let Some(account) = account {
-        if let Some(selector) = account.selector.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+        if let Some(selector) = account
+            .selector
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
             command.env("AGY_ACCOUNT", selector);
         }
         // Application Default Credentials sign-in: the account record points at
         // an authorized_user credentials file; the CLI reads and refreshes it.
-        if let Some(adc) = account.env_dir.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+        if let Some(adc) = account
+            .env_dir
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
             command.env("AGY_ADC_AUTH", adc);
         }
     }
@@ -324,7 +383,11 @@ pub async fn run_antigravity(
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     if !output.status.success() {
-        let detail = if stdout.trim().is_empty() { stderr.trim() } else { stdout.trim() };
+        let detail = if stdout.trim().is_empty() {
+            stderr.trim()
+        } else {
+            stdout.trim()
+        };
         return Err(RouterError::bad_gateway(format!(
             "agy CLI failed: {}",
             catalog::truncate(detail, 300)
@@ -334,7 +397,9 @@ pub async fn run_antigravity(
         .ok_or_else(|| RouterError::bad_gateway("agy CLI returned no parseable result"))?;
     let status = parsed.get("status").and_then(Value::as_str).unwrap_or("");
     if !status.eq_ignore_ascii_case("success") {
-        return Err(RouterError::bad_gateway(format!("agy CLI reported status {status}")));
+        return Err(RouterError::bad_gateway(format!(
+            "agy CLI reported status {status}"
+        )));
     }
     let text = parsed
         .get("response")
@@ -342,14 +407,25 @@ pub async fn run_antigravity(
         .unwrap_or_default()
         .to_owned();
     if text.trim().is_empty() {
-        return Err(RouterError::bad_gateway("agy CLI returned an empty response"));
+        return Err(RouterError::bad_gateway(
+            "agy CLI returned an empty response",
+        ));
     }
     let usage = parsed.get("usage").cloned().unwrap_or(Value::Null);
     Ok(CliCompletion {
         text,
-        prompt_tokens: usage.get("input_tokens").and_then(Value::as_u64).unwrap_or(0),
-        completion_tokens: usage.get("output_tokens").and_then(Value::as_u64).unwrap_or(0),
-        total_tokens: usage.get("total_tokens").and_then(Value::as_u64).unwrap_or(0),
+        prompt_tokens: usage
+            .get("input_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        completion_tokens: usage
+            .get("output_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        total_tokens: usage
+            .get("total_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
     })
 }
 
@@ -361,10 +437,11 @@ fn parse_output(stdout: &str) -> Option<Value> {
         if !trimmed.starts_with('{') {
             continue;
         }
-        if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
-            if value.get("status").is_some() && value.get("response").is_some() {
-                return Some(value);
-            }
+        if let Ok(value) = serde_json::from_str::<Value>(trimmed)
+            && value.get("status").is_some()
+            && value.get("response").is_some()
+        {
+            return Some(value);
         }
     }
     None
@@ -378,10 +455,14 @@ pub async fn run_qoder(
 ) -> Result<CliCompletion, RouterError> {
     let prompt = prompt.trim();
     if prompt.is_empty() {
-        return Err(RouterError::bad_request("the qoder lane needs a non-empty prompt"));
+        return Err(RouterError::bad_request(
+            "the qoder lane needs a non-empty prompt",
+        ));
     }
     if prompt.chars().count() > QODER_MAX_PROMPT_CHARS {
-        return Err(RouterError::bad_request("prompt exceeds the qoder lane budget"));
+        return Err(RouterError::bad_request(
+            "prompt exceeds the qoder lane budget",
+        ));
     }
     let mut command = Command::new(qoder_binary());
     command.arg("--print").arg(prompt);
@@ -416,12 +497,18 @@ pub async fn run_qoder(
     )
     .await
     .map_err(|_| RouterError::bad_gateway("qoder CLI did not finish in time"))?
-    .map_err(|error| RouterError::bad_gateway(format!("qoder CLI could not be started: {error}")))?;
+    .map_err(|error| {
+        RouterError::bad_gateway(format!("qoder CLI could not be started: {error}"))
+    })?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     if !output.status.success() {
-        let detail = if stdout.trim().is_empty() { stderr.trim() } else { stdout.trim() };
+        let detail = if stdout.trim().is_empty() {
+            stderr.trim()
+        } else {
+            stdout.trim()
+        };
         return Err(RouterError::bad_gateway(format!(
             "qoder CLI failed: {}",
             catalog::truncate(detail, 300)
@@ -432,20 +519,29 @@ pub async fn run_qoder(
     let text = qoder_text(&parsed);
     let subtype = parsed.get("subtype").and_then(Value::as_str).unwrap_or("");
     let status = parsed.get("status").and_then(Value::as_str).unwrap_or("");
-    let is_error = parsed.get("is_error").and_then(Value::as_bool).unwrap_or(false);
+    let is_error = parsed
+        .get("is_error")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     if is_error
         || subtype.to_ascii_lowercase().contains("error")
         || status.to_ascii_lowercase().contains("error")
         || status.eq_ignore_ascii_case("failed")
     {
-        let detail = if text.trim().is_empty() { subtype } else { text.trim() };
+        let detail = if text.trim().is_empty() {
+            subtype
+        } else {
+            text.trim()
+        };
         return Err(RouterError::bad_gateway(format!(
             "qoder CLI reported an error: {}",
             catalog::truncate(detail, 300)
         )));
     }
     if text.trim().is_empty() {
-        return Err(RouterError::bad_gateway("qoder CLI returned an empty response"));
+        return Err(RouterError::bad_gateway(
+            "qoder CLI returned an empty response",
+        ));
     }
     let usage = parsed
         .get("usage")
@@ -453,18 +549,27 @@ pub async fn run_qoder(
         .cloned()
         .unwrap_or(Value::Null);
     let prompt_tokens = usage_number(&usage, &["input_tokens", "prompt_tokens", "tokens_input"]);
-    let completion_tokens = usage_number(&usage, &["output_tokens", "completion_tokens", "tokens_output"]);
+    let completion_tokens = usage_number(
+        &usage,
+        &["output_tokens", "completion_tokens", "tokens_output"],
+    );
     let total_tokens = usage_number(&usage, &["total_tokens", "tokens_total"]);
     Ok(CliCompletion {
         text,
         prompt_tokens,
         completion_tokens,
-        total_tokens: if total_tokens == 0 { prompt_tokens + completion_tokens } else { total_tokens },
+        total_tokens: if total_tokens == 0 {
+            prompt_tokens + completion_tokens
+        } else {
+            total_tokens
+        },
     })
 }
 
 fn usage_number(usage: &Value, keys: &[&str]) -> u64 {
-    keys.iter().find_map(|key| usage.get(*key).and_then(Value::as_u64)).unwrap_or(0)
+    keys.iter()
+        .find_map(|key| usage.get(*key).and_then(Value::as_u64))
+        .unwrap_or(0)
 }
 
 /// Accept both the Claude-style `result` string and the nested
@@ -495,10 +600,10 @@ fn qoder_text(parsed: &Value) -> String {
 /// object, otherwise fall back to the last JSON object on stdout.
 fn parse_qoder_output(stdout: &str) -> Option<Value> {
     let trimmed = stdout.trim();
-    if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
-        if value.is_object() {
-            return Some(value);
-        }
+    if let Ok(value) = serde_json::from_str::<Value>(trimmed)
+        && value.is_object()
+    {
+        return Some(value);
     }
     let mut fallback = None;
     for line in trimmed.lines().rev() {

@@ -13,6 +13,8 @@ pub fn app(state: Arc<RouterState>) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/v1/models", get(models))
+        .route("/v1/audio/voices", get(voices))
+        .route("/v1/audio/speech", post(speech))
         .route("/v1/chat/completions", post(chat))
         .route("/v1/responses", post(responses))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
@@ -31,6 +33,31 @@ async fn models(
     Ok(Json(state.model_catalog()))
 }
 
+async fn voices(
+    State(state): State<Arc<RouterState>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, RouterError> {
+    authorize(&state, &headers)?;
+    Ok(Json(state.voice_catalog()))
+}
+
+async fn speech(
+    State(state): State<Arc<RouterState>>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Result<Response, RouterError> {
+    authorize(&state, &headers)?;
+    if !body.is_object() {
+        return Err(RouterError::bad_request(
+            "request body must be a JSON object",
+        ));
+    }
+    let combo = combo_header(&headers);
+    state
+        .speech_with_request(body, combo.as_deref(), "/v1/audio/speech")
+        .await
+}
+
 async fn chat(
     State(state): State<Arc<RouterState>>,
     headers: HeaderMap,
@@ -38,7 +65,9 @@ async fn chat(
 ) -> Result<Response, RouterError> {
     authorize(&state, &headers)?;
     if !body.is_object() {
-        return Err(RouterError::bad_request("request body must be a JSON object"));
+        return Err(RouterError::bad_request(
+            "request body must be a JSON object",
+        ));
     }
     let combo = combo_header(&headers);
     state
@@ -59,7 +88,9 @@ async fn responses(
 ) -> Result<Response, RouterError> {
     authorize(&state, &headers)?;
     if !body.is_object() {
-        return Err(RouterError::bad_request("request body must be a JSON object"));
+        return Err(RouterError::bad_request(
+            "request body must be a JSON object",
+        ));
     }
     let combo = combo_header(&headers);
     state

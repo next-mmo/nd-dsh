@@ -118,7 +118,12 @@ impl AppState {
         // Stopping in-flight work first is what lets shutdown finish: without it a
         // dispatcher worker sitting in a Git deadline would hold the join.
         self.interrupts.cancel_all();
-        if let Some(mut router) = self.router.lock().unwrap_or_else(|error| error.into_inner()).take() {
+        if let Some(mut router) = self
+            .router
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .take()
+        {
             router.stop();
         }
         self.terminals.shutdown();
@@ -709,7 +714,12 @@ fn dispatch(
         // The desktop owns the data directory and receives the per-launch
         // loopback key only once, from initialize.
         "router.initialize" => {
-            if let Some(mut existing) = state.router.lock().unwrap_or_else(|error| error.into_inner()).take() {
+            if let Some(mut existing) = state
+                .router
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .take()
+            {
                 existing.stop();
             }
             let params = from_params::<RouterInitParams>(params)?;
@@ -718,19 +728,32 @@ fn dispatch(
                 web_bridge: params.web_bridge,
                 safe_mode: params.safe_mode,
                 preferred_port: params.preferred_port,
+                seed_defaults: true,
             };
-            let router_state = nd_router::RouterState::with_options(std::path::PathBuf::from(params.data_dir), options)
-                .map_err(|error| errors::coded(CODE_METHOD_FAILED, format!("{error:#}")))?;
-            let server = nd_router::RouterServer::start(Arc::clone(&router_state), router_state.preferred_port())
-                .map_err(|error| errors::coded(CODE_METHOD_FAILED, format!("{error:#}")))?;
+            let router_state = nd_router::RouterState::with_options(
+                std::path::PathBuf::from(params.data_dir),
+                options,
+            )
+            .map_err(|error| errors::coded(CODE_METHOD_FAILED, format!("{error:#}")))?;
+            let server = nd_router::RouterServer::start(
+                Arc::clone(&router_state),
+                router_state.preferred_port(),
+            )
+            .map_err(|error| errors::coded(CODE_METHOD_FAILED, format!("{error:#}")))?;
             let result = json!({
                 "endpoint": server.endpoint,
                 "key": server.key,
                 "port": server.port,
                 "state": router_state.snapshot(),
             });
-            *state.router.lock().unwrap_or_else(|error| error.into_inner()) = Some(server);
-            *state.router_state.lock().unwrap_or_else(|error| error.into_inner()) = Some(router_state);
+            *state
+                .router
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = Some(server);
+            *state
+                .router_state
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = Some(router_state);
             Ok(result)
         }
         "router.setExternalKey" => {
@@ -743,10 +766,18 @@ fn dispatch(
             Ok(router_state(&state)?.set_safe_mode(input.enabled))
         }
         "router.stop" => {
-            if let Some(mut server) = state.router.lock().unwrap_or_else(|error| error.into_inner()).take() {
+            if let Some(mut server) = state
+                .router
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .take()
+            {
                 server.stop();
             }
-            *state.router_state.lock().unwrap_or_else(|error| error.into_inner()) = None;
+            *state
+                .router_state
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = None;
             Ok(json!({"stopped": true}))
         }
         "router.state" => Ok(router_state(&state)?.snapshot()),
@@ -774,7 +805,10 @@ fn dispatch(
         "router.testCandidate" => {
             let input = from_params::<SaveProviderInput>(params)?;
             let state_ref = router_state(&state)?;
-            let guard = state.router.lock().unwrap_or_else(|error| error.into_inner());
+            let guard = state
+                .router
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
             let server = guard
                 .as_ref()
                 .ok_or_else(|| errors::coded(CODE_METHOD_FAILED, "ND Router is not initialized"))?;
@@ -783,7 +817,10 @@ fn dispatch(
         "router.testProvider" => {
             let input = from_params::<ProviderIdInput>(params)?;
             let state_ref = router_state(&state)?;
-            let guard = state.router.lock().unwrap_or_else(|error| error.into_inner());
+            let guard = state
+                .router
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
             let server = guard
                 .as_ref()
                 .ok_or_else(|| errors::coded(CODE_METHOD_FAILED, "ND Router is not initialized"))?;
