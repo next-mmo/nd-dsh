@@ -22,7 +22,7 @@ Authority is this repository's `AGENTS.md` (performance work belongs in the Rust
 
 - Read `crates/nd-core/src/main.rs`: every `"method.name" =>` dispatch arm is the authoritative RPC surface.
 - Pair methods with implementations by listing `crates/nd-runtime/src/*.rs` (artifacts, cache, deadline, decision, dispatcher, effect_journal, evidence, git, metrics, process, revision, scheduler, search, session_journal, snapshot, terminal, windows_job, workspace).
-- Note sibling crates: `nd-protocol` (wire framing), `nd-browser-host` (overlapped-pipe bridge), `nd-agent` (ND-native model/session server, separate stdio protocol).
+- Note sibling crates: `nd-protocol` (wire framing), `nd-browser-host` (overlapped-pipe bridge), `nd-router` (local router, CLI/web lanes, TTS), `nd-agent` (ND-native model/session server, separate stdio protocol).
 
 ### 2. Build the wired-versus-dormant matrix
 

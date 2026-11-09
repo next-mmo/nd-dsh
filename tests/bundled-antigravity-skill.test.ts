@@ -42,6 +42,10 @@ it('discovers and invokes the complete Antigravity skill from a relocated releas
     const cli = await readFile(join(directory, 'scripts/patch.py'), 'utf8')
     expect(cli).toContain("local / 'ND/Patches/Antigravity'")
     expect(cli).not.toMatch(/\.codex|Codex\/Patches|MT-Staff/)
+    const universalDir = join(__dirname, '..', '.agents', 'skills', 'antigravity-patch')
+    for (const relPath of ['SKILL.md', 'references/cli.md', 'references/antigravity-desktop.md', 'references/patch-lifecycle.md', 'scripts/patch.py', 'scripts/asar_tool.py', 'assets/browser-annotate/recipes.json', 'assets/browser-annotate/2.29.0-block.js']) {
+      expect(await readFile(join(universalDir, relPath), 'utf8')).toBe(await readFile(join(directory, relPath), 'utf8'))
+    }
     const help = await service.prepare('/antigravity-patch -h', catalog.scope, skill.selectionId)
     expect(help?.prompt).toContain(`Skill resource directory: ${directory}`)
     expect(help?.prompt).toContain('/antigravity-patch -h')

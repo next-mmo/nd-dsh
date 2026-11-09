@@ -7,11 +7,11 @@ description: Create, extend, verify, or remove temporary local patches to the in
 
 Implement the requested local change with a reviewable patch, observed UI verification, and precise rollback. This skill does not authorize additional features, messages to agents, or changes to unrelated apps.
 
-In ND, invoke `/antigravity-patch <request>` through the skill picker or composer. This directory is the repository-owned release bundle. Keep its references, helpers, assets, and recipe together as regular tracked files; do not link to a developer's global skill installation. After intentionally changing the annotation asset, review and update its recipe hash and run the bundled Python tests plus ND's bundled-skill integration test.
+In ND, invoke `/antigravity-patch <request>` through the skill picker or composer; in any universal coding agent (Antigravity, Codex, Claude Code, Pi, Cursor, etc.), load this skill from `.agents/skills/antigravity-patch`. Keep `.agents/skills/antigravity-patch` (universal workspace skill) and `configs/dsh/agent-presets/nd-dsh/skills/antigravity-patch` (ND release bundle) in sync with all references, helpers, assets, and recipes as regular tracked files; do not link to a developer's global home skill installation. After intentionally changing the annotation asset, review and update its recipe hash and run the bundled Python tests plus ND's bundled-skill integration test.
 
 ## Help, apply, reset, and adoption
 
-Map `/antigravity-patch -h` (or `help`), `status`, `apply`, `reset`, and `adopt` to this resource directory's `scripts/patch.py`. Help is read-only. Read [references/cli.md](references/cli.md) for arguments and recovery. Resolve every helper, recipe, and reference relative to ND's supplied **Skill resource directory**, never a global skill installation.
+Map `/antigravity-patch -h` (or `help`), `status`, `apply`, `reset`, and `adopt` to this resource directory's `scripts/patch.py`. Help is read-only. Read [references/cli.md](references/cli.md) for arguments and recovery. Resolve every helper, recipe, and reference relative to ND's supplied **Skill resource directory** or the workspace `.agents/skills/antigravity-patch` directory, never a global skill installation.
 
 The helper defaults to `%LOCALAPPDATA%/ND/Patches/Antigravity/`. It supports the inspected 2.29.0 browser-annotate recipe; new versions require inspection. Start with `status` and the requested command's `--dry-run`. Save active work and quit Antigravity normally before `apply` or `reset`. Neither command closes processes or bypasses file locks. After restarting, observe actual UI behavior and record it with `confirm --validation`; do not claim UI checks from code or archive tests.
 

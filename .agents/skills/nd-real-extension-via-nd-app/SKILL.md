@@ -19,7 +19,7 @@ real job, and evidence about whether ND can reliably deliver it.
   submit prompts, inspect progress, use its terminal, install/activate packages,
   and test the extension. Use the currently documented API and fresh UI state.
 - Do not bypass ND by writing extension or ND repair code directly through
-  Codex file tools, running an external coding agent, calling private IPC, or
+  local agent file tools, running an external coding agent, calling private IPC, or
   injecting JavaScript into the renderer. Ask ND's agent to implement repairs.
 - Read-only repository inspection is useful for independent review and checking
   claims. Prefer ND's Files/Source Control/terminal for inspectable evidence;

@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "recipes": [
+    {
+      "id": "browser-annotate",
+      "revision": 2,
+      "app_version": "2.29.0",
+      "entry": "dist/preload.js",
+      "entry_sha256": "2f4348c24fa6feeba6fef81644603304667b43a446b3887370781e90ec37ca2c",
+      "marker": "// AGY_TEMP_ANNOTATOR_V1",
+      "block": "2.29.0-block.js",
+      "block_sha256": "9c01783223460308d9e1db7e7dc2166e9aba30e10d650d3c546d9f53fca53521",
+      "validation": "Live Windows UI checks on 2026-11-04: picker, rectangle, draft with/without screenshot, Escape and Cancel. Source ported for owned WebContentsViews; inspect again for every new version."
+    }
+  ]
+}

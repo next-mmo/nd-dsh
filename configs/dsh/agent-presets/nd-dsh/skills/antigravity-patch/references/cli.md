@@ -1,8 +1,8 @@
 # Patch CLI
 
-In ND, use `/antigravity-patch -h`, `/antigravity-patch status`, `/antigravity-patch apply`, or `/antigravity-patch reset`. ND resolves the slash skill itself. The agent runs this directory's helper through its authorized execution tools; it must respect workspace/OS permissions. If those tools or external-app UI controls are unavailable, report that limit and provide commands for the user instead of claiming execution.
+In ND or any universal coding agent, use `/antigravity-patch -h`, `/antigravity-patch status`, `/antigravity-patch apply`, `/antigravity-patch reset`, or `/antigravity-patch adopt`. In ND, the slash skill resolves automatically; in universal agents, load `.agents/skills/antigravity-patch`. The agent runs this directory's helper through its authorized execution tools; it must respect workspace/OS permissions. If those tools or external-app UI controls are unavailable, report that limit and provide commands for the user instead of claiming execution.
 
-In the examples below, set `$skillDirectory` to the **Skill resource directory** provided by ND (the bundled folder ending in `skills/antigravity-patch`). Do not resolve it from another product's home directory.
+In the examples below, set `$skillDirectory` to the **Skill resource directory** provided by ND or the repository workspace path `.agents/skills/antigravity-patch` (ending in `skills/antigravity-patch`). Do not resolve it from another product's global home directory.
 
 Run the bundled Python helper from any directory. Python 3.9+ and Node.js are required for applying recipes; Node checks the complete changed JavaScript entry. Live archive replacement is Windows-only. No extra Python packages are required.
 
