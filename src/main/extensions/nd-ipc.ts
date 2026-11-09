@@ -104,6 +104,9 @@ import { promptVaultEntry, type VaultPromptValues } from './vault-prompt.js'
 import { ExtensionWebViewAssets } from './webview-assets.js'
 import { TicTacToeStatsStore, asTicTacToeOutcome } from './tic-tac-toe-store.js'
 import { AccountMgtStore } from './account-mgt-store.js'
+import { AccessStore } from './access-store.js'
+import { fetchInbox, fetchMessage } from './access-imap.js'
+import { generateTotp } from './access-totp.js'
 import { WizardChessStatsStore, asWizardChessOutcome } from './wizard-chess-store.js'
 import { MiniBrowserStore, browserTabUrl, asMiniEntryId, miniTabTitle, legacyYouTubeQueuePath, type MiniLink } from './mini-browser-store.js'
 import { PayGuardStore } from './pay-guard-store.js'
@@ -185,6 +188,7 @@ const QUIT_PROCESS_ID = 'nd.quit-process'
 const PASSWORD_VAULT_ID = 'nd.password-vault'
 const TIC_TAC_TOE_ID = 'nd.tic-tac-toe'
 const ACCOUNT_MGT_ID = 'nd.account-mgt'
+const ACCESS_ID = 'nd.access'
 const WIZARD_CHESS_ID = 'nd.wizard-chess-3d'
 const MINI_BROWSER_ID = 'nd.mini-browser'
 const PAY_GUARD_ID = 'nd.pay-guard'
@@ -216,6 +220,7 @@ const AVAILABLE_PACKAGES: readonly { id: string; path: () => string }[] = app.is
   ...(app.isPackaged ? [] : [
     { id: TIC_TAC_TOE_ID, path: ticTacToePackagePath },
     { id: ACCOUNT_MGT_ID, path: accountMgtPackagePath },
+    { id: ACCESS_ID, path: accessPackagePath },
     { id: WIZARD_CHESS_ID, path: wizardChessPackagePath },
     { id: MINI_BROWSER_ID, path: miniBrowserPackagePath },
     { id: PAY_GUARD_ID, path: payGuardPackagePath },
@@ -301,6 +306,12 @@ function accountMgtPackagePath(): string {
   return app.isPackaged
     ? join(process.resourcesPath, 'nd-extensions', 'account-mgt')
     : join(app.getAppPath(), 'extensions', 'account-mgt')
+}
+
+function accessPackagePath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'nd-extensions', 'nd-access')
+    : join(app.getAppPath(), 'extensions', 'nd-access')
 }
 
 function wizardChessPackagePath(): string {
@@ -492,6 +503,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
         ...(app.isPackaged ? [] : [
           ticTacToeCatalogView(state),
           accountMgtCatalogView(state),
+          accessCatalogView(state),
           wizardChessCatalogView(state),
           miniBrowserCatalogView(state),
           payGuardCatalogView(state),
@@ -2344,6 +2356,94 @@ export function registerNativeHostHandlers(
     return { deleted: await accountMgt.delete(input.id) }
   })
 
+  // --- ND Access --------------------------------------------------------------
+  //
+  // Sealed mailbox + TOTP access. Secrets are OS-encrypted in a dedicated
+  // store that no generic vault/IPC surface can read; host methods return only
+  // mail rows and codes. Agents are refused outright: this is user-only data.
+
+  const accessStore = new AccessStore(join(app.getPath('userData'), 'nd-access', 'accounts.json'))
+
+  const requireAccessUser = (context: NdHostCallContext): void => {
+    requirePersonalContext(context)
+    if (context.caller === 'agent') {
+      throw new Error('ND Access is user-only. Agents and CLI cannot read mailbox or 2FA data.')
+    }
+  }
+  const accessAccountId = (value: unknown): string => requiredText(value, 'ND Access account', 64)
+  const accessMailLimit = (value: unknown): number => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return 15
+    return Math.max(1, Math.min(30, Math.round(value)))
+  }
+
+  host.register('access.accounts.list', async (_input, context) => {
+    requireAccessUser(context)
+    return accessStore.list()
+  })
+
+  host.register('access.accounts.create', async (input, context) => {
+    requireAccessUser(context)
+    return accessStore.create({
+      email: requiredText(input.email, 'Mailbox email', 320),
+      label: typeof input.label === 'string' ? input.label : '',
+      appPassword: requiredText(input.appPassword, 'Gmail app password', 512),
+      ...(typeof input.totpSecret === 'string' && input.totpSecret.trim() ? { totpSecret: input.totpSecret } : {}),
+      ...(typeof input.imapHost === 'string' && input.imapHost.trim() ? { imapHost: input.imapHost } : {}),
+      ...(typeof input.imapPort === 'number' ? { imapPort: input.imapPort } : {}),
+    })
+  })
+
+  host.register('access.accounts.update', async (input, context) => {
+    requireAccessUser(context)
+    return accessStore.update(accessAccountId(input.id), {
+      ...(typeof input.label === 'string' ? { label: input.label } : {}),
+      ...(typeof input.appPassword === 'string' && input.appPassword.trim() ? { appPassword: input.appPassword } : {}),
+      ...(typeof input.totpSecret === 'string' ? { totpSecret: input.totpSecret } : {}),
+      ...(typeof input.imapHost === 'string' && input.imapHost.trim() ? { imapHost: input.imapHost } : {}),
+      ...(typeof input.imapPort === 'number' ? { imapPort: input.imapPort } : {}),
+    })
+  })
+
+  host.register('access.accounts.delete', async (input, context) => {
+    requireAccessUser(context)
+    return { deleted: await accessStore.remove(accessAccountId(input.id)) }
+  })
+
+  host.register('access.mail.inbox', async (input, context) => {
+    requireAccessUser(context)
+    const account = await accessStore.get(accessAccountId(input.id))
+    const secrets = await accessStore.secrets(account.id)
+    return fetchInbox({
+      email: account.email,
+      appPassword: secrets.appPassword,
+      host: account.imapHost,
+      port: account.imapPort,
+    }, accessMailLimit(input.limit))
+  })
+
+  host.register('access.mail.message', async (input, context) => {
+    requireAccessUser(context)
+    if (typeof input.uid !== 'number' || !Number.isInteger(input.uid) || input.uid <= 0) {
+      throw new Error('Mailbox message id is invalid')
+    }
+    const account = await accessStore.get(accessAccountId(input.id))
+    const secrets = await accessStore.secrets(account.id)
+    return fetchMessage({
+      email: account.email,
+      appPassword: secrets.appPassword,
+      host: account.imapHost,
+      port: account.imapPort,
+    }, input.uid)
+  })
+
+  host.register('access.totp.code', async (input, context) => {
+    requireAccessUser(context)
+    const account = await accessStore.get(accessAccountId(input.id))
+    const secrets = await accessStore.secrets(account.id)
+    if (!secrets.totpSecret) throw new Error('No 2FA secret is saved for this account')
+    return generateTotp(secrets.totpSecret)
+  })
+
   // --- Wizard Chess 3D --------------------------------------------------------
   //
   // The game UI itself is the package's web view (sandboxed iframe); this side
@@ -3282,6 +3382,14 @@ async function accountMgtCatalogView(state: NdExtensionsStateView): Promise<NdAv
     name: 'Account Manager',
     description: 'Track the accounts you own and run a guided ChatGPT signup with an external mailbox. ND opens the pages; you enter credentials and verification codes yourself.',
     permissions: ['accountmgt.read', 'accountmgt.write', 'browser.navigate'],
+  })
+}
+
+async function accessCatalogView(state: NdExtensionsStateView): Promise<NdAvailablePackageView> {
+  return packageCatalogView(state, ACCESS_ID, accessPackagePath(), {
+    name: 'ND Access',
+    description: 'Read a Gmail inbox and generate 2FA codes. Secrets are sealed on this device; agents and CLI cannot read them.',
+    permissions: ['access.read', 'access.write'],
   })
 }
 

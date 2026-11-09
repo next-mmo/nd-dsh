@@ -1,0 +1,43 @@
+{
+  "protocol": "nd.extension/1",
+  "id": "nd.access",
+  "name": "ND Access",
+  "description": "Read a Gmail inbox and generate 2FA codes. Secrets are sealed on this device; agents and CLI cannot read them.",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "contexts": ["personal"],
+  "permissions": ["access.read", "access.write"],
+  "settings": [],
+  "contributions": {
+    "commands": [
+      {
+        "id": "open",
+        "title": "ND Access",
+        "description": "Open your sealed mailbox and 2FA codes.",
+        "keywords": ["access", "mail", "mailbox", "inbox", "gmail", "2fa", "totp", "code"],
+        "host": "access.accounts.list",
+        "openViewId": "access",
+        "contexts": ["personal"]
+      }
+    ],
+    "views": [
+      {
+        "id": "access",
+        "title": "ND Access",
+        "description": "Add a mailbox and read 2FA codes. Secrets stay on this device and are not available to agents or CLI.",
+        "kind": "web",
+        "entry": "ui/index.html",
+        "contexts": ["personal"],
+        "actions": [
+          { "id": "list", "title": "List access accounts", "host": "access.accounts.list" },
+          { "id": "create", "title": "Save an access account", "host": "access.accounts.create" },
+          { "id": "update", "title": "Update an access account", "host": "access.accounts.update" },
+          { "id": "delete", "title": "Delete an access account", "host": "access.accounts.delete" },
+          { "id": "inbox", "title": "Read the mailbox inbox", "host": "access.mail.inbox" },
+          { "id": "message", "title": "Read a mailbox message", "host": "access.mail.message" },
+          { "id": "totp", "title": "Generate a 2FA code", "host": "access.totp.code" }
+        ]
+      }
+    ]
+  }
+}

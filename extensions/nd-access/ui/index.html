@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark light" />
+  <title>ND Access</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="top">
+      <div class="brand">
+        <span class="mark">ND</span>
+        <div>
+          <h1>Access</h1>
+          <p>Mailbox and 2FA, sealed on this device. Agents and CLI cannot read it.</p>
+        </div>
+      </div>
+      <span id="connection" class="chip">Connecting…</span>
+    </header>
+
+    <div id="notice" class="notice" role="status" hidden></div>
+
+    <section id="editor-panel" class="panel" hidden>
+      <div class="panel-head">
+        <h2 id="editor-title">Add account</h2>
+        <button id="editor-cancel" class="ghost" type="button">Cancel</button>
+      </div>
+      <form id="editor-form" autocomplete="off">
+        <div class="grid">
+          <label class="field">
+            <span>Mailbox email</span>
+            <input id="edit-email" type="email" inputmode="email" placeholder="name@gmail.com" maxlength="320" required />
+          </label>
+          <label class="field">
+            <span>Label <em>optional</em></span>
+            <input id="edit-label" type="text" placeholder="Personal, Work…" maxlength="80" />
+          </label>
+          <label class="field">
+            <span>Gmail app password</span>
+            <input id="edit-password" type="password" placeholder="16-character app password" maxlength="512" autocomplete="new-password" />
+            <small id="password-hint">Use a Google App Password, not the account password. Leave blank when editing to keep the saved one.</small>
+          </label>
+          <label class="field">
+            <span>2FA secret <em>optional</em></span>
+            <input id="edit-totp" type="password" placeholder="otpauth:// link or Base32 seed" maxlength="512" autocomplete="off" />
+            <small>Paste the seed from the 2FA page's Show QR link, or the Base32 secret. Codes are generated locally.</small>
+          </label>
+        </div>
+        <div class="actions">
+          <button id="editor-save" type="submit" class="primary">Save account</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <h2>Accounts</h2>
+          <p>Credentials never leave this window; only mail rows and codes are shown.</p>
+        </div>
+        <button id="new-account" type="button">Add account</button>
+      </div>
+      <div id="empty" class="empty">No accounts yet. Add a Gmail mailbox to begin.</div>
+      <div id="accounts" class="accounts"></div>
+    </section>
+
+    <section id="mail-panel" class="panel" hidden>
+      <div class="panel-head">
+        <div>
+          <h2 id="mail-title">Inbox</h2>
+          <p id="mail-subtitle"></p>
+        </div>
+        <button id="mail-close" class="ghost" type="button">Close</button>
+      </div>
+      <div id="mail-body" class="mail-body"></div>
+    </section>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
