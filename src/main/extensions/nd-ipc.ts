@@ -33,9 +33,9 @@ import { WallpaperThumbnailCache, type CachedThumbnail } from '../os/wallpaper-t
 import {
   WallpaperLinkStore,
   addBundledWallpaperLink,
+  bundledCollectionFromSeed,
   bundledLinkFromSeed,
   bundledWallpaperLinksPath,
-  collectionEntryId,
   downloadWallpaperImage,
   findCachedImage,
   linkIdForUrl,
@@ -972,19 +972,7 @@ export function registerNativeHostHandlers(
       )
       doc = {
         links: parsed.links.map(bundledLinkFromSeed),
-        collections: (parsed.collections ?? []).map((seed) => ({
-          id: seed.id?.trim() || `col-${linkIdForUrl(seed.name)}`,
-          name: seed.name,
-          createdAt: seed.createdAt ?? 0,
-          entries: seed.entries.map((entry) => ({
-            id: entry.id?.trim() || collectionEntryId(entry.kind, entry.ref),
-            kind: entry.kind,
-            ref: entry.ref,
-            title: entry.title,
-            addedAt: 0,
-          })),
-          source: 'bundle' as const,
-        })),
+        collections: (parsed.collections ?? []).map(bundledCollectionFromSeed),
       }
     } catch (error) {
       console.warn('ND wallpaper bundle failed to load:', error)
@@ -1414,10 +1402,25 @@ export function registerNativeHostHandlers(
     const soloCollectionId = sources.length === 1 && sources[0]!.startsWith('collection:')
       ? sources[0]!.slice('collection:'.length)
       : ''
-    const own = wallpaperLinkStore.listCollections()
+    // Cache files are named `<url hash>.<ext>`, so an applied link entry can be
+    // matched to the current wallpaper without touching the disk per entry.
+    const activePath = getActiveWallpaperState().path ?? ''
+    const activeBase = activePath ? basename(activePath) : ''
+    const withActive = (collection: WallpaperCollection): WallpaperCollection => ({
+      ...collection,
+      entries: collection.entries.map((entry) => {
+        const active = entry.kind === 'file'
+          ? entry.ref === activePath
+          : Boolean(activeBase && activeBase.startsWith(`${linkIdForUrl(entry.ref)}.`))
+        return active ? { ...entry, active: true } : entry
+      }),
+    })
+    const own = wallpaperLinkStore.listCollections().map(withActive)
     const ownNames = new Set(own.map((collection) => collection.name.toLowerCase()))
     // Curated collections ship in the bundle; a same-named personal copy wins.
-    const curated = (await bundledDocOnce()).collections.filter((collection) => !ownNames.has(collection.name.toLowerCase()))
+    const curated = (await bundledDocOnce()).collections
+      .filter((collection) => !ownNames.has(collection.name.toLowerCase()))
+      .map(withActive)
     return {
       collections: [...own.map((collection) => ({ ...collection, source: 'user' as const })), ...curated],
       rotateCollectionId: soloCollectionId,
@@ -1581,7 +1584,11 @@ export function registerNativeHostHandlers(
       if (!entry) continue
       if (entry.kind === 'link') {
         const known = await knownLinkForRef(entry.ref)
-        linkEntries.push(known ? { ...known, id: entry.id } : { id: entry.id, url: entry.ref, title: entry.title, source: 'user', addedAt: 0 })
+        linkEntries.push({
+          ...(known ?? { id: entry.id, url: entry.ref, title: entry.title, source: 'user' as const, addedAt: 0 }),
+          id: entry.id,
+          ...(entry.thumbUrl ? { thumbUrl: entry.thumbUrl } : {}),
+        })
         continue
       }
       try {

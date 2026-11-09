@@ -18,6 +18,7 @@ import {
   type WallpaperCollection,
   type WallpaperCollectionEntry,
   type WallpaperCollectionItemInput,
+  type WallpaperCollectionSeed,
   type WallpaperLink,
   type WallpaperLinkSeed,
   type WallpaperLinksBundle,
@@ -233,6 +234,26 @@ export function bundledLinkFromSeed(seed: WallpaperLinkSeed): WallpaperLink {
   }
 }
 
+/** Runtime shape of a curated collection, including its credit and entry covers. */
+export function bundledCollectionFromSeed(seed: WallpaperCollectionSeed): WallpaperCollection {
+  return {
+    id: seed.id?.trim() || `col-${linkIdForUrl(seed.name)}`,
+    name: seed.name,
+    createdAt: seed.createdAt ?? 0,
+    ...(seed.description ? { description: seed.description } : {}),
+    ...(seed.sourceUrl ? { sourceUrl: seed.sourceUrl } : {}),
+    entries: seed.entries.map((entry) => ({
+      id: entry.id?.trim() || collectionEntryId(entry.kind, entry.ref),
+      kind: entry.kind,
+      ref: entry.ref,
+      title: entry.title,
+      addedAt: 0,
+      ...(entry.thumb ? { thumbUrl: entry.thumb } : {}),
+    })),
+    source: 'bundle',
+  }
+}
+
 /**
  * Dev-only curation of the shipped ND bundle document. Unpacked builds write
  * `resources/nd-bundles/wallpaper-links.json` in place so a curation pass lands
@@ -279,9 +300,18 @@ export async function writeWallpaperLinksBundle(filePath: string, bundle: Wallpa
   const collectionsBlock = bundle.collections && bundle.collections.length > 0
     ? `[\n${bundle.collections.map((collection) => {
         const entries = collection.entries
-          .map((seed) => `      { "kind": ${JSON.stringify(seed.kind)}, "ref": ${JSON.stringify(seed.ref)}, "title": ${JSON.stringify(seed.title)}${seed.id ? `, "id": ${JSON.stringify(seed.id)}` : ''} }`)
+          .map((seed) => {
+            const parts = [`"kind": ${JSON.stringify(seed.kind)}`, `"ref": ${JSON.stringify(seed.ref)}`, `"title": ${JSON.stringify(seed.title)}`]
+            if (seed.id) parts.push(`"id": ${JSON.stringify(seed.id)}`)
+            if (seed.thumb) parts.push(`"thumb": ${JSON.stringify(seed.thumb)}`)
+            return `      { ${parts.join(', ')} }`
+          })
           .join(',\n')
-        return `    { "id": ${JSON.stringify(collection.id ?? '')}, "name": ${JSON.stringify(collection.name)}, "createdAt": ${JSON.stringify(collection.createdAt ?? 0)}, "entries": [\n${entries}\n    ] }`
+        const head = [`"id": ${JSON.stringify(collection.id ?? '')}`, `"name": ${JSON.stringify(collection.name)}`, `"createdAt": ${JSON.stringify(collection.createdAt ?? 0)}`]
+        if (collection.description) head.push(`"description": ${JSON.stringify(collection.description)}`)
+        if (collection.sourceUrl) head.push(`"sourceUrl": ${JSON.stringify(collection.sourceUrl)}`)
+        if (collection.curated) head.push(`"curated": true`)
+        return `    { ${head.join(', ')}, "entries": [\n${entries}\n    ] }`
       }).join(',\n')}\n  ]`
     : null
   // Keep whatever line endings the checkout already uses, so a curation pass
@@ -362,15 +392,30 @@ export async function removeBundledWallpaperLink(filePath: string, currentUrl: s
  */
 export async function writeBundledCollections(filePath: string, collections: WallpaperCollection[]): Promise<WallpaperLinksBundle> {
   const bundle = await readWallpaperLinksBundle(filePath)
-  bundle.collections = collections.slice(0, COLLECTIONS_MAX).map((collection) => ({
-    id: collection.id,
-    name: collection.name.slice(0, COLLECTION_NAME_MAX),
-    createdAt: collection.createdAt,
-    entries: collection.entries
-      .filter((entry) => entry.kind === 'link')
-      .slice(0, COLLECTION_ENTRIES_MAX)
-      .map((entry) => ({ id: entry.id, kind: 'link' as const, ref: entry.ref, title: entry.title })),
-  }))
+  // Curated collections are shipped content; mirroring the user's own list must
+  // never delete them. A personal collection with the same name also stays out
+  // of the document because the runtime already prefers the user's copy.
+  const curated = (bundle.collections ?? []).filter((collection) => collection.curated === true)
+  const curatedNames = new Set(curated.map((collection) => collection.name.toLowerCase()))
+  const mirrored = collections
+    .filter((collection) => !curatedNames.has(collection.name.toLowerCase()))
+    .slice(0, Math.max(0, COLLECTIONS_MAX - curated.length))
+    .map((collection) => ({
+      id: collection.id,
+      name: collection.name.slice(0, COLLECTION_NAME_MAX),
+      createdAt: collection.createdAt,
+      entries: collection.entries
+        .filter((entry) => entry.kind === 'link')
+        .slice(0, COLLECTION_ENTRIES_MAX)
+        .map((entry) => ({
+          id: entry.id,
+          kind: 'link' as const,
+          ref: entry.ref,
+          title: entry.title,
+          ...(entry.thumbUrl ? { thumb: entry.thumbUrl } : {}),
+        })),
+    }))
+  bundle.collections = [...curated, ...mirrored]
   await writeWallpaperLinksBundle(filePath, bundle)
   return bundle
 }

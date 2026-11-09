@@ -1671,6 +1671,25 @@ function WallpaperLibraryGrid({ rows, thumbs, queueThumbnail, busy, onPreview, o
   )
 }
 
+/** Curator credit and source link for a read-only or personal collection. */
+export function CollectionCredit({ collection }: { collection: WallpaperCollection }): React.ReactNode {
+  if (!collection.description && !collection.sourceUrl) return null
+  return (
+    <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] text-faint">
+      {collection.description ? <span>{collection.description}</span> : null}
+      {collection.sourceUrl ? (
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
+          onClick={() => void window.ndDsh.browser.openExternal(collection.sourceUrl ?? '')}
+        >
+          <ExternalLink className="size-3" /> Source
+        </button>
+      ) : null}
+    </div>
+  )
+}
+
 /**
  * Discovery's remote-link cards. Rows carry the link source in `path`
  * (`user` or `bundle`); bundle rows are read-only and save into My links
@@ -2189,13 +2208,16 @@ export function ExtensionViewDialog({
         sources: Array.isArray(value.sources) ? value.sources.filter((item): item is string => typeof item === 'string') : [],
       })
       setActiveFolder((current) => {
+        // Keep a browsed collection on screen; reloading folders after an
+        // apply must not bounce the user back to the first linked folder.
+        if (browseCollectionId) return current
         if (current && folders.some((folder) => folder.path === current)) return current
         return folders[0]?.path ?? null
       })
     } catch (cause) {
       onError(cause instanceof Error ? cause.message : String(cause))
     }
-  }, [target, onError])
+  }, [target, onError, browseCollectionId])
 
   const loadFolderRows = useCallback(async (): Promise<void> => {
     if (!target || !activeFolder) return
@@ -2289,9 +2311,11 @@ export function ExtensionViewDialog({
         // The dev bundle editor offers collection names as category options.
         void loadCollections()
       }
-    } else if (studioTab === 'now' && !linksData) {
-      // Now playing also reports an active Discovery link as the current wallpaper.
-      void loadDiscoveryLinks()
+    } else if (studioTab === 'now') {
+      // Now playing reports an active Discovery link or collection entry as the
+      // current wallpaper; both lists are needed to find which one is active.
+      if (!linksData) void loadDiscoveryLinks()
+      if (!collectionsData) void loadCollections()
     }
   }, [isWallpaperStudio, target, studioTab, discoveryTab, foldersData, collectionsData, folderRowsFor, activeFolder, browseCollectionId, linksData, previewItem, loadFolders, loadFolderRows, loadDiscoveryLinks, loadCollections])
 
@@ -2316,7 +2340,8 @@ export function ExtensionViewDialog({
       id: entry.id,
       title: entry.title,
       body: entry.ref,
-      path: entry.kind,
+      path: selectedCollection?.source === 'bundle' ? 'bundle' : entry.kind,
+      ...(entry.active ? { meta: 'Active' } : {}),
       ...(collectionThumbs[entry.id] ? { thumbnail: collectionThumbs[entry.id] } : {}),
     })),
     [selectedCollection, collectionThumbs],
@@ -2336,7 +2361,8 @@ export function ExtensionViewDialog({
       id: entry.id,
       title: entry.title,
       body: entry.ref,
-      path: entry.kind,
+      path: browsedCollection?.source === 'bundle' ? 'bundle' : entry.kind,
+      ...(entry.active ? { meta: 'Active' } : {}),
       ...(browseCollectionThumbs[entry.id] ? { thumbnail: browseCollectionThumbs[entry.id] } : {}),
     })),
     [browsedCollection, browseCollectionThumbs],
@@ -2501,6 +2527,14 @@ export function ExtensionViewDialog({
     () => [...(linksData?.user ?? []), ...(linksData?.bundle ?? [])].find((link) => link.active) ?? null,
     [linksData],
   )
+  /** The applied image when it came from a collection rather than My links. */
+  const activeCollection = useMemo(() => {
+    for (const collection of collectionsData?.collections ?? []) {
+      const entry = collection.entries.find((item) => item.active)
+      if (entry) return { collection, entry }
+    }
+    return null
+  }, [collectionsData])
   // Bundle cards check this set to flip their Save button into "Saved".
   const savedLinkUrls = useMemo(
     () => new Set((linksData?.user ?? []).map((link) => link.url)),
@@ -2568,9 +2602,11 @@ export function ExtensionViewDialog({
     () => currentData?.rows.find((row) => row.meta === 'Active') ?? null,
     [currentData],
   )
+  const nowTitle = activeLink?.title ?? activeCollection?.entry.title ?? activeRow?.title ?? ''
+  const nowRef = activeLink?.url ?? activeCollection?.entry.ref ?? activeRow?.body ?? ''
 
   useEffect(() => {
-    if (!isWallpaperStudio || studioTab !== 'now' || !target || (!activeRow && !activeLink)) {
+    if (!isWallpaperStudio || studioTab !== 'now' || !target || (!activeRow && !activeLink && !activeCollection)) {
       setNowDetail(null)
       return
     }
@@ -2578,7 +2614,9 @@ export function ExtensionViewDialog({
     setNowLoading(true)
     const input = activeLink
       ? { id: activeLink.id, source: activeLink.source, action: 'links-preview' }
-      : { id: activeRow!.id, action: 'preview' }
+      : activeCollection
+        ? { collectionId: activeCollection.collection.id, entryId: activeCollection.entry.id, action: 'collections-preview' }
+        : { id: activeRow!.id, action: 'preview' }
     void window.ndDsh.ndExtensions.invoke({
       extensionId: target.extensionId,
       contributionId: target.viewId,
@@ -2595,7 +2633,7 @@ export function ExtensionViewDialog({
       if (mounted) setNowLoading(false)
     })
     return () => { mounted = false }
-  }, [isWallpaperStudio, studioTab, target, activeRow?.id, activeLink?.id, activeLink?.source, activeLink, activeRow])
+  }, [isWallpaperStudio, studioTab, target, activeRow?.id, activeLink?.id, activeLink?.source, activeLink, activeRow, activeCollection])
 
   // A collection preview can come from the Collections tab or from browsing a
   // collection inside the Folders tab; both address the same host.
@@ -2716,6 +2754,10 @@ export function ExtensionViewDialog({
       if (actionId.startsWith('links-')) await loadDiscoveryLinks()
       if (actionId.startsWith('folders-')) await loadFolders()
       if (actionId.startsWith('collections-')) await Promise.all([loadCollections(), loadDiscoveryLinks(), loadFolders()])
+      // Now playing's Prev/Next/Random can land on a collection entry or a link.
+      if (actionId === 'prev' || actionId === 'next' || actionId === 'random') {
+        await Promise.all([loadCollections(), loadDiscoveryLinks()])
+      }
     } catch (cause) {
       onError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -3098,7 +3140,7 @@ export function ExtensionViewDialog({
                         {foldersData.sources.length === 0
                           ? foldersData.folders.length === 0
                             ? 'Nothing checked: link a folder (or solo a collection below) to give rotation something to play.'
-                            : 'Nothing checked: rotation plays every linked folder.'
+                            : 'Nothing checked: rotation plays only linked folders, not collections.'
                           : 'Rotation, Next, and Shuffle draw from exactly these folders and collections.'}
                       </p>
                     </div>
@@ -3184,25 +3226,71 @@ export function ExtensionViewDialog({
                   </div>
 
                   {browseCollectionId && !activeFolder && browsedCollection ? (
-                    browsedCollection.entries.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border-soft py-8 px-4 text-center">
-                        <Layers className="mb-2 size-8 text-faint" />
-                        <p className="text-xs text-soft">The {browsedCollection.name} collection is empty.</p>
-                        <p className="mt-1 max-w-sm text-[11px] text-faint">
-                          Use the folder-plus button on any image card to save images into it.
-                        </p>
+                    <div className="space-y-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border-soft bg-surface-0/40 px-3 py-1.5 text-xs">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="truncate font-semibold text-foreground">{browsedCollection.name}</span>
+                          <span className="shrink-0 text-faint">{browsedCollection.entries.length} images</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-6 text-[11px] px-2"
+                            disabled={busy || browsedCollection.entries.length === 0}
+                            onClick={() => void runAction('collections-next', 'os.wallpaper.collections.next', undefined, { id: browsedCollection.id })}
+                            title="Apply the next image in this collection"
+                          >
+                            <SkipForward className="mr-1 size-3" /> Next
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-6 text-[11px] px-2"
+                            disabled={busy || browsedCollection.entries.length === 0}
+                            onClick={() => void runAction('collections-random', 'os.wallpaper.collections.random', undefined, { id: browsedCollection.id })}
+                            title="Apply a random image from this collection"
+                          >
+                            <Shuffle className="mr-1 size-3" /> Shuffle
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant={collectionsData?.rotateCollectionId === browsedCollection.id ? 'secondary' : 'outline'}
+                            className="h-6 text-[11px] px-2"
+                            disabled={busy}
+                            onClick={() => void runAction(
+                              'collections-rotate',
+                              'os.wallpaper.collections.rotate',
+                              undefined,
+                              { id: collectionsData?.rotateCollectionId === browsedCollection.id ? '' : browsedCollection.id },
+                            )}
+                            title="Auto-rotate this collection on the timer configured in Wallpaper Manager → Settings (0 disables)"
+                          >
+                            <Repeat className="mr-1 size-3" /> {collectionsData?.rotateCollectionId === browsedCollection.id ? 'Rotating' : 'Auto-rotate'}
+                          </Button>
+                        </div>
                       </div>
-                    ) : (
-                      <WallpaperLinksGrid
-                        rows={browseCollectionRows}
-                        thumbs={browseCollectionThumbs}
-                        queueThumbnail={queueBrowseCollectionThumbnail}
-                        busy={busy}
-                        onPreview={(row) => openPreview(row, 'collection')}
-                        onApply={(row) => void runAction('collections-apply', 'os.wallpaper.collections.apply', row, { collectionId: browsedCollection.id })}
-                        onRemove={browsedCollection.source === 'bundle' ? undefined : (row) => void runAction('collections-remove', 'os.wallpaper.collections.removeEntry', undefined, { collectionId: browsedCollection.id, entryId: row.id })}
-                      />
-                    )
+                      <CollectionCredit collection={browsedCollection} />
+                      {browsedCollection.entries.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border-soft py-8 px-4 text-center">
+                          <Layers className="mb-2 size-8 text-faint" />
+                          <p className="text-xs text-soft">The {browsedCollection.name} collection is empty.</p>
+                          <p className="mt-1 max-w-sm text-[11px] text-faint">
+                            Use the folder-plus button on any image card to save images into it.
+                          </p>
+                        </div>
+                      ) : (
+                        <WallpaperLinksGrid
+                          rows={browseCollectionRows}
+                          thumbs={browseCollectionThumbs}
+                          queueThumbnail={queueBrowseCollectionThumbnail}
+                          busy={busy}
+                          onPreview={(row) => openPreview(row, 'collection')}
+                          onApply={(row) => void runAction('collections-apply', 'os.wallpaper.collections.apply', row, { collectionId: browsedCollection.id })}
+                          onRemove={browsedCollection.source === 'bundle' ? undefined : (row) => void runAction('collections-remove', 'os.wallpaper.collections.removeEntry', undefined, { collectionId: browsedCollection.id, entryId: row.id })}
+                        />
+                      )}
+                    </div>
                   ) : foldersData.folders.length === 0 ? (
                     <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border-soft py-8 px-4 text-center">
                       <FolderOpen className="mb-2 size-8 text-faint" />
@@ -3367,6 +3455,8 @@ export function ExtensionViewDialog({
                           )}
                         </div>
                       </div>
+
+                      <CollectionCredit collection={selectedCollection} />
 
                       {collectionRows.length === 0 ? (
                         <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border-soft py-8 px-4 text-center">
@@ -3589,13 +3679,13 @@ export function ExtensionViewDialog({
         ) : null}
 
         {!previewItem && isWallpaperStudio && studioTab === 'now' ? (
-          activeRow || activeLink ? (
+          activeRow || activeLink || activeCollection ? (
             <div className="space-y-3">
               <div className="relative flex min-h-[280px] max-h-[50vh] items-center justify-center overflow-hidden rounded-xl border border-border-soft bg-black/70 p-3 shadow-inner">
                 {nowDetail?.dataUrl || nowDetail?.thumbnail ? (
                   <img
                     src={nowDetail.dataUrl ?? nowDetail.thumbnail}
-                    alt={activeLink?.title ?? activeRow?.title ?? 'Current wallpaper'}
+                    alt={nowTitle || 'Current wallpaper'}
                     className="max-h-[46vh] max-w-full rounded-md object-contain shadow-2xl"
                   />
                 ) : (
@@ -3612,12 +3702,12 @@ export function ExtensionViewDialog({
               </div>
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border-soft bg-surface-0/40 px-3 py-2 text-xs">
                 <div className="min-w-0">
-                  <span className="block max-w-xs truncate font-semibold text-foreground" title={activeLink?.title ?? activeRow?.title}>
-                    {activeLink?.title ?? activeRow?.title}
+                  <span className="block max-w-xs truncate font-semibold text-foreground" title={nowTitle}>
+                    {nowTitle}
                   </span>
-                  {(activeLink?.url ?? activeRow?.body) ? (
-                    <p className="mt-0.5 truncate text-[11px] text-faint font-mono" title={activeLink?.url ?? activeRow?.body}>
-                      {activeLink?.url ?? activeRow?.body}
+                  {nowRef ? (
+                    <p className="mt-0.5 truncate text-[11px] text-faint font-mono" title={nowRef}>
+                      {nowRef}
                     </p>
                   ) : null}
                 </div>
@@ -3642,7 +3732,7 @@ export function ExtensionViewDialog({
               <MonitorPlay className="mb-2 size-8 text-faint" />
               <p className="text-xs text-soft">No wallpaper is active yet.</p>
               <p className="mt-1 max-w-sm text-[11px] text-faint">
-                Apply one from the Library tab and it will show up here.
+                Apply one from the Library tab or a collection and it will show up here.
               </p>
             </div>
           )

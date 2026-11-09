@@ -14,6 +14,7 @@ import {
 import {
   WallpaperLinkStore,
   addBundledWallpaperLink,
+  bundledCollectionFromSeed,
   bundledWallpaperLinksPath,
   bundledWallpaperLinksWithSource,
   collectionEntryId,
@@ -25,6 +26,7 @@ import {
   updateBundledWallpaperLink,
   validateCollectionFileRef,
   writeBundledCollections,
+  writeWallpaperLinksBundle,
 } from '../src/main/os/wallpaper-links.js'
 
 /** A DNS answer that points at a public address, except loopback, which resolves truthfully. */
@@ -180,6 +182,81 @@ describe('wallpaper links bundle parsing', () => {
     expect(bundle.collections![0]!.entries).toHaveLength(1)
     expect(bundle.collections![0]!.entries[0]!.ref).toBe('https://example.com/a.jpg')
     expect(bundle.collections![1]!.name).toBe('Empty')
+  })
+
+  it('carries collection credit, source links, and entry covers', () => {
+    const bundle = parseWallpaperLinksBundle({
+      schema: WALLPAPER_LINKS_SCHEMA,
+      name: 'Curated',
+      links: [],
+      collections: [
+        {
+          id: 'col-reanthort',
+          name: 'ReanThort',
+          description: '  Free  to use with credit. ',
+          sourceUrl: 'https://drive.google.com/drive/folders/abc',
+          curated: true,
+          entries: [
+            {
+              kind: 'link',
+              ref: 'https://lh3.googleusercontent.com/d/abc=w2560',
+              title: 'Angkor',
+              thumb: 'https://lh3.googleusercontent.com/d/abc=w480',
+            },
+          ],
+        },
+      ],
+    })
+    const collection = bundle.collections![0]!
+    expect(collection.description).toBe('Free to use with credit.')
+    expect(collection.sourceUrl).toBe('https://drive.google.com/drive/folders/abc')
+    expect(collection.curated).toBe(true)
+    expect(collection.entries[0]!.thumb).toBe('https://lh3.googleusercontent.com/d/abc=w480')
+  })
+
+  it('drops a broken source or cover without sinking its collection', () => {
+    const bundle = parseWallpaperLinksBundle({
+      schema: WALLPAPER_LINKS_SCHEMA,
+      name: 'Broken credit',
+      links: [],
+      collections: [
+        {
+          name: 'ReanThort',
+          sourceUrl: 'http://insecure.example.com/folder',
+          entries: [
+            { kind: 'link', ref: 'https://example.com/a.jpg', title: 'A', thumb: 'not a url' },
+          ],
+        },
+      ],
+    })
+    const collection = bundle.collections![0]!
+    expect(collection.name).toBe('ReanThort')
+    expect(collection.sourceUrl).toBeUndefined()
+    expect(collection.entries).toHaveLength(1)
+    expect(collection.entries[0]!.thumb).toBeUndefined()
+  })
+
+  it('maps a curated seed to the runtime collection with credit and covers', () => {
+    const collection = bundledCollectionFromSeed({
+      id: 'col-reanthort',
+      name: 'ReanThort',
+      description: 'Free to use with credit.',
+      sourceUrl: 'https://drive.google.com/drive/folders/abc',
+      curated: true,
+      entries: [
+        {
+          kind: 'link',
+          ref: 'https://lh3.googleusercontent.com/d/abc=w2560',
+          title: 'Angkor',
+          thumb: 'https://lh3.googleusercontent.com/d/abc=w480',
+        },
+      ],
+    })
+    expect(collection.source).toBe('bundle')
+    expect(collection.description).toBe('Free to use with credit.')
+    expect(collection.sourceUrl).toBe('https://drive.google.com/drive/folders/abc')
+    expect(collection.entries[0]!.thumbUrl).toBe('https://lh3.googleusercontent.com/d/abc=w480')
+    expect(collection.entries[0]!.addedAt).toBe(0)
   })
 })
 
@@ -496,6 +573,23 @@ describe('shipped ND wallpaper bundle', () => {
     }
   })
 
+  it('ships the ReanThort collection with covers and a source link', async () => {
+    const path = bundledWallpaperLinksPath({ appPath: fileURLToPath(new URL('..', import.meta.url)) })
+    const parsed = parseWallpaperLinksBundle(JSON.parse(await readFile(path, 'utf8')))
+    const collection = parsed.collections!.find((entry) => entry.name === 'ReanThort')
+    expect(collection).toBeTruthy()
+    expect(collection!.curated).toBe(true)
+    // The folder name is the credit; no extra blurb ships.
+    expect(collection!.description).toBeUndefined()
+    expect(collection!.sourceUrl).toBe('https://drive.google.com/drive/folders/143isOQT3M5atJ1gTymcGLSFxUR1Mm8DC')
+    expect(collection!.entries.length).toBeGreaterThan(0)
+    for (const entry of collection!.entries) {
+      expect(entry.kind).toBe('link')
+      expect(() => parseWallpaperLinkUrl(entry.ref)).not.toThrow()
+      expect(() => parseWallpaperLinkUrl(entry.thumb!)).not.toThrow()
+    }
+  })
+
   it('writes cache files only under the configured cache directory', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'nd-wallpaper-cache-'))
     try {
@@ -594,5 +688,46 @@ describe('ND bundle curation (dev-only edits)', () => {
     expect(roundTrip.collections![0]!.entries[0]!.ref).toBe('https://example.com/a.jpg')
     // Links survive the collection mirror untouched.
     expect(roundTrip.links).toHaveLength(1)
+  })
+
+  it('keeps curated collections, credit, and covers through the user mirror', async () => {
+    const curated = parseWallpaperLinksBundle({
+      schema: WALLPAPER_LINKS_SCHEMA,
+      name: 'Bundle',
+      links: [{ url: 'https://example.com/a.jpg', title: 'A' }],
+      collections: [
+        {
+          id: 'col-reanthort',
+          name: 'ReanThort',
+          description: 'Free to use with credit.',
+          sourceUrl: 'https://drive.google.com/drive/folders/abc',
+          curated: true,
+          entries: [
+            {
+              kind: 'link',
+              ref: 'https://example.com/a.jpg',
+              title: 'A',
+              thumb: 'https://example.com/a-small.jpg',
+            },
+          ],
+        },
+      ],
+    })
+    await writeWallpaperLinksBundle(file, curated)
+
+    const mirrored = await writeBundledCollections(file, [
+      { id: 'col-user', name: 'Nature', createdAt: 1, entries: [] },
+      // A personal copy of a curated name stays out of the document.
+      { id: 'col-user-2', name: 'ReanThort', createdAt: 2, entries: [] },
+    ])
+    expect(mirrored.collections!.map((collection) => collection.name)).toEqual(['ReanThort', 'Nature'])
+
+    const roundTrip = await readWallpaperLinksBundle(file)
+    const reanthort = roundTrip.collections!.find((collection) => collection.name === 'ReanThort')!
+    expect(reanthort.id).toBe('col-reanthort')
+    expect(reanthort.curated).toBe(true)
+    expect(reanthort.description).toBe('Free to use with credit.')
+    expect(reanthort.sourceUrl).toBe('https://drive.google.com/drive/folders/abc')
+    expect(reanthort.entries[0]!.thumb).toBe('https://example.com/a-small.jpg')
   })
 })

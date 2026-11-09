@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { ExtensionDetailRows, openExtensionProviderTab } from './ExtensionPackages'
+import { ExtensionDetailRows, CollectionCredit, openExtensionProviderTab } from './ExtensionPackages'
 import type { NdViewData } from '../../../shared/nd-invocations'
 
 const target = { extensionId: 'nd.translate', viewId: 'translator', context: { kind: 'personal' as const } }
@@ -157,5 +157,26 @@ describe('extension detail rows', () => {
     expect(html).not.toContain('Preview')
     expect(html).not.toContain('>Apply<')
     expect(html).not.toContain('rows')
+  })
+})
+
+describe('wallpaper collection credit', () => {
+  const base = { id: 'col-reanthort', name: 'ReanThort', createdAt: 0, entries: [] }
+
+  it('renders the credit line and the source action', () => {
+    const html = renderToStaticMarkup(createElement(CollectionCredit, {
+      collection: {
+        ...base,
+        description: 'Free to use with credit — wallpapers by ReanThort.',
+        sourceUrl: 'https://drive.google.com/drive/folders/abc',
+      },
+    }))
+    expect(html).toContain('Free to use with credit')
+    expect(html).toContain('Source')
+  })
+
+  it('renders nothing for a collection without credit or source', () => {
+    const html = renderToStaticMarkup(createElement(CollectionCredit, { collection: base }))
+    expect(html).toBe('')
   })
 })

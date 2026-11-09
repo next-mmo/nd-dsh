@@ -13,6 +13,7 @@ export const WALLPAPER_LINKS_MAX = 500
 export const WALLPAPER_LINK_TITLE_MAX = 200
 export const WALLPAPER_LINK_CATEGORY_MAX = 40
 export const COLLECTION_NAME_MAX = 80
+export const COLLECTION_DESCRIPTION_MAX = 300
 export const COLLECTIONS_MAX = 50
 export const COLLECTION_ENTRIES_MAX = 500
 
@@ -79,6 +80,10 @@ export interface WallpaperCollectionEntry {
   ref: string
   title: string
   addedAt: number
+  /** Small cover image for curated link entries, fetched before the full-size image. */
+  thumbUrl?: string
+  /** True when this entry's cached image is the current desktop wallpaper. */
+  active?: boolean
 }
 
 export interface WallpaperCollection {
@@ -88,6 +93,10 @@ export interface WallpaperCollection {
   entries: WallpaperCollectionEntry[]
   /** `bundle` collections ship in the ND bundle and are read-only. */
   source?: WallpaperLinkSource
+  /** Credit line shown with a curated collection. */
+  description?: string
+  /** Where a curated collection came from, e.g. the curator's source folder. */
+  sourceUrl?: string
 }
 
 /**
@@ -100,6 +109,10 @@ export interface WallpaperCollectionSeed {
   name: string
   createdAt?: number
   entries: WallpaperCollectionEntrySeed[]
+  description?: string
+  sourceUrl?: string
+  /** Curated collections survive the dev-only mirror of the user's own collections. */
+  curated?: boolean
 }
 
 /** Bundle collection entries are link-only; ids are filled in by the main process. */
@@ -108,6 +121,7 @@ export interface WallpaperCollectionEntrySeed {
   kind: WallpaperCollectionEntryKind
   ref: string
   title: string
+  thumb?: string
 }
 
 /** What a "save to collections" action adds; validated in the main process. */
@@ -198,6 +212,16 @@ export function parseWallpaperLinkUrl(raw: string): URL {
   return url
 }
 
+/** Optional URLs (covers, source links) are dropped rather than sinking their parent. */
+function parseOptionalHttpsUrl(raw: unknown): string | undefined {
+  if (typeof raw !== 'string' || !raw.trim()) return undefined
+  try {
+    return parseWallpaperLinkUrl(raw).toString()
+  } catch {
+    return undefined
+  }
+}
+
 /** Validate an imported or bundled links document; returns the usable seeds. */
 export function parseWallpaperLinksBundle(raw: unknown): WallpaperLinksBundle {
   if (!raw || typeof raw !== 'object') throw new Error('Not a wallpaper links file')
@@ -281,17 +305,26 @@ function parseBundleCollections(raw: unknown): WallpaperCollectionSeed[] {
       }
       if (seenRefs.has(ref)) continue
       seenRefs.add(ref)
+      const thumb = parseOptionalHttpsUrl(candidate.thumb)
       entries.push({
         ...(typeof candidate.id === 'string' && candidate.id.trim() ? { id: candidate.id.trim().slice(0, 64) } : {}),
         kind: 'link',
         ref,
         title: typeof candidate.title === 'string' && candidate.title.trim() ? candidate.title.trim().slice(0, WALLPAPER_LINK_TITLE_MAX) : new URL(ref).hostname,
+        ...(thumb ? { thumb } : {}),
       })
     }
+    const description = typeof item.description === 'string' && item.description.trim()
+      ? item.description.replace(/\s+/g, ' ').trim().slice(0, COLLECTION_DESCRIPTION_MAX)
+      : undefined
+    const sourceUrl = parseOptionalHttpsUrl(item.sourceUrl)
     collections.push({
       ...(typeof item.id === 'string' && item.id.trim() ? { id: item.id.trim().slice(0, 64) } : {}),
       name: collectionName,
       ...(typeof item.createdAt === 'number' && Number.isFinite(item.createdAt) ? { createdAt: item.createdAt } : {}),
+      ...(description ? { description } : {}),
+      ...(sourceUrl ? { sourceUrl } : {}),
+      ...(item.curated === true ? { curated: true } : {}),
       entries,
     })
   }
