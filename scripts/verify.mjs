@@ -185,7 +185,7 @@ for (const needle of ['/api/respond', '/api/events.mux', '/api/events.host', "ty
 }
 
 const rendererHtml = await fs.readFile(join(root, 'src/renderer/index.html'), 'utf8')
-for (const directive of ["default-src 'self'", "script-src 'self'", "connect-src 'self'"]) {
+for (const directive of ["default-src 'self'", "script-src 'self'", "connect-src 'self'", "media-src 'self' data:"]) {
   if (!rendererHtml.includes(directive)) errors.push(`renderer CSP is missing ${directive}`)
 }
 const rendererMain = await fs.readFile(join(root, 'src/renderer/src/main.tsx'), 'utf8')
