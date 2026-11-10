@@ -680,6 +680,11 @@ const desktopApi: DesktopApi = {
     onBrowserFocus: () => () => undefined,
     onSkillCompose: () => () => undefined,
   },
+  live: {
+    open: async () => {
+      throw new Error('Live Teacher sessions require the desktop ND Router runtime.')
+    },
+  },
   home: {
     state: async () => previewHomeState(),
     createNote: async () => previewHomeState(),

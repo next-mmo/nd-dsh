@@ -1,8 +1,8 @@
 use crate::RouterServer;
 use crate::state::{RouterOptions, RouterState};
 use crate::types::{
-    ComboEntry, CreateAgyApprovalInput, SaveAccountInput, SaveComboInput, SaveProviderInput,
-    SetAgyEnabledInput, SetAgyPolicyInput, WebBridgeConfig,
+    ComboEntry, CreateAgyApprovalInput, CreateLiveTicketInput, LiveToolSpec, SaveAccountInput,
+    SaveComboInput, SaveProviderInput, SetAgyEnabledInput, SetAgyPolicyInput, WebBridgeConfig,
 };
 use axum::http::StatusCode;
 use axum::routing::post;
@@ -2184,4 +2184,355 @@ async fn synthesizes_audio_via_edge_tts_and_lists_voices() {
         .unwrap_or_default();
     assert!(content.contains("data:audio/mpeg;base64,"));
     assert!(content.contains("en-US-JennyNeural"));
+}
+
+#[test]
+fn live_catalog_and_ticket_validation_fail_closed() {
+    assert_eq!(
+        crate::catalog::normalize_kind("gemini-ai-studio").expect("gemini-ai-studio"),
+        crate::catalog::KIND_AI_STUDIO
+    );
+    assert!(crate::catalog::supports_live(
+        crate::catalog::KIND_AI_STUDIO
+    ));
+    assert!(!crate::catalog::supports_live(
+        crate::catalog::KIND_ANTIGRAVITY
+    ));
+    assert!(!crate::catalog::supports_live(
+        crate::catalog::KIND_GEMINI_WEB
+    ));
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let state = RouterState::new(temp.path().to_path_buf()).expect("state");
+
+    // 1. Fails when no AI Studio provider exists
+    let err = state
+        .create_live_ticket(CreateLiveTicketInput {
+            model: None,
+            provider_id: None,
+            system_instruction: Some("Teach SQL".to_owned()),
+            voice: None,
+            language: None,
+            tools: vec![],
+        })
+        .expect_err("no ai-studio");
+    assert!(err.message.contains("Google AI Studio"));
+
+    // 2. Add AI Studio without key -> still fails
+    state
+        .save_provider(SaveProviderInput {
+            id: Some("ai-studio-1".to_owned()),
+            kind: Some("gemini-ai-studio".to_owned()),
+            name: Some("Gemini AI Studio".to_owned()),
+            base_url: None,
+            models: None,
+            is_active: Some(true),
+            priority: Some(10),
+            api_key: None,
+            clear_secret: false,
+        })
+        .expect("save without key");
+    let err_no_key = state
+        .create_live_ticket(CreateLiveTicketInput {
+            model: None,
+            provider_id: None,
+            system_instruction: None,
+            voice: None,
+            language: None,
+            tools: vec![],
+        })
+        .expect_err("no key");
+    assert!(err_no_key.message.contains("API key"));
+
+    // 3. Add key -> ticket succeeds; snapshot shows liveCapable
+    state
+        .save_provider(SaveProviderInput {
+            id: Some("ai-studio-1".to_owned()),
+            kind: Some("ai-studio".to_owned()),
+            name: Some("Gemini AI Studio".to_owned()),
+            base_url: None,
+            models: None,
+            is_active: Some(true),
+            priority: Some(10),
+            api_key: Some("AIzaTestLiveKeyPlaceholder".to_owned()),
+            clear_secret: false,
+        })
+        .expect("save with key");
+    let snap = state.snapshot();
+    let provider_view = snap["providers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["id"] == "ai-studio-1")
+        .expect("ai-studio provider view");
+    assert_eq!(provider_view["liveCapable"], true);
+    assert!(
+        snap["liveModels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m == "gemini-3.8-live")
+    );
+
+    // 4. Rejects non-live models and invalid tool names
+    assert!(
+        state
+            .create_live_ticket(CreateLiveTicketInput {
+                model: Some("gpt-4o".to_owned()),
+                provider_id: None,
+                system_instruction: None,
+                voice: None,
+                language: None,
+                tools: vec![],
+            })
+            .is_err()
+    );
+    assert!(
+        state
+            .create_live_ticket(CreateLiveTicketInput {
+                model: Some("gemini-3.8-live".to_owned()),
+                provider_id: None,
+                system_instruction: None,
+                voice: None,
+                language: None,
+                tools: vec![LiveToolSpec {
+                    name: "BadToolName!".to_owned(),
+                    description: "bad".to_owned(),
+                    parameters: json!({"type": "object"}),
+                }],
+            })
+            .is_err()
+    );
+
+    // 5. Rejects when Safe Mode is on
+    state.set_safe_mode(true);
+    let safe_err = state
+        .create_live_ticket(CreateLiveTicketInput {
+            model: None,
+            provider_id: None,
+            system_instruction: None,
+            voice: None,
+            language: None,
+            tools: vec![],
+        })
+        .expect_err("safe mode blocks");
+    assert_eq!(safe_err.status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn live_websocket_relay_enforces_single_use_allowlist_concurrency_and_safe_mode() {
+    use axum::extract::ws::{Message as WsMsg, WebSocketUpgrade};
+    use axum::http::HeaderMap;
+    use axum::routing::get;
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::connect_async;
+    use tokio_tungstenite::tungstenite::Message as TMsg;
+
+    let seen_upstream: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let seen_key: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let seen_upstream_clone = Arc::clone(&seen_upstream);
+    let seen_key_clone = Arc::clone(&seen_key);
+
+    let mock_app = Router::new().route(
+        "/live",
+        get(move |headers: HeaderMap, ws: WebSocketUpgrade| {
+            let frames = Arc::clone(&seen_upstream_clone);
+            let key_slot = Arc::clone(&seen_key_clone);
+            async move {
+                *key_slot.lock().unwrap() = headers
+                    .get("x-goog-api-key")
+                    .and_then(|v| v.to_str().ok())
+                    .map(ToOwned::to_owned);
+                ws.on_upgrade(move |mut socket| async move {
+                    // Expect setup frame first, reply setupComplete, echo clientContent
+                    if let Some(Ok(WsMsg::Text(setup))) = socket.next().await {
+                        frames.lock().unwrap().push(setup);
+                        let _ = socket
+                            .send(WsMsg::Text(json!({ "setupComplete": {} }).to_string()))
+                            .await;
+                    }
+                    while let Some(Ok(msg)) = socket.next().await {
+                        if let WsMsg::Text(txt) = msg {
+                            frames.lock().unwrap().push(txt.clone());
+                            let _ = socket
+                                .send(WsMsg::Text(
+                                    json!({
+                                        "serverContent": {
+                                            "outputTranscription": { "text": "Try NOT NULL first." },
+                                            "turnComplete": true
+                                        },
+                                        "usageMetadata": {
+                                            "promptTokenCount": 12,
+                                            "responseTokenCount": 8
+                                        }
+                                    })
+                                    .to_string(),
+                                ))
+                                .await;
+                        }
+                    }
+                })
+            }
+        }),
+    );
+
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("bind mock live upstream");
+    let upstream_addr = listener.local_addr().expect("upstream addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, mock_app).await;
+    });
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let state = RouterState::new(temp.path().to_path_buf()).expect("state");
+    state.set_live_upstream_for_test(format!("ws://{upstream_addr}/live"));
+    state
+        .save_provider(SaveProviderInput {
+            id: Some("ai-studio-live".to_owned()),
+            kind: Some("gemini-ai-studio".to_owned()),
+            name: Some("Google AI Studio".to_owned()),
+            base_url: None,
+            models: Some(vec![
+                "gemini-2.5-flash".to_owned(),
+                "gemini-3.8-live".to_owned(),
+            ]),
+            is_active: Some(true),
+            priority: Some(10),
+            api_key: Some("AIzaLiveSecretTestOnly".to_owned()),
+            clear_secret: false,
+        })
+        .expect("save ai-studio");
+
+    // Verify probe_live_connection when testing gemini-3.8-live model
+    let probe = crate::live::probe_live_connection(
+        &format!("ws://{upstream_addr}/live"),
+        "AIzaLiveSecretTestOnly",
+        "gemini-3.8-live",
+    )
+    .await
+    .expect("live probe ok");
+    assert!(probe.1.contains("Live API OK"));
+    seen_upstream.lock().unwrap().clear();
+
+    // Start router HTTP/WS server on the test runtime
+    let router_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("bind router listener");
+    let port = router_listener.local_addr().expect("router addr").port();
+    let app = crate::http::app(Arc::clone(&state));
+    let router_task = tokio::spawn(async move {
+        let _ = axum::serve(router_listener, app).await;
+    });
+
+    let ticket_json = state
+        .create_live_ticket(CreateLiveTicketInput {
+            model: Some("gemini-3.8-live".to_owned()),
+            provider_id: None,
+            system_instruction: Some("Be Socratic.".to_owned()),
+            voice: Some("Aoede".to_owned()),
+            language: Some("en".to_owned()),
+            tools: vec![LiveToolSpec {
+                name: "show_hint".to_owned(),
+                description: "Reveal hint 1-3".to_owned(),
+                parameters: json!({"type": "object"}),
+            }],
+        })
+        .expect("create ticket");
+    let ticket = ticket_json["ticket"].as_str().unwrap().to_owned();
+
+    // Connect client WebSocket
+    let ws_url = format!("ws://127.0.0.1:{port}/v1/live?ticket={ticket}");
+    let (mut client_ws, _) = connect_async(&ws_url).await.expect("connect live ws");
+
+    // First message must be setupComplete from mock upstream
+    let first = client_ws
+        .next()
+        .await
+        .expect("setupComplete frame")
+        .unwrap();
+    assert!(first.to_text().unwrap().contains("setupComplete"));
+
+    // Second connection using the SAME single-use ticket must be rejected (401)
+    let reuse_res = connect_async(&ws_url).await;
+    assert!(reuse_res.is_err(), "single-use ticket must reject reuse");
+
+    // Second ticket while session #1 is active must return 409 Conflict
+    let ticket2 = state
+        .create_live_ticket(CreateLiveTicketInput {
+            model: None,
+            provider_id: None,
+            system_instruction: None,
+            voice: None,
+            language: None,
+            tools: vec![],
+        })
+        .expect("ticket 2")["ticket"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let busy_res = connect_async(format!("ws://127.0.0.1:{port}/v1/live?ticket={ticket2}")).await;
+    assert!(
+        busy_res.is_err(),
+        "concurrent live session must be capped at 1"
+    );
+
+    // Attempt forbidden `setup` override from client -> dropped by allowlist
+    client_ws
+        .send(TMsg::Text(
+            json!({ "setup": { "model": "models/evil" } }).to_string(),
+        ))
+        .await
+        .unwrap();
+    // Send valid clientContent
+    client_ws
+        .send(TMsg::Text(
+            json!({
+                "clientContent": {
+                    "turns": [{ "role": "user", "parts": [{ "text": "Why use NOT NULL?" }] }],
+                    "turnComplete": true
+                }
+            })
+            .to_string(),
+        ))
+        .await
+        .unwrap();
+
+    let reply = client_ws.next().await.expect("reply frame").unwrap();
+    assert!(reply.to_text().unwrap().contains("Try NOT NULL first."));
+
+    // Verify upstream received server-authored setup + API key + clientContent, NOT evil setup
+    assert_eq!(
+        seen_key.lock().unwrap().as_deref(),
+        Some("AIzaLiveSecretTestOnly")
+    );
+    {
+        let frames = seen_upstream.lock().unwrap();
+        assert_eq!(frames.len(), 2);
+        assert!(frames[0].contains("models/gemini-3.8-live"));
+        assert!(frames[0].contains("Be Socratic."));
+        assert!(frames[0].contains("show_hint"));
+        assert!(!frames[1].contains("evil"));
+        assert!(frames[1].contains("Why use NOT NULL?"));
+    }
+
+    // Toggling Safe Mode on immediately closes the active live socket
+    state.set_safe_mode(true);
+    let closed = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        while let Some(item) = client_ws.next().await {
+            if matches!(item, Ok(TMsg::Close(_)) | Err(_)) {
+                return true;
+            }
+        }
+        true
+    })
+    .await
+    .expect("safe mode should close live session promptly");
+    assert!(closed);
+
+    // Wait briefly for Drop to flush usage entry
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let usage = state.usage_summary();
+    assert_eq!(usage["requests"], 1);
+    router_task.abort();
 }

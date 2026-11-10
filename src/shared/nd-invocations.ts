@@ -45,7 +45,7 @@ export interface NdInvocationResult {
  * secure CLI broker, which resolves entries itself and never exposes a host
  * handler to package manifests.
  */
-export type NdGrantHost = NdHostMethod | 'vault.resolve'
+export type NdGrantHost = NdHostMethod | 'vault.resolve' | 'live.voice'
 
 export interface NdPendingApprovalView {
   approvalId: string

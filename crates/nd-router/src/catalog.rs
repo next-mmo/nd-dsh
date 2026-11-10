@@ -40,9 +40,8 @@ pub fn normalize_kind(value: &str) -> Result<String, String> {
     let normalized = value.trim().to_ascii_lowercase();
     match normalized.as_str() {
         "" | "custom" | "openai" | "openai-compatible" => Ok(KIND_OPENAI.to_owned()),
-        "ai-studio" | "aistudio" | "google-ai-studio" | "google-aistudio" => {
-            Ok(KIND_AI_STUDIO.to_owned())
-        }
+        "ai-studio" | "aistudio" | "google-ai-studio" | "google-aistudio" | "gemini-ai-studio"
+        | "gemini-aistudio" => Ok(KIND_AI_STUDIO.to_owned()),
         "aistudio-web" | "ai-studio-web" | "google-ai-studio-web" => {
             Ok(KIND_AI_STUDIO_WEB.to_owned())
         }
@@ -145,6 +144,10 @@ pub fn is_cli_kind(kind: &str) -> bool {
 
 pub fn is_tts_kind(kind: &str) -> bool {
     matches!(kind, KIND_EDGE_TTS)
+}
+
+pub fn supports_live(kind: &str) -> bool {
+    kind == KIND_AI_STUDIO
 }
 
 pub fn provider_category(kind: &str) -> &'static str {

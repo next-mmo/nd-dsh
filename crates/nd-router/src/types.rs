@@ -155,6 +155,22 @@ impl RouterError {
         }
     }
 
+    pub fn forbidden(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::FORBIDDEN,
+            code: "forbidden",
+            message: message.into(),
+        }
+    }
+
+    pub fn conflict(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::CONFLICT,
+            code: "conflict",
+            message: message.into(),
+        }
+    }
+
     pub fn not_found(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::NOT_FOUND,
@@ -236,6 +252,7 @@ pub struct ProviderView {
     pub is_active: bool,
     pub priority: i32,
     pub has_secret: bool,
+    pub live_capable: bool,
     pub accounts: Vec<AccountView>,
 }
 
@@ -271,6 +288,7 @@ impl ProviderView {
                     .accounts
                     .iter()
                     .any(|account| account.secret_ref.is_some()),
+            live_capable: crate::catalog::supports_live(&record.kind),
             accounts: record.accounts.iter().map(AccountView::of).collect(),
         }
     }
@@ -499,4 +517,30 @@ pub struct AgyOutcome {
     pub message: Option<String>,
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveToolSpec {
+    pub name: String,
+    pub description: String,
+    #[serde(default)]
+    pub parameters: Value,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateLiveTicketInput {
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub provider_id: Option<String>,
+    #[serde(default)]
+    pub system_instruction: Option<String>,
+    #[serde(default)]
+    pub voice: Option<String>,
+    #[serde(default)]
+    pub language: Option<String>,
+    #[serde(default)]
+    pub tools: Vec<LiveToolSpec>,
 }

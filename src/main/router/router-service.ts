@@ -21,12 +21,22 @@ import {
   type RouterTestResult,
   type RouterUsageSummary,
 } from '../../shared/router.js'
+import type { LiveOpenResult, LiveToolDeclaration } from '../../shared/live-session.js'
 import type { CoreClient } from '../core/core-client.js'
 import type { ProviderStore } from '../providers.js'
 import { NINE_ROUTER_EXTERNAL_PROVIDER_ID } from '../../shared/nine-router.js'
 import { RouterExternalKeyStore } from './external-key-store.js'
 import { RouterSafeModeStore } from './router-safe-mode-store.js'
 import type { WebLaneBridgeDescriptor } from './web-lane-bridge.js'
+
+interface CoreLiveTicketResult {
+  ticket: string
+  model: string
+  expiresAtMs: number
+  providerId: string
+  providerName: string
+  port: number
+}
 
 interface InitializeResult {
   endpoint: string
@@ -262,6 +272,25 @@ export class RouterService {
 
   agyUsage(): Promise<RouterAgyUsageSummary> {
     return this.coreRequest<RouterAgyUsageSummary>('router.agyUsage', {})
+  }
+
+  async createLiveTicket(input: {
+    model?: string
+    providerId?: string
+    systemInstruction?: string
+    voice?: string
+    language?: string
+    tools?: LiveToolDeclaration[]
+  }): Promise<LiveOpenResult> {
+    const result = await this.coreRequest<CoreLiveTicketResult>('router.createLiveTicket', input, 10_000)
+    return {
+      wsUrl: `ws://127.0.0.1:${result.port}/v1/live`,
+      ticket: result.ticket,
+      model: result.model,
+      expiresAtMs: result.expiresAtMs,
+      providerId: result.providerId,
+      providerName: result.providerName,
+    }
   }
 
   private agyApprovalHeader(): string | undefined {

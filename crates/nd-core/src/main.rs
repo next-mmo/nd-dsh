@@ -2,8 +2,8 @@ use anyhow::{Context, Result};
 use nd_protocol::errors::{self, CODE_INVALID_PARAMS, CODE_METHOD_FAILED, CODE_RUNTIME_BUSY};
 use nd_protocol::{PROTOCOL_VERSION, ProtocolWriter, read_request};
 use nd_router::types::{
-    AccountIdInput, ComboIdInput, CreateAgyApprovalInput, ProviderIdInput, SaveAccountInput,
-    SaveComboInput, SaveProviderInput, SetAgyEnabledInput, SetAgyPolicyInput,
+    AccountIdInput, ComboIdInput, CreateAgyApprovalInput, CreateLiveTicketInput, ProviderIdInput,
+    SaveAccountInput, SaveComboInput, SaveProviderInput, SetAgyEnabledInput, SetAgyPolicyInput,
 };
 use nd_runtime::api_http;
 use nd_runtime::artifacts;
@@ -842,6 +842,21 @@ fn dispatch(
             Ok(router_state(&state)?.create_agy_approval(input)?)
         }
         "router.agyUsage" => Ok(router_state(&state)?.agy_usage_summary()),
+        "router.createLiveTicket" => {
+            let input = from_params::<CreateLiveTicketInput>(params)?;
+            let port = state
+                .router
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .as_ref()
+                .map(|server| server.port)
+                .ok_or_else(|| errors::coded(CODE_METHOD_FAILED, "ND Router is not initialized"))?;
+            let mut result = router_state(&state)?.create_live_ticket(input)?;
+            if let Some(object) = result.as_object_mut() {
+                object.insert("port".to_owned(), json!(port));
+            }
+            Ok(result)
+        }
         other => Err(errors::coded(
             CODE_METHOD_FAILED,
             format!("unknown nd-core method: {other}"),

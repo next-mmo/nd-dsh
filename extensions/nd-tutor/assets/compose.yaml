@@ -1,0 +1,19 @@
+# Disposable local lab ONLY. Do not expose these credentials publicly.
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: todo_learning
+      POSTGRES_USER: todo_student
+      POSTGRES_PASSWORD: local-dev-only
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - todo_learning_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U todo_student -d todo_learning"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+volumes:
+  todo_learning_pgdata:

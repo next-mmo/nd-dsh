@@ -17,6 +17,7 @@ pub fn app(state: Arc<RouterState>) -> Router {
         .route("/v1/audio/speech", post(speech))
         .route("/v1/chat/completions", post(chat))
         .route("/v1/responses", post(responses))
+        .route("/v1/live", get(crate::live::upgrade))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .with_state(state)
 }

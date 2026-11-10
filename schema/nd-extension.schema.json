@@ -103,7 +103,12 @@
           "emulator.read",
           "emulator.write",
           "ostoolkit.read",
-          "ostoolkit.write"
+          "ostoolkit.write",
+          "tutor.read",
+          "tutor.write",
+          "live.voice",
+          "phoneaudio.read",
+          "phoneaudio.write"
         ]
       }
     },
@@ -628,7 +633,16 @@
         "ostoolkit.backends.probe",
         "ostoolkit.schedule.get",
         "ostoolkit.schedule.save",
-        "ostoolkit.theme.apply"
+        "ostoolkit.theme.apply",
+        "tutor.progress.get",
+        "tutor.progress.save",
+        "tutor.progress.reset",
+        "phoneaudio.status.get",
+        "phoneaudio.session.start",
+        "phoneaudio.session.stop",
+        "phoneaudio.client.disconnect",
+        "phoneaudio.token.rotate",
+        "phoneaudio.options.set"
       ]
     }
   }

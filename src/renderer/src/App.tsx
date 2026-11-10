@@ -60,6 +60,7 @@ import type {
   NdInvocationResult,
 } from '../../shared/nd-invocations'
 import { pickSelfElement } from './lib/self-element-picker'
+import { PhoneAudioRendererHost } from './lib/phone-audio-host'
 import {
   capabilitySubTabFromLocation,
   enginesSubTabFromLocation,
@@ -291,6 +292,14 @@ export default function App() {
   const [captureOverlay, setCaptureOverlay] = useState<{ active: boolean; mode: CaptureOverlayMode } | null>(null)
   const [floatDropdownOpen, setFloatDropdownOpen] = useState(false)
   const [quickLauncherOpen, setQuickLauncherOpen] = useState(false)
+  useEffect(() => {
+    if (isFloatOverlay || uiPreview) return
+    const api = window.ndDsh?.phoneAudio
+    if (!api) return
+    const host = new PhoneAudioRendererHost(api)
+    host.startListening()
+    return () => host.dispose()
+  }, [isFloatOverlay, uiPreview])
   // Keep-alive header: while a modal dialog is open, the titlebar stays live
   // above the overlay so company/project/navigation controls keep working.
   // The quick launcher is a spotlight surface that must keep its normal

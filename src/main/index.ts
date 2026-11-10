@@ -1,5 +1,5 @@
 import 'dotenv/config'
-import { app, BrowserWindow, crashReporter, dialog, Menu, protocol, screen, type MenuItemConstructorOptions } from 'electron'
+import { app, BrowserWindow, crashReporter, desktopCapturer, dialog, Menu, protocol, screen, type MenuItemConstructorOptions } from 'electron'
 import { createServer } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
 import process from 'node:process'
@@ -384,10 +384,16 @@ async function createWindow(cdpPort: number): Promise<void> {
     } catch { return undefined }
   }
 
-  // Desktop capture for the embedded emulator mirror: the main renderer streams
-  // the off-screen scrcpy window into the sandboxed extension frame via the
-  // legacy chromeMediaSource constraints. Only ND's own windows may capture
-  // video; every other media or capture request stays denied. Comparing against
+  const phoneAudioCaptureGate: {
+    current?: {
+      isCaptureArmed(): boolean
+      requestedLoopbackAudioMode(): 'loopback' | 'loopbackWithMute'
+    }
+  } = {}
+
+  // Desktop capture for the embedded emulator mirror & Phone Audio loopback:
+  // only ND's own windows may capture media, and display capture stays denied
+  // unless Phone Audio explicitly armed a session in main. Comparing against
   // the requesting webContents' own URL keeps the check meaningful for the
   // file:// renderer in production (origin "null") as well as the dev server.
   {
@@ -418,12 +424,45 @@ async function createWindow(cdpPort: number): Promise<void> {
         callback(false)
         return
       }
-      const wantsVideo = ('mediaTypes' in details ? details.mediaTypes : undefined)?.includes('video') ?? false
-      if (!wantsVideo) {
+      const mediaTypes = ('mediaTypes' in details ? details.mediaTypes : undefined) ?? []
+      if (!mediaTypes.includes('video') && !mediaTypes.includes('audio')) {
         callback(false)
         return
       }
       callback(originOf(webContents.getURL()) === originOf(details.requestingUrl))
+    })
+
+    appSession.setDisplayMediaRequestHandler(async (request, callback) => {
+      const gate = phoneAudioCaptureGate.current
+      const frame = request.frame
+      const isMainFrame = Boolean(
+        frame
+        && !window.isDestroyed()
+        && !window.webContents.isDestroyed()
+        && frame === window.webContents.mainFrame,
+      )
+      if (!isMainFrame || !gate?.isCaptureArmed()) {
+        callback({})
+        return
+      }
+      try {
+        const sources = await desktopCapturer.getSources({
+          types: ['screen'],
+          thumbnailSize: { width: 1, height: 1 },
+        })
+        const primary = screen.getPrimaryDisplay()
+        const source = sources.find((item) => item.display_id === String(primary.id)) ?? sources[0]
+        if (!source) {
+          callback({})
+          return
+        }
+        callback({
+          video: source,
+          audio: gate.requestedLoopbackAudioMode(),
+        })
+      } catch {
+        callback({})
+      }
     })
   }
 
@@ -679,7 +718,7 @@ async function createWindow(cdpPort: number): Promise<void> {
   // `CARGO_PKG_VERSION` and cannot tell a fresh build from a stale one.
   const coreOsTheme = createCoreOsTheme(core)
   let currentActiveSessionId: string | undefined
-  const disposeIpc = registerIpc({ window, preloadPath: preload, launcherPopup, shortcuts: shortcutRegistry, browser, browserPlatform, mediaDownloadSpawn, stopProcess: stopCoreManagedChildProcess, dshSurface, engines, engineRouter, nativeToolBroker: nativeBroker, ownsWorktree: (cwd) => taskWorktrees?.ownsRoot(cwd) === true, harness, superagentPrototype, projectWorkspace, workspaces, theme, providers, externalElements, recentPicks, git, corePackageSnapshot: createCorePackageSnapshot(core), coreGit: coreGit.exec.bind(coreGit), coreMedia, coreClipboard, coreMediaKeys, coreSystemVolume, coreVault, coreApiHttp, coreOsTheme, coreDisk: createCoreDiskScan(core), coreComputer: createCoreComputer(core), qa, sessionArchive, usageLedger, capabilities, organizationStore, nineRouterManaged, onSessionSelected: (id) => { currentActiveSessionId = id } })
+  const disposeIpc = registerIpc({ window, preloadPath: preload, launcherPopup, shortcuts: shortcutRegistry, browser, browserPlatform, mediaDownloadSpawn, stopProcess: stopCoreManagedChildProcess, dshSurface, engines, engineRouter, nativeToolBroker: nativeBroker, ownsWorktree: (cwd) => taskWorktrees?.ownsRoot(cwd) === true, harness, superagentPrototype, projectWorkspace, workspaces, theme, providers, externalElements, recentPicks, git, corePackageSnapshot: createCorePackageSnapshot(core), coreGit: coreGit.exec.bind(coreGit), coreMedia, coreClipboard, coreMediaKeys, coreSystemVolume, coreVault, coreApiHttp, coreOsTheme, coreDisk: createCoreDiskScan(core), coreComputer: createCoreComputer(core), phoneAudioCaptureGate, qa, sessionArchive, usageLedger, capabilities, organizationStore, nineRouterManaged, routerService, onSessionSelected: (id) => { currentActiveSessionId = id } })
   if (nativeAgent.ready() && nativeAgent.hasPersistedSessions()) {
     void nativeAgent.start().catch((error) => {
       console.warn('ND Agent private runtime could not initialize:', error instanceof Error ? error.message : String(error))

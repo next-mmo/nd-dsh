@@ -159,6 +159,8 @@ export const ROUTER_FREE_API_BASE_URLS: Record<string, string> = {
 
 export const ROUTER_AI_STUDIO_MODELS: string[] = [
   'gemini-2.5-flash',
+  'gemini-3.8-live',
+  'gemini-3.8-live-extended-thinking',
   'gemini-2.5-pro',
   'gemini-2.0-flash',
   'gemini-2.0-pro',
@@ -240,6 +242,7 @@ export interface RouterProviderView {
   isActive: boolean
   priority: number
   hasSecret: boolean
+  liveCapable?: boolean
   accounts: RouterAccountView[]
 }
 
@@ -274,6 +277,8 @@ export interface RouterState {
   counters: RouterCounters
   /** Experimental network lockdown; absent only from older sidecar builds. */
   safeMode?: boolean
+  /** Realtime Live API model ids supported by ND Router. */
+  liveModels?: string[]
 }
 
 export interface RouterUsageSummary {

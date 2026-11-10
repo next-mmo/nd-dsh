@@ -282,6 +282,8 @@ fn default_models(kind: &str) -> Vec<String> {
     match kind {
         catalog::KIND_AI_STUDIO => vec![
             "gemini-2.5-flash".to_owned(),
+            "gemini-3.8-live".to_owned(),
+            "gemini-3.8-live-extended-thinking".to_owned(),
             "gemini-2.5-pro".to_owned(),
             "gemini-2.0-flash".to_owned(),
             "gemini-2.0-pro".to_owned(),

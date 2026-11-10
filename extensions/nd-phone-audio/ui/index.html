@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'none'; script-src nd-extension-ui:; style-src nd-extension-ui: 'unsafe-inline'; img-src nd-extension-ui: data: blob:; font-src nd-extension-ui:; connect-src 'none'; base-uri 'none'; form-action 'none'" />
+  <title>Phone Audio</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b0c0f;
+      --panel: #161922;
+      --panel-2: #1d212d;
+      --border: rgba(255, 255, 255, 0.08);
+      --border-strong: rgba(255, 255, 255, 0.16);
+      --text: #e7e9ee;
+      --faint: #9aa3b2;
+      --accent: #0a84ff;
+      --ok: #30d158;
+      --warn: #ff9f0a;
+      --bad: #ff453a;
+    }
+    :root[data-theme='light'] {
+      color-scheme: light;
+      --bg: #eef0f4;
+      --panel: #ffffff;
+      --panel-2: #f4f6fa;
+      --border: rgba(30, 30, 35, 0.09);
+      --border-strong: rgba(30, 30, 35, 0.18);
+      --text: #1d1d1f;
+      --faint: #6e6e73;
+      --accent: #007aff;
+      --ok: #15803d;
+      --warn: #b45309;
+      --bad: #dc2626;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      padding: 14px 16px 20px;
+      background: var(--bg);
+      color: var(--text);
+      font: 13px/1.45 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .title-group h1 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 650;
+      letter-spacing: -0.015em;
+    }
+    .title-group p {
+      margin: 2px 0 0;
+      font-size: 12px;
+      color: var(--faint);
+    }
+    .controls-top {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      font-size: 11.5px;
+      font-weight: 600;
+      color: var(--faint);
+    }
+    .pill .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+    .pill.accent { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+    .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+    .pill.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+    .pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
+
+    button, select {
+      font: inherit;
+      color: var(--text);
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 12px;
+      cursor: pointer;
+    }
+    button:hover:not(:disabled), select:hover:not(:disabled) {
+      border-color: var(--border-strong);
+    }
+    button:disabled, select:disabled {
+      opacity: 0.45;
+      cursor: default;
+    }
+    button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+      font-weight: 600;
+    }
+    button.danger {
+      color: var(--bad);
+      border-color: color-mix(in srgb, var(--bad) 35%, transparent);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    @media (max-width: 720px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+
+    section.card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      padding: 13px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .card-title {
+      margin: 0;
+      font-size: 11px;
+      font-weight: 650;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--faint);
+    }
+    .qr-wrap {
+      display: flex;
+      gap: 14px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .qr-box {
+      width: 148px;
+      height: 148px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #ffffff;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      flex: none;
+    }
+    .qr-box img {
+      width: 144px;
+      height: 144px;
+      display: block;
+    }
+    .qr-placeholder {
+      font-size: 11px;
+      color: #475569;
+      text-align: center;
+      padding: 10px;
+    }
+    .url-box {
+      font-family: ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, monospace;
+      font-size: 11.5px;
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 7px 9px;
+      word-break: break-all;
+      user-select: all;
+    }
+    .kv-list {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 5px 12px;
+      font-size: 12px;
+    }
+    .kv-k { color: var(--faint); }
+    .kv-v { font-weight: 550; overflow-wrap: anywhere; }
+    .pin-badge {
+      display: inline-block;
+      font-family: ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, monospace;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      padding: 2px 8px;
+      border-radius: 6px;
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+    }
+    .meter-track {
+      height: 10px;
+      border-radius: 999px;
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      overflow: hidden;
+    }
+    .meter-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--accent), var(--ok));
+      transition: width 75ms linear;
+    }
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .check {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .check input { accent-color: var(--accent); width: 14px; height: 14px; }
+    .device-list {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    .device-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 6px 9px;
+      border-radius: 8px;
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      font-size: 12px;
+    }
+    .note { font-size: 11.5px; color: var(--faint); }
+    .banner {
+      border-radius: 9px;
+      padding: 8px 11px;
+      font-size: 12px;
+      border: 1px solid var(--border);
+      background: var(--panel-2);
+    }
+    .banner.warn {
+      color: var(--warn);
+      border-color: color-mix(in srgb, var(--warn) 40%, transparent);
+    }
+    .banner.bad {
+      color: var(--bad);
+      border-color: color-mix(in srgb, var(--bad) 40%, transparent);
+    }
+    details.card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      padding: 11px 14px;
+    }
+    details summary {
+      cursor: pointer;
+      font-size: 12.5px;
+      font-weight: 600;
+    }
+    details ul {
+      margin: 8px 0 0;
+      padding-left: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      font-size: 12px;
+      color: var(--faint);
+    }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="title-group">
+      <h1>Phone Audio</h1>
+      <p>Use your Android phone as a low-latency local speaker over Wi-Fi or USB tethering.</p>
+    </div>
+    <div class="controls-top">
+      <span id="state-pill" class="pill"><span class="dot"></span><span id="state-label">Stopped</span></span>
+      <button id="toggle-btn" class="primary" type="button">Start Streaming</button>
+    </div>
+  </header>
+
+  <div id="error-banner" class="banner bad" hidden></div>
+  <div id="warning-banner" class="banner warn" hidden></div>
+
+  <div class="grid">
+    <section class="card">
+      <h2 class="card-title">Android Pairing (Wi-Fi / USB)</h2>
+      <div class="row">
+        <label class="note" for="iface-select">Network interface:</label>
+        <select id="iface-select" style="flex:1;min-width:180px;"></select>
+      </div>
+      <div class="qr-wrap">
+        <div class="qr-box">
+          <img id="qr-img" alt="QR code to open Phone Audio receiver on Android" hidden />
+          <div id="qr-placeholder" class="qr-placeholder">Start streaming to generate QR code</div>
+        </div>
+        <div style="flex:1;min-width:170px;display:flex;flex-direction:column;gap:8px;">
+          <div class="kv-list">
+            <span class="kv-k">Local IP &amp; Port</span>
+            <span id="ip-port" class="kv-v">—</span>
+            <span class="kv-k">Pairing Code</span>
+            <span class="kv-v"><span id="pairing-code" class="pin-badge">------</span></span>
+          </div>
+          <div id="conn-url" class="url-box">Start streaming to reveal local URL</div>
+          <div class="row">
+            <button id="copy-url-btn" type="button" disabled>Copy URL</button>
+            <button id="rotate-btn" type="button" disabled>New Code</button>
+          </div>
+        </div>
+      </div>
+      <div id="firewall-note" class="note"></div>
+    </section>
+
+    <section class="card">
+      <h2 class="card-title">Connected Android Device</h2>
+      <div id="client-empty" class="note">
+        No Android receiver connected yet. Open the URL or scan the QR code in Android Chrome and tap <strong>Connect &amp; Play Audio</strong>.
+      </div>
+      <div id="client-details" hidden style="display:flex;flex-direction:column;gap:10px;">
+        <div class="kv-list">
+          <span class="kv-k">Device</span>
+          <span id="client-ua" class="kv-v">—</span>
+          <span class="kv-k">Transport</span>
+          <span id="client-transport" class="kv-v">—</span>
+          <span class="kv-k">Address</span>
+          <span id="client-ip" class="kv-v">—</span>
+          <span class="kv-k">Playback</span>
+          <span id="client-playback" class="kv-v">—</span>
+          <span class="kv-k">Measured Latency</span>
+          <span id="client-latency" class="kv-v">—</span>
+          <span class="kv-k">Codec &amp; Rate</span>
+          <span id="client-codec" class="kv-v">—</span>
+        </div>
+        <div class="row">
+          <button id="disconnect-btn" class="danger" type="button">Disconnect Receiver</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2 class="card-title">System Audio Capture &amp; Activity</h2>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div class="row" style="justify-content:space-between;">
+          <span class="note">Live PC Audio Meter</span>
+          <span id="meter-text" class="note">0%</span>
+        </div>
+        <div class="meter-track"><div id="meter-fill" class="meter-fill"></div></div>
+      </div>
+      <div class="kv-list">
+        <span class="kv-k">Capture Status</span>
+        <span id="capture-status" class="kv-v">Inactive</span>
+        <span class="kv-k">Stream Format</span>
+        <span id="capture-format" class="kv-v">—</span>
+      </div>
+      <div class="row">
+        <label class="note" for="capture-mode-select">Capture Source:</label>
+        <select id="capture-mode-select" style="flex:1;">
+          <option value="loopback">Windows System Audio Loopback (Recommended)</option>
+          <option value="device">Virtual Audio Device Fallback (e.g. VB-CABLE)</option>
+        </select>
+      </div>
+      <div id="fallback-device-row" class="row" hidden>
+        <label class="note" for="input-device-select">Virtual Input:</label>
+        <select id="input-device-select" style="flex:1;"></select>
+      </div>
+      <label class="check">
+        <input id="mute-pc-checkbox" type="checkbox" />
+        <span>Mute PC speakers while streaming (loopbackWithMute — prevents room echo)</span>
+      </label>
+    </section>
+
+    <section class="card">
+      <h2 class="card-title">Windows Output Devices</h2>
+      <div class="kv-list">
+        <span class="kv-k">Master Output Volume</span>
+        <span id="sys-volume" class="kv-v">Checking…</span>
+      </div>
+      <ul id="output-device-list" class="device-list"></ul>
+      <div class="row">
+        <button id="refresh-btn" type="button">Refresh Devices &amp; Network</button>
+      </div>
+    </section>
+  </div>
+
+  <details class="card">
+    <summary>Troubleshooting &amp; Setup Tips (Wi-Fi, USB Tethering, Firewall, Audio Devices)</summary>
+    <ul>
+      <li><strong>Wi-Fi Mode:</strong> Ensure your Windows PC and Android phone are on the same local Wi-Fi/LAN subnet, then scan the QR code and tap <em>Connect &amp; Play Audio</em> in Android Chrome.</li>
+      <li><strong>USB Tethering Mode (No Wi-Fi needed):</strong> Connect Android via a USB data cable, turn on <em>USB tethering</em> in Android Network settings, wait a moment or click <em>Refresh Devices &amp; Network</em>, and select the <code>USB Tethering</code> interface.</li>
+      <li><strong>Windows Firewall:</strong> If Android hangs while loading the URL over Wi-Fi, allow <code>ND-DSH</code> (or Electron) on <strong>Private</strong> networks in Windows Defender Firewall, or use USB tethering.</li>
+      <li><strong>Silent audio or missing playback device:</strong> Verify an active Windows output (such as <code>Speakers (Realtek(R) Audio)</code> or <code>U27N3R (Intel(R) Display Audio)</code>) is enabled and playing audio. On drivers that silence WASAPI loopback when hardware-muted, unmute Windows and use the <em>Mute PC speakers while streaming</em> option instead.</li>
+      <li><strong>VB-CABLE Optional Fallback:</strong> If a specific audio driver blocks Windows loopback, install VB-Audio Virtual Cable, set Windows output to <em>CABLE Input</em>, and choose <em>Virtual Audio Device Fallback</em> → <em>CABLE Output</em>.</li>
+    </ul>
+  </details>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

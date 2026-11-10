@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
+  <title>ND Tutor</title>
+  <link rel="stylesheet" href="tutor.css" />
+</head>
+<body>
+  <!-- Header -->
+  <header class="app-header">
+    <div class="header-left">
+      <div class="brand-badge">
+        <span class="brand-icon">🎓</span>
+        <span>ND Tutor</span>
+      </div>
+      <div class="course-select-wrap">
+        <select id="course-select" class="course-select">
+          <option value="springboot-db-tutor" selected>Spring Boot &amp; PostgreSQL DB Lab (28 Days)</option>
+          <option value="nextjs-fullstack-db" disabled>Next.js &amp; Distributed DB (Coming Soon)</option>
+          <option value="go-sqlite-microservices" disabled>Go &amp; SQLite Microservices (Coming Soon)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="header-stats">
+      <div class="stat-pill">
+        <span>Completed:</span>
+        <strong id="stat-completed">0 / 28</strong>
+      </div>
+      <div class="progress-bar-wrap" title="Curriculum Progress">
+        <div id="stat-progress-fill" class="progress-bar-fill" style="width: 0%;"></div>
+      </div>
+      <div class="stat-pill">
+        <span>Mastery Avg:</span>
+        <strong id="stat-avg-score">—</strong>
+      </div>
+      <div class="stat-pill">
+        <button id="btn-reviews" class="btn btn-sm btn-accent-subtle">
+          <span>Due Reviews:</span>
+          <strong id="stat-due-count">0</strong>
+        </button>
+      </div>
+    </div>
+
+    <div class="header-actions">
+      <button id="btn-lang-toggle" class="btn btn-sm" title="Toggle English / Khmer language">
+        🌐 <span id="lang-label">ខ្មែរ (KM)</span>
+      </button>
+      <button id="btn-sandbox" class="btn btn-sm" title="View isolated Docker Compose lab">
+        🐳 Docker Lab
+      </button>
+      <button id="btn-quick-ref" class="btn btn-sm" title="PostgreSQL &amp; Spring Quick Reference">
+        📖 Reference
+      </button>
+      <button id="btn-journal" class="btn btn-sm" title="View Learning Journal">
+        📝 Journal
+      </button>
+    </div>
+  </header>
+
+  <!-- Body -->
+  <div class="app-body">
+    <!-- Sidebar: Curriculum Navigation -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <span class="sidebar-title">Curriculum (28 Days)</span>
+        <div class="filter-group">
+          <button class="filter-btn active" data-filter="all">All</button>
+          <button class="filter-btn" data-filter="in_progress">Active</button>
+          <button class="filter-btn" data-filter="completed">Done</button>
+        </div>
+      </div>
+      <div id="curriculum-list" class="curriculum-list">
+        <!-- Week and lesson items dynamically rendered -->
+      </div>
+    </aside>
+
+    <!-- Main Workspace -->
+    <main class="main-workspace">
+      <!-- Lesson Top Banner -->
+      <section class="lesson-banner">
+        <div class="banner-top">
+          <div class="banner-title-area">
+            <span id="banner-day-tag" class="banner-day-tag">Day 1</span>
+            <h1 id="banner-title" class="banner-title">What makes a database row valid?</h1>
+          </div>
+          <div class="banner-actions">
+            <button id="btn-live-toggle" class="btn btn-primary" title="Open Live Voice &amp; Text Teacher (Gemini 3.8 Live)">
+              🎙 Live Teacher
+            </button>
+            <button id="btn-ask-coach" class="btn" title="Launch an interactive coaching session in ND Chat">
+              🤖 Ask ND AI Coach
+            </button>
+            <button id="btn-copy-prompt" class="btn" title="Copy lesson prompt to clipboard">
+              📋 Copy Prompt
+            </button>
+          </div>
+        </div>
+
+        <div class="lesson-agenda">
+          <span class="agenda-pill">⏱ 3m Recall &amp; Review</span>
+          <span class="agenda-pill">💡 7m Concept</span>
+          <span class="agenda-pill">🛠 15m Hands-on Task</span>
+          <span class="agenda-pill">🔍 3m Verify</span>
+          <span class="agenda-pill">📓 2m Journal</span>
+        </div>
+
+        <div id="objective-box" class="objective-box">
+          <!-- Populated dynamically -->
+        </div>
+      </section>
+
+      <!-- Diagnostic Card -->
+      <section class="card">
+        <div class="card-header">
+          <span class="card-title">❓ Diagnostic Question (Reason Before Coding)</span>
+        </div>
+        <div id="diagnostic-text" class="card-body">
+          <!-- Populated dynamically -->
+        </div>
+      </section>
+
+      <!-- Hands-on Exercise Card -->
+      <section class="card">
+        <div class="card-header">
+          <span class="card-title">🎯 Hands-on Exercise (Write Your SQL / Schema)</span>
+          <span id="lesson-prereq" class="stat-pill"></span>
+        </div>
+        <div id="exercise-text" class="card-body">
+          <!-- Populated dynamically -->
+        </div>
+      </section>
+
+      <!-- Real World Failure Trap Callout -->
+      <div class="trap-callout">
+        <div class="trap-icon">⚠️</div>
+        <div class="trap-body">
+          <strong>Production Failure Case:</strong>
+          <span id="trap-text"></span>
+        </div>
+      </div>
+
+      <!-- Scratchpad & Submission -->
+      <section class="card">
+        <div class="card-header">
+          <span class="card-title">✍️ Your SQL &amp; Reasoning Scratchpad</span>
+          <span class="stat-pill" id="scratchpad-status">Saved</span>
+        </div>
+        <div class="scratchpad-wrap">
+          <textarea id="scratchpad" class="scratchpad-textarea" placeholder="Write your SQL, schema design, or answers here... (auto-saved)"></textarea>
+          
+          <div class="submission-controls">
+            <div class="score-input-group">
+              <label for="score-input">Score (0–100):</label>
+              <input type="number" id="score-input" class="score-input" min="0" max="100" placeholder="—" />
+              <select id="status-select" class="course-select">
+                <option value="in_progress">In Progress</option>
+                <option value="completed">Completed (Mastery >= 70)</option>
+                <option value="needs_retry">Needs Retry (< 70)</option>
+              </select>
+            </div>
+            <div>
+              <button id="btn-save-progress" class="btn btn-primary">
+                💾 Save &amp; Record Progress
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Escalating Hints & Solutions -->
+      <section class="card">
+        <div class="card-header">
+          <span class="card-title">💡 Escalating Hints &amp; Worked Solution</span>
+          <span class="stat-pill">Try on your own before revealing</span>
+        </div>
+        <div class="hints-container">
+          <div class="hint-step">
+            <div class="hint-header" data-hint="1">
+              <span>Hint 1 — Direction &amp; Concept</span>
+              <span>▼</span>
+            </div>
+            <div id="hint-1-content" class="hint-content"></div>
+          </div>
+
+          <div class="hint-step">
+            <div class="hint-header" data-hint="2">
+              <span>Hint 2 — SQL Structure &amp; Clauses</span>
+              <span>▼</span>
+            </div>
+            <div id="hint-2-content" class="hint-content"></div>
+          </div>
+
+          <div class="hint-step">
+            <div class="hint-header" data-hint="3">
+              <span>Hint 3 — Near-Complete Syntax</span>
+              <span>▼</span>
+            </div>
+            <div id="hint-3-content" class="hint-content"></div>
+          </div>
+
+          <div class="hint-step">
+            <div class="hint-header" data-hint="solution">
+              <span style="color: var(--accent);">Worked Reference Solution</span>
+              <span>▼</span>
+            </div>
+            <div id="solution-content" class="hint-content">
+              <pre><code id="solution-code"></code></pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Retrieval Practice Questions for Tomorrow -->
+      <section class="card">
+        <div class="card-header">
+          <span class="card-title">🧠 Spaced Retrieval Questions (Check for Tomorrow)</span>
+        </div>
+        <div id="retrieval-container" class="card-body">
+          <!-- Populated dynamically -->
+        </div>
+      </section>
+    </main>
+
+    <!-- Live Teacher Right Dock -->
+    <aside id="live-dock" class="live-dock" aria-label="Live Teacher">
+      <div class="live-dock-header">
+        <div class="live-dock-title-wrap">
+          <span class="live-dot" id="live-dot"></span>
+          <div>
+            <div class="live-dock-title">Live Teacher</div>
+            <div class="live-dock-sub" id="live-model-label">gemini-3.8-live</div>
+          </div>
+        </div>
+        <div class="live-dock-header-right">
+          <span id="live-status-pill" class="live-status-pill">Ready</span>
+          <button id="btn-live-close" class="modal-close" title="Hide Live Teacher panel">✕</button>
+        </div>
+      </div>
+
+      <div class="live-controls">
+        <button id="btn-live-call" class="btn btn-primary btn-sm">🎙 Start Live Call</button>
+        <button id="btn-live-mute" class="btn btn-sm" disabled>🔇 Mute</button>
+        <select id="live-model-select" class="course-select live-model-select" title="Choose Live model">
+          <option value="" selected>Default (3.8 Live)</option>
+          <option value="gemini-3.8-live">3.8 Live (Fast)</option>
+          <option value="gemini-3.8-live-extended-thinking">3.8 Live Thinking</option>
+        </select>
+      </div>
+
+      <div class="live-meter-row">
+        <span class="live-meter-label">Mic</span>
+        <div class="live-meter-track">
+          <div id="live-meter-fill" class="live-meter-fill"></div>
+        </div>
+      </div>
+
+      <div id="live-error-box" class="live-error-box" hidden></div>
+
+      <div id="live-transcript" class="live-transcript" role="log" aria-live="polite">
+        <div class="live-empty">
+          Start a live call to talk through today's PostgreSQL &amp; Spring Boot lesson in real time, or type SQL questions below.
+        </div>
+      </div>
+
+      <div class="live-composer">
+        <div class="live-composer-actions">
+          <button id="btn-live-share-answer" class="btn btn-sm btn-accent-subtle" disabled title="Send your current scratchpad answer to the Live Teacher">
+            📤 Share My Answer
+          </button>
+        </div>
+        <div class="live-input-row">
+          <input id="live-text-input" type="text" class="live-text-input" placeholder="Type SQL or a question during call..." disabled />
+          <button id="btn-live-send" class="btn btn-primary btn-sm" disabled>Send</button>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- Docker Lab Modal -->
+  <div id="modal-sandbox" class="modal-overlay">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h2 class="modal-title">🐳 Isolated Docker Compose Lab</h2>
+        <button class="modal-close" data-close="modal-sandbox">✕</button>
+      </div>
+      <div class="modal-body">
+        <p>This isolated PostgreSQL 17 lab binds <strong>strictly to loopback port 5433</strong> so it never conflicts with local instances or touches production data.</p>
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <strong>assets/compose.yaml</strong>
+          <button id="btn-copy-compose" class="btn btn-sm">📋 Copy Compose</button>
+        </div>
+        <pre><code id="sandbox-compose-code"></code></pre>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px;">
+          <strong>assets/sql/seed_day01.sql</strong>
+          <button id="btn-copy-seed" class="btn btn-sm">📋 Copy Seed SQL</button>
+        </div>
+        <pre><code id="sandbox-seed-code"></code></pre>
+        <p style="font-size: 11px; color: var(--text-muted);">
+          To start the container: <code>docker compose -f assets/compose.yaml up -d</code><br/>
+          Connection URL: <code>jdbc:postgresql://localhost:5433/todo_learning</code> (user: <code>todo_student</code>, pass: <code>local-dev-only</code>)
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" data-close="modal-sandbox">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Quick Reference Modal -->
+  <div id="modal-quick-ref" class="modal-overlay">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h2 class="modal-title">📖 PostgreSQL &amp; Spring Data Quick Reference</h2>
+        <button class="modal-close" data-close="modal-quick-ref">✕</button>
+      </div>
+      <div class="modal-body" id="quick-ref-body">
+        <!-- Rendered dynamically -->
+      </div>
+      <div class="modal-footer">
+        <button class="btn" data-close="modal-quick-ref">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Due Reviews Modal -->
+  <div id="modal-reviews" class="modal-overlay">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h2 class="modal-title">⏱ Spaced Retrieval Practice Queue</h2>
+        <button class="modal-close" data-close="modal-reviews">✕</button>
+      </div>
+      <div class="modal-body">
+        <p style="color: var(--text-muted); font-size: 12px;">
+          Reinforce concepts from earlier lessons. Practice answering without looking at your notes.
+        </p>
+        <div id="reviews-list-container" style="display: flex; flex-direction: column; gap: 10px;">
+          <!-- Dynamically populated -->
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" data-close="modal-reviews">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Journal Modal -->
+  <div id="modal-journal" class="modal-overlay">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h2 class="modal-title">📝 Learning Journal</h2>
+        <button class="modal-close" data-close="modal-journal">✕</button>
+      </div>
+      <div class="modal-body">
+        <div style="display: flex; gap: 8px;">
+          <input type="text" id="manual-journal-input" class="scratchpad-textarea" style="height: 36px; padding: 6px 10px;" placeholder="Add a quick note or reflection..." />
+          <button id="btn-add-journal" class="btn btn-primary">Add Entry</button>
+        </div>
+        <div id="journal-list-container" style="display: flex; flex-direction: column; gap: 8px; margin-top: 10px;">
+          <!-- Dynamically populated -->
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" data-close="modal-journal">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script type="module" src="tutor.js"></script>
+</body>
+</html>

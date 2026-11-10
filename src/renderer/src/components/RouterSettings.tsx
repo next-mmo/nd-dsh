@@ -995,7 +995,7 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
                   <option value="kilo-gateway">Kilo Gateway (Aggregator · No Key)</option>
                 </optgroup>
                 <optgroup label="Custom API (API Key Required)">
-                  <option value="ai-studio">Google AI Studio (Gemini 2.5 / 2.0 / 1.5)</option>
+                  <option value="ai-studio">Google AI Studio (Gemini 3.8 Live / 2.5 / 2.0)</option>
                   <option value="openai-compatible">OpenAI-compatible</option>
                 </optgroup>
                 <optgroup label="CLI (Command Line Tools)">
@@ -1038,7 +1038,7 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
                     : isRouterWebProviderKind(providerKind)
                     ? 'Web chat lane: uses the embedded browser session; no key is stored.'
                     : providerKind === 'ai-studio'
-                      ? 'API lane: Google AI Studio Gemini models via official OpenAI-compatible endpoint.'
+                      ? 'API & Live lane: Google AI Studio Gemini models including realtime Live voice (gemini-3.8-live).'
                       : providerKind === 'antigravity' || providerKind === 'qoder'
                         ? 'CLI lane: uses local command-line tools and OS credentials.'
                         : 'API lane: OpenAI-compatible endpoint with optional API key.'}
@@ -1082,7 +1082,7 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
               <label className="text-[11px] font-semibold text-foreground">Models</label>
               <Input
                 aria-label="Provider models"
-                placeholder={providerKind === 'ai-studio' ? 'Models, e.g. gemini-2.5-flash, gemini-2.5-pro, gemini-2.0-flash' : providerKind === 'antigravity' ? 'Models, e.g. gemini-3.8-flash-medium, claude-sonnet-5-5-medium (from `agy models`)' : providerKind === 'qoder' ? 'Models, e.g. auto, lite, performance (from `qoder --list-models`)' : isRouterWebProviderKind(providerKind) ? `Modes, e.g. ${ROUTER_WEB_LANE_MODELS[providerKind].join(', ')}` : 'Models (comma separated, optional)'}
+                placeholder={providerKind === 'ai-studio' ? 'Models, e.g. gemini-2.5-flash, gemini-3.8-live, gemini-2.5-pro' : providerKind === 'antigravity' ? 'Models, e.g. gemini-3.8-flash-medium, claude-sonnet-5-5-medium (from `agy models`)' : providerKind === 'qoder' ? 'Models, e.g. auto, lite, performance (from `qoder --list-models`)' : isRouterWebProviderKind(providerKind) ? `Modes, e.g. ${ROUTER_WEB_LANE_MODELS[providerKind].join(', ')}` : 'Models (comma separated, optional)'}
                 value={providerModels}
                 disabled={disabled || draftPing.testing}
                 onChange={(event) => {
@@ -1121,7 +1121,7 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
                 >
                   Google AI Studio (aistudio.google.com/app/apikey)
                 </button>
-                <span>· OpenAI-compatible endpoint with Gemini 2.5 / 2.0 / 1.5</span>
+                <span>· Supports Gemini 3.8 Live (voice) + OpenAI-compatible chat</span>
               </div>
             ) : null}
 
@@ -1275,6 +1275,7 @@ function ProviderRow({
               {kindLabel(provider.kind) !== provider.name ? <StatusChip neutral>{kindLabel(provider.kind)}</StatusChip> : null}
               <StatusChip neutral>{categoryBadge(provider.kind).category}</StatusChip>
               <StatusChip good={categoryBadge(provider.kind).auth === 'none'}>{categoryBadge(provider.kind).authLabel}</StatusChip>
+              {(provider.liveCapable || provider.kind === 'ai-studio') ? <StatusChip good>Live</StatusChip> : null}
               {provider.hasSecret ? <StatusChip good>Key saved</StatusChip> : null}
             </span>
             <span className={rowPathText}>

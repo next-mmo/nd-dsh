@@ -50,6 +50,8 @@ import { registerNdExtensionIpc } from './extensions/nd-ipc.js'
 import { SUPERAGENT_PROTOTYPE_IPC } from '../shared/superagent-prototype.js'
 import type { SuperagentPrototypeService } from './prototypes/superagent-service.js'
 import type { NineRouterManagedRuntime } from './router/nine-router-managed.js'
+import type { RouterService } from './router/router-service.js'
+import { registerLiveIpc } from './live/live-ipc.js'
 import { HomeStore } from './home/home-store.js'
 import type { GitService } from './git/git-service.js'
 import type { GitExecRunner } from './git/git-cli.js'
@@ -137,11 +139,19 @@ interface IpcDependencies {
   coreApiHttp?: CoreApiHttp
   /** nd-core-backed Windows theme read/write for OS Toolkit. */
   coreOsTheme?: CoreOsTheme
+  /** Capture gate wired to the main session's display media request handler. */
+  phoneAudioCaptureGate?: {
+    current?: {
+      isCaptureArmed(): boolean
+      requestedLoopbackAudioMode(): 'loopback' | 'loopbackWithMute'
+    }
+  }
   qa: QaService
   sessionArchive: SessionArchiveStore
   /** ND's durable token accounting, captured from the runtime event stream. */
   usageLedger: UsageLedger
   nineRouterManaged?: NineRouterManagedRuntime
+  routerService?: RouterService
   /** Organization state and mutations: ND extension notes and org policy checks run against the same store the UI uses. */
   organizationStore: {
     state(): Promise<OrganizationSnapshot>
@@ -379,9 +389,21 @@ export function registerIpc(deps: IpcDependencies): () => void {
     ...(deps.coreComputer ? { coreComputer: deps.coreComputer } : {}),
     ...(deps.coreApiHttp ? { coreApiHttp: deps.coreApiHttp } : {}),
     ...(deps.coreOsTheme ? { coreOsTheme: deps.coreOsTheme } : {}),
+    ...(deps.coreSystemVolume ? { coreSystemVolume: deps.coreSystemVolume } : {}),
+    ...(deps.phoneAudioCaptureGate ? { phoneAudioCaptureGate: deps.phoneAudioCaptureGate } : {}),
     ...(deps.nineRouterManaged ? { nineRouterManaged: deps.nineRouterManaged } : {}),
     onHomeChanged: () => { void syncHomeSessions() },
   })
+  const disposeLiveIpc = deps.routerService
+    ? registerLiveIpc({
+        window: deps.window,
+        packages: packageStore,
+        state: invocationState,
+        broker: invocationBroker,
+        router: deps.routerService,
+        organizationPolicy: deps.organizationStore.policy,
+      })
+    : () => undefined
   // Personal chats run outside the active workspace but must stay listed in the
   // sidebar; keep the harness's visibility set in step with ND Home records.
   const homeSessionIds = new Set<string>()
@@ -1134,6 +1156,7 @@ export function registerIpc(deps: IpcDependencies): () => void {
     extensionStore.setOnChanged(undefined)
     disposeExtensionIpc()
     disposeNdExtensionIpc()
+    disposeLiveIpc()
     workflowPluginStore.setOnChanged(undefined)
     disposeWorkflowIpc()
     for (const channel of channels) ipcMain.removeHandler(channel)

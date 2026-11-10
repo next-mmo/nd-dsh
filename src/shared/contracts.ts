@@ -765,6 +765,10 @@ export interface DesktopApi {
   browserChromePopupSurface?: import('./browser-chrome-popup.js').BrowserChromePopupSurfaceApi
   /** ND extension packages: contexts, activation, grants, commands, typed views. */
   ndExtensions: import('./nd-invocations.js').NdExtensionsDesktopApi
+  /** Realtime voice/text live session ticket issuer via ND Router. */
+  live?: import('./live-session.js').LiveDesktopApi
+  /** Local PC-to-Android WebRTC audio streaming bridge for ND Phone Audio. */
+  phoneAudio?: import('./phone-audio.js').PhoneAudioDesktopApi
   /** ND Home personal storage: notes, captures, and context-bound chats. */
   home: import('./nd-invocations.js').NdHomeDesktopApi
   browser: {

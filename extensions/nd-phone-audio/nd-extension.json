@@ -1,0 +1,109 @@
+{
+  "protocol": "nd.extension/1",
+  "id": "nd.phone-audio",
+  "name": "Phone Audio",
+  "description": "Stream Windows 11 system playback audio (YouTube, games, music, browsers) to your Android phone over local Wi-Fi or USB tethering using low-latency WebRTC. No Android APK or cloud server required.",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "contexts": [
+    "personal"
+  ],
+  "permissions": [
+    "phoneaudio.read",
+    "phoneaudio.write",
+    "clipboard.write"
+  ],
+  "category": "system",
+  "settings": [],
+  "contributions": {
+    "tools": [],
+    "skills": [],
+    "commands": [
+      {
+        "id": "open-phone-audio",
+        "title": "Phone Audio",
+        "description": "Stream PC playback audio to your Android phone over Wi-Fi or USB tethering.",
+        "keywords": [
+          "phone audio",
+          "audio",
+          "speaker",
+          "android",
+          "stream",
+          "webrtc",
+          "usb",
+          "wifi",
+          "loopback"
+        ],
+        "host": "phoneaudio.status.get",
+        "openViewId": "main",
+        "contexts": [
+          "personal"
+        ]
+      },
+      {
+        "id": "stop-phone-audio",
+        "title": "Stop Phone Audio",
+        "description": "Stop streaming PC audio and close the local signaling server.",
+        "keywords": [
+          "stop phone audio",
+          "stop audio stream",
+          "disconnect phone"
+        ],
+        "host": "phoneaudio.session.stop",
+        "contexts": [
+          "personal"
+        ]
+      }
+    ],
+    "views": [
+      {
+        "id": "main",
+        "title": "Phone Audio",
+        "description": "Stream Windows system audio to an Android phone browser.",
+        "kind": "web",
+        "entry": "ui/index.html",
+        "contexts": [
+          "personal"
+        ],
+        "actions": [
+          {
+            "id": "status",
+            "title": "Read Phone Audio streaming status",
+            "host": "phoneaudio.status.get"
+          },
+          {
+            "id": "start",
+            "title": "Start streaming PC audio to Android",
+            "host": "phoneaudio.session.start"
+          },
+          {
+            "id": "stop",
+            "title": "Stop streaming PC audio",
+            "host": "phoneaudio.session.stop"
+          },
+          {
+            "id": "disconnect",
+            "title": "Disconnect the active Android receiver",
+            "host": "phoneaudio.client.disconnect"
+          },
+          {
+            "id": "rotate-token",
+            "title": "Generate a new pairing code and QR token",
+            "host": "phoneaudio.token.rotate"
+          },
+          {
+            "id": "set-options",
+            "title": "Update capture mode or network interface",
+            "host": "phoneaudio.options.set"
+          },
+          {
+            "id": "copy-url",
+            "title": "Copy the connection URL to the clipboard",
+            "host": "clipboard.write"
+          }
+        ]
+      }
+    ],
+    "workflows": []
+  }
+}

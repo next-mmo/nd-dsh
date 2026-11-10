@@ -362,4 +362,39 @@ describe('RouterService', () => {
     expect(state.combos.length).toBe(1)
     expect(calls).toEqual(['router.state', 'router.initialize', 'router.state'])
   })
+
+  it('creates a loopback live websocket ticket via nd-core', async () => {
+    const localCore = {
+      request: vi.fn(async (method: string, params?: unknown) => {
+        if (method === 'router.createLiveTicket') {
+          expect(params).toMatchObject({
+            model: 'gemini-3.8-live',
+            systemInstruction: 'Coach Socratic SQL',
+          })
+          return {
+            ticket: 'ndlive_abc123',
+            model: 'gemini-3.8-live',
+            expiresAtMs: 1234567890,
+            providerId: 'ai-studio-1',
+            providerName: 'Google AI Studio',
+            port: 3139,
+          }
+        }
+        return { ok: true }
+      }),
+    }
+    const localService = new RouterService(localCore as never, providers as never, dir, () => undefined)
+    const ticket = await localService.createLiveTicket({
+      model: 'gemini-3.8-live',
+      systemInstruction: 'Coach Socratic SQL',
+    })
+    expect(ticket).toEqual({
+      wsUrl: 'ws://127.0.0.1:3139/v1/live',
+      ticket: 'ndlive_abc123',
+      model: 'gemini-3.8-live',
+      expiresAtMs: 1234567890,
+      providerId: 'ai-studio-1',
+      providerName: 'Google AI Studio',
+    })
+  })
 })

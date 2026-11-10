@@ -433,7 +433,7 @@ function KeepAliveFrame({ view, docked, theme, onError }: {
       }} hidden />
       {createPortal(
         <SurfaceErrorBoundary label={view.data.title} resetKey={view.key} onError={onError}>
-          <ExtensionWebView data={view.data} theme={theme} onError={onError} />
+          <ExtensionWebView data={view.data} theme={theme} docked={docked} onError={onError} />
         </SurfaceErrorBoundary>,
         container,
       )}

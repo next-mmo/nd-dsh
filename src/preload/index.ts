@@ -46,6 +46,16 @@ import {
   type NdBrowserFocusEvent,
 } from '../shared/nd-invocations.js'
 import { USAGE_IPC, type UsageDesktopApi, type UsageScope, type UsageSummary } from '../shared/usage.js'
+import { LIVE_IPC, type LiveDesktopApi, type LiveOpenInput, type LiveOpenResult } from '../shared/live-session.js'
+import {
+  PHONE_AUDIO_IPC,
+  type PhoneAudioCommand,
+  type PhoneAudioDesktopApi,
+  type PhoneAudioRendererReport,
+  type PhoneAudioSignalFromRenderer,
+  type PhoneAudioSignalToRenderer,
+  type PhoneAudioSnapshot,
+} from '../shared/phone-audio.js'
 import type { LauncherKeepaliveView, LauncherLiveState } from '../shared/launcher-live.js'
 import { SUPERAGENT_PROTOTYPE_IPC, type SuperagentPrototypeDesktopApi } from '../shared/superagent-prototype.js'
 import {
@@ -127,6 +137,33 @@ const ndExtensionsApi: NdExtensionsDesktopApi = {
     const handler = (_event: Electron.IpcRendererEvent, request: import('../shared/skill-compose.js').SkillComposeRequest) => listener(request)
     ipcRenderer.on(ND_EXTENSIONS_IPC.skillComposeEvent, handler)
     return () => ipcRenderer.removeListener(ND_EXTENSIONS_IPC.skillComposeEvent, handler)
+  },
+}
+
+const liveApi: LiveDesktopApi = {
+  open: (input: LiveOpenInput) => ipcRenderer.invoke(LIVE_IPC.open, input) as Promise<LiveOpenResult>,
+}
+
+const phoneAudioApi: PhoneAudioDesktopApi = {
+  state: () => ipcRenderer.invoke(PHONE_AUDIO_IPC.state) as Promise<PhoneAudioSnapshot>,
+  sendSignal: (signal: PhoneAudioSignalFromRenderer) =>
+    ipcRenderer.invoke(PHONE_AUDIO_IPC.signal, signal) as Promise<void>,
+  reportRenderer: (report: PhoneAudioRendererReport) =>
+    ipcRenderer.invoke(PHONE_AUDIO_IPC.reportRenderer, report) as Promise<void>,
+  onState: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, snapshot: PhoneAudioSnapshot) => listener(snapshot)
+    ipcRenderer.on(PHONE_AUDIO_IPC.stateEvent, handler)
+    return () => ipcRenderer.removeListener(PHONE_AUDIO_IPC.stateEvent, handler)
+  },
+  onCommand: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, command: PhoneAudioCommand) => listener(command)
+    ipcRenderer.on(PHONE_AUDIO_IPC.commandEvent, handler)
+    return () => ipcRenderer.removeListener(PHONE_AUDIO_IPC.commandEvent, handler)
+  },
+  onSignal: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, signal: PhoneAudioSignalToRenderer) => listener(signal)
+    ipcRenderer.on(PHONE_AUDIO_IPC.signalEvent, handler)
+    return () => ipcRenderer.removeListener(PHONE_AUDIO_IPC.signalEvent, handler)
   },
 }
 
@@ -414,6 +451,8 @@ const api: DesktopApi = {
     },
   },
   ndExtensions: ndExtensionsApi,
+  live: liveApi,
+  phoneAudio: phoneAudioApi,
   home: homeApi,
   browser: {
     state: () => ipcRenderer.invoke(IPC.browserState),

@@ -1,0 +1,109 @@
+{
+  "protocol": "nd.extension/1",
+  "id": "nd.tutor",
+  "name": "ND Tutor",
+  "description": "Interactive developer coaching and data engineering laboratory. Master Spring Boot and PostgreSQL with a 28-day structured curriculum, hands-on tasks, review queues, and AI coach integration.",
+  "version": "1.1.0",
+  "apiVersion": 1,
+  "contexts": [
+    "personal"
+  ],
+  "permissions": [
+    "tutor.read",
+    "tutor.write",
+    "clipboard.write",
+    "chat.compose",
+    "live.voice"
+  ],
+  "settings": [
+    {
+      "key": "liveModel",
+      "title": "Live Teacher Model",
+      "type": "string",
+      "default": "gemini-3.8-live",
+      "description": "Gemini Live model for Live Teacher (gemini-3.8-live or gemini-3.8-live-extended-thinking)."
+    },
+    {
+      "key": "liveVoice",
+      "title": "Live Teacher Voice",
+      "type": "string",
+      "default": "Aoede",
+      "description": "Prebuilt voice for Live Teacher (Aoede, Charon, Fenrir, Kore, Puck, Umbriel)."
+    }
+  ],
+  "contributions": {
+    "commands": [
+      {
+        "id": "open",
+        "title": "Open ND Tutor",
+        "description": "Launch the ND Tutor laboratory and daily learning coach.",
+        "keywords": [
+          "tutor",
+          "learn",
+          "study",
+          "springboot",
+          "postgres",
+          "sql",
+          "database",
+          "course",
+          "coach"
+        ],
+        "host": "tutor.progress.get",
+        "openViewId": "main",
+        "contexts": [
+          "personal"
+        ]
+      }
+    ],
+    "views": [
+      {
+        "id": "main",
+        "title": "ND Tutor",
+        "description": "Interactive developer coach and data lab.",
+        "kind": "web",
+        "entry": "ui/index.html",
+        "contexts": [
+          "personal"
+        ],
+        "actions": [
+          {
+            "id": "get-progress",
+            "title": "Read learning progress",
+            "host": "tutor.progress.get"
+          },
+          {
+            "id": "save-progress",
+            "title": "Save lesson progress",
+            "host": "tutor.progress.save"
+          },
+          {
+            "id": "reset-progress",
+            "title": "Reset learning progress",
+            "host": "tutor.progress.reset"
+          },
+          {
+            "id": "copy",
+            "title": "Copy code or prompt",
+            "host": "clipboard.write"
+          },
+          {
+            "id": "ask-coach",
+            "title": "Open in ND Chat",
+            "host": "skill.compose"
+          }
+        ]
+      }
+    ],
+    "skills": [
+      {
+        "id": "tutor-coach",
+        "title": "ND Tutor Coach",
+        "contexts": [
+          "personal"
+        ],
+        "instructions": "Daily interactive Spring Boot and PostgreSQL database tutor for an experienced frontend developer. Teach with exercises, review answers, and track progress across local agent sessions instead of coding everything for the learner. Target 80% PostgreSQL/SQL/schema/Flyway/transactions/production data, 20% Spring Boot/MyBatis/controller code. When invoked with 'today' or 'resume', check overdue reviews and pick the first incomplete day. Ask the learner to write the SQL, schema, or reasoning. Provide up to three escalating hints before showing a worked solution."
+      }
+    ]
+  },
+  "category": "tools"
+}

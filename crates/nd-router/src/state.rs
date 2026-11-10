@@ -1,10 +1,10 @@
 use crate::catalog;
 use crate::store;
 use crate::types::{
-    AccountRecord, AccountView, ComboRecord, MAX_USAGE_LINES, ProviderRecord, ProviderView,
-    REQUEST_TIMEOUT_SECS, RoutedEntry, RouterError, STORE_SCHEMA_VERSION, SaveAccountInput,
-    SaveComboInput, SaveProviderInput, USAGE_FILE, UsageEntry, WEB_REQUEST_TIMEOUT_SECS,
-    WEB_TEST_TIMEOUT_SECS, WebBridgeConfig,
+    AccountRecord, AccountView, ComboRecord, CreateLiveTicketInput, MAX_USAGE_LINES,
+    ProviderRecord, ProviderView, REQUEST_TIMEOUT_SECS, RoutedEntry, RouterError,
+    STORE_SCHEMA_VERSION, SaveAccountInput, SaveComboInput, SaveProviderInput, USAGE_FILE,
+    UsageEntry, WEB_REQUEST_TIMEOUT_SECS, WEB_TEST_TIMEOUT_SECS, WebBridgeConfig,
 };
 use axum::body::Body;
 use axum::http::{HeaderValue, StatusCode, header::CONTENT_TYPE};
@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -53,6 +53,11 @@ pub struct RouterState {
     pub(crate) agy_slot: tokio::sync::Mutex<()>,
     /// Short-lived one-shot approvals; in-memory only, so a restart fails closed.
     pub(crate) agy_approvals: Mutex<Vec<crate::agy_policy::Approval>>,
+    /// Single-use tickets for `/v1/live` WebSocket upgrades; in-memory only.
+    pub(crate) live: crate::live::LiveTicketStore,
+    pub(crate) live_active: AtomicUsize,
+    pub(crate) live_safe_notify: Arc<tokio::sync::Notify>,
+    live_upstream_override: Mutex<Option<String>>,
 }
 
 #[derive(Default, Clone)]
@@ -102,6 +107,10 @@ impl RouterState {
             counters: Mutex::new(Counters::default()),
             agy_slot: tokio::sync::Mutex::new(()),
             agy_approvals: Mutex::new(Vec::new()),
+            live: crate::live::LiveTicketStore::default(),
+            live_active: AtomicUsize::new(0),
+            live_safe_notify: Arc::new(tokio::sync::Notify::new()),
+            live_upstream_override: Mutex::new(None),
         }))
     }
 
@@ -142,6 +151,9 @@ impl RouterState {
 
     pub fn set_safe_mode(&self, enabled: bool) -> Value {
         self.safe_mode.store(enabled, Ordering::Release);
+        if enabled {
+            self.live_safe_notify.notify_waiters();
+        }
         self.snapshot()
     }
 
@@ -192,7 +204,32 @@ impl RouterState {
                 "lastError": counters.last_error,
             },
             "safeMode": self.safe_mode_enabled(),
+            "liveModels": crate::live::LIVE_MODELS,
         })
+    }
+
+    pub fn create_live_ticket(&self, input: CreateLiveTicketInput) -> Result<Value, RouterError> {
+        crate::live::create_ticket(self, input)
+    }
+
+    pub(crate) fn entry_secret_for_live(&self, entry: &RoutedEntry) -> Option<String> {
+        self.entry_secret(entry)
+    }
+
+    pub(crate) fn live_upstream_url(&self) -> String {
+        self.live_upstream_override
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+            .unwrap_or_else(|| crate::live::DEFAULT_LIVE_UPSTREAM.to_owned())
+    }
+
+    #[cfg(test)]
+    pub fn set_live_upstream_for_test(&self, url: String) {
+        *self
+            .live_upstream_override
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(url);
     }
 
     pub fn save_provider(&self, input: SaveProviderInput) -> Result<Value, RouterError> {
@@ -1638,6 +1675,38 @@ impl RouterState {
                 "error": format!("{} lane is not implemented yet", provider.kind),
             }));
         }
+        if provider.kind == catalog::KIND_AI_STUDIO && crate::live::is_live_model(model) {
+            let Some(key) = secret.filter(|value| !value.is_empty()) else {
+                return Ok(json!({
+                    "id": provider_id,
+                    "ok": false,
+                    "statusCode": 400,
+                    "latencyMs": 0,
+                    "model": model,
+                    "error": "Google AI Studio API key is required",
+                }));
+            };
+            let upstream = self.live_upstream_url();
+            return match crate::live::probe_live_connection(&upstream, key, model).await {
+                Ok((latency_ms, preview)) => Ok(json!({
+                    "id": provider_id,
+                    "ok": true,
+                    "statusCode": 200,
+                    "latencyMs": latency_ms,
+                    "model": model,
+                    "error": Value::Null,
+                    "preview": preview,
+                })),
+                Err((status, error)) => Ok(json!({
+                    "id": provider_id,
+                    "ok": false,
+                    "statusCode": status,
+                    "latencyMs": 0,
+                    "model": model,
+                    "error": error,
+                })),
+            };
+        }
         let body = json!({
             "model": model,
             "messages": [{"role": "user", "content": "ping"}],
@@ -1923,7 +1992,7 @@ impl RouterState {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn record_usage(
+    pub(crate) fn record_usage(
         &self,
         entry: &RoutedEntry,
         combo: &str,
@@ -2036,7 +2105,7 @@ fn validate_web_bridge(bridge: &WebBridgeConfig) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+pub(crate) fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
     if left.len() != right.len() {
         return false;
     }

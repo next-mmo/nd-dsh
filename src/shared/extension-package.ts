@@ -146,11 +146,13 @@ export function detectExtensionCategory(pkg: {
     id.includes('wallpaper') ||
     id.includes('security') ||
     id.includes('account-mgt') ||
+    id.includes('phone-audio') ||
     text.includes('wallpaper') ||
     text.includes('disk cleaner') ||
     text.includes('quit process') ||
     text.includes('account manager') ||
-    text.includes('security authority')
+    text.includes('security authority') ||
+    text.includes('phone audio')
   ) {
     return 'system'
   }
@@ -210,6 +212,11 @@ export const ND_EXTENSION_PERMISSIONS = [
   'emulator.write',
   'ostoolkit.read',
   'ostoolkit.write',
+  'tutor.read',
+  'tutor.write',
+  'live.voice',
+  'phoneaudio.read',
+  'phoneaudio.write',
 ] as const
 
 export type NdExtensionPermission = (typeof ND_EXTENSION_PERMISSIONS)[number]
@@ -379,6 +386,15 @@ export const ND_HOST_METHODS = [
   { id: 'ostoolkit.schedule.get', title: 'Read the day/night theme schedule', permission: 'ostoolkit.read', contexts: ['personal'], sensitive: false },
   { id: 'ostoolkit.schedule.save', title: 'Save the day/night theme schedule', permission: 'ostoolkit.write', contexts: ['personal'], sensitive: false },
   { id: 'ostoolkit.theme.apply', title: 'Change the Windows light/dark theme now', permission: 'ostoolkit.write', contexts: ['personal'], sensitive: true },
+  { id: 'tutor.progress.get', title: 'Read ND Tutor progress', permission: 'tutor.read', contexts: ['personal'], sensitive: false },
+  { id: 'tutor.progress.save', title: 'Save ND Tutor progress', permission: 'tutor.write', contexts: ['personal'], sensitive: false },
+  { id: 'tutor.progress.reset', title: 'Reset ND Tutor progress', permission: 'tutor.write', contexts: ['personal'], sensitive: false },
+  { id: 'phoneaudio.status.get', title: 'Read Phone Audio stream status, devices, and pairing info', permission: 'phoneaudio.read', contexts: ['personal'], sensitive: false },
+  { id: 'phoneaudio.session.start', title: 'Start streaming PC audio to Android over local network', permission: 'phoneaudio.write', contexts: ['personal'], sensitive: true },
+  { id: 'phoneaudio.session.stop', title: 'Stop streaming PC audio to Android', permission: 'phoneaudio.write', contexts: ['personal'], sensitive: false },
+  { id: 'phoneaudio.client.disconnect', title: 'Disconnect the active Android audio receiver', permission: 'phoneaudio.write', contexts: ['personal'], sensitive: false },
+  { id: 'phoneaudio.token.rotate', title: 'Rotate Phone Audio pairing URL and code', permission: 'phoneaudio.write', contexts: ['personal'], sensitive: false },
+  { id: 'phoneaudio.options.set', title: 'Update Phone Audio capture and interface options', permission: 'phoneaudio.write', contexts: ['personal'], sensitive: false },
 ] as const satisfies readonly NdHostMethodDescriptor[]
 
 export type NdHostMethod = (typeof ND_HOST_METHODS)[number]['id']

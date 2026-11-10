@@ -112,6 +112,15 @@ import { MiniBrowserStore, browserTabUrl, asMiniEntryId, miniTabTitle, legacyYou
 import { PayGuardStore } from './pay-guard-store.js'
 import { PayGuardScheduler } from './pay-guard-scheduler.js'
 import { OsToolkitScheduler } from './os-toolkit-scheduler.js'
+import { TutorStore } from './tutor-store.js'
+import { PhoneAudioService } from './phone-audio-service.js'
+import type { CoreSystemVolume } from '../core/core-system-volume.js'
+import {
+  PHONE_AUDIO_EXTENSION_ID,
+  PHONE_AUDIO_IPC,
+  type PhoneAudioRendererReport,
+  type PhoneAudioSignalFromRenderer,
+} from '../../shared/phone-audio.js'
 import { ND_TRANSLATE_ID, ND_TRANSLATE_MAX_TEXT, isLlmProvider } from '../../shared/nd-translate.js'
 import { ND_WEBVIEW_URL_SCHEME } from '../../shared/extension-webview.js'
 import type { ProviderStore } from '../providers.js'
@@ -177,6 +186,15 @@ export interface NdIpcDependencies {
    * rather than silently reporting success.
    */
   coreOsTheme?: CoreOsTheme
+  /** nd-core-backed system output volume/mute state for Phone Audio diagnostics. */
+  coreSystemVolume?: CoreSystemVolume
+  /** Main session display-media gate for Phone Audio loopback capture. */
+  phoneAudioCaptureGate?: {
+    current?: {
+      isCaptureArmed(): boolean
+      requestedLoopbackAudioMode(): 'loopback' | 'loopbackWithMute'
+    }
+  }
   /** Notified after ND Home records change, so other services can re-derive views. */
   onHomeChanged?: () => void
   nineRouterManaged?: NineRouterManagedRuntime
@@ -199,6 +217,8 @@ const ANTIGRAVITY_PATCH_ID = 'nd.antigravity-patch'
 const YOUTUBE_DOWNLOADER_ID = 'nd.youtube-downloader'
 export const NINE_ROUTER_ID = 'nd.9router'
 export const EMULATOR_ID = 'nd.emulator'
+export const ND_TUTOR_ID = 'nd.tutor'
+export const PHONE_AUDIO_ID = PHONE_AUDIO_EXTENSION_ID
 
 /**
  * Development package sources. Release Discover uses separately published metadata.
@@ -236,6 +256,8 @@ const AVAILABLE_PACKAGES: readonly { id: string; path: () => string }[] = app.is
     // context, and a package that can change the whole desktop's theme has to be
     // installed and switched on by an explicit user decision.
     { id: OS_TOOLKIT_ID, path: osToolkitPackagePath },
+    { id: ND_TUTOR_ID, path: tutorPackagePath },
+    { id: PHONE_AUDIO_ID, path: phoneAudioPackagePath },
   ]),
 ]
 
@@ -374,6 +396,18 @@ function osToolkitPackagePath(): string {
   return app.isPackaged
     ? join(process.resourcesPath, 'nd-extensions', 'nd-os-toolkit')
     : join(app.getAppPath(), 'extensions', 'nd-os-toolkit')
+}
+
+function tutorPackagePath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'nd-extensions', 'nd-tutor')
+    : join(app.getAppPath(), 'extensions', 'nd-tutor')
+}
+
+function phoneAudioPackagePath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'nd-extensions', 'nd-phone-audio')
+    : join(app.getAppPath(), 'extensions', 'nd-phone-audio')
 }
 
 /**
@@ -515,6 +549,8 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
           nineRouterCatalogView(state),
           emulatorCatalogView(state),
           osToolkitCatalogView(state),
+          tutorCatalogView(state),
+          phoneAudioCatalogView(state),
         ]),
       ]),
     }
@@ -553,7 +589,33 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
         revealFile: (path) => shell.showItemInFolder(path),
       })
     : null
-  const disposeNativeHost = registerNativeHostHandlers(deps, clipboardHistory, computerUse, mediaDownload)
+  const phoneAudio = new PhoneAudioService({
+    readSystemVolume: async () => {
+      if (!deps.coreSystemVolume) {
+        return { available: false, reason: 'System audio state unavailable' }
+      }
+      const state = await deps.coreSystemVolume.state()
+      return state.available
+        ? { available: true, level: state.level, muted: state.muted }
+        : { available: false, reason: state.reason }
+    },
+    onSnapshot: (snapshot) => {
+      if (!deps.window.isDestroyed()) deps.window.webContents.send(PHONE_AUDIO_IPC.stateEvent, snapshot)
+    },
+    onCommand: (command) => {
+      if (!deps.window.isDestroyed()) deps.window.webContents.send(PHONE_AUDIO_IPC.commandEvent, command)
+    },
+    onSignalToRenderer: (signal) => {
+      if (!deps.window.isDestroyed()) deps.window.webContents.send(PHONE_AUDIO_IPC.signalEvent, signal)
+    },
+    onLog: (line) => console.warn(line),
+  })
+  if (deps.phoneAudioCaptureGate) deps.phoneAudioCaptureGate.current = phoneAudio
+  const stopPhoneAudioOnDisable = (id: string): void => {
+    if (id === PHONE_AUDIO_ID) void phoneAudio.stop('Phone Audio was deactivated or updated.').catch(() => undefined)
+  }
+
+  const disposeNativeHost = registerNativeHostHandlers(deps, clipboardHistory, computerUse, mediaDownload, phoneAudio)
 
 
   deps.broker.setOnApprovalRequested(() => { void emitState() })
@@ -631,6 +693,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
       await remoteCatalog.install(id, deps.packages, join(app.getPath('userData'), 'nd-extension-downloads'))
       webViews.revokeExtension(id)
       if (id === OS_TOOLKIT_ID) refreshOsToolkitScheduler?.()
+      stopPhoneAudioOnDisable(id)
       await emitState()
       return stateView()
     }
@@ -645,6 +708,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
     // A version change must rebuild the timer: the old one is bound to the
     // previous snapshot, and AGENTS.md requires disposal on version change.
     if (id === OS_TOOLKIT_ID) refreshOsToolkitScheduler?.()
+    stopPhoneAudioOnDisable(id)
     await emitState()
     return stateView()
   })
@@ -656,6 +720,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
     resetComputerUse(id, contextKey({ kind: 'personal' }))
     syncClipboardWatcher()
     if (id === OS_TOOLKIT_ID) refreshOsToolkitScheduler?.()
+    stopPhoneAudioOnDisable(id)
     await emitState()
     return stateView()
   })
@@ -672,6 +737,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
     syncClipboardWatcher()
     if (id === PAY_GUARD_ID) refreshPayGuardScheduler?.()
     if (id === OS_TOOLKIT_ID) refreshOsToolkitScheduler?.()
+    stopPhoneAudioOnDisable(id)
     await emitState()
     return stateView()
   })
@@ -687,6 +753,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
       await deps.state.revokeGrantsForExtension(id, target)
       webViews.revokeExtension(id, contextKey(target))
       resetComputerUse(id, contextKey(target))
+      stopPhoneAudioOnDisable(id)
     }
     if (id === WALLPAPER_MANAGER_ID) void syncWallpaperRotation()
     if (id === CLIPBOARD_HISTORY_ID) syncClipboardWatcher()
@@ -839,12 +906,25 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
     if (error) throw new Error(error)
   })
 
+  // --- ND Phone Audio bridge --------------------------------------------------
+  handle(PHONE_AUDIO_IPC.state, () => phoneAudio.snapshot())
+  handle(PHONE_AUDIO_IPC.signal, (_event, rawSignal) => {
+    phoneAudio.handleRendererSignal(asPhoneAudioSignal(rawSignal))
+  })
+  handle(PHONE_AUDIO_IPC.reportRenderer, (_event, rawReport) => {
+    phoneAudio.handleRendererReport(asPhoneAudioReport(rawReport))
+  })
+
   // Seeding happens before the first state read; failures stay visible instead
   // of silently shipping a half-registered platform.
   void ensureSeeded().catch((error) => console.warn('ND built-in extension packages failed to seed:', error))
 
   return () => {
     disposeNativeHost.dispose()
+    if (deps.phoneAudioCaptureGate?.current === phoneAudio) {
+      delete deps.phoneAudioCaptureGate.current
+    }
+    void phoneAudio.dispose()
     if (wallpaperTimer) clearInterval(wallpaperTimer)
     for (const channel of channels) ipcMain.removeHandler(channel)
     void clipboardHistory.dispose()
@@ -865,6 +945,7 @@ export function registerNativeHostHandlers(
   clipboardHistory?: ClipboardHistoryAttachment,
   computerUse?: ComputerUseService | null,
   mediaDownload?: MediaDownloadService | null,
+  phoneAudioService?: PhoneAudioService | null,
 ): { dispose: () => void } {
   const { host, providers } = deps
   registerSkillComposeHost(host, deps.skills, (request) => {
@@ -3321,6 +3402,58 @@ export function registerNativeHostHandlers(
     })
   })
 
+  // --- ND Tutor ---------------------------------------------------------------
+  const tutorStore = new TutorStore(join(app.getPath('userData'), 'nd-tutor', 'progress.json'))
+
+  host.register('tutor.progress.get', async (input, context) => {
+    requirePersonalContext(context)
+    const courseId = typeof input.courseId === 'string' ? input.courseId : undefined
+    return tutorStore.get(courseId)
+  })
+
+  host.register('tutor.progress.save', async (input, context) => {
+    requirePersonalContext(context)
+    return tutorStore.saveProgress(input)
+  })
+
+  host.register('tutor.progress.reset', async (input, context) => {
+    requirePersonalContext(context)
+    return tutorStore.reset(input)
+  })
+
+  // --- ND Phone Audio --------------------------------------------------------
+  const phoneAudio = phoneAudioService ?? new PhoneAudioService({ headless: true })
+
+  host.register('phoneaudio.status.get', async (_input, context) => {
+    requirePersonalContext(context)
+    return phoneAudio.snapshot()
+  })
+
+  host.register('phoneaudio.session.start', async (input, context) => {
+    requirePersonalContext(context)
+    return phoneAudio.start(parsePhoneAudioOptionsInput(input))
+  })
+
+  host.register('phoneaudio.session.stop', async (_input, context) => {
+    requirePersonalContext(context)
+    return phoneAudio.stop('Stopped by user.')
+  })
+
+  host.register('phoneaudio.client.disconnect', async (_input, context) => {
+    requirePersonalContext(context)
+    return phoneAudio.disconnectClient()
+  })
+
+  host.register('phoneaudio.token.rotate', async (_input, context) => {
+    requirePersonalContext(context)
+    return phoneAudio.rotateToken()
+  })
+
+  host.register('phoneaudio.options.set', async (input, context) => {
+    requirePersonalContext(context)
+    return phoneAudio.setOptions(parsePhoneAudioOptionsInput(input))
+  })
+
   return {
     dispose: () => {
       translator.dispose()
@@ -3481,6 +3614,22 @@ async function osToolkitCatalogView(state: NdExtensionsStateView): Promise<NdAva
   })
 }
 
+async function tutorCatalogView(state: NdExtensionsStateView): Promise<NdAvailablePackageView> {
+  return packageCatalogView(state, ND_TUTOR_ID, tutorPackagePath(), {
+    name: 'ND Tutor',
+    description: 'Interactive developer tutor and coaching laboratory for ND. Master Spring Boot and PostgreSQL data engineering with a 28-day structured curriculum, real hands-on tasks, review queues, and AI coach integration.',
+    permissions: ['tutor.read', 'tutor.write', 'clipboard.write', 'chat.compose', 'live.voice'],
+  })
+}
+
+async function phoneAudioCatalogView(state: NdExtensionsStateView): Promise<NdAvailablePackageView> {
+  return packageCatalogView(state, PHONE_AUDIO_ID, phoneAudioPackagePath(), {
+    name: 'Phone Audio',
+    description: 'Stream Windows system playback audio (YouTube, games, music, browsers) to your Android phone over local Wi-Fi or USB tethering via low-latency WebRTC. No Android APK or cloud server required.',
+    permissions: ['phoneaudio.read', 'phoneaudio.write', 'clipboard.write'],
+  })
+}
+
 async function packageCatalogView(state: NdExtensionsStateView, id: string, packagePath: string, metadata: Pick<NdAvailablePackageView, 'name' | 'description' | 'permissions'>): Promise<NdAvailablePackageView> {
   const path = join(packagePath, 'nd-extension.json')
   const fallback: NdAvailablePackageView = {
@@ -3556,6 +3705,26 @@ async function seedBuiltinPackages(deps: NdIpcDependencies): Promise<void> {
     }
   } catch {
     // Non-fatal if emulator folder is not present
+  }
+
+  // Pre-seed ND Tutor in development and refresh snapshot when its version changes
+  try {
+    const tutorPath = tutorPackagePath()
+    const tutorManifestPath = join(tutorPath, ND_EXTENSION_MANIFEST_FILENAME)
+    if (existsSync(tutorManifestPath)) {
+      const existing = await deps.packages.record(ND_TUTOR_ID)
+      if (!existing) {
+        await deps.packages.installFromDirectory(tutorPath, { expectId: ND_TUTOR_ID })
+        await deps.state.setActivation(ND_TUTOR_ID, { kind: 'personal' }, true)
+      } else if (!app.isPackaged) {
+        const diskRaw = JSON.parse(await fs.readFile(tutorManifestPath, 'utf8')) as { version?: unknown }
+        if (typeof diskRaw?.version === 'string' && diskRaw.version !== existing.manifest.version) {
+          await deps.packages.installFromDirectory(tutorPath, { expectId: ND_TUTOR_ID })
+        }
+      }
+    }
+  } catch {
+    // Non-fatal if tutor folder is not present
   }
 }
 
@@ -3679,6 +3848,113 @@ function asNoteInput(value: unknown): { body: string; title?: string; tags?: str
     ...(tags ? { tags } : {}),
     ...(context ? { context } : {}),
   }
+}
+
+function parsePhoneAudioOptionsInput(input: Record<string, unknown>): Record<string, unknown> {
+  const parsed: Record<string, unknown> = {}
+  if (input.captureMode === 'loopback' || input.captureMode === 'device') {
+    parsed.captureMode = input.captureMode
+  }
+  if (typeof input.muteLocalPlayback === 'boolean') {
+    parsed.muteLocalPlayback = input.muteLocalPlayback
+  }
+  if (typeof input.inputDeviceId === 'string') {
+    parsed.inputDeviceId = input.inputDeviceId.slice(0, 256)
+  }
+  if (typeof input.preferredInterfaceId === 'string') {
+    parsed.preferredInterfaceId = input.preferredInterfaceId.slice(0, 128)
+  }
+  return parsed
+}
+
+function asPhoneAudioSignal(value: unknown): PhoneAudioSignalFromRenderer {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Phone Audio signaling payload must be an object')
+  }
+  const raw = value as Record<string, unknown>
+  const clientId = requiredText(raw.clientId, 'Client id', 64)
+  if (raw.kind === 'sdp-offer') {
+    return { kind: 'sdp-offer', clientId, sdp: requiredText(raw.sdp, 'SDP offer', 64_000) }
+  }
+  if (raw.kind === 'ice-candidate') {
+    if (!raw.candidate || typeof raw.candidate !== 'object' || Array.isArray(raw.candidate)) {
+      throw new Error('ICE candidate object is required')
+    }
+    const c = raw.candidate as Record<string, unknown>
+    const candidate = typeof c.candidate === 'string' ? c.candidate.slice(0, 4096) : ''
+    return {
+      kind: 'ice-candidate',
+      clientId,
+      candidate: {
+        candidate,
+        ...(typeof c.sdpMid === 'string' || c.sdpMid === null ? { sdpMid: c.sdpMid } : {}),
+        ...(typeof c.sdpMLineIndex === 'number' || c.sdpMLineIndex === null ? { sdpMLineIndex: c.sdpMLineIndex } : {}),
+      },
+    }
+  }
+  if (raw.kind === 'peer-state') {
+    if (raw.state !== 'connecting' && raw.state !== 'connected' && raw.state !== 'reconnecting' && raw.state !== 'error') {
+      throw new Error('Invalid peer state')
+    }
+    return {
+      kind: 'peer-state',
+      clientId,
+      state: raw.state,
+      ...(typeof raw.error === 'string' ? { error: raw.error.slice(0, 512) } : {}),
+    }
+  }
+  throw new Error('Unsupported Phone Audio signaling kind')
+}
+
+function asPhoneAudioReport(value: unknown): PhoneAudioRendererReport {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Phone Audio renderer report must be an object')
+  }
+  const raw = value as Record<string, unknown>
+  const out: PhoneAudioRendererReport = {}
+  if (typeof raw.sessionId === 'string') out.sessionId = raw.sessionId.slice(0, 64)
+  if (typeof raw.captureActive === 'boolean') out.captureActive = raw.captureActive
+  if (typeof raw.captureError === 'string') out.captureError = raw.captureError.slice(0, 512)
+  if (typeof raw.sampleRate === 'number' && Number.isFinite(raw.sampleRate)) out.sampleRate = raw.sampleRate
+  if (typeof raw.channelCount === 'number' && Number.isFinite(raw.channelCount)) out.channelCount = raw.channelCount
+  if (typeof raw.trackLabel === 'string') out.trackLabel = raw.trackLabel.slice(0, 200)
+  if (typeof raw.silentWarning === 'string') out.silentWarning = raw.silentWarning.slice(0, 300)
+  if (typeof raw.audioLevel === 'number' && Number.isFinite(raw.audioLevel)) out.audioLevel = raw.audioLevel
+  if (raw.stats && typeof raw.stats === 'object' && !Array.isArray(raw.stats)) {
+    const s = raw.stats as Record<string, unknown>
+    out.stats = {
+      ...(typeof s.codec === 'string' ? { codec: s.codec.slice(0, 64) } : {}),
+      ...(typeof s.clockRate === 'number' && Number.isFinite(s.clockRate) ? { clockRate: s.clockRate } : {}),
+      ...(typeof s.channels === 'number' && Number.isFinite(s.channels) ? { channels: s.channels } : {}),
+      ...(typeof s.rttMs === 'number' && Number.isFinite(s.rttMs) ? { rttMs: s.rttMs } : {}),
+      ...(typeof s.jitterMs === 'number' && Number.isFinite(s.jitterMs) ? { jitterMs: s.jitterMs } : {}),
+      ...(typeof s.bitrateKbps === 'number' && Number.isFinite(s.bitrateKbps) ? { bitrateKbps: s.bitrateKbps } : {}),
+      ...(typeof s.packetsSent === 'number' && Number.isFinite(s.packetsSent) ? { packetsSent: s.packetsSent } : {}),
+      ...(typeof s.bytesSent === 'number' && Number.isFinite(s.bytesSent) ? { bytesSent: s.bytesSent } : {}),
+    }
+  }
+  if (Array.isArray(raw.outputDevices)) {
+    out.outputDevices = raw.outputDevices
+      .slice(0, 32)
+      .filter((d): d is Record<string, unknown> => Boolean(d) && typeof d === 'object' && !Array.isArray(d))
+      .map((d) => ({
+        deviceId: typeof d.deviceId === 'string' ? d.deviceId.slice(0, 256) : '',
+        label: typeof d.label === 'string' ? d.label.slice(0, 256) : '',
+        groupId: typeof d.groupId === 'string' ? d.groupId.slice(0, 256) : '',
+        isDefault: d.isDefault === true,
+      }))
+  }
+  if (Array.isArray(raw.inputDevices)) {
+    out.inputDevices = raw.inputDevices
+      .slice(0, 32)
+      .filter((d): d is Record<string, unknown> => Boolean(d) && typeof d === 'object' && !Array.isArray(d))
+      .map((d) => ({
+        deviceId: typeof d.deviceId === 'string' ? d.deviceId.slice(0, 256) : '',
+        label: typeof d.label === 'string' ? d.label.slice(0, 256) : '',
+        groupId: typeof d.groupId === 'string' ? d.groupId.slice(0, 256) : '',
+      }))
+  }
+  return out
 }
 
 /** Probe that the host allowlist and the registry cannot drift apart. */

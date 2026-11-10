@@ -1,6 +1,6 @@
 import { normalizeExtensionRuntimePolicy } from '../../../shared/extension-runtime-policy'
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { BookOpen, Braces, Check, ChevronLeft, ChevronRight, Download, ExternalLink, Eye, FolderOpen, FolderPlus, Gamepad2, HardDrive, Image, Languages, Layers, Link2, ListChecks, Maximize2, Minimize2, MonitorPlay, Package, PanelsTopLeft, Pencil, Plus, Power, Puzzle, RefreshCw, Repeat, Search, Settings2, ShieldCheck, Shuffle, SkipBack, SkipForward, Smartphone, Sparkles, SquareTerminal, Sunrise, Trash2, Undo2, Upload, Users, Workflow, Globe, Network } from 'lucide-react'
+import { BookOpen, Braces, Check, ChevronLeft, ChevronRight, Download, ExternalLink, Eye, FolderOpen, FolderPlus, Gamepad2, HardDrive, Image, Languages, Layers, Link2, ListChecks, Maximize2, Mic, Minimize2, MonitorPlay, Package, PanelsTopLeft, Pencil, Plus, Power, Puzzle, RefreshCw, Repeat, Search, Settings2, ShieldCheck, Shuffle, SkipBack, SkipForward, Smartphone, Sparkles, SquareTerminal, Sunrise, Trash2, Undo2, Upload, Users, Volume2, Workflow, Globe, Network } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { cn } from '../lib/utils'
 import type { NdContext } from '../../../shared/nd-context'
@@ -21,6 +21,7 @@ import { describeContextForUi, optionIdForContext, type ContextOption } from '..
 import type { OrganizationSnapshot } from '../../../shared/organization'
 import { SurfaceErrorBoundary } from './surface-error-boundary'
 import { admitKeepAliveView, dockKeepAliveView, extensionViewKey, lookupKeepAliveView, useExtensionKeepAlive } from './extension-view-keepalive'
+import { useExtensionViewLiveStatus } from './ExtensionWebView'
 
 const NdTranslateView = lazy(() => import('./NdTranslateView'))
 const ExtensionGuideDialog = lazy(() => import('./ExtensionGuideDialog'))
@@ -69,6 +70,8 @@ const EXTENSION_ACCENTS: Record<string, { icon: LucideIcon; tileClassName: strin
   'nd.9router': { icon: Network, tileClassName: 'border-orange-500/25 bg-orange-500/15 text-orange-500' },
   'nd.emulator': { icon: Smartphone, tileClassName: 'border-emerald-500/25 bg-emerald-500/15 text-emerald-500' },
   'nd.os-toolkit': { icon: Sunrise, tileClassName: 'border-yellow-500/25 bg-yellow-500/15 text-yellow-500' },
+  'nd.tutor': { icon: BookOpen, tileClassName: 'border-emerald-500/25 bg-emerald-500/15 text-emerald-500' },
+  'nd.phone-audio': { icon: Volume2, tileClassName: 'border-sky-500/25 bg-sky-500/15 text-sky-500' },
 }
 
 function ExtensionIconTile({ id, large = false }: { id: string; large?: boolean }): React.ReactNode {
@@ -2141,6 +2144,7 @@ export function ExtensionViewDialog({
   // host docks the live iframe container inside it. Unmounting the slot (dialog closed)
   // backgrounds the view without unmounting its iframe.
   const webViewDockKey = isWebView && currentData ? extensionViewKey(currentData) : null
+  const liveStatus = useExtensionViewLiveStatus(target)
   const dockWebViewSlot = useCallback((el: HTMLDivElement | null) => {
     if (webViewDockKey) dockKeepAliveView(webViewDockKey, el)
   }, [webViewDockKey])
@@ -2247,6 +2251,12 @@ export function ExtensionViewDialog({
 
   const setPlaySources = useCallback(async (sources: string[]): Promise<void> => {
     if (!target) return
+    let previousSources: string[] | undefined
+    setFoldersData((current) => {
+      if (!current) return current
+      previousSources = current.sources
+      return { ...current, sources }
+    })
     try {
       const res = await window.ndDsh.ndExtensions.invoke({
         extensionId: target.extensionId,
@@ -2257,6 +2267,10 @@ export function ExtensionViewDialog({
         input: { action: 'play-sources-set', sources },
       })
       if (!res.ok) {
+        if (previousSources) {
+          const revert = previousSources
+          setFoldersData((current) => current ? { ...current, sources: revert } : current)
+        }
         onError(res.error?.message ?? 'Could not update the play sources')
         return
       }
@@ -2266,6 +2280,10 @@ export function ExtensionViewDialog({
         sources: Array.isArray(value.sources) ? value.sources.filter((item): item is string => typeof item === 'string') : [],
       } : current)
     } catch (cause) {
+      if (previousSources) {
+        const revert = previousSources
+        setFoldersData((current) => current ? { ...current, sources: revert } : current)
+      }
       onError(cause instanceof Error ? cause.message : String(cause))
     }
   }, [target, onError])
@@ -2882,6 +2900,22 @@ export function ExtensionViewDialog({
               ? <ExtensionGlyph id={target?.extensionId ?? ''} className="size-4 text-primary" />
               : null}
             {previewItem ? `Preview: ${previewItem.title}` : currentData?.title ?? 'Extension view'}
+            {liveStatus === 'live' || liveStatus === 'connecting' || liveStatus === 'muted' ? (
+              <Badge
+                variant="outline"
+                className={cn(
+                  'ml-1 gap-1 text-[10px]',
+                  liveStatus === 'live'
+                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-500'
+                    : liveStatus === 'muted'
+                      ? 'border-amber-500/40 bg-amber-500/10 text-amber-500'
+                      : 'border-sky-500/40 bg-sky-500/10 text-sky-500',
+                )}
+              >
+                <Mic className="size-3" />
+                {liveStatus === 'live' ? 'Live' : liveStatus === 'muted' ? 'Live (Muted)' : 'Connecting…'}
+              </Badge>
+            ) : null}
           </DialogTitle>
           <DialogDescription>
             {target ? `${target.extensionId} · ${describeContextForUi(target.context, organization)}` : ''}
@@ -4058,6 +4092,9 @@ const PERMISSION_LABELS: Record<string, string> = {
   'workflow.read': 'Read the project task board',
   'chat.start': 'Start chats as you',
   'chat.compose': 'Prepare skill requests in chat',
+  'tutor.read': 'Read ND Tutor progress',
+  'tutor.write': 'Save ND Tutor progress',
+  'live.voice': 'Use microphone for live voice tutor sessions via ND Router',
 }
 
 function describePermissions(permissions: string[]): string {
