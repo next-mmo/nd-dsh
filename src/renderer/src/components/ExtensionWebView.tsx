@@ -53,6 +53,13 @@ export function useExtensionViewLiveStatus(
   )
 }
 
+/** A backgrounded view still holding a live voice session is not idle. */
+export function extensionViewHasLiveSession(
+  view: { extensionId: string; viewId: string; context: NdContext },
+): boolean {
+  return liveViewStatuses.has(liveStatusKey(view.extensionId, view.viewId, view.context))
+}
+
 /**
  * Generic host for `kind: 'web'` extension views: renders the package's own
  * static UI in a sandboxed iframe and forwards its bridge requests through
@@ -68,10 +75,12 @@ export function useExtensionViewLiveStatus(
  * policy enforcement intact; popups are denied by Electron and the frame has
  * no Node and no network.
  */
-export function ExtensionWebView({ data, theme, docked = true, onError }: {
+export function ExtensionWebView({ data, theme, docked = true, retained = false, onError }: {
   data: NdViewData
   theme: NdWebViewTheme
   docked?: boolean
+  /** The keep-alive layer will park this view instead of releasing it. */
+  retained?: boolean
   onError?: (message: string) => void
 }): React.ReactNode {
   const frameRef = useRef<HTMLIFrameElement | null>(null)
@@ -207,12 +216,14 @@ export function ExtensionWebView({ data, theme, docked = true, onError }: {
 
   // ── Live voice/text teacher bridge (permission-gated in main via live.voice) ──
   useEffect(() => {
-    if (!docked && liveClientRef.current) {
+    // A retained view keeps talking after its dialog closes; unmounting it
+    // later stops the session through the bridge effect's cleanup below.
+    if (!docked && !retained && liveClientRef.current) {
       liveClientRef.current.stop('Dialog closed')
       liveClientRef.current = null
       setLiveViewStatus(viewKey, undefined)
     }
-  }, [docked, viewKey])
+  }, [docked, retained, viewKey])
 
   useEffect(() => {
     if (!webView?.url) return

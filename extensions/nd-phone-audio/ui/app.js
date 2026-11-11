@@ -16,6 +16,8 @@ const nodes = {
   errorBanner: el('error-banner'),
   warningBanner: el('warning-banner'),
   ifaceSelect: el('iface-select'),
+  usbHint: el('usb-hint'),
+  quickStart: el('quick-start'),
   qrImg: el('qr-img'),
   qrPlaceholder: el('qr-placeholder'),
   ipPort: el('ip-port'),
@@ -109,6 +111,13 @@ function render() {
   }
 
   const activeIface = ifaces.find((item) => item.id === selectedId) || ifaces[0] || null
+  // Guidance adapts to what the PC can actually see: no USB adapter yet means
+  // the phone is not tethering, which is the most common "USB does nothing".
+  const usbIface = ifaces.find((item) => item.kind === 'usb')
+  nodes.usbHint.textContent = usbIface
+    ? `USB link detected (${usbIface.label}). No Wi-Fi needed — keep the cable plugged in while listening.`
+    : 'No USB adapter detected yet. To use USB instead of Wi-Fi: plug in the phone, enable USB tethering (Android) or Personal Hotspot (iPhone), then press Refresh Devices & Network below. Wi-Fi needs no cable.'
+  nodes.quickStart.hidden = Boolean(s.client)
   if (s.serverRunning && activeIface) {
     nodes.ipPort.textContent = `${activeIface.address}:${s.port}`
     nodes.pairingCode.textContent = s.pairingCode || '------'

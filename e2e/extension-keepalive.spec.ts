@@ -2,6 +2,7 @@
 
 import { expect, test } from '@playwright/test'
 import type { NdContext } from '../src/shared/nd-context.js'
+import type { ExtensionRuntimePolicy } from '../src/shared/extension-runtime-policy.js'
 import type { OrganizationDesktopApi } from '../src/shared/organization.js'
 import { closeApp, launchApp, type LaunchedApp } from './fixtures.js'
 
@@ -18,7 +19,7 @@ type NdPlatformWindow = typeof globalThis & {
     ndExtensions: {
       state(): Promise<{ packages: Array<{ id: string }> }>
       installAvailable(extensionId: string): Promise<unknown>
-      setRuntimePolicy(policy: { backgroundExtensionIds: string[]; maxBackgroundViews: number; idleTimeoutMinutes: number }): Promise<unknown>
+      setRuntimePolicy(policy: Partial<ExtensionRuntimePolicy>): Promise<unknown>
       setActivation(extensionId: string, context: NdContext, enabled: boolean): Promise<unknown>
     }
   }

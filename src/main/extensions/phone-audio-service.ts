@@ -460,7 +460,7 @@ export class PhoneAudioService {
   private async tickRefresh(): Promise<void> {
     if (!this.serverRunning || this.disposed) return
     if (this.tokenExpiresAt && Date.now() > this.tokenExpiresAt) {
-      await this.stopInternal('Pairing session expired after 30 minutes. Start streaming again to get a new pairing code.', true)
+      await this.stopInternal(`Pairing session expired after ${Math.round(this.tokenTtlMs / 60_000)} minutes. Start streaming again to get a new pairing code.`, true)
       return
     }
     await this.refreshSystemAndInterfaces()

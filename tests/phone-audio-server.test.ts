@@ -95,6 +95,11 @@ describe('PhoneAudioService HTTP + WebSocket signaling server', () => {
     const html = await okPage.text()
     expect(html).toContain('Connect &amp; Play Audio')
     expect(html).not.toContain('getUserMedia')
+    // iOS hardening: lock-screen controls, foreground re-negotiation, inline playback
+    expect(html).toContain('mediaSession')
+    expect(html).toContain('visibilitychange')
+    expect(html).toContain('playsinline')
+    expect(html).toContain('ios-hint')
 
     // Reject unauthorized WebSocket upgrade
     await expect(connectWs(`ws://127.0.0.1:${started.port}/ws?token=invalid`)).rejects.toThrow()

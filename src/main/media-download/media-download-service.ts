@@ -57,7 +57,7 @@ export interface MediaDownloadServiceOptions {
   tools: MediaToolProvider
   spawnProcess: MediaSpawnProcess
   stopProcess?: (child: ChildProcess, timeoutMs?: number) => Promise<void>
-  revealFile?: (path: string) => void
+  revealFile?: (path: string) => void | Promise<void>
   now?: () => number
   newJobId?: () => string
   maxVideoBytes?: number
@@ -190,7 +190,7 @@ export class MediaDownloadService {
       throw new Error('Refusing to reveal a file outside the Downloads folder.')
     }
     await access(record.view.path)
-    this.revealFile?.(record.view.path)
+    await this.revealFile?.(record.view.path)
   }
 
   /** Activation-off, uninstall, update, and rollback must not leave work running. */
@@ -461,7 +461,7 @@ export class MediaDownloadService {
       this.settle(record)
       await rm(record.stagingDir, { recursive: true, force: true }).catch(() => undefined)
       try {
-        this.revealFile?.(moved.path)
+        await this.revealFile?.(moved.path)
       } catch {
         // Revealing a completed file is best-effort and must not fail the job.
       }

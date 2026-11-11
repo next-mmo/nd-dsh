@@ -1,12 +1,14 @@
 /**
- * Shared contracts for ND Phone Audio (`nd.phone-audio`): PC-to-Android
+ * Shared contracts for ND Phone Audio (`nd.phone-audio`): PC-to-phone
  * low-latency system audio streaming over local Wi-Fi or USB tethering via
  * Electron loopback capture, local HTTP/WebSocket signaling, and WebRTC.
  */
 
 export const PHONE_AUDIO_EXTENSION_ID = 'nd.phone-audio'
 
-export const PHONE_AUDIO_TOKEN_TTL_MS = 30 * 60 * 1000
+// A phone used as a speaker stays paired for a whole listening session; the
+// token is LAN-scoped and PIN-gated, so a long TTL is an acceptable trade.
+export const PHONE_AUDIO_TOKEN_TTL_MS = 2 * 60 * 60 * 1000
 
 export type PhoneAudioStreamState =
   | 'stopped'

@@ -18,6 +18,7 @@ import { BrowserExtensionManager } from '../browser/browser-extension-manager.js
 import { BrowserSafeModeStore } from '../browser/browser-safe-mode.js'
 import type { BrowserProfileStore } from '../browser-profiles/browser-profile-store.js'
 import type { OrganizationStore } from '../organization/store.js'
+import { revealInFolder } from '../os/reveal.js'
 import { BrowserAccessTokenStore } from './browser-access-tokens.js'
 import { BrowserPolicyService } from './browser-policy-service.js'
 import { BrowserTargetRouter } from './browser-target-router.js'
@@ -350,8 +351,12 @@ export class BrowserPlatformService {
   async revealDownload(downloadId: string): Promise<boolean> {
     const path = this.browser.downloadPath(downloadId)
     if (!path) return false
-    shell.showItemInFolder(path)
-    return true
+    try {
+      await revealInFolder(path)
+      return true
+    } catch {
+      return false
+    }
   }
 
   clearFinishedDownloads(): number {

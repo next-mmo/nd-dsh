@@ -7,7 +7,7 @@
 export const STREAM_STATE_META = {
   stopped: { label: 'Stopped', tone: 'idle' },
   starting: { label: 'Starting', tone: 'accent' },
-  waiting: { label: 'Waiting for Android', tone: 'accent' },
+  waiting: { label: 'Waiting for phone', tone: 'accent' },
   connecting: { label: 'Connecting', tone: 'accent' },
   connected: { label: 'Connected', tone: 'ok' },
   reconnecting: { label: 'Reconnecting', tone: 'warn' },
@@ -44,12 +44,21 @@ export function formatLatencySummary(stats, client) {
 }
 
 export function summarizeUserAgent(ua) {
-  if (typeof ua !== 'string' || !ua.trim()) return 'Android Chrome'
-  const chromeMatch = /Chrome\/([0-9.]+)/.exec(ua)
+  if (typeof ua !== 'string' || !ua.trim()) return 'Phone browser'
+  const iosMatch = /(?:iPhone|iPad|iPod).*?OS\s+([0-9_]+)/.exec(ua)
   const androidMatch = /Android\s+([0-9.]+)/.exec(ua)
+  const chromeMatch = /Chrome\/([0-9.]+)/.exec(ua)
+  const criosMatch = /CriOS\/([0-9.]+)/.exec(ua)
+  const firefoxMatch = /FxiOS\/([0-9.]+)/.exec(ua)
+  const safariMatch = /Version\/([0-9.]+)/.exec(ua)
   const bits = []
-  if (androidMatch) bits.push(`Android ${androidMatch[1]}`)
-  if (chromeMatch) bits.push(`Chrome ${chromeMatch[1].split('.')[0]}`)
+  if (iosMatch) bits.push(`iOS ${iosMatch[1].replaceAll('_', '.')}`)
+  else if (androidMatch) bits.push(`Android ${androidMatch[1]}`)
+  if (criosMatch) bits.push(`Chrome ${criosMatch[1].split('.')[0]}`)
+  else if (firefoxMatch) bits.push(`Firefox ${firefoxMatch[1].split('.')[0]}`)
+  else if (chromeMatch && !iosMatch) bits.push(`Chrome ${chromeMatch[1].split('.')[0]}`)
+  // iPadOS 13+ reports a Macintosh UA; Version/… Safari is the only signal.
+  else if (safariMatch && (iosMatch || /Macintosh/.test(ua))) bits.push(`Safari ${safariMatch[1].split('.')[0]}`)
   return bits.length > 0 ? bits.join(' · ') : 'Mobile Browser'
 }
 

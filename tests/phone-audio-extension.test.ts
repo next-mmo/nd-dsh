@@ -151,11 +151,15 @@ describe('ND Phone Audio extension package', () => {
   })
 
   it('formats UI diagnostics and tunes Opus SDP cleanly', () => {
-    expect(describeStreamState('waiting')).toEqual({ label: 'Waiting for Android', tone: 'accent' })
+    expect(describeStreamState('waiting')).toEqual({ label: 'Waiting for phone', tone: 'accent' })
     expect(describeStreamState('connected')).toEqual({ label: 'Connected', tone: 'ok' })
     expect(formatTransportKind('usb')).toBe('USB Tethering')
     expect(formatLatencySummary({ rttMs: 14, jitterMs: 1.8 }, null)).toBe('14 ms RTT · 1.8 ms jitter')
     expect(summarizeUserAgent('Mozilla/5.0 (Linux; Android 14; Pixel 8) Chrome/130.0.0.0 Mobile')).toBe('Android 14 · Chrome 130')
+    expect(summarizeUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1')).toBe('iOS 17.5 · Safari 17')
+    expect(summarizeUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/126.0.6478.123 Mobile/15E148 Safari/604.1')).toBe('iOS 17.5 · Chrome 126')
+    expect(summarizeUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15')).toBe('Safari 17')
+    expect(summarizeUserAgent('')).toBe('Phone browser')
     expect(detectOutputDiagnostics({ outputDevices: [], systemVolume: { available: false } }).ok).toBe(false)
     expect(detectOutputDiagnostics({ outputDevices: [{ label: 'Speakers' }], systemVolume: { available: true, muted: true } }).warning).toContain('muted')
 
@@ -170,5 +174,11 @@ describe('ND Phone Audio extension package', () => {
     expect(tuned).toContain('sprop-stereo=1')
     expect(tuned).toContain('ptime=10')
     expect(tuned).toContain('maxaveragebitrate=128000')
+
+    // Chromium refuses an offer whose final line lost its CRLF terminator.
+    const chromeSdp = `${sampleSdp}\r\na=ssrc:1794043603 cname:6BTO1k4smuRBjUrX\r\na=ssrc:1794043603 msid:stream-id track-id\r\n`
+    const tunedChrome = preferLowLatencyOpusSdp(chromeSdp)
+    expect(tunedChrome.endsWith('\r\n')).toBe(true)
+    expect(tunedChrome).toContain('a=ssrc:1794043603 msid:stream-id track-id\r\n')
   })
 })

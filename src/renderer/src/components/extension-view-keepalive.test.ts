@@ -43,12 +43,12 @@ import { admitKeepAliveView, closeKeepAliveView, dockKeepAliveView, lookupKeepAl
 import type { NdExtensionsStateView } from '../../../shared/nd-invocations'
 
 const ids = ['nd.one', 'nd.two', 'nd.three']
-function runtimeState(backgroundExtensionIds: string[] = [], maxBackgroundViews = 4): NdExtensionsStateView {
+function runtimeState(backgroundExtensionIds: string[] = [], maxBackgroundViews = 4, backgroundDisabledExtensionIds: string[] = []): NdExtensionsStateView {
   return {
     packages: ids.map((id) => ({ id, version: '1.0.0' })) as NdExtensionsStateView['packages'],
     activations: ids.map((id) => ({ extensionId: id, contextKey: 'personal', context: { kind: 'personal' }, enabled: true, settings: {}, updatedAt: 1 })),
     grants: [], audit: [], pendingApprovals: [],
-    runtimePolicy: { backgroundExtensionIds, maxBackgroundViews, idleTimeoutMinutes: 1 },
+    runtimePolicy: { backgroundExtensionIds, backgroundDisabledExtensionIds, fullscreenDisabledExtensionIds: [], maxBackgroundViews, idleTimeoutMinutes: 1 },
   }
 }
 function data(id: string): NdViewData { return { ...view({ kind: 'personal' }).data, extensionId: id, webView: { entry: 'ui/index.html', version: '1.0.0', url: `nd-extension-ui://${id}/ui/index.html`, token: `tok-${id}` } } }
@@ -80,6 +80,23 @@ describe('bounded extension backgrounds', () => {
     expect(lookupKeepAliveView(second)).toBeDefined()
     pruneKeepAliveViews(62_000)
     expect(lookupKeepAliveView(second)).toBeUndefined()
+  })
+
+  it('keeps ND live audio running by default and releases it on an explicit opt-out', async () => {
+    const state = runtimeState()
+    state.packages = [{ id: 'nd.phone-audio', version: '1.0.0' }] as NdExtensionsStateView['packages']
+    state.activations = [{ extensionId: 'nd.phone-audio', contextKey: 'personal', context: { kind: 'personal' }, enabled: true, settings: {}, updatedAt: 1 }]
+    reconcileExtensionKeepAlive(state)
+    const key = admitKeepAliveView(data('nd.phone-audio'))
+    dockKeepAliveView(key, null)
+    await Promise.resolve()
+    expect(lookupKeepAliveView(key)).toBeDefined()
+
+    const optedOut = runtimeState([], 4, ['nd.phone-audio'])
+    optedOut.packages = state.packages
+    optedOut.activations = state.activations
+    reconcileExtensionKeepAlive(optedOut)
+    expect(lookupKeepAliveView(key)).toBeUndefined()
   })
 
   it('closes live views after deactivation, uninstall, or version changes', () => {

@@ -3,7 +3,7 @@
   "id": "nd.disk-cleaner",
   "name": "ND Disk Cleaner",
   "description": "Scan a folder or drive to see what is using space: a zoomable sunburst of the biggest items, a sortable list, reveal in Finder/Explorer, and move selected items to the trash. Fully external — installed on demand, nothing ships in the app bundle.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "apiVersion": 1,
   "contexts": ["personal"],
   "permissions": ["disk.read", "disk.write"],

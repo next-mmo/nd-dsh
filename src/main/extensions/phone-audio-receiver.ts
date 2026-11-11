@@ -1,8 +1,10 @@
 /**
- * Self-contained responsive Android Chrome receiver page served over local HTTP
- * from the Electron main process. Requires no APK, no cloud services, and no
- * microphone/camera permissions. Respects Chrome autoplay policies by starting
- * playback directly inside the user's Connect/Play gesture.
+ * Self-contained responsive phone-browser receiver page (Android Chrome, iOS
+ * Safari) served over local HTTP from the Electron main process. Requires no
+ * APK, no App Store install, no cloud services, and no microphone/camera
+ * permissions. Respects mobile autoplay policies by starting playback directly
+ * inside the user's Connect/Play gesture, and re-negotiates when iOS suspends
+ * the page on lock/background.
  */
 
 export interface ReceiverPageOptions {
@@ -230,7 +232,7 @@ export function renderPhoneAudioReceiverHtml(options: ReceiverPageOptions): stri
       <div class="top">
         <div>
           <h1>Phone Audio</h1>
-          <p class="sub">Local PC-to-Android WebRTC audio speaker</p>
+          <p class="sub">Local PC-to-phone WebRTC audio speaker</p>
         </div>
         <span id="status-pill" class="pill"><span class="dot"></span><span id="status-text">Ready</span></span>
       </div>
@@ -238,7 +240,7 @@ export function renderPhoneAudioReceiverHtml(options: ReceiverPageOptions): stri
     </section>
 
     <section id="pair-card" class="card" hidden>
-      <div class="msg">Enter the 6-digit pairing code shown on your Windows PC in ND.</div>
+      <div class="msg">This page turns your phone into a wireless speaker for your PC. Enter the 6-digit pairing code shown on your Windows PC in ND.</div>
       <form id="pair-form" class="row" style="flex-direction:column;align-items:stretch;">
         <input id="pin-input" class="pin-input" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="000000" autocomplete="one-time-code" required />
         <button id="pair-btn" class="btn primary" type="submit">Pair Device</button>
@@ -288,6 +290,12 @@ export function renderPhoneAudioReceiverHtml(options: ReceiverPageOptions): stri
       <div class="msg">
         Plays through phone speaker, wired headset, or Bluetooth earphones connected to your phone. No microphone permission is used.
       </div>
+      <div class="msg">
+        Keep this page open while listening. Locking the phone or switching apps pauses playback; it resumes when you return, or tap the button above.
+      </div>
+      <div id="ios-hint" class="msg" hidden>
+        iPhone / iPad: tap Connect &amp; Play once. iOS pauses web audio while the screen is locked or Safari is in the background; this page reconnects and resumes when you return. Share → Add to Home Screen gives an app-like icon.
+      </div>
     </section>
 
     <audio id="remote-audio" playsinline autoplay></audio>
@@ -316,6 +324,10 @@ export function renderPhoneAudioReceiverHtml(options: ReceiverPageOptions): stri
       const statJitter = el('stat-jitter');
       const statCodec = el('stat-codec');
       const audioEl = el('remote-audio');
+      const iosHint = el('ios-hint');
+      const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+        || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      if (IS_IOS) iosHint.hidden = false;
 
       let token = BOOT.initialToken || '';
       let ws = null;
@@ -327,6 +339,7 @@ export function renderPhoneAudioReceiverHtml(options: ReceiverPageOptions): stri
       let statsTimer = null;
       let paused = false;
       let volume = 1;
+      let hasConnected = false;
       let lastBytesReceived = 0;
       let lastLatencyMs = null;
       let lastJitterMs = null;
@@ -391,7 +404,30 @@ export function renderPhoneAudioReceiverHtml(options: ReceiverPageOptions): stri
             resumeBtn.hidden = false;
           });
         }
+        syncMediaSession();
         updateControls();
+      }
+
+      // Lock-screen / now-playing controls on iOS and Android. iOS still
+      // suspends WebRTC while locked; the handlers let the user resume from
+      // the lock screen once the page is awake again.
+      function syncMediaSession() {
+        if (!('mediaSession' in navigator)) return;
+        try {
+          if (typeof MediaMetadata === 'function' && !navigator.mediaSession.metadata) {
+            navigator.mediaSession.metadata = new MediaMetadata({
+              title: 'Phone Audio',
+              artist: 'ND-DSH · PC system audio',
+              album: 'Local Wi-Fi / USB stream',
+            });
+          }
+          navigator.mediaSession.playbackState = paused ? 'paused' : 'playing';
+        } catch {}
+      }
+
+      function clearMediaSession() {
+        if (!('mediaSession' in navigator)) return;
+        try { navigator.mediaSession.playbackState = 'none'; } catch {}
       }
 
       async function setupPeerAndHandleOffer(sdp) {
@@ -504,6 +540,7 @@ export function renderPhoneAudioReceiverHtml(options: ReceiverPageOptions): stri
 
         ws.onopen = () => {
           reconnectAttempts = 0;
+          hasConnected = true;
           setStatus('Negotiating…', 'accent');
           sendWs({ type: 'client-hello', userAgent: navigator.userAgent });
           pingTimer = setInterval(() => {
@@ -538,6 +575,7 @@ export function renderPhoneAudioReceiverHtml(options: ReceiverPageOptions): stri
             showError(msg.reason || 'Streaming stopped by desktop.');
             cleanupPeer();
             cleanupSocket();
+            clearMediaSession();
             setStatus('Stopped', '');
             updateControls();
           }
@@ -563,7 +601,7 @@ export function renderPhoneAudioReceiverHtml(options: ReceiverPageOptions): stri
           }
           if (ev.code === 4008) {
             intentionalClose = true;
-            showError('Another Android device is already connected. Disconnect it in ND first.');
+            showError('Another phone is already connected. Disconnect it in ND first.');
             setStatus('Busy', 'warn');
             updateControls();
             return;
@@ -587,7 +625,8 @@ export function renderPhoneAudioReceiverHtml(options: ReceiverPageOptions): stri
       connectBtn.addEventListener('click', () => {
         intentionalClose = false;
         paused = false;
-        // Unlock audio playback directly inside the user's tap gesture for Android Chrome
+        // Unlock audio playback directly inside the user's tap gesture for
+        // Android Chrome and iOS Safari autoplay policies.
         try {
           audioEl.muted = false;
           audioEl.volume = volume;
@@ -602,6 +641,46 @@ export function renderPhoneAudioReceiverHtml(options: ReceiverPageOptions): stri
         applyAudioState();
       });
 
+      if ('mediaSession' in navigator) {
+        try {
+          navigator.mediaSession.setActionHandler('play', () => {
+            paused = false;
+            applyAudioState();
+            setStatus('Playing', 'ok');
+          });
+          navigator.mediaSession.setActionHandler('pause', () => {
+            paused = true;
+            applyAudioState();
+            setStatus('Paused', 'warn');
+          });
+          navigator.mediaSession.setActionHandler('stop', () => {
+            disconnectBtn.click();
+          });
+        } catch {}
+      }
+
+      // iOS suspends the page on lock/background and kills the peer connection.
+      // On return, re-negotiate immediately instead of waiting out the backoff,
+      // and re-attempt playback (a tap may still be required by autoplay rules).
+      function handleReturnToForeground() {
+        if (document.visibilityState === 'hidden') return;
+        // Never auto-connect on first load: playback must start inside the
+        // user's Connect tap to satisfy mobile autoplay policies.
+        if (!hasConnected || intentionalClose || !token) return;
+        const socketDead = !ws || ws.readyState !== WebSocket.OPEN;
+        const ice = pc ? pc.iceConnectionState : 'closed';
+        const peerDead = !pc || ice === 'failed' || ice === 'closed' || ice === 'disconnected';
+        if (socketDead || peerDead) {
+          reconnectAttempts = 0;
+          connectWebSocket();
+          return;
+        }
+        if (!paused) applyAudioState();
+      }
+      document.addEventListener('visibilitychange', handleReturnToForeground);
+      window.addEventListener('pageshow', handleReturnToForeground);
+      window.addEventListener('focus', handleReturnToForeground);
+
       playPauseBtn.addEventListener('click', () => {
         paused = !paused;
         applyAudioState();
@@ -615,6 +694,7 @@ export function renderPhoneAudioReceiverHtml(options: ReceiverPageOptions): stri
         sendWs({ type: 'client-disconnect' });
         cleanupPeer();
         cleanupSocket();
+        clearMediaSession();
         setStatus('Disconnected', '');
         updateControls();
       });

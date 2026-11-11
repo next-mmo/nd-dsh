@@ -1,4 +1,4 @@
-import { normalizeExtensionRuntimePolicy, type ExtensionRuntimePolicy } from '../../../shared/extension-runtime-policy'
+import { extensionRunsInBackground, normalizeExtensionRuntimePolicy, type ExtensionRuntimePolicy } from '../../../shared/extension-runtime-policy'
 import type { NdWebViewTheme } from '../../../shared/extension-webview'
 import type { NdExtensionsStateView } from '../../../shared/nd-invocations'
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
@@ -10,13 +10,15 @@ import type { OrganizationSnapshot } from '../../../shared/organization'
 import { describeContextForUi } from '../lib/nd-context-model'
 import { cn } from '../lib/utils'
 import { SparkIcon } from './Icons'
-import { ExtensionWebView } from './ExtensionWebView'
+import { ExtensionWebView, extensionViewHasLiveSession } from './ExtensionWebView'
 import { SurfaceErrorBoundary } from './surface-error-boundary'
 
 /**
  * React keep-alive for `kind: 'web'` extension views (games, mini-apps). An
  * foreground view owns one iframe. Background retention is profile-owned,
- * opt-in, count-bounded, and subject to idle expiry; release disposes its heap.
+ * count-bounded, and subject to idle expiry; release disposes its heap. ND's
+ * live audio extensions are on by default, everything else waits for the
+ * user's switch, and an explicit choice always wins over the default.
  *
  * The live iframes are owned by {@link ExtensionKeepAliveHost}, mounted once
  * at the app shell. While the extension view dialog is open for a view, the
@@ -272,7 +274,7 @@ function isPersistedEntryEligible(
   if (entry.version && installed.version !== entry.version) return false
   if (entry.updatedAt && installed.updatedAt !== entry.updatedAt) return false
   if (keepAliveState.dockedKey !== entry.key) {
-    if (!policy.backgroundExtensionIds.includes(entry.extensionId) || policy.maxBackgroundViews <= 0) return false
+    if (!extensionRunsInBackground(policy, entry.extensionId) || policy.maxBackgroundViews <= 0) return false
     if (entry.backgroundedAt !== undefined && now - entry.backgroundedAt >= policy.idleTimeoutMinutes * 60_000) return false
   }
   return true
@@ -317,7 +319,7 @@ function reconcilePersistedKeepAliveViews(
           || keepAliveState.views.some((view) => view.key === entry.key)
           || next.kind !== 'web'
           || !next.webView?.url
-          || !runtimePolicy.backgroundExtensionIds.includes(next.extensionId)
+          || !extensionRunsInBackground(runtimePolicy, next.extensionId)
           || runtimePolicy.maxBackgroundViews <= 0) {
           if (next.webView?.token && typeof window !== 'undefined') {
             void window.ndDsh?.ndExtensions?.closeWebView?.(next.webView.token).catch(() => undefined)
@@ -371,8 +373,12 @@ export function pruneKeepAliveViews(now = Date.now(), policy: ExtensionRuntimePo
   const background = keepAliveState.views.filter((view) => view.key !== keepAliveState.dockedKey && backgroundedAt.has(view.key))
     .sort((a, b) => (backgroundedAt.get(a.key) ?? now) - (backgroundedAt.get(b.key) ?? now))
   for (const view of background) {
-    if (!policy.backgroundExtensionIds.includes(view.data.extensionId)
-      || now - (backgroundedAt.get(view.key) ?? now) >= policy.idleTimeoutMinutes * 60_000
+    // A live voice session is not idle: releasing it would cut the audio the
+    // user is still listening to.
+    const idleExpired = now - (backgroundedAt.get(view.key) ?? now) >= policy.idleTimeoutMinutes * 60_000
+      && !extensionViewHasLiveSession(view.data)
+    if (!extensionRunsInBackground(policy, view.data.extensionId)
+      || idleExpired
       || (view.data.webView?.expiresAt && view.data.webView.expiresAt <= now)) closeKeepAliveView(view.key)
   }
   const retained = background.filter((view) => lookupKeepAliveView(view.key))
@@ -403,9 +409,10 @@ function getKeepAliveSnapshot(): ExtensionKeepAliveState {
 }
 
 /** Keep one portal target for the lifetime of the frame, including while hidden. */
-function KeepAliveFrame({ view, docked, theme, onError }: {
+function KeepAliveFrame({ view, docked, retained, theme, onError }: {
   view: ExtensionKeepAliveView
   docked: boolean
+  retained: boolean
   theme: NdWebViewTheme
   onError: (message: string) => void
 }): ReactNode {
@@ -433,7 +440,7 @@ function KeepAliveFrame({ view, docked, theme, onError }: {
       }} hidden />
       {createPortal(
         <SurfaceErrorBoundary label={view.data.title} resetKey={view.key} onError={onError}>
-          <ExtensionWebView data={view.data} theme={theme} docked={docked} onError={onError} />
+          <ExtensionWebView data={view.data} theme={theme} docked={docked} retained={retained} onError={onError} />
         </SurfaceErrorBoundary>,
         container,
       )}
@@ -469,7 +476,14 @@ export function ExtensionKeepAliveHost({ theme, onError }: {
     void Promise.resolve(window.ndDsh.launcher?.reportKeepalive(report)).catch(() => undefined)
   }, [views, dockedKey])
   return <>{views.map((view) => (
-    <KeepAliveFrame key={view.key} view={view} docked={view.key === dockedKey} theme={theme} onError={onError} />
+    <KeepAliveFrame
+      key={view.key}
+      view={view}
+      docked={view.key === dockedKey}
+      retained={runtimePolicy.maxBackgroundViews > 0 && extensionRunsInBackground(runtimePolicy, view.data.extensionId)}
+      theme={theme}
+      onError={onError}
+    />
   ))}</>
 }
 

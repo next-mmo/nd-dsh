@@ -51,6 +51,7 @@ import type { CoreComputer } from '../core/core-computer.js'
 import type { CoreApiHttp } from '../core/core-api-http.js'
 import type { CoreOsTheme, OsThemeState } from '../core/core-os-theme.js'
 import { applyOsTheme, resolveBackend } from '../os/theme.js'
+import { revealInFolder } from '../os/reveal.js'
 import {
   desiredTheme,
   nextChange,
@@ -586,7 +587,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
         tools: new MediaToolInstaller({ rootDir: mediaToolsRoot }),
         spawnProcess: deps.spawnProcess,
         ...(deps.stopProcess ? { stopProcess: deps.stopProcess } : {}),
-        revealFile: (path) => shell.showItemInFolder(path),
+        revealFile: async (path) => { await revealInFolder(path) },
       })
     : null
   const phoneAudio = new PhoneAudioService({
@@ -2792,8 +2793,8 @@ export function registerNativeHostHandlers(
     requirePersonalContext(context)
     const path = resolve(requiredText(input.path, 'Item', 4096))
     await fs.access(path)
-    shell.showItemInFolder(path)
-    return { revealed: true, path }
+    const { method } = await revealInFolder(path)
+    return { revealed: true, method, path }
   })
 
   host.register('browser.openUrl', async (input) => {
@@ -3625,7 +3626,7 @@ async function tutorCatalogView(state: NdExtensionsStateView): Promise<NdAvailab
 async function phoneAudioCatalogView(state: NdExtensionsStateView): Promise<NdAvailablePackageView> {
   return packageCatalogView(state, PHONE_AUDIO_ID, phoneAudioPackagePath(), {
     name: 'Phone Audio',
-    description: 'Stream Windows system playback audio (YouTube, games, music, browsers) to your Android phone over local Wi-Fi or USB tethering via low-latency WebRTC. No Android APK or cloud server required.',
+    description: 'Stream Windows system playback audio (YouTube, games, music, browsers) to your Android or iPhone over local Wi-Fi or USB tethering via low-latency WebRTC. No APK, App Store install, or cloud server required.',
     permissions: ['phoneaudio.read', 'phoneaudio.write', 'clipboard.write'],
   })
 }
@@ -3874,7 +3875,11 @@ function asPhoneAudioSignal(value: unknown): PhoneAudioSignalFromRenderer {
   const raw = value as Record<string, unknown>
   const clientId = requiredText(raw.clientId, 'Client id', 64)
   if (raw.kind === 'sdp-offer') {
-    return { kind: 'sdp-offer', clientId, sdp: requiredText(raw.sdp, 'SDP offer', 64_000) }
+    // SDP is byte-sensitive: Chromium rejects an offer whose last line lost
+    // its terminating CRLF, so validate length without trimming the payload.
+    if (typeof raw.sdp !== 'string' || !raw.sdp.trim()) throw new Error('SDP offer is required')
+    if (raw.sdp.length > 64_000) throw new Error('SDP offer must be at most 64000 characters')
+    return { kind: 'sdp-offer', clientId, sdp: raw.sdp }
   }
   if (raw.kind === 'ice-candidate') {
     if (!raw.candidate || typeof raw.candidate !== 'object' || Array.isArray(raw.candidate)) {

@@ -425,7 +425,10 @@ async function createWindow(cdpPort: number): Promise<void> {
         return
       }
       const mediaTypes = ('mediaTypes' in details ? details.mediaTypes : undefined) ?? []
-      if (!mediaTypes.includes('video') && !mediaTypes.includes('audio')) {
+      // getDisplayMedia reports no mediaTypes at all; denying an empty list
+      // here killed Phone Audio loopback before the display-media handler
+      // (which enforces the armed-session gate) was ever consulted.
+      if (mediaTypes.length > 0 && !mediaTypes.includes('video') && !mediaTypes.includes('audio')) {
         callback(false)
         return
       }
@@ -442,6 +445,7 @@ async function createWindow(cdpPort: number): Promise<void> {
         && frame === window.webContents.mainFrame,
       )
       if (!isMainFrame || !gate?.isCaptureArmed()) {
+        console.warn('[phone-audio] display media denied', JSON.stringify({ isMainFrame, armed: gate?.isCaptureArmed() ?? false, frameUrl: request.frame?.url }))
         callback({})
         return
       }
@@ -453,6 +457,7 @@ async function createWindow(cdpPort: number): Promise<void> {
         const primary = screen.getPrimaryDisplay()
         const source = sources.find((item) => item.display_id === String(primary.id)) ?? sources[0]
         if (!source) {
+          console.warn('[phone-audio] display media denied: no screen source', sources.length)
           callback({})
           return
         }
@@ -460,7 +465,8 @@ async function createWindow(cdpPort: number): Promise<void> {
           video: source,
           audio: gate.requestedLoopbackAudioMode(),
         })
-      } catch {
+      } catch (error) {
+        console.warn('[phone-audio] display media denied: getSources threw', error instanceof Error ? error.message : String(error))
         callback({})
       }
     })

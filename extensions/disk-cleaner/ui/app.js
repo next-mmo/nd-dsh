@@ -459,7 +459,12 @@ async function cancelScan() {
 async function revealPath(path) {
   if (!path) return
   const result = await bridge.invoke({ action: 'reveal', path })
-  if (!result.ok) showToast(result.error?.message ?? 'Could not reveal that item', 'error')
+  if (!result.ok) {
+    showToast(result.error?.message ?? 'Could not reveal that item', 'error')
+    return
+  }
+  const method = result.value?.method
+  showToast(method === 'explorer' ? 'Revealed in Explorer' : method === 'finder' ? 'Revealed in Finder' : 'Opened the containing folder', 'ok')
 }
 
 async function trashPath(path) {

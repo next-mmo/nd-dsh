@@ -2,8 +2,8 @@
   "protocol": "nd.extension/1",
   "id": "nd.phone-audio",
   "name": "Phone Audio",
-  "description": "Stream Windows 11 system playback audio (YouTube, games, music, browsers) to your Android phone over local Wi-Fi or USB tethering using low-latency WebRTC. No Android APK or cloud server required.",
-  "version": "1.0.0",
+  "description": "Stream Windows 11 system playback audio (YouTube, games, music, browsers) to your Android or iPhone over local Wi-Fi or USB tethering using low-latency WebRTC. No APK, App Store install, or cloud server required.",
+  "version": "1.2.0",
   "apiVersion": 1,
   "contexts": [
     "personal"
@@ -22,7 +22,7 @@
       {
         "id": "open-phone-audio",
         "title": "Phone Audio",
-        "description": "Stream PC playback audio to your Android phone over Wi-Fi or USB tethering.",
+        "description": "Stream PC playback audio to your phone (Android or iPhone) over Wi-Fi or USB tethering.",
         "keywords": [
           "phone audio",
           "audio",
@@ -59,7 +59,7 @@
       {
         "id": "main",
         "title": "Phone Audio",
-        "description": "Stream Windows system audio to an Android phone browser.",
+        "description": "Stream Windows system audio to a phone browser (Android Chrome or iOS Safari).",
         "kind": "web",
         "entry": "ui/index.html",
         "contexts": [
@@ -73,7 +73,7 @@
           },
           {
             "id": "start",
-            "title": "Start streaming PC audio to Android",
+            "title": "Start streaming PC audio to your phone",
             "host": "phoneaudio.session.start"
           },
           {
@@ -83,7 +83,7 @@
           },
           {
             "id": "disconnect",
-            "title": "Disconnect the active Android receiver",
+            "title": "Disconnect the active phone receiver",
             "host": "phoneaudio.client.disconnect"
           },
           {

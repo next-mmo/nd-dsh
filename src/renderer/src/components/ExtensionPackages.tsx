@@ -1,4 +1,4 @@
-import { normalizeExtensionRuntimePolicy } from '../../../shared/extension-runtime-policy'
+import { extensionOpensFullscreen, extensionRunsInBackground, normalizeExtensionRuntimePolicy, setBackgroundExtension, setExtensionFullscreen } from '../../../shared/extension-runtime-policy'
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { BookOpen, Braces, Check, ChevronLeft, ChevronRight, Download, ExternalLink, Eye, FolderOpen, FolderPlus, Gamepad2, HardDrive, Image, Languages, Layers, Link2, ListChecks, Maximize2, Mic, Minimize2, MonitorPlay, Package, PanelsTopLeft, Pencil, Plus, Power, Puzzle, RefreshCw, Repeat, Search, Settings2, ShieldCheck, Shuffle, SkipBack, SkipForward, Smartphone, Sparkles, SquareTerminal, Sunrise, Trash2, Undo2, Upload, Users, Volume2, Workflow, Globe, Network } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
@@ -22,6 +22,7 @@ import type { OrganizationSnapshot } from '../../../shared/organization'
 import { SurfaceErrorBoundary } from './surface-error-boundary'
 import { admitKeepAliveView, dockKeepAliveView, extensionViewKey, lookupKeepAliveView, useExtensionKeepAlive } from './extension-view-keepalive'
 import { useExtensionViewLiveStatus } from './ExtensionWebView'
+import { SettingsSwitch } from './settings-primitives'
 
 const NdTranslateView = lazy(() => import('./NdTranslateView'))
 const ExtensionGuideDialog = lazy(() => import('./ExtensionGuideDialog'))
@@ -134,8 +135,6 @@ export function ExtensionPackagesCard({ state, organization, contexts, requested
   const searchRef = useRef<HTMLInputElement>(null)
 
   const policy = normalizeExtensionRuntimePolicy(state.runtimePolicy)
-  const webPackages = state.packages.filter((item) => item.views.some((view) => view.kind === 'web')
-    && `${item.name} ${item.id}`.toLowerCase().includes(query.trim().toLowerCase())).slice(0, 48)
   const packageIndex = useMemo(() => new Map(state.packages.map((item) => [item.id, item])), [state.packages])
   const activeIndex = useMemo(() => new Set(state.activations.filter((item) => item.enabled).map((item) => JSON.stringify([item.extensionId, item.contextKey]))), [state.activations])
   useEffect(() => setVisibleCount(48), [query, catalogTab])
@@ -259,7 +258,7 @@ export function ExtensionPackagesCard({ state, organization, contexts, requested
 
       <details className="rounded-xl border border-border-soft bg-surface-0/60 p-4">
         <summary className="cursor-pointer text-sm font-semibold">Background extension limits</summary>
-        <p className="mt-2 text-xs text-faint">Views stop when closed unless you enable background use below. Idle views can lose unsaved state when released. Native reminders and clipboard recording use their own settings.</p>
+        <p className="mt-2 text-xs text-faint">Every extension card has Full screen and Background run switches. Views open full screen by default; background run stays off except for ND's live audio extensions (Phone Audio, ND Tutor), so closing the window never cuts the sound. Both choices are remembered per extension, and a backgrounded view reopens in the mode you left it. Idle views can lose unsaved state when released. Native reminders and clipboard recording use their own settings.</p>
         <div className="mt-3 flex flex-wrap gap-4">
           <label className="text-xs">Maximum background views
             <select aria-label="Maximum background extension views" className="ml-2 rounded border border-border-soft bg-surface-1 p-1" value={policy.maxBackgroundViews} disabled={busy}
@@ -273,15 +272,6 @@ export function ExtensionPackagesCard({ state, organization, contexts, requested
               {Array.from({ length: 20 }, (_, index) => <option key={index} value={index + 1}>{index + 1}</option>)}
             </select>
           </label>
-        </div>
-        <p className="mt-2 text-xs text-faint">Use the extension search to find background options. Up to 48 matching views are shown.</p>
-        <div className="mt-3 flex flex-wrap gap-4">
-          {webPackages.map((item) => <label key={item.id} className="flex items-center gap-2 text-xs">
-            <input type="checkbox" disabled={busy} checked={policy.backgroundExtensionIds.includes(item.id)}
-              onChange={(event) => void run(() => window.ndDsh.ndExtensions.setRuntimePolicy({ ...policy, backgroundExtensionIds: event.target.checked
-                ? [...policy.backgroundExtensionIds, item.id] : policy.backgroundExtensionIds.filter((id) => id !== item.id) }))} />
-            Keep {item.name} in background
-          </label>)}
         </div>
       </details>
 
@@ -918,6 +908,8 @@ function PackageRow({
   const effectiveKey = contextKey(effectiveContext)
   const activation = state.activations.find((record) => record.extensionId === item.id && record.contextKey === effectiveKey)
   const primaryView = item.views[0]
+  const policy = normalizeExtensionRuntimePolicy(state.runtimePolicy)
+  const hasWebView = item.views.some((view) => view.kind === 'web')
 
   return (
     <>
@@ -963,6 +955,31 @@ function PackageRow({
               )
             }) : <span className="text-[10px] text-faint">No compatible context available.</span>}
           </div>
+
+          {item.views.length > 0 ? (
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 rounded-lg border border-border-soft bg-surface-1/50 px-2.5 py-1.5">
+              <span className="flex items-center gap-2 text-[10px] leading-4 text-faint" title="Open this extension's view full screen. The view's own header button remembers its choice too.">
+                <SettingsSwitch
+                  label={`Open ${item.name} full screen by default`}
+                  checked={extensionOpensFullscreen(policy, item.id)}
+                  disabled={busy}
+                  onCheckedChange={(next) => void run(() => window.ndDsh.ndExtensions.setRuntimePolicy(setExtensionFullscreen(policy, item.id, next)))}
+                />
+                <span><strong className="font-medium text-soft">Full screen</strong> by default</span>
+              </span>
+              {hasWebView ? (
+                <span className="flex items-center gap-2 text-[10px] leading-4 text-faint" title="Keep this view alive when you close it, so game state and live audio survive.">
+                  <SettingsSwitch
+                    label={`Allow ${item.name} to run in background`}
+                    checked={extensionRunsInBackground(policy, item.id)}
+                    disabled={busy}
+                    onCheckedChange={(next) => void run(() => window.ndDsh.ndExtensions.setRuntimePolicy(setBackgroundExtension(policy, item.id, next)))}
+                  />
+                  <span><strong className="font-medium text-soft">Background</strong> run</span>
+                </span>
+              ) : null}
+            </div>
+          ) : null}
 
           <div
             className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-faint"
@@ -1958,6 +1975,17 @@ export function ExtensionViewDialog({
     onClose()
   }
 
+  const runtimePolicy = normalizeExtensionRuntimePolicy(state?.runtimePolicy)
+  // The header toggle and the card switch write the same remembered choice, so
+  // a view reopened from its background tab comes back in the mode it was left.
+  const applyFullscreen = (next: boolean): void => {
+    setExpanded(next)
+    if (!target) return
+    void window.ndDsh.ndExtensions.setRuntimePolicy(setExtensionFullscreen(runtimePolicy, target.extensionId, next))
+      .then(() => onChanged())
+      .catch((cause) => onError(cause instanceof Error ? cause.message : String(cause)))
+  }
+
   useEffect(() => () => { targetGeneration.current.revision += 1 }, [])
   // The keep-alive titlebar stays live above dialogs, so every extension view
   // starts below it — not only a full-screen one. Otherwise a centered dialog
@@ -2049,7 +2077,9 @@ export function ExtensionViewDialog({
   }
 
   useEffect(() => {
-    setExpanded(false)
+    // Full screen is the default presentation; only an explicit per-extension
+    // choice (card switch or the view's own header toggle) opens it windowed.
+    setExpanded(target ? extensionOpensFullscreen(runtimePolicy, target.extensionId) : false)
     setData(null)
     setLoadedTarget(null)
     setLoadError(null)
@@ -2890,7 +2920,7 @@ export function ExtensionViewDialog({
           className="absolute top-3 right-12 text-muted-foreground"
           aria-label={expanded ? 'Exit full screen' : 'Full screen'}
           title={expanded ? 'Exit full screen' : 'Full screen'}
-          onClick={() => setExpanded((value) => !value)}
+          onClick={() => applyFullscreen(!expanded)}
         >
           {expanded ? <Minimize2 /> : <Maximize2 />}
         </Button>

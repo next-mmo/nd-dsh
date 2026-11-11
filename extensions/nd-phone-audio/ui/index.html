@@ -253,6 +253,9 @@
       font-size: 12px;
     }
     .note { font-size: 11.5px; color: var(--faint); }
+    .steps { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 8px; font-size: 12.5px; line-height: 1.55; }
+    .steps li::marker { color: var(--accent); font-weight: 700; }
+    .steps em { font-style: normal; font-weight: 600; color: var(--accent); }
     .banner {
       border-radius: 9px;
       padding: 8px 11px;
@@ -295,7 +298,7 @@
   <header class="header">
     <div class="title-group">
       <h1>Phone Audio</h1>
-      <p>Use your Android phone as a low-latency local speaker over Wi-Fi or USB tethering.</p>
+      <p>Use your phone (Android or iPhone) as a low-latency local speaker over Wi-Fi or USB tethering.</p>
     </div>
     <div class="controls-top">
       <span id="state-pill" class="pill"><span class="dot"></span><span id="state-label">Stopped</span></span>
@@ -307,15 +310,29 @@
   <div id="warning-banner" class="banner warn" hidden></div>
 
   <div class="grid">
+    <section class="card" id="quick-start">
+      <h2 class="card-title">How to use — 3 steps</h2>
+      <ol class="steps">
+        <li><strong>On this PC:</strong> press <em>Start Streaming</em>. ND captures whatever Windows is playing — YouTube, games, music, calls.</li>
+        <li><strong>On your phone:</strong> scan the QR code below (iPhone: Camera app; Android: any QR scanner), or type the URL into the phone browser. Use the same Wi-Fi as the PC, or plug in a USB cable — see the note under the interface selector.</li>
+        <li><strong>On the phone page:</strong> tap <em>Connect &amp; Play Audio</em> once. Sound now plays through the phone speaker, wired headset, or Bluetooth earphones.</li>
+      </ol>
+      <div class="note">
+        iPhone / iPad: open in Safari and tap once; audio pauses while the screen is locked and resumes when you return. Android: Chrome works best. No app install and no microphone permission are needed.
+      </div>
+    </section>
+
     <section class="card">
-      <h2 class="card-title">Android Pairing (Wi-Fi / USB)</h2>
+      <h2 class="card-title">Phone Pairing (Wi-Fi / USB)</h2>
       <div class="row">
         <label class="note" for="iface-select">Network interface:</label>
         <select id="iface-select" style="flex:1;min-width:180px;"></select>
       </div>
+      <div id="usb-hint" class="note"></div>
+      <div class="note">Scan the QR with your phone, or open the URL in its browser. The 6-digit pairing code is only needed if the phone page asks for it.</div>
       <div class="qr-wrap">
         <div class="qr-box">
-          <img id="qr-img" alt="QR code to open Phone Audio receiver on Android" hidden />
+          <img id="qr-img" alt="QR code to open the Phone Audio receiver on your phone" hidden />
           <div id="qr-placeholder" class="qr-placeholder">Start streaming to generate QR code</div>
         </div>
         <div style="flex:1;min-width:170px;display:flex;flex-direction:column;gap:8px;">
@@ -336,9 +353,9 @@
     </section>
 
     <section class="card">
-      <h2 class="card-title">Connected Android Device</h2>
+      <h2 class="card-title">Connected Phone</h2>
       <div id="client-empty" class="note">
-        No Android receiver connected yet. Open the URL or scan the QR code in Android Chrome and tap <strong>Connect &amp; Play Audio</strong>.
+        No phone receiver connected yet. Open the URL or scan the QR code in your phone browser (Android Chrome or iOS Safari) and tap <strong>Connect &amp; Play Audio</strong>.
       </div>
       <div id="client-details" hidden style="display:flex;flex-direction:column;gap:10px;">
         <div class="kv-list">
@@ -407,11 +424,13 @@
   </div>
 
   <details class="card">
-    <summary>Troubleshooting &amp; Setup Tips (Wi-Fi, USB Tethering, Firewall, Audio Devices)</summary>
+    <summary>Help &amp; Troubleshooting (Wi-Fi, USB, iPhone, Firewall, Audio Devices)</summary>
     <ul>
-      <li><strong>Wi-Fi Mode:</strong> Ensure your Windows PC and Android phone are on the same local Wi-Fi/LAN subnet, then scan the QR code and tap <em>Connect &amp; Play Audio</em> in Android Chrome.</li>
-      <li><strong>USB Tethering Mode (No Wi-Fi needed):</strong> Connect Android via a USB data cable, turn on <em>USB tethering</em> in Android Network settings, wait a moment or click <em>Refresh Devices &amp; Network</em>, and select the <code>USB Tethering</code> interface.</li>
-      <li><strong>Windows Firewall:</strong> If Android hangs while loading the URL over Wi-Fi, allow <code>ND-DSH</code> (or Electron) on <strong>Private</strong> networks in Windows Defender Firewall, or use USB tethering.</li>
+      <li><strong>New here?</strong> Follow the three steps at the top; the phone page explains itself too. Pairing codes and QR links stay valid for 2 hours — press <em>New Code</em> or start streaming again if one expires.</li>
+      <li><strong>Wi-Fi Mode:</strong> Ensure your Windows PC and phone are on the same local Wi-Fi/LAN subnet, then scan the QR code and tap <em>Connect &amp; Play Audio</em> in the phone browser (Android Chrome or iOS Safari).</li>
+      <li><strong>iPhone / iPad:</strong> Open the URL in Safari (the Camera app opens it there), tap <em>Connect &amp; Play Audio</em> once, and optionally use Share → <em>Add to Home Screen</em>. iOS pauses web audio while the screen is locked or Safari is backgrounded; the receiver reconnects and resumes when you return, and lock-screen play/pause controls are provided.</li>
+      <li><strong>USB Tethering Mode (No Wi-Fi needed):</strong> Connect Android via a USB data cable, turn on <em>USB tethering</em> in Android Network settings, wait a moment or click <em>Refresh Devices &amp; Network</em>, and select the <code>USB Tethering</code> interface. iPhone USB tethering (Personal Hotspot over USB) works the same way once the hotspot interface appears.</li>
+      <li><strong>Windows Firewall:</strong> If the phone hangs while loading the URL over Wi-Fi, allow <code>ND-DSH</code> (or Electron) on <strong>Private</strong> networks in Windows Defender Firewall, or use USB tethering.</li>
       <li><strong>Silent audio or missing playback device:</strong> Verify an active Windows output (such as <code>Speakers (Realtek(R) Audio)</code> or <code>U27N3R (Intel(R) Display Audio)</code>) is enabled and playing audio. On drivers that silence WASAPI loopback when hardware-muted, unmute Windows and use the <em>Mute PC speakers while streaming</em> option instead.</li>
       <li><strong>VB-CABLE Optional Fallback:</strong> If a specific audio driver blocks Windows loopback, install VB-Audio Virtual Cable, set Windows output to <em>CABLE Input</em>, and choose <em>Virtual Audio Device Fallback</em> → <em>CABLE Output</em>.</li>
     </ul>

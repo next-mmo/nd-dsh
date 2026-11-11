@@ -19,7 +19,9 @@ installed on demand — nothing here ships in the app bundle.
 - **Sunburst + list** — click a ring or a row to zoom in; sizes reconcile
   exactly. Entries too small to chart fold into one `(other)` bucket that names
   how many items it hides; it is informational and not actionable.
-- **Reveal** — opens the containing folder with the item selected.
+- **Reveal** — opens the containing folder with the item selected and confirms
+  with a toast. If the native selector is unavailable, ND opens the containing
+  folder instead and says so.
 - **Trash** — moves one item to the system trash after ND's own confirm dialog
   showing the full path. The host refuses filesystem roots and your home
   folder; nothing moves without the dialog.
