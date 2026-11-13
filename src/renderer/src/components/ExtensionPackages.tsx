@@ -1,6 +1,6 @@
 import { extensionOpensFullscreen, extensionRunsInBackground, normalizeExtensionRuntimePolicy, setBackgroundExtension, setExtensionFullscreen } from '../../../shared/extension-runtime-policy'
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { BookOpen, Braces, Check, ChevronLeft, ChevronRight, Download, ExternalLink, Eye, FolderOpen, FolderPlus, Gamepad2, HardDrive, Image, Languages, Layers, Link2, ListChecks, Maximize2, Mic, Minimize2, MonitorPlay, Package, PanelsTopLeft, Pencil, Plus, Power, Puzzle, RefreshCw, Repeat, Search, Settings2, ShieldCheck, Shuffle, SkipBack, SkipForward, Smartphone, Sparkles, SquareTerminal, Sunrise, Trash2, Undo2, Upload, Users, Volume2, Workflow, Globe, Network } from 'lucide-react'
+import { BookOpen, Braces, Check, ChevronLeft, ChevronRight, Download, ExternalLink, Eye, FolderOpen, FolderPlus, Gamepad2, HardDrive, Image, Keyboard, Languages, Layers, Link2, ListChecks, Maximize2, Mic, Minimize2, MonitorPlay, Package, PanelsTopLeft, Pencil, Plus, Power, Puzzle, RefreshCw, Repeat, Search, Settings2, ShieldCheck, Shuffle, SkipBack, SkipForward, Smartphone, Sparkles, SquareTerminal, Sunrise, Trash2, Undo2, Upload, Users, Volume2, Workflow, Globe, Network } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { cn } from '../lib/utils'
 import type { NdContext } from '../../../shared/nd-context'
@@ -73,6 +73,7 @@ const EXTENSION_ACCENTS: Record<string, { icon: LucideIcon; tileClassName: strin
   'nd.os-toolkit': { icon: Sunrise, tileClassName: 'border-yellow-500/25 bg-yellow-500/15 text-yellow-500' },
   'nd.tutor': { icon: BookOpen, tileClassName: 'border-emerald-500/25 bg-emerald-500/15 text-emerald-500' },
   'nd.phone-audio': { icon: Volume2, tileClassName: 'border-sky-500/25 bg-sky-500/15 text-sky-500' },
+  'nd.phone-input': { icon: Keyboard, tileClassName: 'border-indigo-500/25 bg-indigo-500/15 text-indigo-500' },
 }
 
 function ExtensionIconTile({ id, large = false }: { id: string; large?: boolean }): React.ReactNode {

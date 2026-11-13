@@ -1,0 +1,109 @@
+{
+  "protocol": "nd.extension/1",
+  "id": "nd.phone-input",
+  "name": "Phone Keyboard",
+  "description": "Use your Android phone as a wireless keyboard for this PC over local Wi-Fi, USB tethering, or LAN. Type in English or Khmer and dictate with your phone keyboard's own voice input (Gboard). Text is injected as real Unicode; nothing leaves your LAN.",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "contexts": [
+    "personal"
+  ],
+  "permissions": [
+    "phoneinput.read",
+    "phoneinput.write",
+    "clipboard.write"
+  ],
+  "category": "system",
+  "settings": [],
+  "contributions": {
+    "tools": [],
+    "skills": [],
+    "commands": [
+      {
+        "id": "open-phone-keyboard",
+        "title": "Phone Keyboard",
+        "description": "Turn your phone into a wireless English/Khmer keyboard and voice dictation pad for this PC.",
+        "keywords": [
+          "phone keyboard",
+          "keyboard",
+          "voice",
+          "dictation",
+          "khmer",
+          "english",
+          "android",
+          "usb",
+          "wifi",
+          "type"
+        ],
+        "host": "phoneinput.status.get",
+        "openViewId": "main",
+        "contexts": [
+          "personal"
+        ]
+      },
+      {
+        "id": "stop-phone-keyboard",
+        "title": "Stop Phone Keyboard",
+        "description": "Stop the Phone Keyboard server and disconnect the paired phone.",
+        "keywords": [
+          "stop phone keyboard",
+          "disconnect phone"
+        ],
+        "host": "phoneinput.session.stop",
+        "contexts": [
+          "personal"
+        ]
+      }
+    ],
+    "views": [
+      {
+        "id": "main",
+        "title": "Phone Keyboard",
+        "description": "Pair a phone browser (Android Chrome or iOS Safari) and type into the focused Windows app.",
+        "kind": "web",
+        "entry": "ui/index.html",
+        "contexts": [
+          "personal"
+        ],
+        "actions": [
+          {
+            "id": "status",
+            "title": "Read Phone Keyboard status",
+            "host": "phoneinput.status.get"
+          },
+          {
+            "id": "start",
+            "title": "Start the Phone Keyboard server",
+            "host": "phoneinput.session.start"
+          },
+          {
+            "id": "stop",
+            "title": "Stop the Phone Keyboard server",
+            "host": "phoneinput.session.stop"
+          },
+          {
+            "id": "disconnect",
+            "title": "Disconnect the active phone keyboard",
+            "host": "phoneinput.client.disconnect"
+          },
+          {
+            "id": "rotate-token",
+            "title": "Generate a new pairing code and QR token",
+            "host": "phoneinput.token.rotate"
+          },
+          {
+            "id": "set-options",
+            "title": "Update the network interface",
+            "host": "phoneinput.options.set"
+          },
+          {
+            "id": "copy-url",
+            "title": "Copy the connection URL to the clipboard",
+            "host": "clipboard.write"
+          }
+        ]
+      }
+    ],
+    "workflows": []
+  }
+}

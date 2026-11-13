@@ -365,6 +365,23 @@ export function ExtensionWebView({ data, theme, docked = true, retained = false,
     return () => unsubscribe()
   }, [data.extensionId, webView?.url, ready])
 
+  // ── Phone Keyboard live state push (nd.phone-input only) ──
+  useEffect(() => {
+    if (data.extensionId !== 'nd.phone-input') return
+    const frame = frameRef.current
+    const api = window.ndDsh?.phoneInput
+    if (!frame || !webView?.url || !api) return
+    const expectedOrigin = new URL(webView.url).origin
+    const pushState = (snapshot: unknown): void => {
+      frame.contentWindow?.postMessage({ kind: 'nd-webview:phone-input-state', state: snapshot }, expectedOrigin)
+    }
+    const unsubscribe = api.onState(pushState)
+    if (ready) {
+      void api.state().then(pushState).catch(() => undefined)
+    }
+    return () => unsubscribe()
+  }, [data.extensionId, webView?.url, ready])
+
   useEffect(() => {
     if (!webView?.url) return
     const frame = frameRef.current

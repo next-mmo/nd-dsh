@@ -115,6 +115,8 @@ import { PayGuardScheduler } from './pay-guard-scheduler.js'
 import { OsToolkitScheduler } from './os-toolkit-scheduler.js'
 import { TutorStore } from './tutor-store.js'
 import { PhoneAudioService } from './phone-audio-service.js'
+import { PhoneInputService } from './phone-input-service.js'
+import type { CoreInput } from '../core/core-input.js'
 import type { CoreSystemVolume } from '../core/core-system-volume.js'
 import {
   PHONE_AUDIO_EXTENSION_ID,
@@ -122,6 +124,7 @@ import {
   type PhoneAudioRendererReport,
   type PhoneAudioSignalFromRenderer,
 } from '../../shared/phone-audio.js'
+import { PHONE_INPUT_EXTENSION_ID, PHONE_INPUT_IPC } from '../../shared/phone-input.js'
 import { ND_TRANSLATE_ID, ND_TRANSLATE_MAX_TEXT, isLlmProvider } from '../../shared/nd-translate.js'
 import { ND_WEBVIEW_URL_SCHEME } from '../../shared/extension-webview.js'
 import type { ProviderStore } from '../providers.js'
@@ -189,6 +192,8 @@ export interface NdIpcDependencies {
   coreOsTheme?: CoreOsTheme
   /** nd-core-backed system output volume/mute state for Phone Audio diagnostics. */
   coreSystemVolume?: CoreSystemVolume
+  /** nd-core keyboard injection for Phone Keyboard; fails closed without it. */
+  coreInput?: CoreInput
   /** Main session display-media gate for Phone Audio loopback capture. */
   phoneAudioCaptureGate?: {
     current?: {
@@ -220,6 +225,7 @@ export const NINE_ROUTER_ID = 'nd.9router'
 export const EMULATOR_ID = 'nd.emulator'
 export const ND_TUTOR_ID = 'nd.tutor'
 export const PHONE_AUDIO_ID = PHONE_AUDIO_EXTENSION_ID
+export const PHONE_INPUT_ID = PHONE_INPUT_EXTENSION_ID
 
 /**
  * Development package sources. Release Discover uses separately published metadata.
@@ -259,6 +265,7 @@ const AVAILABLE_PACKAGES: readonly { id: string; path: () => string }[] = app.is
     { id: OS_TOOLKIT_ID, path: osToolkitPackagePath },
     { id: ND_TUTOR_ID, path: tutorPackagePath },
     { id: PHONE_AUDIO_ID, path: phoneAudioPackagePath },
+    { id: PHONE_INPUT_ID, path: phoneInputPackagePath },
   ]),
 ]
 
@@ -411,6 +418,12 @@ function phoneAudioPackagePath(): string {
     : join(app.getAppPath(), 'extensions', 'nd-phone-audio')
 }
 
+function phoneInputPackagePath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'nd-extensions', 'nd-phone-input')
+    : join(app.getAppPath(), 'extensions', 'nd-phone-input')
+}
+
 /**
  * The ND extension invocation surface plus the ND Home personal surface. Every
  * handler runs in the trusted main process, is registered on narrow channels
@@ -552,6 +565,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
           osToolkitCatalogView(state),
           tutorCatalogView(state),
           phoneAudioCatalogView(state),
+          phoneInputCatalogView(state),
         ]),
       ]),
     }
@@ -616,7 +630,22 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
     if (id === PHONE_AUDIO_ID) void phoneAudio.stop('Phone Audio was deactivated or updated.').catch(() => undefined)
   }
 
-  const disposeNativeHost = registerNativeHostHandlers(deps, clipboardHistory, computerUse, mediaDownload, phoneAudio)
+  const phoneInput = new PhoneInputService({
+    ...(deps.coreInput ? { inject: deps.coreInput } : {}),
+    onSnapshot: (snapshot) => {
+      if (!deps.window.isDestroyed()) deps.window.webContents.send(PHONE_INPUT_IPC.stateEvent, snapshot)
+    },
+    onLog: (line) => console.warn(line),
+  })
+  const stopPhoneInputOnDisable = (id: string): void => {
+    if (id === PHONE_INPUT_ID) void phoneInput.stop('Phone Keyboard was deactivated or updated.').catch(() => undefined)
+  }
+  const stopPhoneServicesOnDisable = (id: string): void => {
+    stopPhoneAudioOnDisable(id)
+    stopPhoneInputOnDisable(id)
+  }
+
+  const disposeNativeHost = registerNativeHostHandlers(deps, clipboardHistory, computerUse, mediaDownload, phoneAudio, phoneInput)
 
 
   deps.broker.setOnApprovalRequested(() => { void emitState() })
@@ -694,7 +723,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
       await remoteCatalog.install(id, deps.packages, join(app.getPath('userData'), 'nd-extension-downloads'))
       webViews.revokeExtension(id)
       if (id === OS_TOOLKIT_ID) refreshOsToolkitScheduler?.()
-      stopPhoneAudioOnDisable(id)
+      stopPhoneServicesOnDisable(id)
       await emitState()
       return stateView()
     }
@@ -709,7 +738,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
     // A version change must rebuild the timer: the old one is bound to the
     // previous snapshot, and AGENTS.md requires disposal on version change.
     if (id === OS_TOOLKIT_ID) refreshOsToolkitScheduler?.()
-    stopPhoneAudioOnDisable(id)
+    stopPhoneServicesOnDisable(id)
     await emitState()
     return stateView()
   })
@@ -721,7 +750,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
     resetComputerUse(id, contextKey({ kind: 'personal' }))
     syncClipboardWatcher()
     if (id === OS_TOOLKIT_ID) refreshOsToolkitScheduler?.()
-    stopPhoneAudioOnDisable(id)
+    stopPhoneServicesOnDisable(id)
     await emitState()
     return stateView()
   })
@@ -738,7 +767,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
     syncClipboardWatcher()
     if (id === PAY_GUARD_ID) refreshPayGuardScheduler?.()
     if (id === OS_TOOLKIT_ID) refreshOsToolkitScheduler?.()
-    stopPhoneAudioOnDisable(id)
+    stopPhoneServicesOnDisable(id)
     await emitState()
     return stateView()
   })
@@ -754,7 +783,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
       await deps.state.revokeGrantsForExtension(id, target)
       webViews.revokeExtension(id, contextKey(target))
       resetComputerUse(id, contextKey(target))
-      stopPhoneAudioOnDisable(id)
+      stopPhoneServicesOnDisable(id)
     }
     if (id === WALLPAPER_MANAGER_ID) void syncWallpaperRotation()
     if (id === CLIPBOARD_HISTORY_ID) syncClipboardWatcher()
@@ -916,6 +945,9 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
     phoneAudio.handleRendererReport(asPhoneAudioReport(rawReport))
   })
 
+  // --- ND Phone Keyboard bridge -----------------------------------------------
+  handle(PHONE_INPUT_IPC.state, () => phoneInput.snapshot())
+
   // Seeding happens before the first state read; failures stay visible instead
   // of silently shipping a half-registered platform.
   void ensureSeeded().catch((error) => console.warn('ND built-in extension packages failed to seed:', error))
@@ -926,6 +958,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
       delete deps.phoneAudioCaptureGate.current
     }
     void phoneAudio.dispose()
+    void phoneInput.dispose()
     if (wallpaperTimer) clearInterval(wallpaperTimer)
     for (const channel of channels) ipcMain.removeHandler(channel)
     void clipboardHistory.dispose()
@@ -947,6 +980,7 @@ export function registerNativeHostHandlers(
   computerUse?: ComputerUseService | null,
   mediaDownload?: MediaDownloadService | null,
   phoneAudioService?: PhoneAudioService | null,
+  phoneInputService?: PhoneInputService | null,
 ): { dispose: () => void } {
   const { host, providers } = deps
   registerSkillComposeHost(host, deps.skills, (request) => {
@@ -3455,6 +3489,39 @@ export function registerNativeHostHandlers(
     return phoneAudio.setOptions(parsePhoneAudioOptionsInput(input))
   })
 
+  // --- ND Phone Keyboard ------------------------------------------------------
+  const phoneInput = phoneInputService ?? new PhoneInputService({ headless: true })
+
+  host.register('phoneinput.status.get', async (_input, context) => {
+    requirePersonalContext(context)
+    return phoneInput.snapshot()
+  })
+
+  host.register('phoneinput.session.start', async (input, context) => {
+    requirePersonalContext(context)
+    return phoneInput.start(parsePhoneInputOptionsInput(input))
+  })
+
+  host.register('phoneinput.session.stop', async (_input, context) => {
+    requirePersonalContext(context)
+    return phoneInput.stop('Stopped by user.')
+  })
+
+  host.register('phoneinput.client.disconnect', async (_input, context) => {
+    requirePersonalContext(context)
+    return phoneInput.disconnectClient()
+  })
+
+  host.register('phoneinput.token.rotate', async (_input, context) => {
+    requirePersonalContext(context)
+    return phoneInput.rotateToken()
+  })
+
+  host.register('phoneinput.options.set', async (input, context) => {
+    requirePersonalContext(context)
+    return phoneInput.setOptions(parsePhoneInputOptionsInput(input))
+  })
+
   return {
     dispose: () => {
       translator.dispose()
@@ -3628,6 +3695,14 @@ async function phoneAudioCatalogView(state: NdExtensionsStateView): Promise<NdAv
     name: 'Phone Audio',
     description: 'Stream Windows system playback audio (YouTube, games, music, browsers) to your Android or iPhone over local Wi-Fi or USB tethering via low-latency WebRTC. No APK, App Store install, or cloud server required.',
     permissions: ['phoneaudio.read', 'phoneaudio.write', 'clipboard.write'],
+  })
+}
+
+async function phoneInputCatalogView(state: NdExtensionsStateView): Promise<NdAvailablePackageView> {
+  return packageCatalogView(state, PHONE_INPUT_ID, phoneInputPackagePath(), {
+    name: 'Phone Keyboard',
+    description: 'Use your Android phone as a wireless keyboard for this PC over local Wi-Fi, USB tethering, or LAN. Type in English or Khmer, and dictate with your phone keyboard’s own voice input (Gboard). Text is injected as real Unicode; nothing leaves your LAN.',
+    permissions: ['phoneinput.read', 'phoneinput.write', 'clipboard.write'],
   })
 }
 
@@ -3862,6 +3937,14 @@ function parsePhoneAudioOptionsInput(input: Record<string, unknown>): Record<str
   if (typeof input.inputDeviceId === 'string') {
     parsed.inputDeviceId = input.inputDeviceId.slice(0, 256)
   }
+  if (typeof input.preferredInterfaceId === 'string') {
+    parsed.preferredInterfaceId = input.preferredInterfaceId.slice(0, 128)
+  }
+  return parsed
+}
+
+function parsePhoneInputOptionsInput(input: Record<string, unknown>): Record<string, unknown> {
+  const parsed: Record<string, unknown> = {}
   if (typeof input.preferredInterfaceId === 'string') {
     parsed.preferredInterfaceId = input.preferredInterfaceId.slice(0, 128)
   }

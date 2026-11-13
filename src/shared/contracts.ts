@@ -769,6 +769,8 @@ export interface DesktopApi {
   live?: import('./live-session.js').LiveDesktopApi
   /** Local PC-to-Android WebRTC audio streaming bridge for ND Phone Audio. */
   phoneAudio?: import('./phone-audio.js').PhoneAudioDesktopApi
+  /** Local Android-to-PC keyboard bridge for ND Phone Keyboard. */
+  phoneInput?: import('./phone-input.js').PhoneInputDesktopApi
   /** ND Home personal storage: notes, captures, and context-bound chats. */
   home: import('./nd-invocations.js').NdHomeDesktopApi
   browser: {

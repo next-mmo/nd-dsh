@@ -625,6 +625,16 @@ fn dispatch(
             let params = from_params::<media::MediaKeyParams>(params)?;
             to_value(media::send_media_key(params)?)
         }
+        // Phone Keyboard: a paired phone types into the focused Windows app.
+        // Unicode SendInput lives here once; the desktop never synthesizes input.
+        "input.text" => {
+            let params = from_params::<nd_runtime::input::InputTextParams>(params)?;
+            to_value(nd_runtime::input::send_text(params)?)
+        }
+        "input.key" => {
+            let params = from_params::<nd_runtime::input::InputKeyParams>(params)?;
+            to_value(nd_runtime::input::send_key(params)?)
+        }
         // Disk-usage scans for the ND Disk Cleaner extension: the heavy walk
         // stays here, progress streams out as events tagged with the request
         // id (the desktop's scan identity, canceled through `core.cancel`).

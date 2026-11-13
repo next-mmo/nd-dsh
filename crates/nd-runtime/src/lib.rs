@@ -16,6 +16,7 @@ pub mod effect_journal;
 pub mod evidence;
 pub mod extension_package;
 pub mod git;
+pub mod input;
 pub mod media;
 pub mod metrics;
 pub mod os_theme;

@@ -56,6 +56,7 @@ import {
   type PhoneAudioSignalToRenderer,
   type PhoneAudioSnapshot,
 } from '../shared/phone-audio.js'
+import { PHONE_INPUT_IPC, type PhoneInputDesktopApi, type PhoneInputSnapshot } from '../shared/phone-input.js'
 import type { LauncherKeepaliveView, LauncherLiveState } from '../shared/launcher-live.js'
 import { SUPERAGENT_PROTOTYPE_IPC, type SuperagentPrototypeDesktopApi } from '../shared/superagent-prototype.js'
 import {
@@ -164,6 +165,15 @@ const phoneAudioApi: PhoneAudioDesktopApi = {
     const handler = (_event: Electron.IpcRendererEvent, signal: PhoneAudioSignalToRenderer) => listener(signal)
     ipcRenderer.on(PHONE_AUDIO_IPC.signalEvent, handler)
     return () => ipcRenderer.removeListener(PHONE_AUDIO_IPC.signalEvent, handler)
+  },
+}
+
+const phoneInputApi: PhoneInputDesktopApi = {
+  state: () => ipcRenderer.invoke(PHONE_INPUT_IPC.state) as Promise<PhoneInputSnapshot>,
+  onState: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, snapshot: PhoneInputSnapshot) => listener(snapshot)
+    ipcRenderer.on(PHONE_INPUT_IPC.stateEvent, handler)
+    return () => ipcRenderer.removeListener(PHONE_INPUT_IPC.stateEvent, handler)
   },
 }
 
@@ -453,6 +463,7 @@ const api: DesktopApi = {
   ndExtensions: ndExtensionsApi,
   live: liveApi,
   phoneAudio: phoneAudioApi,
+  phoneInput: phoneInputApi,
   home: homeApi,
   browser: {
     state: () => ipcRenderer.invoke(IPC.browserState),

@@ -58,6 +58,7 @@ import type { GitExecRunner } from './git/git-cli.js'
 import type { CoreMedia } from './core/core-media.js'
 import type { CoreClipboard } from './core/core-clipboard.js'
 import type { CoreMediaKeys } from './core/core-media-keys.js'
+import type { CoreInput } from './core/core-input.js'
 import { validateSystemVolumeUpdate, type CoreSystemVolume } from './core/core-system-volume.js'
 import type { NdMediaKeyKind } from '../shared/media-session.js'
 import type { CoreVault } from './core/core-vault.js'
@@ -129,6 +130,7 @@ interface IpcDependencies {
   /** nd-core-backed OS media transport keys, the launcher transport fallback. */
   coreMediaKeys?: CoreMediaKeys
   coreSystemVolume?: CoreSystemVolume
+  coreInput?: CoreInput
   /** nd-core-backed encrypted local password vault for extensions. */
   coreVault?: CoreVault
   /** nd-core-backed disk-usage scan surface for extensions. */
@@ -390,6 +392,7 @@ export function registerIpc(deps: IpcDependencies): () => void {
     ...(deps.coreApiHttp ? { coreApiHttp: deps.coreApiHttp } : {}),
     ...(deps.coreOsTheme ? { coreOsTheme: deps.coreOsTheme } : {}),
     ...(deps.coreSystemVolume ? { coreSystemVolume: deps.coreSystemVolume } : {}),
+    ...(deps.coreInput ? { coreInput: deps.coreInput } : {}),
     ...(deps.phoneAudioCaptureGate ? { phoneAudioCaptureGate: deps.phoneAudioCaptureGate } : {}),
     ...(deps.nineRouterManaged ? { nineRouterManaged: deps.nineRouterManaged } : {}),
     onHomeChanged: () => { void syncHomeSessions() },

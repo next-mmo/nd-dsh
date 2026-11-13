@@ -108,7 +108,9 @@
           "tutor.write",
           "live.voice",
           "phoneaudio.read",
-          "phoneaudio.write"
+          "phoneaudio.write",
+          "phoneinput.read",
+          "phoneinput.write"
         ]
       }
     },
@@ -642,7 +644,13 @@
         "phoneaudio.session.stop",
         "phoneaudio.client.disconnect",
         "phoneaudio.token.rotate",
-        "phoneaudio.options.set"
+        "phoneaudio.options.set",
+        "phoneinput.status.get",
+        "phoneinput.session.start",
+        "phoneinput.session.stop",
+        "phoneinput.client.disconnect",
+        "phoneinput.token.rotate",
+        "phoneinput.options.set"
       ]
     }
   }

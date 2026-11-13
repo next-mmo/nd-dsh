@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'none'; script-src nd-extension-ui:; style-src nd-extension-ui: 'unsafe-inline'; img-src nd-extension-ui: data: blob:; font-src nd-extension-ui:; connect-src 'none'; base-uri 'none'; form-action 'none'" />
+  <title>Phone Keyboard</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b0c0f;
+      --panel: #161922;
+      --panel-2: #1d212d;
+      --border: rgba(255, 255, 255, 0.08);
+      --border-strong: rgba(255, 255, 255, 0.16);
+      --text: #e7e9ee;
+      --faint: #9aa3b2;
+      --accent: #0a84ff;
+      --ok: #30d158;
+      --warn: #ff9f0a;
+      --bad: #ff453a;
+    }
+    :root[data-theme='light'] {
+      color-scheme: light;
+      --bg: #eef0f4;
+      --panel: #ffffff;
+      --panel-2: #f4f6fa;
+      --border: rgba(30, 30, 35, 0.09);
+      --border-strong: rgba(30, 30, 35, 0.18);
+      --text: #1d1d1f;
+      --faint: #6e6e73;
+      --accent: #007aff;
+      --ok: #15803d;
+      --warn: #b45309;
+      --bad: #dc2626;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      padding: 14px 16px 20px;
+      background: var(--bg);
+      color: var(--text);
+      font: 13px/1.45 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .title-group h1 { margin: 0; font-size: 16px; font-weight: 650; letter-spacing: -0.015em; }
+    .title-group p { margin: 2px 0 0; font-size: 12px; color: var(--faint); }
+    .controls-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .pill {
+      display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px;
+      border-radius: 999px; border: 1px solid var(--border); background: var(--panel);
+      font-size: 11.5px; font-weight: 600; color: var(--faint);
+    }
+    .pill .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+    .pill.accent { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+    .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+    .pill.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+    .pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
+    button, select {
+      font: inherit; color: var(--text); background: var(--panel-2);
+      border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; cursor: pointer;
+    }
+    button:hover:not(:disabled), select:hover:not(:disabled) { border-color: var(--border-strong); }
+    button:disabled, select:disabled { opacity: 0.45; cursor: default; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+    button.danger { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 35%, transparent); }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
+    section.card {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 11px;
+      padding: 13px 14px; display: flex; flex-direction: column; gap: 10px;
+    }
+    .card-title {
+      margin: 0; font-size: 11px; font-weight: 650; letter-spacing: 0.05em;
+      text-transform: uppercase; color: var(--faint);
+    }
+    .qr-wrap { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+    .qr-box {
+      width: 148px; height: 148px; border-radius: 10px; border: 1px solid var(--border);
+      background: #ffffff; display: grid; place-items: center; overflow: hidden; flex: none;
+    }
+    .qr-box img { width: 144px; height: 144px; display: block; }
+    .qr-placeholder { font-size: 11px; color: #6e6e73; text-align: center; padding: 8px; }
+    .qr-meta { display: flex; flex-direction: column; gap: 8px; min-width: 200px; flex: 1; }
+    .kv { display: flex; flex-direction: column; gap: 2px; }
+    .kv .k { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--faint); }
+    .kv .v { font-size: 13px; font-weight: 600; word-break: break-all; }
+    .kv .v.mono { font-family: ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, monospace; font-size: 12.5px; }
+    .code { font-size: 22px; letter-spacing: 0.25em; font-weight: 700; font-family: ui-monospace, Consolas, monospace; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .note { font-size: 11.5px; color: var(--faint); }
+    .banner { border-radius: 8px; padding: 8px 10px; font-size: 12px; border: 1px solid var(--border); }
+    .banner.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 35%, transparent); background: color-mix(in srgb, var(--bad) 8%, transparent); }
+    .field { display: flex; flex-direction: column; gap: 4px; }
+    .field label { font-size: 11px; color: var(--faint); }
+    select { width: 100%; }
+    .client-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; }
+    .hint { font-size: 12px; color: var(--faint); }
+    ul.steps { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="title-group">
+      <h1>Phone Keyboard</h1>
+      <p>Type English / Khmer and dictate from your phone into the focused Windows app.</p>
+    </div>
+    <div class="controls-top">
+      <span id="state-pill" class="pill"><span class="dot"></span><span id="state-label">Stopped</span></span>
+      <button id="toggle-btn" class="primary">Start Keyboard</button>
+      <button id="refresh-btn">Refresh</button>
+    </div>
+  </div>
+
+  <div id="error-banner" class="banner bad" hidden></div>
+
+  <div class="grid">
+    <section class="card">
+      <h2 class="card-title">Pair your phone</h2>
+      <div class="qr-wrap">
+        <div class="qr-box">
+          <img id="qr-img" alt="Pairing QR code" hidden />
+          <div id="qr-placeholder" class="qr-placeholder">Start the keyboard to generate a QR code</div>
+        </div>
+        <div class="qr-meta">
+          <div class="kv"><span class="k">Address</span><span id="ip-port" class="v mono">—</span></div>
+          <div class="kv"><span class="k">Pairing code</span><span id="pairing-code" class="v code">------</span></div>
+          <div class="kv"><span class="k">URL</span><span id="conn-url" class="v mono">Start the keyboard to generate a pairing URL</span></div>
+          <div class="row">
+            <button id="copy-url-btn" disabled>Copy URL</button>
+            <button id="rotate-btn" disabled>New code</button>
+          </div>
+        </div>
+      </div>
+      <div class="field">
+        <label for="iface-select">Network interface</label>
+        <select id="iface-select"></select>
+      </div>
+      <p id="usb-hint" class="hint"></p>
+      <p id="firewall-note" class="note"></p>
+    </section>
+
+    <section class="card">
+      <h2 class="card-title">Connected phone</h2>
+      <p id="client-empty" class="hint">No phone connected yet. Scan the QR code or open the URL on your phone, then enter the pairing code.</p>
+      <div id="client-details" hidden>
+        <div class="client-grid">
+          <div class="kv"><span class="k">Device</span><span id="client-ua" class="v">—</span></div>
+          <div class="kv"><span class="k">Link</span><span id="client-transport" class="v">—</span></div>
+          <div class="kv"><span class="k">IP</span><span id="client-ip" class="v mono">—</span></div>
+          <div class="kv"><span class="k">Latency</span><span id="client-latency" class="v">—</span></div>
+          <div class="kv"><span class="k">Injected</span><span id="client-injection" class="v">—</span></div>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <button id="disconnect-btn" class="danger">Disconnect phone</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2 class="card-title">How to use</h2>
+    <ul class="steps">
+      <li>Press <strong>Start Keyboard</strong>, then scan the QR code with your phone (or open the URL and enter the 6-digit code).</li>
+      <li>On the phone page, tap the text box and type — or tap your keyboard's mic (Gboard) to dictate in English or Khmer.</li>
+      <li>Press <strong>Send to PC</strong> to type the text into whatever Windows app is focused. Direct keys (Enter, Backspace, arrows) apply immediately.</li>
+      <li>Wi-Fi, USB tethering, and wired LAN all work. Keep the phone and PC on the same network; nothing leaves your LAN.</li>
+    </ul>
+  </section>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

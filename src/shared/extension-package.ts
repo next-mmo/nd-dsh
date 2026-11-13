@@ -147,6 +147,7 @@ export function detectExtensionCategory(pkg: {
     id.includes('security') ||
     id.includes('account-mgt') ||
     id.includes('phone-audio') ||
+    id.includes('phone-input') ||
     text.includes('wallpaper') ||
     text.includes('disk cleaner') ||
     text.includes('quit process') ||
@@ -217,6 +218,8 @@ export const ND_EXTENSION_PERMISSIONS = [
   'live.voice',
   'phoneaudio.read',
   'phoneaudio.write',
+  'phoneinput.read',
+  'phoneinput.write',
 ] as const
 
 export type NdExtensionPermission = (typeof ND_EXTENSION_PERMISSIONS)[number]
@@ -395,6 +398,12 @@ export const ND_HOST_METHODS = [
   { id: 'phoneaudio.client.disconnect', title: 'Disconnect the active Android audio receiver', permission: 'phoneaudio.write', contexts: ['personal'], sensitive: false },
   { id: 'phoneaudio.token.rotate', title: 'Rotate Phone Audio pairing URL and code', permission: 'phoneaudio.write', contexts: ['personal'], sensitive: false },
   { id: 'phoneaudio.options.set', title: 'Update Phone Audio capture and interface options', permission: 'phoneaudio.write', contexts: ['personal'], sensitive: false },
+  { id: 'phoneinput.status.get', title: 'Read Phone Keyboard status, devices, and pairing info', permission: 'phoneinput.read', contexts: ['personal'], sensitive: false },
+  { id: 'phoneinput.session.start', title: 'Start the Phone Keyboard server so a paired phone can type into this PC', permission: 'phoneinput.write', contexts: ['personal'], sensitive: true },
+  { id: 'phoneinput.session.stop', title: 'Stop the Phone Keyboard server', permission: 'phoneinput.write', contexts: ['personal'], sensitive: false },
+  { id: 'phoneinput.client.disconnect', title: 'Disconnect the active phone keyboard', permission: 'phoneinput.write', contexts: ['personal'], sensitive: false },
+  { id: 'phoneinput.token.rotate', title: 'Rotate Phone Keyboard pairing URL and code', permission: 'phoneinput.write', contexts: ['personal'], sensitive: false },
+  { id: 'phoneinput.options.set', title: 'Update Phone Keyboard network interface options', permission: 'phoneinput.write', contexts: ['personal'], sensitive: false },
 ] as const satisfies readonly NdHostMethodDescriptor[]
 
 export type NdHostMethod = (typeof ND_HOST_METHODS)[number]['id']
