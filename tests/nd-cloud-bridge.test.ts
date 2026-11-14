@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildNdCloudKanbanProjection, canNdCloudDispatchLocalCommand, isValidNdCloudReadBinding } from '../src/shared/nd-cloud-bridge.js'
+import { buildNdCloudBoardSubmission, buildNdCloudKanbanProjection, canNdCloudDispatchLocalCommand, isValidNdCloudReadBinding } from '../src/shared/nd-cloud-bridge.js'
 import type { OrganizationSnapshot } from '../src/shared/organization.js'
 
 const binding = {
@@ -66,5 +66,36 @@ describe('ND Cloud gated read-only projection', () => {
   it('never accepts cloud-initiated task execution or approval', () => {
     expect(canNdCloudDispatchLocalCommand({ type: 'task.execute', projectId: 'project-a' })).toBe(false)
     expect(canNdCloudDispatchLocalCommand({ type: 'approval.resolve', verdict: 'approve' })).toBe(false)
+  })
+})
+
+describe('ND Cloud Go pilot request contract', () => {
+  it('serializes a minimal host-only board submission with explicit revision', () => {
+    expect(buildNdCloudBoardSubmission(snapshot, binding, 7)).toEqual({
+      schema_version: 1,
+      source_system: 'nd-dsh',
+      tenant_id: 'tenant-a',
+      cloud_project_id: 'cloud-project-a',
+      local_company_id: 'company-a',
+      local_project_id: 'project-a',
+      revision: 7,
+      tasks: [{ id: 'task-a', title: 'Ship A', status: 'ready', priority: 'high', updated_at: 3 }],
+    })
+    expect(JSON.stringify(buildNdCloudBoardSubmission(snapshot, binding, 7))).not.toMatch(/PRIVATE|secret|Other Project|Other Company/)
+  })
+
+  it('rejects absent host opt-in, invalid revisions and oversized boards', () => {
+    expect(buildNdCloudBoardSubmission(snapshot, { ...binding, enabled: false }, 1)).toBeNull()
+    for (const revision of [0, -1, NaN, Infinity, 0.4]) {
+      expect(buildNdCloudBoardSubmission(snapshot, binding, revision)).toBeNull()
+    }
+    const oversized = {
+      ...snapshot,
+      tasks: Array.from({ length: 501 }, (_, i) => ({
+        id: 't-' + i, companyId: 'company-a', projectId: 'project-a',
+        title: 'Task ' + i, status: 'ready', priority: 'low', updatedAt: i,
+      })),
+    } as unknown as OrganizationSnapshot
+    expect(buildNdCloudBoardSubmission(oversized, binding, 1)).toBeNull()
   })
 })
