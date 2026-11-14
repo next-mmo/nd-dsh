@@ -101,3 +101,39 @@ Use the same `-data` path for all CLI commands and the server. `go test -race` m
 ### Browser console (working UI)
 
 Start `go run . serve` and open <http://127.0.0.1:8787/>. This is a small **same-origin dependency-free pilot UI** (not the future React production customer portal), supporting authenticated project selection, Kanban summaries, case submission/task proposals, Knowledge Card drafts/independent publication and deterministic ND Assist lookup. Paste an operator-generated human pilot credential; the console keeps it only in memory and clears it when you disconnect or reload. The server embeds all assets and applies a restrictive Content Security Policy. No CDN, external JS, localStorage or cookies are used.
+
+## Continued implementation: M1 metadata-only ZIP ingestion + v2 snapshot recovery
+
+**Source import is manual, opt-in and project-scoped.** A tenant owner imports a selected `.zip` via the new **Source snapshots** page at `http://127.0.0.1:8787/`, or via HTTP. The Go server validates the ZIP and stores only an immutable manifest of file paths, SHA-256 hashes, byte lengths, ZIP hash, uploader, tenant/project scope and timestamp. Archive bytes and raw file contents are **discarded immediately**. It never executes repository scripts, generates a Wiki, trains an AI, performs RAG, or publishes approved knowledge automatically. An independently approved source-to-Wiki step remains a future milestone.
+
+Limits: 8 MiB ZIP; 250 entries; 1 MiB per supported source file; 16 MiB total expanded; max 50 snapshots per project. Supported `.md`, `.markdown`, `.txt`, `.json`, `.yaml`, `.yml`, `.toml`, `.ts`, `.tsx`, `.js`, `.jsx`, `.go`, `.rs`, `.java`, `.py`, `.vue`, `.svelte`, `.html`, `.css`. Other file types, special files/symlinks, traversal paths, duplicate case-insensitive paths and private/dependency directories are rejected. Avoid uploading `.env`, API keys, sensitive code or any data not approved for the pilot. The path/hash manifest is private project metadata even though raw bytes are not stored.
+
+```sh
+export OWNER_TOKEN='ndp_your_private_owner_token'
+export PROJECT_ID='prj_your_project_id'
+curl --fail-with-body -X POST \
+  -H "Authorization: Bearer $OWNER_TOKEN" \
+  -H 'Content-Type: application/zip' \
+  -H 'X-ND-Source-Filename: pos-source.zip' \
+  --data-binary @pos-source.zip \
+  "http://127.0.0.1:8787/v1/projects/$PROJECT_ID/sources/zip"
+curl --fail-with-body -H "Authorization: Bearer $OWNER_TOKEN" \
+  "http://127.0.0.1:8787/v1/projects/$PROJECT_ID/sources"
+```
+
+Owners and reviewers may list or read manifests; viewers and host credentials cannot. Duplicate ZIP hashes in one project return `409`. This is a **provenance foundation**, not source-content search or an automated code analysis agent.
+
+### Schema migration and private backups
+
+Snapshot schema `v2` adds a `sources` collection. Existing **v1** local pilot stores are readable without data loss and are upgraded in memory; the *first successful mutation* persists v2 atomically. Future schema versions fail closed. Before upgrading, **stop the local service and all operator CLI writers**, create a backup and keep a second offline copy. No multi-process writer coordination exists in this pilot.
+
+```sh
+# With the service stopped; never commit or email this backup.
+go run . backup -data .local/nd-cloud.json -out .local/backup-2026-11-15.nd.json
+# Restore refuses to overwrite an existing data path. Use a fresh path.
+go run . restore -from .local/backup-2026-11-15.nd.json -data .local/restored/nd-cloud.json
+# Verify recovered data by pointing the server at the restored file:
+go run . serve -data .local/restored/nd-cloud.json -addr 127.0.0.1:8787
+```
+
+Backups are private mode `0600` and SHA-256 integrity checked, with restore refusing existing destinations or world-readable backup files. **They are not encrypted.** Backups include tenant/project data, case/knowledge content and hashed pilot bearer credentials; protect the files and copied token secrets. This does not replace PostgreSQL transactions, cross-host backups or a tested hosted recovery/retention plan.
