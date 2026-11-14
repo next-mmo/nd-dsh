@@ -104,3 +104,61 @@ export function buildNdCloudKanbanProjection(
 export function canNdCloudDispatchLocalCommand(_value: unknown): false {
   return false
 }
+
+/**
+ * Wire-compatible with the loopback-only Go pilot's PUT
+ * /v1/projects/{project}/board endpoint.
+ *
+ * Pure data conversion. Only a trusted main-process host with a separately
+ * enrolled, revocable host credential may transmit it. Never place that
+ * credential in the renderer, a project file or a URL.
+ */
+export interface NdCloudBoardSubmission {
+  schema_version: 1
+  source_system: 'nd-dsh'
+  tenant_id: string
+  cloud_project_id: string
+  local_company_id: string
+  local_project_id: string
+  revision: number
+  tasks: Array<{
+    id: string
+    title: string
+    status: TaskStatus
+    priority: TaskPriority
+    updated_at: number
+  }>
+}
+
+export function buildNdCloudBoardSubmission(
+  snapshot: OrganizationSnapshot,
+  binding: unknown,
+  revision: number,
+): NdCloudBoardSubmission | null {
+  if (!isValidNdCloudReadBinding(binding) || !Number.isSafeInteger(revision) || revision < 1) return null
+  const projection = buildNdCloudKanbanProjection(snapshot, binding, 0)
+  if (!projection || projection.tasks.length > 500) return null
+  const ids = new Set<string>()
+  const encoder = new TextEncoder()
+  for (const task of projection.tasks) {
+    if (!safeId(task.id) || !task.title.trim() || encoder.encode(task.title).length > 250 ||
+      !Number.isSafeInteger(task.updatedAt) || task.updatedAt < 0 || ids.has(task.id)) return null
+    ids.add(task.id)
+  }
+  return {
+    schema_version: ND_CLOUD_BRIDGE_VERSION,
+    source_system: 'nd-dsh',
+    tenant_id: binding.tenantId,
+    cloud_project_id: binding.cloudProjectId,
+    local_company_id: binding.localCompanyId,
+    local_project_id: binding.localProjectId,
+    revision,
+    tasks: projection.tasks.map((task) => ({
+      id: task.id,
+      title: task.title,
+      status: task.status,
+      priority: task.priority,
+      updated_at: task.updatedAt,
+    })),
+  }
+}
