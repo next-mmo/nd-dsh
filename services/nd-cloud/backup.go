@@ -36,11 +36,20 @@ func normalizedState(raw []byte) (State, error) {
 	case 1:
 		state.Sources = map[string]SourceSnapshot{}
 		state.SchemaVersion = 2
+		fallthrough
+	case 2:
+		state.WikiPages = map[string]WikiPage{}
+		state.Events = map[string][]ProjectEvent{}
+		state.Proposals = map[string]TaskProposal{}
+		state.Ledgers = map[string][]LedgerTxn{}
+		state.Reservations = map[string]Reservation{}
+		state.RouterAttempts = map[string]RouterAttempt{}
+		state.SchemaVersion = schemaVersion
 	case schemaVersion:
 	default:
 		return state, fmt.Errorf("unsupported schema version %d", state.SchemaVersion)
 	}
-	if state.Tenants == nil || state.Memberships == nil || state.Projects == nil || state.Tokens == nil || state.Boards == nil || state.Cases == nil || state.Cards == nil || state.Sources == nil {
+	if state.Tenants == nil || state.Memberships == nil || state.Projects == nil || state.Tokens == nil || state.Boards == nil || state.Cases == nil || state.Cards == nil || state.Sources == nil || state.WikiPages == nil || state.Events == nil || state.Proposals == nil || state.Ledgers == nil || state.Reservations == nil || state.RouterAttempts == nil {
 		return state, errInvalid
 	}
 	return state, nil
