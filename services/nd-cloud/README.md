@@ -97,3 +97,7 @@ Invoke-RestMethod 'http://127.0.0.1:8787/v1/tenants/demo/projects' -Method Post 
 ```
 
 Use the same `-data` path for all CLI commands and the server. `go test -race` may require a C compiler; if your Windows Go installation lacks one, run `go test ./...` and perform race tests on CI/Linux.
+
+### Browser console (working UI)
+
+Start `go run . serve` and open <http://127.0.0.1:8787/>. This is a small **same-origin dependency-free pilot UI** (not the future React production customer portal), supporting authenticated project selection, Kanban summaries, case submission/task proposals, Knowledge Card drafts/independent publication and deterministic ND Assist lookup. Paste an operator-generated human pilot credential; the console keeps it only in memory and clears it when you disconnect or reload. The server embeds all assets and applies a restrictive Content Security Policy. No CDN, external JS, localStorage or cookies are used.
