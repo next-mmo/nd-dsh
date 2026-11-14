@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>ND Cloud — Local Pilot</title>
+  <link rel="stylesheet" href="/assets/styles.css" />
+  <script defer src="/assets/app.js"></script>
+</head>
+<body>
+  <div class="app" id="app">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">ND</span><div><strong>ND Cloud</strong><small>Local pilot / M0</small></div></div>
+      <div class="sidebar-label">WORKSPACE</div>
+      <nav id="nav" aria-label="Workspace navigation">
+        <button type="button" data-panel="overview" class="nav-item selected">◫ <span>Overview</span></button>
+        <button type="button" data-panel="board" class="nav-item">▦ <span>Kanban</span></button>
+        <button type="button" data-panel="knowledge" class="nav-item">▤ <span>Knowledge</span></button>
+        <button type="button" data-panel="assist" class="nav-item">✦ <span>ND Assist</span></button>
+        <button type="button" data-panel="support" class="nav-item">☷ <span>ND Support</span></button>
+      </nav>
+      <div class="sidebar-label">LATER MILESTONES</div>
+      <div class="nav-disabled">◈ <span>Router Cloud</span><small>Not enabled</small></div>
+      <div class="nav-disabled">◇ <span>Billing &amp; plans</span><small>Not enabled</small></div>
+      <div class="sidebar-bottom"><span class="status-dot"></span> Loopback only <small>Local authority stays in ND-DSH</small></div>
+    </aside>
+    <main class="main">
+      <header class="topbar"><div><span class="eyebrow">ND CLOUD / PRIVATE PILOT</span><h1 id="page-title">Overview</h1></div><div class="top-actions"><span class="chip">NO PUBLIC SYNC</span><button type="button" class="quiet" id="signout" hidden>Disconnect</button></div></header>
+      <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+      <section class="auth-card panel-card" id="auth-view">
+        <span class="eyebrow">OPERATOR-PROVISIONED ACCOUNT</span><h2>Connect to your ND Cloud pilot</h2>
+        <p>Your token stays in this browser tab's memory. It is not saved in local storage, a cookie, or a URL.</p>
+        <form id="login-form" class="form-stack"><label for="token">Pilot bearer credential</label><input id="token" type="password" required minlength="40" autocomplete="off" spellcheck="false" placeholder="ndp_…" /><button type="submit" class="primary">Connect securely</button></form>
+        <p class="subtle">To create an owner token, run <code>go run . bootstrap -tenant demo -name "ND Demo" -subject owner</code> from <code>services/nd-cloud</code>.</p>
+      </section>
+      <div id="workspace" hidden>
+        <section class="workspace-strip panel-card"><div class="workspace-id"><span class="eyebrow">AUTHENTICATED SCOPE</span><strong id="identity">—</strong><small id="role">—</small></div><div class="workspace-selector"><label for="project-picker">Current project</label><select id="project-picker" aria-label="Current project"></select></div><button type="button" id="refresh" class="quiet">Refresh</button></section>
+        <section id="panel-overview" class="view-panel">
+          <div class="stats"><div class="stat panel-card"><small>Accessible projects</small><strong id="metric-projects">0</strong><span>Your token's authorized project scope</span></div><div class="stat panel-card"><small>Board tasks</small><strong id="metric-tasks">—</strong><span>Read-only ND-DSH projection</span></div><div class="stat panel-card"><small>Support cases</small><strong id="metric-cases">—</strong><span>Visible under your membership</span></div></div>
+          <div class="panel-card"><div class="section-head"><div><span class="eyebrow">PROJECT MANAGEMENT</span><h2>Create a project</h2></div></div><p>Only tenant owners can create projects. Other roles receive an explicit authorization denial.</p><form id="project-form" class="inline-form"><input id="project-name" required maxlength="120" placeholder="New project name" aria-label="Project name" /><button class="primary" type="submit">Create project</button></form><div id="projects-list" class="list-stack"></div></div>
+          <div class="panel-card"><div class="section-head"><div><span class="eyebrow">BOUNDARIES</span><h2>What this pilot does not do</h2></div></div><p>No remote task execution, approval mutation, public cloud sign-in, billing, live AI, or automated GitHub ingestion. The service is local-only with an explicit board-read contract.</p></div>
+        </section>
+        <section id="panel-board" class="view-panel" hidden><div class="panel-card"><div class="section-head"><div><span class="eyebrow">ND-DSH LINK</span><h2>Read-only Kanban</h2></div><span id="board-version" class="subtle">No sync yet</span></div><p>Bound hosts can upload revisions through their own limited credential. This console cannot execute or approve tasks.</p><div id="board-list" class="kanban"></div></div></section>
+        <section id="panel-knowledge" class="view-panel" hidden><div class="panel-card"><div class="section-head"><div><span class="eyebrow">REVIEW GOVERNANCE</span><h2>Knowledge Cards</h2></div></div><p>Drafts are visible only to owner/reviewer roles. Publishing requires a different reviewer than the author. Source links are not automatically verified.</p><form id="knowledge-form" class="form-stack">
+          <div class="form-grid"><div><label for="knowledge-release">App release</label><input id="knowledge-release" required value="v1.0.0" /></div><div><label for="knowledge-revision">Source revision</label><input id="knowledge-revision" required placeholder="Git SHA or revision" /></div></div>
+          <label for="knowledge-question">Customer question</label><input id="knowledge-question" required maxlength="500" placeholder="How do I perform a refund?" />
+          <label for="knowledge-answer">Reviewed answer draft</label><textarea id="knowledge-answer" required rows="4" maxlength="8000"></textarea>
+          <label for="knowledge-url">HTTPS evidence URL</label><input id="knowledge-url" required type="url" placeholder="https://github.com/…/blob/…" />
+          <label for="knowledge-label">Evidence label</label><input id="knowledge-label" required maxlength="160" value="Reference" />
+          <button type="submit" class="primary">Create draft</button>
+        </form><div id="knowledge-list" class="list-stack"></div></div></section>
+        <section id="panel-assist" class="view-panel" hidden><div class="panel-card"><span class="eyebrow">NO HALLUCINATION MODE</span><h2>ND Assist lookup</h2><p>Exact-match, version-scoped human-reviewed answers only. Unknown questions deliberately return no answer. No LLM or executable auto-demo is enabled.</p><form id="assist-form" class="form-stack"><label for="assist-release">App release</label><input id="assist-release" value="v1.0.0" required /><label for="assist-question">Ask a question</label><textarea id="assist-question" rows="3" required maxlength="500" placeholder="How do I perform a refund?"></textarea><button type="submit" class="primary">Find reviewed answer</button></form><div id="assist-result" class="result"></div></div></section>
+        <section id="panel-support" class="view-panel" hidden><div class="panel-card"><span class="eyebrow">HUMAN SERVICE</span><h2>ND Support cases</h2><p>Case information is scoped to the project. Viewers see only their own cases; reviewers and owners can see all cases in their authorized project.</p><form id="case-form" class="form-stack"><label for="case-subject">Issue title</label><input id="case-subject" required maxlength="200" placeholder="Cannot complete checkout" /><label for="case-desc">Issue details</label><textarea id="case-desc" required maxlength="8000" rows="4"></textarea><button class="primary" type="submit">Open support case</button></form><div id="cases-list" class="list-stack"></div></div></section>
+      </div>
+      <footer>ND Cloud local pilot · No paid services · Private state stays on this machine</footer>
+    </main>
+  </div>
+</body>
+</html>
