@@ -2,7 +2,7 @@
 
 // Memory-only credentials. This pilot does not use localStorage, sessionStorage,
 // cookies, URL tokens, untrusted scripts, browser extensions, or remote origins.
-const state = { token: '', me: null, projects: [], project: '', board: null, cases: [], cards: [], panel: 'overview' }
+const state = { token: '', me: null, projects: [], project: '', board: null, cases: [], cards: [], sources: [], panel: 'overview' }
 const $ = (id) => document.getElementById(id)
 const say = (message, error = false) => {
   const n = $('notice')
@@ -48,6 +48,7 @@ function disconnect() {
   state.board = null
   state.cases = []
   state.cards = []
+  state.sources = []
   $('token').value = ''
   $('auth-view').hidden = false
   $('workspace').hidden = true
@@ -110,17 +111,20 @@ async function loadProjectData() {
   state.board = null
   state.cases = []
   state.cards = []
-  if (!state.project) { renderBoard(); renderCases(); renderCards(); return }
+  state.sources = []
+  if (!state.project) { renderBoard(); renderCases(); renderCards(); renderSources(); return }
   const base = '/v1/projects/' + encodeURIComponent(state.project)
-  const [board, cases, cards] = await Promise.all([
+  const [board, cases, cards, sources] = await Promise.all([
     fetchOptional(base + '/board'),
     request('GET', base + '/support/cases'),
     request('GET', base + '/knowledge/cards'),
+    ['owner','reviewer'].includes(state.me?.role) ? request('GET', base + '/sources') : Promise.resolve({sources: []}),
   ])
   state.board = board
   state.cases = cases.cases || []
   state.cards = cards.cards || []
-  renderBoard(); renderCases(); renderCards()
+  state.sources = sources.sources || []
+  renderBoard(); renderCases(); renderCards(); renderSources()
 }
 
 function renderProjects() {
@@ -221,13 +225,52 @@ function renderCards() {
   if (!state.cards.length) list.append(line('No visible Knowledge Cards for this project.'))
 }
 
+function renderSources() {
+  const list = $('sources-list'); clear(list)
+  if (!state.project) { list.append(line('Choose a project first.')); return }
+  if (!['owner','reviewer'].includes(state.me?.role)) {
+    list.append(line('Source manifests are restricted to project owners and reviewers.')); return
+  }
+  for (const snapshot of state.sources) {
+    const item = node('div', '', 'item')
+    const head = node('div', '', 'item-head')
+    head.append(node('h3', snapshot.filename), node('span', snapshot.status, 'pill'))
+    item.append(head, node('small', 'SHA-256: ' + snapshot.artifact_sha256))
+    for (const f of snapshot.files || []) {
+      item.append(node('small', f.path + ' · ' + f.kind + ' · ' + f.bytes + ' bytes · ' + f.sha256.slice(0, 14)))
+    }
+    list.append(item)
+  }
+  if (!state.sources.length) list.append(line('No source snapshots imported. No source content has been stored.'))
+}
+
+async function importArchive(file) {
+  if (!state.token || !state.project) throw new Error('Connect and choose a project first.')
+  if (state.me?.role !== 'owner') throw new Error('Only the owner may import source archives.')
+  if (!file || !file.name.toLowerCase().endsWith('.zip') || file.size > 8 * 1024 * 1024 || file.size === 0) {
+    throw new Error('Choose a ZIP file smaller than 8 MiB.')
+  }
+  let response
+  try {
+    response = await fetch('/v1/projects/' + encodeURIComponent(state.project) + '/sources/zip', {
+      method: 'POST', cache: 'no-store', credentials: 'omit', redirect: 'error',
+      headers: { Authorization: 'Bearer ' + state.token,
+        'Content-Type': 'application/zip', 'X-ND-Source-Filename': file.name },
+      body: file,
+    })
+  } catch (_) { throw new Error('Local ND Cloud service is unreachable.') }
+  const result = await response.json().catch(() => ({error: 'Invalid server response'}))
+  if (!response.ok) throw new Error(result.error || 'ZIP import rejected')
+  return result
+}
+
 async function action(task) {
   try { clearNotice(); await task() }
   catch (e) { say(e.message, true) }
 }
 function switchPanel(panel) {
   state.panel = panel
-  const headings = {overview:'Overview',board:'Kanban',knowledge:'Knowledge',assist:'ND Assist',support:'ND Support'}
+  const headings = {overview:'Overview',board:'Kanban',sources:'Source snapshots',knowledge:'Knowledge',assist:'ND Assist',support:'ND Support'}
   $('page-title').textContent = headings[panel]
   for (const name of Object.keys(headings)) $('panel-' + name).hidden = name !== panel
   for (const button of document.querySelectorAll('[data-panel]')) {
@@ -248,6 +291,13 @@ document.addEventListener('DOMContentLoaded', () => {
     await request('POST','/v1/tenants/'+encodeURIComponent(state.me.tenant_id)+'/projects',{name:$('project-name').value})
     $('project-name').value=''
     await loadProjects();say('Project created.')
+  }))
+  $('source-form').addEventListener('submit', e => action(async () => {
+    e.preventDefault()
+    await importArchive($('source-file').files[0])
+    $('source-file').value = ''
+    await loadProjectData()
+    say('ZIP manifest imported. Raw archive discarded; no Wiki auto-publication or execution.')
   }))
   $('case-form').addEventListener('submit', e => action(async () => {
     e.preventDefault();if(!state.project)throw new Error('Choose a project first.')
