@@ -206,6 +206,22 @@ func (a *API) createSourceSnapshot(w http.ResponseWriter, r *http.Request) {
 			return errInvalid
 		}
 		st.Sources[record.ID] = record
+		for pageID, page := range st.WikiPages {
+			if page.ProjectID == id && page.TenantID == p.TenantID && page.Status == "published" && page.SourceSnapshotID != record.ID {
+				page.Status = "stale"
+				page.Revision++
+				page.UpdatedAt = time.Now().UTC()
+				st.WikiPages[pageID] = page
+				appendProjectEvent(st, id, "wiki.stale", page.ID, page.Revision)
+			}
+		}
+		draft, err := inventoryDraft(record, p.Subject)
+		if err != nil {
+			return err
+		}
+		st.WikiPages[draft.ID] = draft
+		appendProjectEvent(st, id, "source.imported", record.ID, 1)
+		appendProjectEvent(st, id, "wiki.draft", draft.ID, draft.Revision)
 		return nil
 	})
 	if err != nil {
