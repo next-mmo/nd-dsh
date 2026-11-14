@@ -34,7 +34,7 @@ func TestPrivateBackupRestoreAndTamperRejection(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.read(func(st State) {
-		if len(st.Tenants) != 2 || len(st.Projects) != 3 || len(st.Boards) != 1 || st.SchemaVersion != 2 {
+		if len(st.Tenants) != 2 || len(st.Projects) != 3 || len(st.Boards) != 1 || st.SchemaVersion != 3 {
 			t.Fatal("unexpected restored state")
 		}
 	})
@@ -94,7 +94,7 @@ func TestSchemaOneMigratesOnNextWriteWithoutDataLoss(t *testing.T) {
 		t.Fatal(err)
 	}
 	store.read(func(st State) {
-		if st.SchemaVersion != 2 || st.Tenants["legacy"].Name != "Legacy Tenant" || st.Sources == nil {
+		if st.SchemaVersion != 3 || st.Tenants["legacy"].Name != "Legacy Tenant" || st.Sources == nil {
 			t.Fatal("migration failed")
 		}
 	})
@@ -112,7 +112,7 @@ func TestSchemaOneMigratesOnNextWriteWithoutDataLoss(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(disk, []byte(`"schema_version": 2`)) || !bytes.Contains(disk, []byte(`"sources": {}`)) {
+	if !bytes.Contains(disk, []byte(`"schema_version": 3`)) || !bytes.Contains(disk, []byte(`"sources": {}`)) {
 		t.Fatal("schema not upgraded")
 	}
 	_, err = openStore(file)
@@ -129,5 +129,57 @@ func TestUnsupportedNewerSchemaFailClosed(t *testing.T) {
 	}
 	if _, err := openStore(file); err == nil {
 		t.Fatal("future schema read succeeded")
+	}
+}
+
+func TestSchemaTwoMigratesToThreeWithoutErasingSources(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "v2.json")
+	old := emptyState()
+	old.SchemaVersion = 2
+	old.Tenants["tenant"] = Tenant{ID: "tenant", Name: "Existing"}
+	old.Sources["src_old"] = SourceSnapshot{ID: "src_old", TenantID: "tenant", ArtifactSHA256: "sha256-test", Status: "metadata-only"}
+	raw, err := json.Marshal(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"wiki_pages", "events", "proposals", "ledgers", "reservations", "router_attempts"} {
+		delete(obj, name)
+	}
+	oldBytes, err := json.Marshal(obj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, oldBytes, 0600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := openStore(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.read(func(state State) {
+		if state.SchemaVersion != 3 || state.Sources["src_old"].ArtifactSHA256 != "sha256-test" || state.WikiPages == nil || state.RouterAttempts == nil {
+			t.Fatal("v2 data lost on migration")
+		}
+	})
+	disk, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(disk, oldBytes) {
+		t.Fatal("read-only migration changed original")
+	}
+	if err := s.transact(func(state *State) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	disk, err = os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(disk, []byte(`"schema_version": 3`)) || !bytes.Contains(disk, []byte(`"src_old"`)) {
+		t.Fatal("write migration lost records")
 	}
 }
