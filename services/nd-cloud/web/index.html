@@ -11,18 +11,21 @@
 <body>
   <div class="app" id="app">
     <aside class="sidebar">
-      <div class="brand"><span class="brand-mark">ND</span><div><strong>ND Cloud</strong><small>Local pilot / M0</small></div></div>
+      <div class="brand"><span class="brand-mark">ND</span><div><strong>ND Cloud</strong><small>Local pilot / M0–M5</small></div></div>
       <div class="sidebar-label">WORKSPACE</div>
       <nav id="nav" aria-label="Workspace navigation">
         <button type="button" data-panel="overview" class="nav-item selected">◫ <span>Overview</span></button>
         <button type="button" data-panel="board" class="nav-item">▦ <span>Kanban</span></button>
         <button type="button" data-panel="sources" class="nav-item">▣ <span>Source snapshots</span></button>
+        <button type="button" data-panel="wiki" class="nav-item">▤ <span>Source Wiki</span></button>
         <button type="button" data-panel="knowledge" class="nav-item">▤ <span>Knowledge</span></button>
         <button type="button" data-panel="assist" class="nav-item">✦ <span>ND Assist</span></button>
         <button type="button" data-panel="support" class="nav-item">☷ <span>ND Support</span></button>
+        <button type="button" data-panel="sync" class="nav-item">◷ <span>Sync Events</span></button>
+        <button type="button" data-panel="router" class="nav-item">◈ <span>Router Lab</span></button>
       </nav>
       <div class="sidebar-label">LATER MILESTONES</div>
-      <div class="nav-disabled">◈ <span>Router Cloud</span><small>Not enabled</small></div>
+      <div class="nav-disabled">◈ <span>Router Cloud SaaS</span><small>Not enabled</small></div>
       <div class="nav-disabled">◇ <span>Billing &amp; plans</span><small>Not enabled</small></div>
       <div class="sidebar-bottom"><span class="status-dot"></span> Loopback only <small>Local authority stays in ND-DSH</small></div>
     </aside>
@@ -40,16 +43,27 @@
         <section id="panel-overview" class="view-panel">
           <div class="stats"><div class="stat panel-card"><small>Accessible projects</small><strong id="metric-projects">0</strong><span>Your token's authorized project scope</span></div><div class="stat panel-card"><small>Board tasks</small><strong id="metric-tasks">—</strong><span>Read-only ND-DSH projection</span></div><div class="stat panel-card"><small>Support cases</small><strong id="metric-cases">—</strong><span>Visible under your membership</span></div></div>
           <div class="panel-card"><div class="section-head"><div><span class="eyebrow">PROJECT MANAGEMENT</span><h2>Create a project</h2></div></div><p>Only tenant owners can create projects. Other roles receive an explicit authorization denial.</p><form id="project-form" class="inline-form"><input id="project-name" required maxlength="120" placeholder="New project name" aria-label="Project name" /><button class="primary" type="submit">Create project</button></form><div id="projects-list" class="list-stack"></div></div>
-          <div class="panel-card"><div class="section-head"><div><span class="eyebrow">BOUNDARIES</span><h2>What this pilot does not do</h2></div></div><p>No remote task execution, approval mutation, public cloud sign-in, billing, live AI, or automated GitHub ingestion. The service is local-only with an explicit board-read contract.</p></div>
+          <div class="panel-card"><div class="section-head"><div><span class="eyebrow">BOUNDARIES</span><h2>What this pilot does not do</h2></div></div><p>No remote task execution, ND approval mutation, public cloud sign-in, paid billing or automated GitHub ingestion. An optional operator-enabled BYOK streaming lab is isolated from the hosted roadmap. The service is local-only with an explicit board-read contract.</p></div>
         </section>
         <section id="panel-board" class="view-panel" hidden><div class="panel-card"><div class="section-head"><div><span class="eyebrow">ND-DSH LINK</span><h2>Read-only Kanban</h2></div><span id="board-version" class="subtle">No sync yet</span></div><p>Bound hosts can upload revisions through their own limited credential. This console cannot execute or approve tasks.</p><div id="board-list" class="kanban"></div></div></section>
         <section id="panel-sources" class="view-panel" hidden>
           <div class="panel-card">
             <div class="section-head"><div><span class="eyebrow">EXPLICIT PROJECT OPT-IN</span><h2>ZIP source manifests</h2></div><span class="subtle">Metadata only</span></div>
-            <p>Owner-only import of a selected ZIP. ND Cloud checks file safety, records hashes and paths, and discards the uploaded archive. It never runs code, publishes a Wiki, or stores raw source in this pilot. Reviewers may inspect manifests; viewers cannot.</p>
+            <p>Owner-only import of a selected ZIP. ND Cloud checks file safety, records hashes and paths, and discards the uploaded archive. It never executes code, auto-publishes Wiki pages, or stores raw source. It creates a review-only source inventory draft. Reviewers may inspect manifests; viewers cannot.</p>
             <form id="source-form" class="form-stack"><label for="source-file">Source archive (ZIP, max 8 MiB)</label><input type="file" id="source-file" accept=".zip,application/zip" required /><button type="submit" class="primary">Import safely</button></form>
             <div id="sources-list" class="list-stack"></div>
           </div>
+        </section>
+        <section id="panel-wiki" class="view-panel" hidden>
+          <div class="panel-card"><div class="section-head"><div><span class="eyebrow">PROVENANCE &amp; INDEPENDENT REVIEW</span><h2>Source Wiki</h2></div><span class="subtle">Drafts are never auto-published</span></div>
+          <p>Every ZIP import creates a deterministic inventory draft with SHA-256 provenance. Owners/reviewers can author a page tied to an exact source file. Another authorized human must publish it. Changes to source snapshots mark previous published pages stale.</p>
+          <form id="wiki-form" class="form-stack">
+            <label for="wiki-source">Source snapshot ID</label><input id="wiki-source" required placeholder="src_… (copy from Source snapshots)" />
+            <label for="wiki-path">Exact file path</label><input id="wiki-path" required placeholder="docs/guide.md" />
+            <label for="wiki-title">Wiki title</label><input id="wiki-title" required maxlength="160" />
+            <label for="wiki-body">Human-authored draft (max 8000 characters)</label><textarea id="wiki-body" maxlength="8000" required rows="4"></textarea>
+            <button type="submit" class="primary">Create source-linked draft</button>
+          </form><div id="wiki-list" class="list-stack"></div></div>
         </section>
         <section id="panel-knowledge" class="view-panel" hidden><div class="panel-card"><div class="section-head"><div><span class="eyebrow">REVIEW GOVERNANCE</span><h2>Knowledge Cards</h2></div></div><p>Drafts are visible only to owner/reviewer roles. Publishing requires a different reviewer than the author. Source links are not automatically verified.</p><form id="knowledge-form" class="form-stack">
           <div class="form-grid"><div><label for="knowledge-release">App release</label><input id="knowledge-release" required value="v1.0.0" /></div><div><label for="knowledge-revision">Source revision</label><input id="knowledge-revision" required placeholder="Git SHA or revision" /></div></div>
@@ -60,7 +74,14 @@
           <button type="submit" class="primary">Create draft</button>
         </form><div id="knowledge-list" class="list-stack"></div></div></section>
         <section id="panel-assist" class="view-panel" hidden><div class="panel-card"><span class="eyebrow">NO HALLUCINATION MODE</span><h2>ND Assist lookup</h2><p>Exact-match, version-scoped human-reviewed answers only. Unknown questions deliberately return no answer. No LLM or executable auto-demo is enabled.</p><form id="assist-form" class="form-stack"><label for="assist-release">App release</label><input id="assist-release" value="v1.0.0" required /><label for="assist-question">Ask a question</label><textarea id="assist-question" rows="3" required maxlength="500" placeholder="How do I perform a refund?"></textarea><button type="submit" class="primary">Find reviewed answer</button></form><div id="assist-result" class="result"></div></div></section>
-        <section id="panel-support" class="view-panel" hidden><div class="panel-card"><span class="eyebrow">HUMAN SERVICE</span><h2>ND Support cases</h2><p>Case information is scoped to the project. Viewers see only their own cases; reviewers and owners can see all cases in their authorized project.</p><form id="case-form" class="form-stack"><label for="case-subject">Issue title</label><input id="case-subject" required maxlength="200" placeholder="Cannot complete checkout" /><label for="case-desc">Issue details</label><textarea id="case-desc" required maxlength="8000" rows="4"></textarea><button class="primary" type="submit">Open support case</button></form><div id="cases-list" class="list-stack"></div></div></section>
+        <section id="panel-support" class="view-panel" hidden><div class="panel-card"><span class="eyebrow">HUMAN SERVICE</span><h2>ND Support cases</h2><p>Case information is scoped to the project. Viewers see only their own cases; reviewers and owners can see all cases in their authorized project.</p><form id="case-form" class="form-stack"><label for="case-subject">Issue title</label><input id="case-subject" required maxlength="200" placeholder="Cannot complete checkout" /><label for="case-desc">Issue details</label><textarea id="case-desc" required maxlength="8000" rows="4"></textarea><button class="primary" type="submit">Open support case</button></form><div id="cases-list" class="list-stack"></div><div class="section-head"><h2>Reviewed ND task proposals</h2></div><p>Owner approval is required before a bound ND host can report a task receipt. No task is created by this cloud UI.</p><div id="proposals-list" class="list-stack"></div></div></section>
+
+        <section id="panel-sync" class="view-panel" hidden><div class="panel-card"><span class="eyebrow">READ-ONLY PROJECTION REPLAY</span><h2>Sync activity</h2><p>These scoped receipts can be replayed by cursor. They do not prove the ND host is online or permit remote agent execution.</p><p id="sync-status" class="subtle">No host status</p><div id="events-list" class="list-stack"></div></div></section>
+        <section id="panel-router" class="view-panel" hidden><div class="panel-card"><span class="eyebrow">OPTIONAL LOCAL LAB</span><h2>BYOK Router &amp; demo quotas</h2><p>The lab is <strong>off by default</strong>. It is not a paid plan, a managed-key service or model reselling. Configure a short-lived, project-only provider key for this server process; do not use a sensitive production key during pilot testing.</p><p id="router-status" class="subtle">Router lab disabled</p>
+          <form id="router-key-form" class="form-stack"><label for="router-model">Provider model ID</label><input id="router-model" required value="gpt-4o-mini" /><label for="router-key">OpenAI API key (memory only)</label><input id="router-key" required type="password" autocomplete="off" /><button type="submit" class="quiet">Configure temporary BYOK key</button></form>
+          <form id="router-quota-form" class="inline-form"><input id="router-quota" type="number" min="1" max="100000" value="1000" aria-label="Nonmonetary demo quota units" /><button type="submit" class="quiet">Grant test units (owner only)</button></form><p id="router-balance" class="subtle">Demo quota only, never real money.</p>
+          <form id="router-chat-form" class="form-stack"><label for="router-prompt">Test prompt</label><textarea id="router-prompt" required rows="3" maxlength="4000"></textarea><button class="primary" type="submit">Stream test response</button></form><pre id="router-result" class="result" aria-live="polite"></pre>
+        </div></section>
       </div>
       <footer>ND Cloud local pilot · No paid services · Private state stays on this machine</footer>
     </main>
