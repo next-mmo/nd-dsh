@@ -26,6 +26,15 @@ type API struct{ store *Store }
 func newAPI(store *Store) http.Handler {
 	a := &API{store: store}
 	m := http.NewServeMux()
+	m.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		staticWebFile("web/index.html", "text/html; charset=utf-8")(w, r)
+	})
+	m.HandleFunc("GET /assets/app.js", staticWebFile("web/app.js", "text/javascript; charset=utf-8"))
+	m.HandleFunc("GET /assets/styles.css", staticWebFile("web/styles.css", "text/css; charset=utf-8"))
 	m.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		respond(w, 200, map[string]string{"status": "ok", "mode": "loopback-pilot"})
 	})
