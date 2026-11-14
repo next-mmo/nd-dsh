@@ -26,7 +26,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: nd-cloud serve|bootstrap|grant|bind-host|revoke [flags]")
+		return errors.New("usage: nd-cloud serve|bootstrap|grant|bind-host|revoke|backup|restore [flags]")
 	}
 	cmd := args[0]
 	f := flag.NewFlagSet(cmd, flag.ContinueOnError)
@@ -41,6 +41,8 @@ func run(args []string) error {
 	company := f.String("local-company", "", "ND local company ID")
 	localProject := f.String("local-project", "", "ND local project ID")
 	tokenID := f.String("token-id", "", "issued credential ID to revoke")
+	out := f.String("out", "", "private backup output (must not already exist)")
+	from := f.String("from", "", "private backup input")
 	addr := f.String("addr", "127.0.0.1:8787", "loopback listener (no public bind)")
 	if err := f.Parse(args[1:]); err != nil {
 		return err
@@ -91,6 +93,24 @@ func run(args []string) error {
 			return err
 		}
 		fmt.Println("Credential revoked")
+		return nil
+	case "backup":
+		if *out == "" {
+			return errors.New("backup requires -out")
+		}
+		if err := s.exportBackup(*out); err != nil {
+			return err
+		}
+		fmt.Println("Private backup written (contains tenant data and credential hashes)")
+		return nil
+	case "restore":
+		if *from == "" {
+			return errors.New("restore requires -from and an unused -data path")
+		}
+		if err := restoreBackup(*from, *data); err != nil {
+			return err
+		}
+		fmt.Println("Backup restored into new data path")
 		return nil
 	case "serve":
 		return serve(s, *addr)
