@@ -137,3 +137,39 @@ go run . serve -data .local/restored/nd-cloud.json -addr 127.0.0.1:8787
 ```
 
 Backups are private mode `0600` and SHA-256 integrity checked, with restore refusing existing destinations or world-readable backup files. **They are not encrypted.** Backups include tenant/project data, case/knowledge content and hashed pilot bearer credentials; protect the files and copied token secrets. This does not replace PostgreSQL transactions, cross-host backups or a tested hosted recovery/retention plan.
+
+## V3 extension — reviewed source Wiki, scoped replay, proposals, BYOK lab and quota ledger
+
+The original single-process pilot now includes experimental API features. They do **not** replace a production ND Cloud deployment or complete ND-DSH remote collaboration.
+
+### Source Wiki and drift (M1–M3 groundwork)
+
+A valid owner-imported ZIP creates a deterministic **draft** Wiki inventory of file paths, kinds, and SHA-256 values. It is not an AI-generated manual and it does not contain raw source code. An authorized owner/reviewer can create a human-authored page tied to a specific uploaded file via `POST /v1/projects/{project}/wiki/pages` with `{ "source_snapshot_id":"src_...", "source_path":"docs/guide.md", "title":"...", "body":"..." }`. A *different human* owner/reviewer must `POST /v1/projects/{project}/wiki/pages/{page}/publish` with `{ "expected_revision":1 }`. Published pages can be found through `GET .../wiki/search?q=...` by authorized project members. The server always labels this as unverified and does not allow automatic UI demos. On the next source ZIP import, prior published pages become **stale** and stop appearing in viewer searches. Reviewed Knowledge Cards and exact version-scoped Assist lookup remain separate flows; broad keyword Wiki search does not become an authoritative customer answer.
+
+### ND-DSH event replay and task proposals (M4 groundwork)
+
+`GET /v1/projects/{project}/events?after=0&limit=50` returns tenant/project-authorized ordered receipts plus `next_cursor`, `latest_cursor`, and `has_more`. Duplicated unchanged board revision uploads do not duplicate events. Only the latest 1024 events are retained: an expired or future cursor returns HTTP 409 and clients must fetch a fresh snapshot. `GET /v1/projects/{project}/sync/status` reports a stale/recent projection but **never claims host connectivity**, even immediately after an upload.
+
+The existing support-case proposal note remains for compatibility. New, idempotent typed proposals can be created at `POST .../support/cases/{case}/task-proposals` with `{ "expected_case_revision":1, "idempotency_key":"case-001", "text":"..." }`, listed with `GET .../task-proposals`, independently approved by a tenant owner at `POST .../task-proposals/{proposal}/approve`, and receipted only by the **bound host** at `POST .../task-proposals/{proposal}/host-receipt`. These statuses are explicitly `host-reported`; the actual ND Task ID and every policy, worktree, approval and execution decision remain authoritative in ND-DSH. **No task is created or executed by these cloud endpoints.** Host receipts are not trusted evidence of ND task acceptance without a subsequent integration contract and E2E gate.
+
+### Test-unit ledger (M5 groundwork, NOT billing)
+
+`POST /v1/projects/{project}/ledger/demo-grant` (owner) with `{ "idempotency_key":"seed-1", "units":1000 }` grants **nonredeemable demo units**. `POST .../ledger/reservations` with `{ "idempotency_key":"r1", "units":100 }` holds them atomically, while `POST .../ledger/reservations/{id}/settle` with `{ "actual_units": 30 }` consumes 30 and releases 70. `GET .../ledger` (owner only) returns balanced append-only transactions and balances. Concurrent reservations cannot overspend. There are **no prices, card data, topups, invoices, payment providers, currency, or public entitlements**. Do not use this file-backed ledger for money or paid Router plans.
+
+### Optional, disabled-by-default OpenAI BYOK streaming lab
+
+The service is **loopback-only**. Opt in to a local lab by starting the Go server with `serve -router-lab` after issuing an owner token. The owner can configure a memory-only per-project OpenAI key through `POST /v1/projects/{project}/router/credentials` with `{ "api_key":"sk_...", "model":"..." }` and can inspect `GET .../router/status`. Keys vanish when the service stops, are not stored in snapshots or backups, and the upstream URL is hardcoded to `https://api.openai.com/v1/chat/completions` (no user-supplied proxy URL). The owner or reviewer may call `POST .../router/chat/stream` with `{ "request_id":"req-1", "messages":[{"role":"user","content":"Hello"}], "max_output_tokens":64 }` **only after** an owner grants nonmonetary demo units. The server reserves an estimated upper-bound quota before issuing an upstream call, streams real SSE, accepts provider-reported token counts when present, and stores sanitized attempt receipts under `GET .../router/attempts` (owner only). If usage is unavailable or streaming fails mid-flight, the entire reservation is consumed **in demo units only**. Upstream failures before stream acceptance release demo quota. Retries with the same request ID are blocked. No model availability, provider cost, token pricing, resale rights, financial suitability or API response compatibility are guaranteed; real BYOK calls may incur external provider charges. A mock HTTP upstream is used in tests; real provider access was not tested in this environment.
+
+### Schema and verification
+
+Local private JSON schema v3 adds Wiki, project events, task proposals, nonmonetary ledger, reservations and sanitized Router attempt receipts. Existing v1/v2 data loads through explicit in-memory upgrade and is persisted as v3 on its next successful write. Preserve an offline backup before a pilot upgrade; no simultaneous CLI + server writers.
+
+```sh
+cd services/nd-cloud
+go test ./... -race -count=1
+go vet ./...
+node --check web/app.js
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o nd-cloud-v3-windows.exe .
+```
+
+The experimental `schema/postgres/0001_init.sql` is **not connected to the Go service and is untested against PostgreSQL**. It is design preparation only. Production needs a real database driver and migration runner, reviewable Go-vs-Rust ADR, independent membership/OIDC, host enrollment revocation, a true ND-DSH outbox, backups/restore, TLS, monitoring, and financial/provider/legal sign-offs. See `docs/qa/nd-cloud-v3-milestone-handoff-2026-11-15.md`.
