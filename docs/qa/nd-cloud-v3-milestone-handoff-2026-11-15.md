@@ -22,13 +22,14 @@ Repository: `next-mmo/nd-dsh`; target branch **`dev` only**; `main` must remain 
 
 ## Executed verification
 
-- Go 1.23.2 Linux amd64: existing and new tests with `go test ./... -race -count=1` **PASS**.
+- Go 1.23.2 Linux amd64: **27 tests** with `go test ./... -race -count=1` **PASS**.
 - `go vet ./...` **PASS**.
 - Browser JavaScript `node --check web/app.js` **PASS**.
 - Windows x64 cross-compile `GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build` **PASS**; executable unsigned and **not executed on Windows**.
 - Fake upstream integration checks: fixed authorization header, real SSE, measured provider token receipt, duplicate request prevention, cross-tenant denial, no key persistence, upstream 429 error sanitization and quota refund **PASS**.
 - Concurrent demo reservation checks: 20 concurrent requests against 1000 demo units, exactly 10 reservations of 100 units, balanced legs, settlement and restart **PASS**.
 - Source/Wiki/board/proposal tests: independent authorship, new-source stale invalidation, tenant isolation, project-scoped cursor replay, cursor gap and revocation **PASS**.
+- Real local HTTP smoke: owner bootstrap/login, project create, ZIP import, generated Wiki draft, case creation, demo-unit ledger, event cursor, router disabled status and backup/restore **PASS**.
 - A Chromium Playwright browser test was **blocked by container administrator policy** (`ERR_BLOCKED_BY_ADMINISTRATOR` on loopback) before page load. Interactive browser E2E is **NOT PASS**; run manually on actual Windows machine.
 - No live OpenAI call, OIDC provider, PostgreSQL database, billing provider, GitHub App, browser agent test or ND-DSH real sync was exercised. No GitHub CI is asserted without a check status.
 
