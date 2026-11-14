@@ -1,6 +1,6 @@
 # ND Cloud — first safe delivery on `dev`
 
-Status: **contract foundation only; no ND Cloud production service shipped**  
+Status: **runnable Go pilot implemented; no production ND Cloud service or public deployment**  
 Repository: `next-mmo/nd-dsh`  
 Source review: `ND_CLOUD_FULL_TEAM_REVIEW_PLAN_V1.zip` provided 2026-11-15
 
@@ -8,9 +8,11 @@ Source review: `ND_CLOUD_FULL_TEAM_REVIEW_PLAN_V1.zip` provided 2026-11-15
 
 - `src/shared/nd-cloud-bridge.ts`: versioned, narrow, opt-in **read-only** Kanban summary projection for one explicitly bound tenant/company/project.
 - `tests/nd-cloud-bridge.test.ts`: isolation, minimal payload, version/capability denial, no cloud command acceptance.
-- No new runtime permissions, network listeners, sessions, credentials, background sync, dependency installations, package changes or billing.
+- No changes to existing ND-DSH renderer permissions, local agent execution, background sync, billing, or package dependencies.
+- `services/nd-cloud/`: runnable Go 1.23+ loopback HTTP service with operator-provisioned identity, tenant/project grants, scoped ND board ingestion, support cases, independently reviewed Knowledge Cards, deterministic Assist lookup and persistent private state.
+- `services/nd-cloud/api_test.go` and `knowledge_test.go`: authorization, isolation, revision, review, revocation, restart and concurrency tests.
 
-This is **M0 contract preparation**, not a remote team-sync feature or a completed hosted backend. A caller must still verify authenticated binding and project membership in a trusted main-process service. The `enabled` field is an opt-in record, **not proof of identity or permission**.
+This is **M0 pilot code**, not a completed hosted backend, desktop sync daemon, OIDC deployment or paid service. A caller must still verify authenticated binding and project membership in a trusted main-process service. The `enabled` field is an opt-in record, **not proof of identity or permission**.
 
 ## Product boundaries
 
@@ -35,6 +37,19 @@ This is **M0 contract preparation**, not a remote team-sync feature or a complet
 | Paid access | Atomic ledger, tested refunds/reconciliation, model commercial rights and explicit financial sign-off |
 
 ## Local verification
+
+Go service verification from `services/nd-cloud`:
+
+```sh
+go test ./... -race -count=1
+go vet ./...
+go run . bootstrap -tenant pilot -name Pilot -subject owner
+go run . serve -addr 127.0.0.1:8787
+```
+
+**Evidence (2026-11-15):** 11 Go tests/examples passed under `-race`, `go vet` passed, Windows `GOOS=windows GOARCH=amd64 go test -c` passed, and a live loopback HTTP smoke test verified bootstrap authentication, project creation and unknown-token denial. TypeScript Electron project-wide checks and production integration tests were not run here.
+
+Desktop verification remains:
 
 ```sh
 corepack pnpm vitest run tests/nd-cloud-bridge.test.ts
