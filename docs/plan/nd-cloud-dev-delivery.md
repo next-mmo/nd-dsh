@@ -1,3 +1,5 @@
+> **2026-11-15 V3 implementation update:** The Go loopback pilot now includes independently reviewed, source-linked Wiki drafts, conservative drift invalidation, replayable scoped events, governed task proposals and host receipts, a balanced nonmonetary demo-unit ledger, and an optional memory-only BYOK streaming lab. See [V3 implementation and 27-test QA evidence](../qa/nd-cloud-v3-milestone-handoff-2026-11-15.md). PostgreSQL, OIDC, hosted ND sync, public payments, real-money billing, finance and provider rights remain blocked. This update does not supersede PRD 0009/0010's authority gates or approve a Go-over-Rust production ADR.
+
 # ND Cloud — first safe delivery on `dev`
 
 Status: **runnable Go pilot implemented; no production ND Cloud service or public deployment**  
