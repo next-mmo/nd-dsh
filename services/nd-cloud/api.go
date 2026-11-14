@@ -44,6 +44,9 @@ func newAPI(store *Store) http.Handler {
 	m.HandleFunc("GET /v1/tenants/{tenant}/projects", a.listProjects)
 	m.HandleFunc("POST /v1/tenants/{tenant}/projects", a.createProject)
 	m.HandleFunc("GET /v1/projects/{project}/board", a.getBoard)
+	m.HandleFunc("POST /v1/projects/{project}/sources/zip", a.createSourceSnapshot)
+	m.HandleFunc("GET /v1/projects/{project}/sources", a.listSourceSnapshots)
+	m.HandleFunc("GET /v1/projects/{project}/sources/{source}", a.getSourceSnapshot)
 	m.HandleFunc("PUT /v1/projects/{project}/board", a.putBoard)
 	m.HandleFunc("POST /v1/projects/{project}/knowledge/cards", a.createKnowledgeCard)
 	m.HandleFunc("GET /v1/projects/{project}/knowledge/cards", a.listKnowledgeCards)
@@ -129,7 +132,7 @@ func (a *API) auth(w http.ResponseWriter, r *http.Request, kind string) (AccessT
 
 func memberProject(st State, p AccessToken, projectID string) (Membership, Project, bool) {
 	project, ok := st.Projects[projectID]
-	if !ok || project.TenantID != p.TenantID || p.Kind != "human" {
+	if !ok || project.TenantID != p.TenantID || p.Kind != "human" || !activePrincipal(st, p) {
 		return Membership{}, Project{}, false
 	}
 	member, ok := st.Memberships[memberKey(project.TenantID, p.Subject)]
@@ -154,7 +157,7 @@ func (a *API) me(w http.ResponseWriter, r *http.Request) {
 	}
 	a.store.read(func(st State) {
 		m, exists := st.Memberships[memberKey(p.TenantID, p.Subject)]
-		if !exists {
+		if !activePrincipal(st, p) || !exists {
 			failure(w, 403, "membership revoked")
 			return
 		}
@@ -168,7 +171,7 @@ func (a *API) tenants(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.store.read(func(st State) {
-		if _, exists := st.Memberships[memberKey(p.TenantID, p.Subject)]; !exists {
+		if _, exists := st.Memberships[memberKey(p.TenantID, p.Subject)]; !activePrincipal(st, p) || !exists {
 			failure(w, 403, "membership revoked")
 			return
 		}
@@ -188,7 +191,7 @@ func (a *API) listProjects(w http.ResponseWriter, r *http.Request) {
 	}
 	a.store.read(func(st State) {
 		member, ok := st.Memberships[memberKey(tenant, p.Subject)]
-		if !ok {
+		if !activePrincipal(st, p) || !ok {
 			failure(w, 403, "membership revoked")
 			return
 		}
