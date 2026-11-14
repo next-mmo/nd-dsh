@@ -16,6 +16,7 @@
       <nav id="nav" aria-label="Workspace navigation">
         <button type="button" data-panel="overview" class="nav-item selected">◫ <span>Overview</span></button>
         <button type="button" data-panel="board" class="nav-item">▦ <span>Kanban</span></button>
+        <button type="button" data-panel="sources" class="nav-item">▣ <span>Source snapshots</span></button>
         <button type="button" data-panel="knowledge" class="nav-item">▤ <span>Knowledge</span></button>
         <button type="button" data-panel="assist" class="nav-item">✦ <span>ND Assist</span></button>
         <button type="button" data-panel="support" class="nav-item">☷ <span>ND Support</span></button>
@@ -42,6 +43,14 @@
           <div class="panel-card"><div class="section-head"><div><span class="eyebrow">BOUNDARIES</span><h2>What this pilot does not do</h2></div></div><p>No remote task execution, approval mutation, public cloud sign-in, billing, live AI, or automated GitHub ingestion. The service is local-only with an explicit board-read contract.</p></div>
         </section>
         <section id="panel-board" class="view-panel" hidden><div class="panel-card"><div class="section-head"><div><span class="eyebrow">ND-DSH LINK</span><h2>Read-only Kanban</h2></div><span id="board-version" class="subtle">No sync yet</span></div><p>Bound hosts can upload revisions through their own limited credential. This console cannot execute or approve tasks.</p><div id="board-list" class="kanban"></div></div></section>
+        <section id="panel-sources" class="view-panel" hidden>
+          <div class="panel-card">
+            <div class="section-head"><div><span class="eyebrow">EXPLICIT PROJECT OPT-IN</span><h2>ZIP source manifests</h2></div><span class="subtle">Metadata only</span></div>
+            <p>Owner-only import of a selected ZIP. ND Cloud checks file safety, records hashes and paths, and discards the uploaded archive. It never runs code, publishes a Wiki, or stores raw source in this pilot. Reviewers may inspect manifests; viewers cannot.</p>
+            <form id="source-form" class="form-stack"><label for="source-file">Source archive (ZIP, max 8 MiB)</label><input type="file" id="source-file" accept=".zip,application/zip" required /><button type="submit" class="primary">Import safely</button></form>
+            <div id="sources-list" class="list-stack"></div>
+          </div>
+        </section>
         <section id="panel-knowledge" class="view-panel" hidden><div class="panel-card"><div class="section-head"><div><span class="eyebrow">REVIEW GOVERNANCE</span><h2>Knowledge Cards</h2></div></div><p>Drafts are visible only to owner/reviewer roles. Publishing requires a different reviewer than the author. Source links are not automatically verified.</p><form id="knowledge-form" class="form-stack">
           <div class="form-grid"><div><label for="knowledge-release">App release</label><input id="knowledge-release" required value="v1.0.0" /></div><div><label for="knowledge-revision">Source revision</label><input id="knowledge-revision" required placeholder="Git SHA or revision" /></div></div>
           <label for="knowledge-question">Customer question</label><input id="knowledge-question" required maxlength="500" placeholder="How do I perform a refund?" />
