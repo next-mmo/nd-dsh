@@ -10,7 +10,8 @@ Source review: `ND_CLOUD_FULL_TEAM_REVIEW_PLAN_V1.zip` provided 2026-11-15
 - `tests/nd-cloud-bridge.test.ts`: isolation, minimal payload, version/capability denial, no cloud command acceptance.
 - No changes to existing ND-DSH renderer permissions, local agent execution, background sync, billing, or package dependencies.
 - `services/nd-cloud/`: runnable Go 1.23+ loopback HTTP service with operator-provisioned identity, tenant/project grants, scoped ND board ingestion, support cases, independently reviewed Knowledge Cards, deterministic Assist lookup and persistent private state.
-- `services/nd-cloud/api_test.go` and `knowledge_test.go`: authorization, isolation, revision, review, revocation, restart and concurrency tests.
+- `services/nd-cloud/api_test.go`, `knowledge_test.go`, and `web_test.go`: authorization, isolation, revision, review, revocation, restart, concurrency and web-surface tests.
+- `services/nd-cloud/web/`: local same-origin console for project selection, board viewing, knowledge draft/review, Assist lookup and support.
 
 This is **M0 pilot code**, not a completed hosted backend, desktop sync daemon, OIDC deployment or paid service. A caller must still verify authenticated binding and project membership in a trusted main-process service. The `enabled` field is an opt-in record, **not proof of identity or permission**.
 
@@ -47,7 +48,7 @@ go run . bootstrap -tenant pilot -name Pilot -subject owner
 go run . serve -addr 127.0.0.1:8787
 ```
 
-**Evidence (2026-11-15):** 11 Go tests/examples passed under `-race`, `go vet` passed, Windows `GOOS=windows GOARCH=amd64 go test -c` passed, and a live loopback HTTP smoke test verified bootstrap authentication, project creation and unknown-token denial. TypeScript Electron project-wide checks and production integration tests were not run here.
+**Evidence (2026-11-15):** 12 Go tests/examples passed under `-race`, `go vet` passed, Windows `GOOS=windows GOARCH=amd64 go test -c` passed, and a live loopback HTTP smoke test verified bootstrap authentication, project creation and unknown-token denial. Go browser console assets and CSP route tests passed; JavaScript syntax check passed. Interactive browser E2E, TypeScript Electron project-wide checks and production integration tests were not run here.
 
 Desktop verification remains:
 
