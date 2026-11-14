@@ -44,6 +44,7 @@ func run(args []string) error {
 	out := f.String("out", "", "private backup output (must not already exist)")
 	from := f.String("from", "", "private backup input")
 	addr := f.String("addr", "127.0.0.1:8787", "loopback listener (no public bind)")
+	routerLab := f.Bool("router-lab", false, "enable ephemeral BYOK streaming demo; requires manual demo units; no public/paid access")
 	if err := f.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -113,13 +114,15 @@ func run(args []string) error {
 		fmt.Println("Backup restored into new data path")
 		return nil
 	case "serve":
-		return serve(s, *addr)
+		return serveWithRouter(s, *addr, *routerLab)
 	default:
 		return fmt.Errorf("unknown command %q", cmd)
 	}
 }
 
-func serve(s *Store, addr string) error {
+func serve(s *Store, addr string) error { return serveWithRouter(s, addr, false) }
+
+func serveWithRouter(s *Store, addr string, routerLab bool) error {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		return fmt.Errorf("invalid listen address: %w", err)
@@ -135,9 +138,13 @@ func serve(s *Store, addr string) error {
 		return err
 	}
 	defer listener.Close()
+	handler := newAPI(s)
+	if routerLab {
+		handler = newAPIWithRouter(s, newRouterLab())
+	}
 	srv := &http.Server{
-		Handler: newAPI(s), ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second,
+		Handler: handler, ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout: 10 * time.Second, WriteTimeout: 60 * time.Second,
 		IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8 << 10,
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
