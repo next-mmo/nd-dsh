@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const schemaVersion = 1
+const schemaVersion = 2
 
 var (
 	errNotFound  = errors.New("not found")
@@ -121,18 +121,19 @@ type KnowledgeCard struct {
 }
 
 type State struct {
-	SchemaVersion int                      `json:"schema_version"`
-	Tenants       map[string]Tenant        `json:"tenants"`
-	Memberships   map[string]Membership    `json:"memberships"`
-	Projects      map[string]Project       `json:"projects"`
-	Tokens        map[string]AccessToken   `json:"tokens"` // keyed by SHA-256 of opaque secret, never plaintext
-	Boards        map[string]Board         `json:"boards"`
-	Cases         map[string]SupportCase   `json:"cases"`
-	Cards         map[string]KnowledgeCard `json:"cards"`
+	SchemaVersion int                       `json:"schema_version"`
+	Tenants       map[string]Tenant         `json:"tenants"`
+	Memberships   map[string]Membership     `json:"memberships"`
+	Projects      map[string]Project        `json:"projects"`
+	Tokens        map[string]AccessToken    `json:"tokens"` // keyed by SHA-256 of opaque secret, never plaintext
+	Boards        map[string]Board          `json:"boards"`
+	Cases         map[string]SupportCase    `json:"cases"`
+	Cards         map[string]KnowledgeCard  `json:"cards"`
+	Sources       map[string]SourceSnapshot `json:"sources"`
 }
 
 func emptyState() State {
-	return State{SchemaVersion: schemaVersion, Tenants: map[string]Tenant{}, Memberships: map[string]Membership{}, Projects: map[string]Project{}, Tokens: map[string]AccessToken{}, Boards: map[string]Board{}, Cases: map[string]SupportCase{}, Cards: map[string]KnowledgeCard{}}
+	return State{SchemaVersion: schemaVersion, Tenants: map[string]Tenant{}, Memberships: map[string]Membership{}, Projects: map[string]Project{}, Tokens: map[string]AccessToken{}, Boards: map[string]Board{}, Cases: map[string]SupportCase{}, Cards: map[string]KnowledgeCard{}, Sources: map[string]SourceSnapshot{}}
 }
 
 func memberKey(tenant, subject string) string { return tenant + ":" + subject }
@@ -182,15 +183,11 @@ func openStore(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := json.Unmarshal(b, &s.state); err != nil {
+	state, err := normalizedState(b)
+	if err != nil {
 		return nil, err
 	}
-	if s.state.SchemaVersion != schemaVersion {
-		return nil, fmt.Errorf("unsupported schema version: %d", s.state.SchemaVersion)
-	}
-	if s.state.Tenants == nil || s.state.Memberships == nil || s.state.Projects == nil || s.state.Tokens == nil || s.state.Boards == nil || s.state.Cases == nil || s.state.Cards == nil {
-		return nil, fmt.Errorf("corrupt data file: missing map")
-	}
+	s.state = state
 	return s, nil
 }
 
