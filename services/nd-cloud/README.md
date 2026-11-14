@@ -75,3 +75,25 @@ No GitHub Actions have been enabled and no production installer is claimed.
 `POST /v1/projects/{project}/knowledge/cards` creates a **draft** with `app_release`, `question`, `answer`, and at least one citation `{url,revision,label}`. A distinct owner/reviewer must call `POST /v1/projects/{project}/knowledge/cards/{card}/publish` with `{ "expected_revision":1 }`; the author cannot self-publish. New publication for the same project/release/question stales older publications. Viewers never see drafts.
 
 `POST /v1/projects/{project}/assist/lookup` accepts `{ "app_release":"v1.2.0", "question":"How do I refund an order?" }`. It returns matching human-reviewed text and citations with `status: "unverified"` or `status: "unknown"` when absent. This is **deterministic exact-question retrieval**, not RAG, vector search, an LLM, executable proof or a live UI guide. `auto_demo_allowed` is always false. Project/release authorization happens before lookup. No unmatched question can produce a fabricated guide.
+
+### Windows PowerShell quick start
+
+Install Go 1.23+ and open PowerShell in `services/nd-cloud`:
+
+```powershell
+go test ./... -race
+go run . bootstrap -tenant demo -name "ND Demo" -subject owner
+# Copy the generated token into $env:OWNER_TOKEN for this PowerShell session.
+$env:OWNER_TOKEN = 'ndp_PASTE_YOUR_TOKEN_HERE'
+go run . serve -addr 127.0.0.1:8787
+```
+
+In **another** PowerShell window with the same token set:
+
+```powershell
+$headers = @{ Authorization = "Bearer $env:OWNER_TOKEN" }
+Invoke-RestMethod 'http://127.0.0.1:8787/v1/me' -Headers $headers
+Invoke-RestMethod 'http://127.0.0.1:8787/v1/tenants/demo/projects' -Method Post -Headers $headers -ContentType 'application/json' -Body '{"name":"POS Help"}'
+```
+
+Use the same `-data` path for all CLI commands and the server. `go test -race` may require a C compiler; if your Windows Go installation lacks one, run `go test ./...` and perform race tests on CI/Linux.
