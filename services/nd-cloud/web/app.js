@@ -2,7 +2,7 @@
 
 // Memory-only credentials. This pilot does not use localStorage, sessionStorage,
 // cookies, URL tokens, untrusted scripts, browser extensions, or remote origins.
-const state = { token: '', me: null, projects: [], project: '', board: null, cases: [], cards: [], sources: [], panel: 'overview' }
+const state = { token: '', me: null, projects: [], project: '', board: null, cases: [], cards: [], sources: [], wiki: [], proposals: [], events: [], sync: null, router: null, ledger: null, panel: 'overview' }
 const $ = (id) => document.getElementById(id)
 const say = (message, error = false) => {
   const n = $('notice')
@@ -48,7 +48,7 @@ function disconnect() {
   state.board = null
   state.cases = []
   state.cards = []
-  state.sources = []
+  state.sources = []; state.wiki = []; state.proposals = []; state.events = []; state.sync = null; state.router = null; state.ledger = null
   $('token').value = ''
   $('auth-view').hidden = false
   $('workspace').hidden = true
@@ -111,20 +111,28 @@ async function loadProjectData() {
   state.board = null
   state.cases = []
   state.cards = []
-  state.sources = []
-  if (!state.project) { renderBoard(); renderCases(); renderCards(); renderSources(); return }
+  state.sources = []; state.wiki = []; state.proposals = []; state.events = []; state.sync = null; state.router = null; state.ledger = null
+  if (!state.project) { renderBoard(); renderCases(); renderCards(); renderSources(); renderWiki(); renderProposals(); renderSync(); renderRouter(); return }
   const base = '/v1/projects/' + encodeURIComponent(state.project)
-  const [board, cases, cards, sources] = await Promise.all([
+  const [board, cases, cards, sources, wiki, proposals, sync, events, router, ledger] = await Promise.all([
     fetchOptional(base + '/board'),
     request('GET', base + '/support/cases'),
     request('GET', base + '/knowledge/cards'),
     ['owner','reviewer'].includes(state.me?.role) ? request('GET', base + '/sources') : Promise.resolve({sources: []}),
+    request('GET', base + '/wiki/pages'),
+    ['owner','reviewer'].includes(state.me?.role) ? request('GET', base + '/task-proposals') : Promise.resolve({proposals: []}),
+    request('GET', base + '/sync/status'),
+    loadInitialEvents(base),
+    request('GET', base + '/router/status'),
+    state.me?.role === 'owner' ? request('GET', base + '/ledger') : Promise.resolve(null),
   ])
   state.board = board
   state.cases = cases.cases || []
   state.cards = cards.cards || []
   state.sources = sources.sources || []
-  renderBoard(); renderCases(); renderCards(); renderSources()
+  state.wiki = wiki.pages || []; state.proposals = proposals.proposals || []
+  state.sync = sync; state.events = events.events || []; state.eventsGap = Boolean(events.gap); state.router = router; state.ledger = ledger
+  renderBoard(); renderCases(); renderCards(); renderSources(); renderWiki(); renderProposals(); renderSync(); renderRouter()
 }
 
 function renderProjects() {
@@ -175,7 +183,7 @@ function renderCases() {
     const head = node('div', '', 'item-head')
     head.append(node('h3', c.subject), node('span', c.status, 'pill'))
     item.append(head, line(c.description), node('small', c.id + ' · revision ' + c.revision))
-    if (c.proposed_nd_task) item.append(line('ND task proposal: ' + c.proposed_nd_task))
+    if (c.proposed_nd_task) item.append(line('Legacy proposal note: ' + c.proposed_nd_task))
     if (state.me.role === 'owner' || state.me.role === 'reviewer') {
       const entry = node('textarea')
       entry.rows = 2
@@ -190,6 +198,17 @@ function renderCases() {
         say('Task proposal recorded, without ND-DSH execution.')
       }))
       item.append(entry, button)
+      const requestButton = node('button', 'Create governed task proposal', 'quiet')
+      requestButton.type = 'button'
+      requestButton.addEventListener('click', () => action(async () => {
+        if (!entry.value.trim()) throw new Error('A proposal is required.')
+        await request('POST', '/v1/projects/' + encodeURIComponent(state.project) + '/support/cases/' + encodeURIComponent(c.id) + '/task-proposals', {
+          expected_case_revision: c.revision, idempotency_key: crypto.randomUUID(), text: entry.value,
+        })
+        await loadProjectData()
+        say('Proposal awaiting independent owner approval; ND-DSH has not created a task.')
+      }))
+      item.append(requestButton)
     }
     list.append(item)
   }
@@ -264,13 +283,109 @@ async function importArchive(file) {
   return result
 }
 
+
+function renderWiki() {
+  const target = $('wiki-list'); clear(target)
+  for (const page of state.wiki) {
+    const box = node('div', '', 'item')
+    const head = node('div', '', 'item-head')
+    head.append(node('h3', page.title), node('span', page.status, 'pill'))
+    box.append(head, node('small', page.id + ' · ' + page.source_snapshot_id))
+    box.append(line(page.generated ? 'Source inventory: paths and hashes only.' : page.body))
+    box.append(node('small', page.source_path || 'Whole ZIP provenance'))
+    if (page.status === 'draft' && ['owner','reviewer'].includes(state.me?.role) && page.author !== state.me.subject) {
+      const btn = node('button', 'Publish after independent review', 'quiet')
+      btn.addEventListener('click', () => action(async () => {
+        await request('POST', '/v1/projects/' + encodeURIComponent(state.project) + '/wiki/pages/' + encodeURIComponent(page.id) + '/publish', { expected_revision: page.revision })
+        await loadProjectData(); say('Wiki published; source changes will mark it stale.')
+      }))
+      box.append(btn)
+    }
+    target.append(box)
+  }
+  if (!state.wiki.length) target.append(line('Import a ZIP or create a source-linked Wiki draft.'))
+}
+function renderProposals() {
+  const target = $('proposals-list'); clear(target)
+  for (const p of state.proposals) {
+    const box = node('div', '', 'item')
+    const head = node('div', '', 'item-head')
+    head.append(node('h3', p.text), node('span', p.status, 'pill'))
+    box.append(head, node('small', p.id + ' · case: ' + p.case_id + ' · version ' + p.revision))
+    if (p.nd_task_id) box.append(line('Host-reported ND task ID: ' + p.nd_task_id))
+    if (p.status === 'pending' && state.me.role === 'owner' && state.me.subject !== p.author) {
+      const btn = node('button', 'Approve for ND host review', 'quiet')
+      btn.addEventListener('click', () => action(async () => {
+        await request('POST', '/v1/projects/' + encodeURIComponent(state.project) + '/task-proposals/' + encodeURIComponent(p.id) + '/approve', {expected_revision:p.revision})
+        await loadProjectData();say('Approved for host review. No task execution authorized.')
+      }))
+      box.append(btn)
+    }
+    target.append(box)
+  }
+  if (!state.proposals.length) target.append(line('No governed task proposals.'))
+}
+async function loadInitialEvents(base) {
+  try { return await request('GET', base + '/events?limit=50') }
+  catch (e) {
+    if (e.message.includes('snapshot resync')) return {events:[],gap:true}
+    throw e
+  }
+}
+function renderSync() {
+  $('sync-status').textContent = state.eventsGap ? 'Cursor expired — request a fresh board snapshot before replay.' :
+    (state.sync ? 'Projection: ' + state.sync.state + ' · Host connectivity NOT confirmed' : 'No projection')
+  const target = $('events-list');clear(target)
+  for (const event of state.events) {
+    const box = node('div', '', 'item')
+    box.append(node('strong', event.kind), node('small', 'Seq ' + event.sequence + ' · ' + event.entity_id + ' · ' + event.created_at))
+    target.append(box)
+  }
+  if (!state.events.length) target.append(line('No events yet.'))
+}
+function renderRouter() {
+  $('router-status').textContent = !state.router?.enabled ?
+    'Disabled. Restart the Go service with -router-lab to enable a controlled test.' :
+    (state.router?.configured ? 'Temporary BYOK configured for this project, model ' + state.router.model : 'Enabled — owner must configure a temporary key')
+  const b = state.ledger?.balances
+  $('router-balance').textContent = b ?
+    'Nonmonetary test units — available: ' + b.available + ', reserved: ' + b.reserved + ', spent: ' + b.spent :
+    'Only the owner can view the demo ledger. No real funds or payments.'
+}
+
+async function routerStream(prompt) {
+  if (!state.router?.enabled || !state.router.configured) throw new Error('Router Lab is disabled or no temporary key is configured.')
+  const result = $('router-result');result.textContent = ''
+  const body = {request_id:crypto.randomUUID(),messages:[{role:'user',content:prompt}],max_output_tokens:128}
+  const response = await fetch('/v1/projects/' + encodeURIComponent(state.project) + '/router/chat/stream', {
+    method:'POST',headers:{Authorization:'Bearer '+state.token,'Content-Type':'application/json'},body:JSON.stringify(body),
+    cache:'no-store',credentials:'omit',redirect:'error',
+  })
+  if (!response.ok) {
+    const p = await response.json().catch(() => ({})); throw new Error(p.error || 'Stream failed')
+  }
+  if (!response.body) throw new Error('Streaming not supported by this browser')
+  const reader = response.body.getReader(), decoder = new TextDecoder()
+  let pending = '', done = false
+  while (!done) {
+    const part = await reader.read();done = part.done
+    pending += decoder.decode(part.value || new Uint8Array(), {stream:!done})
+    let eol
+    while ((eol = pending.indexOf('\n')) >= 0) {
+      const line = pending.slice(0,eol).trim();pending = pending.slice(eol+1)
+      if (!line.startsWith('data: ') || line === 'data: [DONE]') continue
+      try { const chunk = JSON.parse(line.slice(6));result.textContent += chunk?.choices?.[0]?.delta?.content || '' } catch (_) { /* provider event */ }
+    }
+  }
+}
+
 async function action(task) {
   try { clearNotice(); await task() }
   catch (e) { say(e.message, true) }
 }
 function switchPanel(panel) {
   state.panel = panel
-  const headings = {overview:'Overview',board:'Kanban',sources:'Source snapshots',knowledge:'Knowledge',assist:'ND Assist',support:'ND Support'}
+  const headings = {overview:'Overview',board:'Kanban',sources:'Source snapshots',wiki:'Source Wiki',knowledge:'Knowledge',assist:'ND Assist',support:'ND Support',sync:'Sync Events',router:'Router Lab'}
   $('page-title').textContent = headings[panel]
   for (const name of Object.keys(headings)) $('panel-' + name).hidden = name !== panel
   for (const button of document.querySelectorAll('[data-panel]')) {
@@ -297,7 +412,7 @@ document.addEventListener('DOMContentLoaded', () => {
     await importArchive($('source-file').files[0])
     $('source-file').value = ''
     await loadProjectData()
-    say('ZIP manifest imported. Raw archive discarded; no Wiki auto-publication or execution.')
+    say('ZIP manifest imported; draft Wiki inventory created for review. No code executed or Wiki auto-published.')
   }))
   $('case-form').addEventListener('submit', e => action(async () => {
     e.preventDefault();if(!state.project)throw new Error('Choose a project first.')
@@ -314,7 +429,36 @@ document.addEventListener('DOMContentLoaded', () => {
     $('knowledge-question').value='';$('knowledge-answer').value=''
     await loadProjectData();say('Knowledge draft created. Another authorized human must review it.')
   }))
-  $('assist-form').addEventListener('submit', e => action(async () => {
+  $('wiki-form').addEventListener('submit', e => action(async () => {
+    e.preventDefault()
+    await request('POST', '/v1/projects/' + encodeURIComponent(state.project) + '/wiki/pages', {
+      source_snapshot_id: $('wiki-source').value, source_path: $('wiki-path').value,
+      title: $('wiki-title').value, body: $('wiki-body').value,
+    })
+    $('wiki-body').value = '';$('wiki-title').value = ''
+    await loadProjectData();say('Wiki draft created; a separate reviewer must publish it.')
+  }))
+  $('router-key-form').addEventListener('submit', e => action(async () => {
+    e.preventDefault()
+    await request('POST', '/v1/projects/' + encodeURIComponent(state.project) + '/router/credentials', {
+      model: $('router-model').value, api_key: $('router-key').value,
+    })
+    $('router-key').value = ''
+    await loadProjectData();say('Temporary BYOK configured in Go process memory only.')
+  }))
+  $('router-quota-form').addEventListener('submit', e => action(async () => {
+    e.preventDefault()
+    await request('POST', '/v1/projects/' + encodeURIComponent(state.project) + '/ledger/demo-grant', {
+      idempotency_key: crypto.randomUUID(), units: Number($('router-quota').value),
+    })
+    await loadProjectData();say('Nonmonetary demo quota granted.')
+  }))
+  $('router-chat-form').addEventListener('submit', e => action(async () => {
+    e.preventDefault()
+    await routerStream($('router-prompt').value)
+    await loadProjectData();say('Streaming attempt completed; inspect metering under local API.')
+  }))
+  $('assist-form').addEventListener('submit' , e => action(async () => {
     e.preventDefault();if(!state.project)throw new Error('Choose a project first.')
     const value=await request('POST','/v1/projects/'+encodeURIComponent(state.project)+'/assist/lookup',{
       app_release:$('assist-release').value,question:$('assist-question').value,
