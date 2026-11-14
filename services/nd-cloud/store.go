@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const schemaVersion = 2
+const schemaVersion = 3
 
 var (
 	errNotFound  = errors.New("not found")
@@ -121,19 +121,25 @@ type KnowledgeCard struct {
 }
 
 type State struct {
-	SchemaVersion int                       `json:"schema_version"`
-	Tenants       map[string]Tenant         `json:"tenants"`
-	Memberships   map[string]Membership     `json:"memberships"`
-	Projects      map[string]Project        `json:"projects"`
-	Tokens        map[string]AccessToken    `json:"tokens"` // keyed by SHA-256 of opaque secret, never plaintext
-	Boards        map[string]Board          `json:"boards"`
-	Cases         map[string]SupportCase    `json:"cases"`
-	Cards         map[string]KnowledgeCard  `json:"cards"`
-	Sources       map[string]SourceSnapshot `json:"sources"`
+	SchemaVersion  int                       `json:"schema_version"`
+	Tenants        map[string]Tenant         `json:"tenants"`
+	Memberships    map[string]Membership     `json:"memberships"`
+	Projects       map[string]Project        `json:"projects"`
+	Tokens         map[string]AccessToken    `json:"tokens"` // keyed by SHA-256 of opaque secret, never plaintext
+	Boards         map[string]Board          `json:"boards"`
+	Cases          map[string]SupportCase    `json:"cases"`
+	Cards          map[string]KnowledgeCard  `json:"cards"`
+	Sources        map[string]SourceSnapshot `json:"sources"`
+	WikiPages      map[string]WikiPage       `json:"wiki_pages"`
+	Events         map[string][]ProjectEvent `json:"events"`
+	Proposals      map[string]TaskProposal   `json:"proposals"`
+	Ledgers        map[string][]LedgerTxn    `json:"ledgers"`
+	Reservations   map[string]Reservation    `json:"reservations"`
+	RouterAttempts map[string]RouterAttempt  `json:"router_attempts"`
 }
 
 func emptyState() State {
-	return State{SchemaVersion: schemaVersion, Tenants: map[string]Tenant{}, Memberships: map[string]Membership{}, Projects: map[string]Project{}, Tokens: map[string]AccessToken{}, Boards: map[string]Board{}, Cases: map[string]SupportCase{}, Cards: map[string]KnowledgeCard{}, Sources: map[string]SourceSnapshot{}}
+	return State{SchemaVersion: schemaVersion, Tenants: map[string]Tenant{}, Memberships: map[string]Membership{}, Projects: map[string]Project{}, Tokens: map[string]AccessToken{}, Boards: map[string]Board{}, Cases: map[string]SupportCase{}, Cards: map[string]KnowledgeCard{}, Sources: map[string]SourceSnapshot{}, WikiPages: map[string]WikiPage{}, Events: map[string][]ProjectEvent{}, Proposals: map[string]TaskProposal{}, Ledgers: map[string][]LedgerTxn{}, Reservations: map[string]Reservation{}, RouterAttempts: map[string]RouterAttempt{}}
 }
 
 func memberKey(tenant, subject string) string { return tenant + ":" + subject }
