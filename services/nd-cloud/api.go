@@ -21,10 +21,15 @@ func validName(v string, limit int) bool {
 	return strings.TrimSpace(v) != "" && len(v) <= limit && !strings.ContainsRune(v, '\x00')
 }
 
-type API struct{ store *Store }
+type API struct {
+	store  *Store
+	router *RouterLab
+}
 
-func newAPI(store *Store) http.Handler {
-	a := &API{store: store}
+func newAPI(store *Store) http.Handler { return newAPIWithRouter(store, nil) }
+
+func newAPIWithRouter(store *Store, router *RouterLab) http.Handler {
+	a := &API{store: store, router: router}
 	m := http.NewServeMux()
 	m.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -48,6 +53,12 @@ func newAPI(store *Store) http.Handler {
 	m.HandleFunc("GET /v1/projects/{project}/sources", a.listSourceSnapshots)
 	m.HandleFunc("GET /v1/projects/{project}/sources/{source}", a.getSourceSnapshot)
 	m.HandleFunc("PUT /v1/projects/{project}/board", a.putBoard)
+	m.HandleFunc("GET /v1/projects/{project}/sync/status", a.projectSyncStatus)
+	m.HandleFunc("GET /v1/projects/{project}/events", a.replayProjectEvents)
+	m.HandleFunc("POST /v1/projects/{project}/wiki/pages", a.createWikiPage)
+	m.HandleFunc("GET /v1/projects/{project}/wiki/pages", a.listWikiPages)
+	m.HandleFunc("POST /v1/projects/{project}/wiki/pages/{page}/publish", a.publishWikiPage)
+	m.HandleFunc("GET /v1/projects/{project}/wiki/search", a.searchWiki)
 	m.HandleFunc("POST /v1/projects/{project}/knowledge/cards", a.createKnowledgeCard)
 	m.HandleFunc("GET /v1/projects/{project}/knowledge/cards", a.listKnowledgeCards)
 	m.HandleFunc("POST /v1/projects/{project}/knowledge/cards/{card}/publish", a.publishKnowledgeCard)
@@ -55,6 +66,18 @@ func newAPI(store *Store) http.Handler {
 	m.HandleFunc("POST /v1/projects/{project}/support/cases", a.createCase)
 	m.HandleFunc("GET /v1/projects/{project}/support/cases", a.listCases)
 	m.HandleFunc("POST /v1/projects/{project}/support/cases/{case}/propose-task", a.proposeTask)
+	m.HandleFunc("POST /v1/projects/{project}/support/cases/{case}/task-proposals", a.createTaskProposal)
+	m.HandleFunc("GET /v1/projects/{project}/task-proposals", a.listTaskProposals)
+	m.HandleFunc("POST /v1/projects/{project}/ledger/demo-grant", a.grantDemoUnits)
+	m.HandleFunc("POST /v1/projects/{project}/ledger/reservations", a.reserveDemoUnits)
+	m.HandleFunc("POST /v1/projects/{project}/ledger/reservations/{reservation}/settle", a.settleDemoUnits)
+	m.HandleFunc("GET /v1/projects/{project}/ledger", a.readDemoLedger)
+	m.HandleFunc("POST /v1/projects/{project}/router/credentials", a.setRouterCredential)
+	m.HandleFunc("GET /v1/projects/{project}/router/status", a.getRouterStatus)
+	m.HandleFunc("POST /v1/projects/{project}/router/chat/stream", a.routerChatStream)
+	m.HandleFunc("GET /v1/projects/{project}/router/attempts", a.routerAttempts)
+	m.HandleFunc("POST /v1/projects/{project}/task-proposals/{proposal}/approve", a.approveTaskProposal)
+	m.HandleFunc("POST /v1/projects/{project}/task-proposals/{proposal}/host-receipt", a.hostTaskReceipt)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -352,6 +375,7 @@ func (a *API) putBoard(w http.ResponseWriter, r *http.Request) {
 		}
 		result = Board{BoardSubmission: input, Digest: digest, ReceivedAt: time.Now().UTC()}
 		st.Boards[id] = result
+		appendProjectEvent(st, id, "board.revision", id, input.Revision)
 		changed = true
 		return nil
 	})
@@ -398,6 +422,7 @@ func (a *API) createCase(w http.ResponseWriter, r *http.Request) {
 			return errNotFound
 		}
 		st.Cases[id] = c
+		appendProjectEvent(st, projectID, "case.opened", c.ID, c.Revision)
 		return nil
 	})
 	if err != nil {
@@ -474,6 +499,7 @@ func (a *API) proposeTask(w http.ResponseWriter, r *http.Request) {
 		current.ProposedNDTask = strings.TrimSpace(input.Proposal)
 		current.UpdatedAt = time.Now().UTC()
 		st.Cases[caseID] = current
+		appendProjectEvent(st, projectID, "case.proposed", current.ID, current.Revision)
 		c = current
 		return nil
 	})
