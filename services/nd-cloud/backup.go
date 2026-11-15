@@ -44,12 +44,16 @@ func normalizedState(raw []byte) (State, error) {
 		state.Ledgers = map[string][]LedgerTxn{}
 		state.Reservations = map[string]Reservation{}
 		state.RouterAttempts = map[string]RouterAttempt{}
+		state.SchemaVersion = 3
+		fallthrough
+	case 3:
+		state.Specs = map[string]HumanSpec{}
 		state.SchemaVersion = schemaVersion
 	case schemaVersion:
 	default:
 		return state, fmt.Errorf("unsupported schema version %d", state.SchemaVersion)
 	}
-	if state.Tenants == nil || state.Memberships == nil || state.Projects == nil || state.Tokens == nil || state.Boards == nil || state.Cases == nil || state.Cards == nil || state.Sources == nil || state.WikiPages == nil || state.Events == nil || state.Proposals == nil || state.Ledgers == nil || state.Reservations == nil || state.RouterAttempts == nil {
+	if state.Tenants == nil || state.Memberships == nil || state.Projects == nil || state.Tokens == nil || state.Boards == nil || state.Cases == nil || state.Cards == nil || state.Sources == nil || state.WikiPages == nil || state.Events == nil || state.Proposals == nil || state.Ledgers == nil || state.Reservations == nil || state.RouterAttempts == nil || state.Specs == nil {
 		return state, errInvalid
 	}
 	return state, nil
@@ -94,7 +98,7 @@ func (s *Store) exportBackup(destination string) error {
 	if err != nil {
 		return err
 	}
-	return persistAtomic(destination, append(b, '\n'))
+	return persistNoReplace(destination, append(b, '\n'))
 }
 
 // restoreBackup restores only into an absent data path. The checked envelope
@@ -141,7 +145,7 @@ func restoreBackup(source, destination string) error {
 	if err != nil {
 		return err
 	}
-	if err := persistAtomic(destination, append(next, '\n')); err != nil {
+	if err := persistNoReplace(destination, append(next, '\n')); err != nil {
 		return err
 	}
 	// Make sure the resulting file is an openable ND store before reporting success.
