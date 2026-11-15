@@ -64,6 +64,19 @@
             <label for="wiki-body">Human-authored draft (max 8000 characters)</label><textarea id="wiki-body" maxlength="8000" required rows="4"></textarea>
             <button type="submit" class="primary">Create source-linked draft</button>
           </form><div id="wiki-list" class="list-stack"></div></div>
+          <div class="panel-card"><div class="section-head"><div><span class="eyebrow">HUMAN SPECIFICATIONS</span><h2>Versioned Specs</h2></div><span class="subtle">Independent review · Source conflict detection</span></div>
+            <p>Draft an exact-file-linked human requirement. A different human reviewer must approve the revision. If that source file changes, approval is revoked until you revise/rebase and review again. This does not automatically prove runtime behavior.</p>
+            <form id="spec-form" class="form-stack">
+              <p id="spec-edit-caption" class="subtle">New specification</p>
+              <label for="spec-source">Latest source snapshot ID</label><input id="spec-source" placeholder="src_…" required />
+              <label for="spec-path">Source path</label><input id="spec-path" placeholder="docs/pos.md" required />
+              <label for="spec-title">Specification title</label><input id="spec-title" required maxlength="160" />
+              <label for="spec-body">Human-authored requirements</label><textarea id="spec-body" maxlength="8000" rows="5" required></textarea>
+              <button id="spec-submit" type="submit" class="primary">Create spec draft</button>
+              <button id="spec-cancel" type="button" class="quiet" hidden>Cancel editing</button>
+            </form>
+            <div id="spec-list" class="list-stack"></div>
+          </div>
         </section>
         <section id="panel-knowledge" class="view-panel" hidden><div class="panel-card"><div class="section-head"><div><span class="eyebrow">REVIEW GOVERNANCE</span><h2>Knowledge Cards</h2></div></div><p>Drafts are visible only to owner/reviewer roles. Publishing requires a different reviewer than the author. Source links are not automatically verified.</p><form id="knowledge-form" class="form-stack">
           <div class="form-grid"><div><label for="knowledge-release">App release</label><input id="knowledge-release" required value="v1.0.0" /></div><div><label for="knowledge-revision">Source revision</label><input id="knowledge-revision" required placeholder="Git SHA or revision" /></div></div>
