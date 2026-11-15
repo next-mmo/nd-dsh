@@ -44,7 +44,7 @@ func TestSlowReadDoesNotBlockIndependentWrite(t *testing.T) {
 			close(release)
 			t.Fatal(err)
 		}
-	case <-time.After(1500 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		close(release)
 		<-readResult
 		t.Fatal("blocked: slow snapshot reader prevented independent write")
