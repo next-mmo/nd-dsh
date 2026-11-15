@@ -2,7 +2,7 @@
 
 // Memory-only credentials. This pilot does not use localStorage, sessionStorage,
 // cookies, URL tokens, untrusted scripts, browser extensions, or remote origins.
-const state = { token: '', me: null, projects: [], project: '', board: null, cases: [], cards: [], sources: [], wiki: [], proposals: [], events: [], sync: null, router: null, ledger: null, panel: 'overview' }
+const state = { token: '', me: null, projects: [], project: '', board: null, cases: [], cards: [], sources: [], wiki: [], specs: [], specEdit: null, proposals: [], events: [], sync: null, router: null, ledger: null, panel: 'overview' }
 const $ = (id) => document.getElementById(id)
 const say = (message, error = false) => {
   const n = $('notice')
@@ -48,11 +48,12 @@ function disconnect() {
   state.board = null
   state.cases = []
   state.cards = []
-  state.sources = []; state.wiki = []; state.proposals = []; state.events = []; state.sync = null; state.router = null; state.ledger = null
+  state.sources = []; state.wiki = []; state.specs = []; state.specEdit = null; state.proposals = []; state.events = []; state.sync = null; state.router = null; state.ledger = null
   $('token').value = ''
   $('auth-view').hidden = false
   $('workspace').hidden = true
   $('signout').hidden = true
+  resetSpecEditor()
   say('Disconnected. Your in-memory token has been cleared.')
 }
 
@@ -111,15 +112,16 @@ async function loadProjectData() {
   state.board = null
   state.cases = []
   state.cards = []
-  state.sources = []; state.wiki = []; state.proposals = []; state.events = []; state.sync = null; state.router = null; state.ledger = null
-  if (!state.project) { renderBoard(); renderCases(); renderCards(); renderSources(); renderWiki(); renderProposals(); renderSync(); renderRouter(); return }
+  state.sources = []; state.wiki = []; state.specs = []; state.specEdit = null; state.proposals = []; state.events = []; state.sync = null; state.router = null; state.ledger = null
+  if (!state.project) { renderBoard(); renderCases(); renderCards(); renderSources(); renderWiki(); renderSpecs(); renderProposals(); renderSync(); renderRouter(); return }
   const base = '/v1/projects/' + encodeURIComponent(state.project)
-  const [board, cases, cards, sources, wiki, proposals, sync, events, router, ledger] = await Promise.all([
+  const [board, cases, cards, sources, wiki, specs, proposals, sync, events, router, ledger] = await Promise.all([
     fetchOptional(base + '/board'),
     request('GET', base + '/support/cases'),
     request('GET', base + '/knowledge/cards'),
     ['owner','reviewer'].includes(state.me?.role) ? request('GET', base + '/sources') : Promise.resolve({sources: []}),
     request('GET', base + '/wiki/pages'),
+    request('GET', base + '/specs'),
     ['owner','reviewer'].includes(state.me?.role) ? request('GET', base + '/task-proposals') : Promise.resolve({proposals: []}),
     request('GET', base + '/sync/status'),
     loadInitialEvents(base),
@@ -130,9 +132,9 @@ async function loadProjectData() {
   state.cases = cases.cases || []
   state.cards = cards.cards || []
   state.sources = sources.sources || []
-  state.wiki = wiki.pages || []; state.proposals = proposals.proposals || []
+  state.wiki = wiki.pages || []; state.specs = specs.specs || []; state.proposals = proposals.proposals || []
   state.sync = sync; state.events = events.events || []; state.eventsGap = Boolean(events.gap); state.router = router; state.ledger = ledger
-  renderBoard(); renderCases(); renderCards(); renderSources(); renderWiki(); renderProposals(); renderSync(); renderRouter()
+  renderBoard(); renderCases(); renderCards(); renderSources(); renderWiki(); renderSpecs(); renderProposals(); renderSync(); renderRouter()
 }
 
 function renderProjects() {
@@ -305,6 +307,53 @@ function renderWiki() {
   }
   if (!state.wiki.length) target.append(line('Import a ZIP or create a source-linked Wiki draft.'))
 }
+function renderSpecs() {
+  const target = $('spec-list'); clear(target)
+  const editorAllowed = ['owner','reviewer'].includes(state.me?.role)
+  $('spec-form').hidden = !editorAllowed
+  for (const spec of state.specs) {
+    const box = node('div', '', 'item')
+    const head = node('div', '', 'item-head')
+    head.append(node('h3', spec.title), node('span', spec.status, 'pill'))
+    box.append(head, node('small', spec.id + ' · revision ' + spec.revision + ' · ' + spec.source_path))
+    box.append(line(spec.body))
+    box.append(node('small', 'Pinned SHA-256: ' + spec.source_sha256.slice(0,16) + ' · Author ' + spec.author + (spec.reviewer ? ' · Reviewed by ' + spec.reviewer : '')))
+    if (spec.status === 'conflict') box.append(line('Source changed: revise to the latest snapshot and request independent re-review.'))
+    if (editorAllowed) {
+      const edit = node('button', 'Revise / rebase', 'quiet')
+      edit.addEventListener('click', () => {
+        state.specEdit = {id: spec.id, revision: spec.revision}
+        $('spec-source').value = spec.source_snapshot_id
+        $('spec-path').value = spec.source_path
+        $('spec-title').value = spec.title
+        $('spec-body').value = spec.body
+        $('spec-edit-caption').textContent = 'Editing ' + spec.id + ' · expected revision ' + spec.revision
+        $('spec-submit').textContent = 'Submit spec revision'
+        $('spec-cancel').hidden = false
+        $('spec-form').scrollIntoView({behavior:'smooth',block:'start'})
+      })
+      box.append(edit)
+    }
+    if (spec.status === 'draft' && editorAllowed && spec.author !== state.me.subject) {
+      const approve = node('button', 'Approve exact spec revision', 'quiet')
+      approve.addEventListener('click', () => action(async () => {
+        await request('POST','/v1/projects/'+encodeURIComponent(state.project)+'/specs/'+encodeURIComponent(spec.id)+'/approve',{expected_revision: spec.revision})
+        await loadProjectData();say('Spec revision approved. Source hash drift will revoke approval.')
+      }))
+      box.append(approve)
+    }
+    target.append(box)
+  }
+  if (!state.specs.length) target.append(line('No human specifications for this project.'))
+}
+function resetSpecEditor() {
+  state.specEdit = null
+  $('spec-form').reset()
+  $('spec-edit-caption').textContent = 'New specification'
+  $('spec-submit').textContent = 'Create spec draft'
+  $('spec-cancel').hidden = true
+}
+
 function renderProposals() {
   const target = $('proposals-list'); clear(target)
   for (const p of state.proposals) {
@@ -399,7 +448,7 @@ document.addEventListener('DOMContentLoaded', () => {
   $('login-form').addEventListener('submit', connect)
   $('signout').addEventListener('click', disconnect)
   $('refresh').addEventListener('click', () => action(async () => { await loadProjects(); say('Project data refreshed.') }))
-  $('project-picker').addEventListener('change', (e) => action(async () => {state.project=e.target.value;renderProjects();await loadProjectData()}))
+  $('project-picker').addEventListener('change', (e) => action(async () => {resetSpecEditor();state.project=e.target.value;renderProjects();await loadProjectData()}))
   for (const button of document.querySelectorAll('[data-panel]')) button.addEventListener('click', () => switchPanel(button.dataset.panel))
   $('project-form').addEventListener('submit', e => action(async () => {
     e.preventDefault()
@@ -437,6 +486,18 @@ document.addEventListener('DOMContentLoaded', () => {
     })
     $('wiki-body').value = '';$('wiki-title').value = ''
     await loadProjectData();say('Wiki draft created; a separate reviewer must publish it.')
+  }))
+  $('spec-cancel').addEventListener('click', resetSpecEditor)
+  $('spec-form').addEventListener('submit', e => action(async () => {
+    e.preventDefault()
+    if(!state.project) throw new Error('Choose a project first.')
+    const payload = {source_snapshot_id:$('spec-source').value,source_path:$('spec-path').value,title:$('spec-title').value,body:$('spec-body').value}
+    const edit = state.specEdit
+    const base = '/v1/projects/' + encodeURIComponent(state.project) + '/specs'
+    if (edit) await request('POST',base+'/'+encodeURIComponent(edit.id)+'/revise',{...payload,expected_revision:edit.revision})
+    else await request('POST',base,payload)
+    resetSpecEditor()
+    await loadProjectData();say('Spec saved as private draft; a different reviewer must approve it.')
   }))
   $('router-key-form').addEventListener('submit', e => action(async () => {
     e.preventDefault()
