@@ -173,3 +173,47 @@ GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o nd-cloud-v3-windows.exe .
 ```
 
 The experimental `schema/postgres/0001_init.sql` is **not connected to the Go service and is untested against PostgreSQL**. It is design preparation only. Production needs a real database driver and migration runner, reviewable Go-vs-Rust ADR, independent membership/OIDC, host enrollment revocation, a true ND-DSH outbox, backups/restore, TLS, monitoring, and financial/provider/legal sign-offs. See `docs/qa/nd-cloud-v3-milestone-handoff-2026-11-15.md`.
+
+## V4: human specifications, encrypted backups and single-writer guard
+
+**Still a loopback development pilot, not an internet-facing service.** Source-linked human specs close a portion of M2. All approvals are explicit, versioned, project-scoped and independent of the current author's login. An approved spec is *human reviewed*; this does not prove code behavior or authorize ND-DSH task execution.
+
+From the web console, select **Source Wiki → Versioned Specs**, then create a draft against the *latest* ZIP source snapshot and exact file path. Review with a different owner/reviewer credential. When the pinned file's SHA-256 changes or the file is removed in a newer imported archive, the spec switches to **conflict** and disappears from viewer reads. Revise/rebase to the latest source snapshot and ask another authorized human to approve the new revision. Full author/reviewer history remains visible only to authorized owner/reviewer members. The server publishes scoped `spec.draft`, `spec.revised`, `spec.approved` and `spec.conflict` events through the existing replay endpoint.
+
+API: `POST /v1/projects/{project}/specs`, `GET /v1/projects/{project}/specs`, `POST /v1/projects/{project}/specs/{spec}/revise`, `POST /v1/projects/{project}/specs/{spec}/approve`. Creation body:
+
+```json
+{"source_snapshot_id":"src_...","source_path":"docs/pos.md","title":"Refund policy","body":"Refunds require the supervisor role"}
+```
+
+Revision body additionally requires `expected_revision` and the latest source snapshot ID; approval requires `{"expected_revision":1}`. Revision conflicts return 409, not silent last-write-wins. Self-approval and cross-project reads fail.
+
+### Encrypted recovery (recommended over legacy plaintext backup)
+
+Set a **private, minimum 16-character passphrase** using an environment variable; do not pass it as a CLI argument or commit it. Example PowerShell commands:
+
+```powershell
+$env:ND_CLOUD_BACKUP_PASSPHRASE = Read-Host "ND Cloud offline backup passphrase"
+.\ND_Cloud_Pilot_V4_Windows_x64.exe backup-encrypted -data .local/nd-cloud.json -out .local/nd-cloud.enc.json
+.\ND_Cloud_Pilot_V4_Windows_x64.exe restore-encrypted -data .local/restored/nd-cloud.json -from .local/nd-cloud.enc.json
+Remove-Item Env:ND_CLOUD_BACKUP_PASSPHRASE
+```
+
+The format uses AES-256-GCM with a random 96-bit nonce, a random 128-bit salt, and PBKDF2-HMAC-SHA256 (300,000 rounds), authenticated against a fixed backup context. Wrong passwords and tampering fail before state is written. The key derivation scheme is suitable for local pilot backups; independent production review should select an appropriate memory-hard password KDF and tested key management. Restore requires an absent destination and strict private file permissions; it cannot silently replace existing state. V1–V3 backup files remain compatible with the **legacy unencrypted** `restore` command but *do not* become encrypted by upgrading the schema. Use the encrypted commands to protect new backup copies. Backups contain internal tenant data; protect the passphrase separately.
+
+### Process-exclusive writer lock
+
+The server and all mutating operator CLI commands now acquire `<data-path>.writer.lock` before reading/writing. A second writer exits with an explicit conflict instead of overwriting another process's snapshot. The file records a random owner nonce and PID but **no secrets**. If a process crashes without releasing the lock, **first confirm there is no active ND Cloud server or writer** and then manually remove this specific lock file. A stale lock is never auto-stolen.
+
+This is intentionally a cooperative **single-host pilot** guard, not distributed locking. It does not replace PostgreSQL transactions, migration recovery, backups, OIDC user authentication, or an audited cloud deployment. Snapshot version 4 is accepted; old v1–v3 data migrates in memory and persists v4 on its next successful write. The standalone `schema/postgres/0002_human_specs.sql` is a reviewed-proposal DDL extension, **not an executed migration**.
+
+### V4 verification
+
+```sh
+go test ./... -race -count=1
+go vet ./...
+node --check web/app.js
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build
+```
+
+Run the actual Windows binary and browser UI on a Windows host before any wider distribution; local cross-compilation is not a Windows E2E pass.
