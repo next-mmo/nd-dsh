@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -19,9 +20,7 @@ func TestPrivateBackupRestoreAndTamperRejection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0600 {
-		t.Fatalf("backup not private: %v", info.Mode())
-	}
+	expectPrivateMode(t, info.Mode())
 	if err := p.store.exportBackup(backupPath); err != errConflict {
 		t.Fatalf("existing backup overwritten: %v", err)
 	}
@@ -60,11 +59,14 @@ func TestPrivateBackupRestoreAndTamperRejection(t *testing.T) {
 	if _, err := os.Stat(dest); !os.IsNotExist(err) {
 		t.Fatal("tampered backup wrote state")
 	}
-	if err := os.Chmod(backupPath, 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := restoreBackup(backupPath, filepath.Join(t.TempDir(), "untrusted.json")); err == nil {
-		t.Fatal("world-readable backup accepted")
+	// Windows has no POSIX permission bits, so world-readable refusal is POSIX-only.
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(backupPath, 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := restoreBackup(backupPath, filepath.Join(t.TempDir(), "untrusted.json")); err == nil {
+			t.Fatal("world-readable backup accepted")
+		}
 	}
 }
 

@@ -7,6 +7,17 @@ import (
 	"runtime"
 )
 
+// privateModeOK reports whether permission bits are owner-only. Windows has no
+// POSIX mode bits (Go synthesizes 0666/0444 from the read-only attribute), so
+// there the NTFS ACLs inherited from the data directory are the protection
+// boundary and bit checks must not fail closed.
+func privateModeOK(mode os.FileMode) bool {
+	if runtime.GOOS == "windows" {
+		return true
+	}
+	return mode.Perm()&0077 == 0
+}
+
 // persistNoReplace durably publishes a new private file without replacing any
 // existing destination, including when an unrelated writer races the caller.
 // Hard-linking the synced temporary regular file makes the no-clobber publish

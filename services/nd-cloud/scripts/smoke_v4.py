@@ -1,4 +1,4 @@
-import subprocess, tempfile, pathlib, json, time, urllib.request, urllib.error, zipfile, io, re, os
+import subprocess, tempfile, pathlib, json, time, urllib.request, urllib.error, zipfile, io, re, os, signal
 root=pathlib.Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory() as temp:
     work=pathlib.Path(temp); binary=work/'nd-cloud'
@@ -9,7 +9,13 @@ with tempfile.TemporaryDirectory() as temp:
         if c.returncode: raise RuntimeError(c.stderr)
         return c.stdout
     owner=re.search(r'ndp_[a-zA-Z0-9_-]+',cmd('bootstrap','-tenant','company','-name','Pilot','-subject','owner')).group(0)
-    proc=subprocess.Popen([str(binary),'serve','-data',str(db),'-addr','127.0.0.1:18787'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+    # Windows terminate() is a hard kill that strands the cooperative writer
+    # lock; CTRL_BREAK reaches Go's os.Interrupt handler for a graceful stop.
+    popen_kw={'creationflags':subprocess.CREATE_NEW_PROCESS_GROUP} if os.name=='nt' else {}
+    def stop(proc):
+        proc.send_signal(signal.CTRL_BREAK_EVENT if os.name=='nt' else signal.SIGTERM)
+        proc.wait(timeout=5)
+    proc=subprocess.Popen([str(binary),'serve','-data',str(db),'-addr','127.0.0.1:18787'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,**popen_kw)
     def request(method,path,token,body=None,content_type='application/json'):
         if body is not None and not isinstance(body,bytes):body=json.dumps(body).encode()
         req=urllib.request.Request('http://127.0.0.1:18787'+path,data=body,method=method,headers={'Authorization':'Bearer '+token,'Content-Type':content_type,'X-ND-Source-Filename':'pos.zip'})
@@ -37,12 +43,12 @@ with tempfile.TemporaryDirectory() as temp:
         assert concurrent.returncode!=0 and 'locked' in concurrent.stderr,concurrent.stderr
         print('HTTP: second operator writer blocked during server session: PASS')
     finally:
-        proc.terminate();proc.wait(timeout=5)
+        stop(proc)
     # Once stopped, issue a separate reviewer then restart and approve.
     c=subprocess.run([str(binary),'grant','-data',str(db),'-tenant','company','-subject','reviewer','-role','reviewer','-projects',project['id']],capture_output=True,text=True)
     assert c.returncode==0,c.stderr
     reviewer=re.search(r'ndp_[a-zA-Z0-9_-]+',c.stdout).group(0)
-    proc=subprocess.Popen([str(binary),'serve','-data',str(db),'-addr','127.0.0.1:18787'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+    proc=subprocess.Popen([str(binary),'serve','-data',str(db),'-addr','127.0.0.1:18787'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,**popen_kw)
     try:
         for i in range(50):
             try:
@@ -51,7 +57,7 @@ with tempfile.TemporaryDirectory() as temp:
             except Exception:time.sleep(.1)
         assert status==200,approved
         print('HTTP: restarted server, different reviewer approves exact spec revision: PASS')
-    finally:proc.terminate();proc.wait(timeout=5)
+    finally:stop(proc)
     backup=work/'secure.nd.json'
     env=dict(os.environ,ND_CLOUD_BACKUP_PASSPHRASE='safe long passphrase for test only')
     secure=subprocess.run([str(binary),'backup-encrypted','-data',str(db),'-out',str(backup)],capture_output=True,text=True,env=env)

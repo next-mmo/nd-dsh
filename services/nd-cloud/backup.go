@@ -64,7 +64,7 @@ func privateRegularFile(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() > maxBackupBytes {
+	if !info.Mode().IsRegular() || !privateModeOK(info.Mode()) || info.Size() > maxBackupBytes {
 		return nil, errors.New("backup must be a private regular file (0600) under 32 MiB")
 	}
 	return os.ReadFile(path)

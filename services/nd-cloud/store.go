@@ -183,7 +183,7 @@ func openStore(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
+	if !info.Mode().IsRegular() || !privateModeOK(info.Mode()) {
 		return nil, fmt.Errorf("data file must be a private regular file (0600)")
 	}
 	b, err := os.ReadFile(path)
@@ -244,7 +244,7 @@ func persistAtomic(path string, b []byte) error {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
-	if fi, err := os.Lstat(path); err == nil && (!fi.Mode().IsRegular() || fi.Mode().Perm()&0077 != 0) {
+	if fi, err := os.Lstat(path); err == nil && (!fi.Mode().IsRegular() || !privateModeOK(fi.Mode())) {
 		return fmt.Errorf("unsafe data file permissions or type")
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err

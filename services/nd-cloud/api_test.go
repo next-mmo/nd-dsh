@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -98,6 +99,12 @@ func expectStatus(t *testing.T, w *httptest.ResponseRecorder, status int) {
 		t.Fatalf("expected HTTP %d, got %d: %s", status, w.Code, w.Body.String())
 	}
 }
+func expectPrivateMode(t *testing.T, mode os.FileMode) {
+	t.Helper()
+	if runtime.GOOS != "windows" && mode.Perm() != 0600 {
+		t.Fatalf("mode %v", mode.Perm())
+	}
+}
 
 func TestTenantAndProjectIsolation(t *testing.T) {
 	p := createPilot(t)
@@ -185,9 +192,7 @@ func TestDurabilityRevocationAndPermission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fi.Mode().Perm() != 0600 {
-		t.Fatalf("mode %v", fi.Mode().Perm())
-	}
+	expectPrivateMode(t, fi.Mode())
 	reload, err := openStore(p.path)
 	if err != nil {
 		t.Fatal(err)

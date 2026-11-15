@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -29,9 +30,10 @@ func TestEncryptedBackupRoundTripWrongPasswordAndTampering(t *testing.T) {
 		t.Fatal("plaintext backup leak")
 	}
 	info, err := os.Stat(backup)
-	if err != nil || info.Mode().Perm() != 0600 {
-		t.Fatal("backup permission", err)
+	if err != nil {
+		t.Fatal(err)
 	}
+	expectPrivateMode(t, info.Mode())
 	restored := filepath.Join(t.TempDir(), "restored", "nd-cloud.json")
 	if err := restoreEncryptedBackup(backup, restored, testBackupPassphrase); err != nil {
 		t.Fatal(err)
@@ -114,11 +116,14 @@ func TestEncryptedBackupParameterValidation(t *testing.T) {
 	if err := restoreEncryptedBackup(wrong, filepath.Join(t.TempDir(), "new.json"), testBackupPassphrase); err == nil {
 		t.Fatal("unsafe KDF parameters accepted")
 	}
-	if err := os.Chmod(file, 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := restoreEncryptedBackup(file, filepath.Join(t.TempDir(), "other.json"), testBackupPassphrase); err == nil {
-		t.Fatal("public backup allowed")
+	// Windows has no POSIX permission bits, so public-backup refusal is POSIX-only.
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(file, 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := restoreEncryptedBackup(file, filepath.Join(t.TempDir(), "other.json"), testBackupPassphrase); err == nil {
+			t.Fatal("public backup allowed")
+		}
 	}
 }
 
