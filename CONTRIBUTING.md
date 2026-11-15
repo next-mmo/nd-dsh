@@ -1,7 +1,9 @@
 # Contributing
 
 Use Node 24 and pnpm 11.7. Run `corepack pnpm bootstrap` once, then develop with
-`corepack pnpm dev`.
+`corepack pnpm dev`. Run the ND Cloud pilot locally as well (`services/nd-cloud`);
+hosted ND Cloud on a server is a later phase. See [`docs/development.md`](docs/development.md)
+and [`docs/nd-cloud.md`](docs/nd-cloud.md).
 
 Before submitting changes:
 

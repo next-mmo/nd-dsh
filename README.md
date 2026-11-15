@@ -230,6 +230,21 @@ corepack pnpm bootstrap
 corepack pnpm dev
 ```
 
+### Run ND Cloud locally (every new dev)
+
+The ND Cloud pilot is part of the standard local stack. In a second terminal:
+
+```sh
+cd services/nd-cloud
+go run . bootstrap -tenant demo -name "ND Demo" -subject owner   # save the printed token
+go run . serve -addr 127.0.0.1:8787                              # loopback only
+```
+
+Open <http://127.0.0.1:8787/> (or inside the ND built-in browser) and paste the token. Hosted
+**ND Cloud on a server is a later phase**; local development uses this loopback pilot. Full setup,
+verification gate and Windows notes: [`docs/development.md`](docs/development.md); pilot scope and
+next-phase gates: [`docs/nd-cloud.md`](docs/nd-cloud.md).
+
 Configure model providers from **Settings -> Models**. `DEEPSEEK_API_KEY` remains an optional compatibility environment variable for the seeded DeepSeek route. Desktop API keys entered through Settings are stored with Electron OS-backed secure storage when a secure backend is available.
 
 During development, opening the Vite renderer URL (normally `http://localhost:5173`) in a regular browser shows an explicitly labeled **UI Preview** populated with simulated fixtures. It exists only for reviewing navigation, layout, responsive behavior, and interaction states; agents, workspaces, Git, providers, ND Pencil, the shared browser, and organization runs function only in the Electron application. Preview fixtures are development-only and are not bundled as a production runtime fallback.
@@ -308,6 +323,7 @@ A **Public Beta** still requires restored CI, signed installers with an update c
 | ND Pencil | 🚢 Shipped | Native Freeform design surface (bundled `resources/nd-pencil`, sandboxed child view) editing the active project's real source — see [`docs/nd-pencil.md`](docs/nd-pencil.md) |
 | Policy gate | 🚢 Shipped | Main-process DENY/ALLOW/ASK enforcement for approval-bearing organization runs |
 | Packaging & installers | 🧪 Beta | Private Windows portable `0.1.1` with bundled ND Core, Harness, ND Pencil, and agent-browser. Signed installers, an update channel, and a clean-machine install are still pending |
+| ND Cloud local pilot | 🧪 Beta | Loopback Go service + dormant read-only ND-DSH bridge; run locally with the desktop — [`docs/nd-cloud.md`](docs/nd-cloud.md). Hosted cloud on a server = next phase |
 | Codex onboarding | 🛠 Planned | Native authentication and health checks in first-run onboarding |
 | More execution providers | 🛠 Planned | Additional local/offline and remote/cloud workers behind the same ND task/workspace/evidence contract |
 | Broader company templates | 🛠 Planned | Non-coding business roles once the software-company loop is reliable |
@@ -319,7 +335,7 @@ The full, ordered roadmap lives in [`docs/roadmap.md`](docs/roadmap.md), and the
 1. **Shipped foundation** — real company/project/task execution, coding engines, Rust core, built-in browser baseline, source control and design surface.
 2. **Current beta expansion** — General/Coding workspace profiles, ND Extensions/Home, shared command registry, governed native capabilities and first-class in-app browser extensions.
 3. **Public Beta P0** — runtime distribution, signed installers, installed-app E2E, onboarding and runner-attested release evidence.
-4. **After the beta** — more engine adapters, broader action metadata for policy, cloud/sync options and broader company templates.
+4. **Next phase — ND Cloud on a server** — hosted ND Cloud behind ADR-001 / PRD 0009/0010 gates, plus more engine adapters, broader action metadata for policy and broader company templates.
 
 ## Security boundaries
 
@@ -358,6 +374,7 @@ configs/dsh/              ND Harness overlay and agent preset
 tests/                    product/unit contracts
 vendor/deepseek-harness/  runtime submodule (tracks upstream latest)
 crates/                   Rust core: nd-protocol, nd-runtime, nd-core, nd-browser-host
+services/nd-cloud/        ND Cloud loopback Go pilot (local now; hosted on a server = next phase)
 resources/nd-pencil/      bundled ND Pencil engine (pinned upstream source: vendor/openpencil)
 ```
 
@@ -367,4 +384,4 @@ Released under the **MIT License** — see [`LICENSE`](LICENSE). DeepSeek Harnes
 
 ---
 
-> **ND-DSH** — General + Coding workspaces on one governed local-first AI platform. Replaceable models and coding engines. · *Developer Preview / Private Beta.* · [Architecture](docs/architecture.md) · [Full PRD](docs/prd-full.md) · [Release checklist](docs/plan/release-0.0.1-checklist.md) · [Roadmap](docs/roadmap.md) · MIT License
+> **ND-DSH** — General + Coding workspaces on one governed local-first AI platform. Replaceable models and coding engines. · *Developer Preview / Private Beta.* · [Docs index](docs/README.md) · [Development](docs/development.md) · [ND Cloud](docs/nd-cloud.md) · [Architecture](docs/architecture.md) · [Full PRD](docs/prd-full.md) · [Release checklist](docs/plan/release-0.0.1-checklist.md) · [Roadmap](docs/roadmap.md) · MIT License
