@@ -228,10 +228,15 @@ func (s *Store) transact(fn func(*State) error) error {
 	return nil
 }
 
+// read captures an immutable point-in-time state without holding the read lock
+// while the caller runs. All writers use transact's copy-on-write replacement,
+// so a slow HTTP response or backup export cannot stall unrelated writes.
+// Callbacks must treat the returned State and nested maps/slices as read-only.
 func (s *Store) read(fn func(State)) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	fn(s.state)
+	snapshot := s.state
+	s.mu.RUnlock()
+	fn(snapshot)
 }
 
 func persistAtomic(path string, b []byte) error {
