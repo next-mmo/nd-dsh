@@ -299,13 +299,12 @@ describe('InvocationBroker authorization', () => {
     await packages.registerBuiltin(EXECUTABLE_TOOL_MANIFEST)
     await state.setActivation(EXECUTABLE_TOOL_MANIFEST.id, personal, true)
     const credential = broker.mintRunCredential({ sessionId: 'sess-tool', engineId: 'nd-native', context: personal })
-    const result = await broker.invokeAsAgent({
+    await expect(broker.invokeAsAgent({
       token: credential.token,
       extensionId: EXECUTABLE_TOOL_MANIFEST.id,
       contributionId: 'echo-tool',
       input: { text: 'hello' },
-    })
-    expect(result).toMatchObject({ ok: false, error: { code: 'unavailable' } })
+    })).rejects.toThrow(/ND Security/)
     expect(calls).toHaveLength(0)
   })
 

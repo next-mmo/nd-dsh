@@ -19,7 +19,7 @@ afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root,
 async function root() { const path = await mkdtemp(join(tmpdir(), 'nd-catalog-test-')); roots.push(path); return path }
 
 describe('on-demand extension catalog', () => {
-  it('does no network work until Discover and downloads only the selected package on Install', async () => {
+  it('does no network work until Discover and fails closed on Install while the catalog is unsigned', async () => {
     const request = vi.fn(async (url: string | URL | Request) => {
       if (String(url) === 'https://example.test/catalog.json') return Response.json({ version: 1, packages: [entry()] })
       const key = Object.keys(payloads).find((path) => String(url).endsWith(`/${path}`))
@@ -32,10 +32,9 @@ describe('on-demand extension catalog', () => {
     expect(catalog.views(new Set())[0]).toMatchObject({ id: 'nd.audit', installed: false })
     const directory = await root()
     const packages = new ExtensionPackageStore(join(directory, 'packages'), async () => ({ exitCode: 0, stdout: '', stderr: '' }))
-    await catalog.install('nd.audit', packages, join(directory, 'downloads'))
-    expect(request).toHaveBeenCalledTimes(3)
-    expect(await packages.activeManifest('nd.audit')).toMatchObject({ id: 'nd.audit' })
-    expect((await packages.record('nd.audit'))?.source).toMatchObject({ kind: 'remote', revision: 'a'.repeat(40) })
+    await expect(catalog.install('nd.audit', packages, join(directory, 'downloads'))).rejects.toThrow(/ND Security/)
+    expect(request).toHaveBeenCalledTimes(1)
+    expect(await packages.list()).toEqual([])
   })
 
   it('keeps compatible packages discoverable when the catalog includes a newer host API', async () => {
@@ -46,13 +45,14 @@ describe('on-demand extension catalog', () => {
     expect(catalog.views(new Set()).map((item) => item.id)).toEqual(['nd.audit'])
   })
 
-  it('rejects a corrupt download without installing any package', async () => {
+  it('fails closed on Install without downloading or installing any package', async () => {
     const directory = await root()
     const request = vi.fn(async (url: string | URL | Request) => String(url).endsWith('catalog.json')
       ? Response.json({ version: 1, packages: [entry()] }) : new Response('corrupt')) as unknown as typeof fetch
     const catalog = new RemoteExtensionCatalog('https://example.test/catalog.json', request)
     const packages = new ExtensionPackageStore(join(directory, 'packages'))
-    await expect(catalog.install('nd.audit', packages, join(directory, 'downloads'))).rejects.toThrow(/integrity|size limit/)
+    await expect(catalog.install('nd.audit', packages, join(directory, 'downloads'))).rejects.toThrow(/ND Security/)
+    expect(request).not.toHaveBeenCalled()
     expect(await packages.list()).toEqual([])
   })
 

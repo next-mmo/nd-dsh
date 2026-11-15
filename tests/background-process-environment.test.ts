@@ -17,7 +17,7 @@ describe('ND background process environment', () => {
 
   it.skipIf(process.platform !== 'win32')('injects the policy at the Rust coding-engine boundary with scoped environment intact', async () => {
     const request = vi.fn().mockResolvedValue({ processId: 'test', pid: 123, startedAt: 1 })
-    const core = { request, onEvent: () => () => {} } as unknown as CoreClient
+    const core = { request, onEvent: () => () => {}, onResourceEvent: () => () => {} } as unknown as CoreClient
     const spawn = createCoreSpawn(core, { currentPermitId: () => 'permit-test' }, preload)
     const child = spawn('node', ['cli.js'], { cwd: 'C:\\workspace', env: { PATH: 'test-path' } })
     await Promise.resolve()

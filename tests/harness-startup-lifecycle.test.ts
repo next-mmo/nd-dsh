@@ -78,7 +78,7 @@ interface HarnessExitSeam {
   expectedChildExits: WeakSet<ChildProcess>
   runningSessions: Set<string>
   canceledSessions: Set<string>
-  eventHub: { detach(): void }
+  eventHub: { detach(): void; closeSession(sessionId: string): void }
   onEvent?: (frame: DshEventFrame) => void
   updateStatus(state: string, error?: string): void
   handleChildExit(child: ChildProcess, code: number | null, signal: NodeJS.Signals | null, detail: string): void
@@ -99,7 +99,7 @@ function exitFixture() {
   service.expectedChildExits = new WeakSet()
   service.runningSessions = new Set(['pm', 'worker'])
   service.canceledSessions = new Set(['canceled'])
-  service.eventHub = { detach: vi.fn() }
+  service.eventHub = { detach: vi.fn(), closeSession: vi.fn() }
   service.updateStatus = vi.fn()
   service.onEvent = vi.fn()
   return { service, child, gateway }
@@ -183,6 +183,7 @@ describe('HarnessService child-exit interruption', () => {
   it('does not interrupt sessions already reported completed or canceled', () => {
     const { service, child, gateway } = exitFixture()
     service.handleGatewayEvent(child, gateway, { kind: 'session-status', sessionId: 'worker', running: false })
+    expect(service.eventHub.closeSession).toHaveBeenCalledWith('worker')
     service.runningSessions.delete('canceled')
     service.handleChildExit(child, 1, null, '')
     expect(service.onEvent).toHaveBeenCalledWith(expect.objectContaining({ kind: 'session-event', sessionId: 'pm' }))
