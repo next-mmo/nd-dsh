@@ -34,7 +34,7 @@ func TestPrivateBackupRestoreAndTamperRejection(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.read(func(st State) {
-		if len(st.Tenants) != 2 || len(st.Projects) != 3 || len(st.Boards) != 1 || st.SchemaVersion != 3 {
+		if len(st.Tenants) != 2 || len(st.Projects) != 3 || len(st.Boards) != 1 || st.SchemaVersion != schemaVersion {
 			t.Fatal("unexpected restored state")
 		}
 	})
@@ -94,7 +94,7 @@ func TestSchemaOneMigratesOnNextWriteWithoutDataLoss(t *testing.T) {
 		t.Fatal(err)
 	}
 	store.read(func(st State) {
-		if st.SchemaVersion != 3 || st.Tenants["legacy"].Name != "Legacy Tenant" || st.Sources == nil {
+		if st.SchemaVersion != schemaVersion || st.Tenants["legacy"].Name != "Legacy Tenant" || st.Sources == nil {
 			t.Fatal("migration failed")
 		}
 	})
@@ -112,7 +112,7 @@ func TestSchemaOneMigratesOnNextWriteWithoutDataLoss(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(disk, []byte(`"schema_version": 3`)) || !bytes.Contains(disk, []byte(`"sources": {}`)) {
+	if !bytes.Contains(disk, []byte(`"schema_version": 4`)) || !bytes.Contains(disk, []byte(`"sources": {}`)) {
 		t.Fatal("schema not upgraded")
 	}
 	_, err = openStore(file)
@@ -161,7 +161,7 @@ func TestSchemaTwoMigratesToThreeWithoutErasingSources(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.read(func(state State) {
-		if state.SchemaVersion != 3 || state.Sources["src_old"].ArtifactSHA256 != "sha256-test" || state.WikiPages == nil || state.RouterAttempts == nil {
+		if state.SchemaVersion != schemaVersion || state.Sources["src_old"].ArtifactSHA256 != "sha256-test" || state.WikiPages == nil || state.RouterAttempts == nil {
 			t.Fatal("v2 data lost on migration")
 		}
 	})
@@ -179,7 +179,7 @@ func TestSchemaTwoMigratesToThreeWithoutErasingSources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(disk, []byte(`"schema_version": 3`)) || !bytes.Contains(disk, []byte(`"src_old"`)) {
+	if !bytes.Contains(disk, []byte(`"schema_version": 4`)) || !bytes.Contains(disk, []byte(`"src_old"`)) {
 		t.Fatal("write migration lost records")
 	}
 }
