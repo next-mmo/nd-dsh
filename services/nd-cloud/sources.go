@@ -206,6 +206,7 @@ func (a *API) createSourceSnapshot(w http.ResponseWriter, r *http.Request) {
 			return errInvalid
 		}
 		st.Sources[record.ID] = record
+		invalidateSourceSpecs(st, record)
 		for pageID, page := range st.WikiPages {
 			if page.ProjectID == id && page.TenantID == p.TenantID && page.Status == "published" && page.SourceSnapshotID != record.ID {
 				page.Status = "stale"
