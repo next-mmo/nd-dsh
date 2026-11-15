@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const schemaVersion = 3
+const schemaVersion = 4
 
 var (
 	errNotFound  = errors.New("not found")
@@ -136,10 +136,11 @@ type State struct {
 	Ledgers        map[string][]LedgerTxn    `json:"ledgers"`
 	Reservations   map[string]Reservation    `json:"reservations"`
 	RouterAttempts map[string]RouterAttempt  `json:"router_attempts"`
+	Specs          map[string]HumanSpec      `json:"specs"`
 }
 
 func emptyState() State {
-	return State{SchemaVersion: schemaVersion, Tenants: map[string]Tenant{}, Memberships: map[string]Membership{}, Projects: map[string]Project{}, Tokens: map[string]AccessToken{}, Boards: map[string]Board{}, Cases: map[string]SupportCase{}, Cards: map[string]KnowledgeCard{}, Sources: map[string]SourceSnapshot{}, WikiPages: map[string]WikiPage{}, Events: map[string][]ProjectEvent{}, Proposals: map[string]TaskProposal{}, Ledgers: map[string][]LedgerTxn{}, Reservations: map[string]Reservation{}, RouterAttempts: map[string]RouterAttempt{}}
+	return State{SchemaVersion: schemaVersion, Tenants: map[string]Tenant{}, Memberships: map[string]Membership{}, Projects: map[string]Project{}, Tokens: map[string]AccessToken{}, Boards: map[string]Board{}, Cases: map[string]SupportCase{}, Cards: map[string]KnowledgeCard{}, Sources: map[string]SourceSnapshot{}, WikiPages: map[string]WikiPage{}, Events: map[string][]ProjectEvent{}, Proposals: map[string]TaskProposal{}, Ledgers: map[string][]LedgerTxn{}, Reservations: map[string]Reservation{}, RouterAttempts: map[string]RouterAttempt{}, Specs: map[string]HumanSpec{}}
 }
 
 func memberKey(tenant, subject string) string { return tenant + ":" + subject }
@@ -216,6 +217,9 @@ func (s *Store) transact(fn func(*State) error) error {
 	next, err := json.MarshalIndent(draft, "", "  ")
 	if err != nil {
 		return err
+	}
+	if len(next) > maxBackupBytes {
+		return fmt.Errorf("state exceeds local pilot size limit: %w", errInvalid)
 	}
 	if err := persistAtomic(s.path, append(next, '\n')); err != nil {
 		return err
