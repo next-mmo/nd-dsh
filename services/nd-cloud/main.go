@@ -26,7 +26,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: nd-cloud serve|bootstrap|grant|bind-host|revoke|backup|restore [flags]")
+		return errors.New("usage: nd-cloud serve|bootstrap|grant|bind-host|revoke|backup|restore|backup-encrypted|restore-encrypted [flags]")
 	}
 	cmd := args[0]
 	f := flag.NewFlagSet(cmd, flag.ContinueOnError)
@@ -44,12 +44,24 @@ func run(args []string) error {
 	out := f.String("out", "", "private backup output (must not already exist)")
 	from := f.String("from", "", "private backup input")
 	addr := f.String("addr", "127.0.0.1:8787", "loopback listener (no public bind)")
+	passphraseEnv := f.String("passphrase-env", "ND_CLOUD_BACKUP_PASSPHRASE", "name of env var supplying backup passphrase (never pass secret on command line)")
 	routerLab := f.Bool("router-lab", false, "enable ephemeral BYOK streaming demo; requires manual demo units; no public/paid access")
 	if err := f.Parse(args[1:]); err != nil {
 		return err
 	}
 	if len(f.Args()) != 0 {
 		return errors.New("unexpected positional arguments")
+	}
+	// All public CLI writers and the HTTP server share one process-exclusive
+	// lock, so concurrent local processes cannot overwrite each other's snapshots.
+	var writerLock *FileStateLock
+	if cmd != "backup" && cmd != "backup-encrypted" {
+		lock, err := acquireFileStateLock(*data)
+		if err != nil {
+			return err
+		}
+		writerLock = lock
+		defer writerLock.Release()
 	}
 	s, err := openStore(*data)
 	if err != nil {
@@ -102,7 +114,7 @@ func run(args []string) error {
 		if err := s.exportBackup(*out); err != nil {
 			return err
 		}
-		fmt.Println("Private backup written (contains tenant data and credential hashes)")
+		fmt.Println("UNENCRYPTED local backup written; protect it and prefer backup-encrypted for sensitive pilot data")
 		return nil
 	case "restore":
 		if *from == "" {
@@ -112,6 +124,32 @@ func run(args []string) error {
 			return err
 		}
 		fmt.Println("Backup restored into new data path")
+		return nil
+	case "backup-encrypted":
+		if *out == "" {
+			return errors.New("backup-encrypted requires -out")
+		}
+		passphrase := os.Getenv(*passphraseEnv)
+		if passphrase == "" {
+			return errors.New("missing backup passphrase environment variable")
+		}
+		if err := s.exportEncryptedBackup(*out, passphrase); err != nil {
+			return err
+		}
+		fmt.Println("Encrypted backup written; store the passphrase separately")
+		return nil
+	case "restore-encrypted":
+		if *from == "" {
+			return errors.New("restore-encrypted requires -from and an unused -data path")
+		}
+		passphrase := os.Getenv(*passphraseEnv)
+		if passphrase == "" {
+			return errors.New("missing backup passphrase environment variable")
+		}
+		if err := restoreEncryptedBackup(*from, *data, passphrase); err != nil {
+			return err
+		}
+		fmt.Println("Authenticated encrypted backup restored into new data path")
 		return nil
 	case "serve":
 		return serveWithRouter(s, *addr, *routerLab)
