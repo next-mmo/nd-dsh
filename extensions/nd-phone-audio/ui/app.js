@@ -6,6 +6,10 @@ import {
   formatTransportKind,
   summarizeUserAgent,
 } from './phone-audio-core.js'
+import {
+  describeSessionState,
+  formatInjectionSummary,
+} from './phone-input-core.js'
 
 const el = (id) => document.getElementById(id)
 
@@ -46,9 +50,24 @@ const nodes = {
   sysVolume: el('sys-volume'),
   outputDeviceList: el('output-device-list'),
   refreshBtn: el('refresh-btn'),
+  tabAudio: el('tab-audio'),
+  tabKeyboard: el('tab-keyboard'),
+  panelAudio: el('panel-audio'),
+  panelKeyboard: el('panel-keyboard'),
+  kbStatePill: el('kb-state-pill'),
+  kbStateLabel: el('kb-state-label'),
+  kbClientEmpty: el('kb-client-empty'),
+  kbClientDetails: el('kb-client-details'),
+  kbClientUa: el('kb-client-ua'),
+  kbClientTransport: el('kb-client-transport'),
+  kbClientIp: el('kb-client-ip'),
+  kbClientLatency: el('kb-client-latency'),
+  kbClientInjection: el('kb-client-injection'),
+  kbDisconnectBtn: el('kb-disconnect-btn'),
 }
 
 let snapshot = null
+let inputSnapshot = null
 let busy = false
 
 const bridge = createBridge({
@@ -56,11 +75,16 @@ const bridge = createBridge({
     snapshot = next
     render()
   },
+  onPhoneInputState: (next) => {
+    inputSnapshot = next
+    renderKeyboard()
+  },
 })
 
 function setBusy(nextBusy) {
   busy = nextBusy
   render()
+  renderKeyboard()
 }
 
 function showBanner(node, message) {
@@ -82,7 +106,7 @@ function render() {
   nodes.stateLabel.textContent = meta.label
 
   nodes.toggleBtn.disabled = busy
-  nodes.toggleBtn.textContent = s.serverRunning ? 'Stop Streaming' : 'Start Streaming'
+  nodes.toggleBtn.textContent = s.serverRunning ? 'Stop Phone Link' : 'Start Phone Link'
   nodes.toggleBtn.className = s.serverRunning ? 'danger' : 'primary'
 
   const diag = detectOutputDiagnostics(s)
@@ -137,14 +161,14 @@ function render() {
     nodes.pairingCode.textContent = '------'
     nodes.connUrl.textContent = s.serverRunning
       ? `http://127.0.0.1:${s.port}/ (connect Wi-Fi or USB tethering)`
-      : 'Start streaming to generate pairing URL'
+      : 'Start Phone Link to generate pairing URL'
     nodes.copyUrlBtn.disabled = true
     nodes.rotateBtn.disabled = !s.serverRunning || busy
     nodes.qrImg.hidden = true
     nodes.qrPlaceholder.hidden = false
     nodes.qrPlaceholder.textContent = s.serverRunning
       ? 'Waiting for Wi-Fi or USB network adapter'
-      : 'Start streaming to generate QR code'
+      : 'Start Phone Link to generate QR code'
   }
   nodes.firewallNote.textContent = s.firewallHint || ''
 
@@ -235,12 +259,42 @@ function render() {
   }
 }
 
+function renderKeyboard() {
+  const s = inputSnapshot
+  if (!s) return
+
+  const meta = describeSessionState(s.sessionState)
+  nodes.kbStatePill.className = `pill ${meta.tone === 'idle' ? '' : meta.tone}`.trim()
+  nodes.kbStateLabel.textContent = meta.label
+
+  if (s.client) {
+    nodes.kbClientEmpty.hidden = true
+    nodes.kbClientDetails.hidden = false
+    nodes.kbClientUa.textContent = summarizeUserAgent(s.client.userAgent)
+    nodes.kbClientTransport.textContent = formatTransportKind(s.client.transport)
+    nodes.kbClientIp.textContent = s.client.remoteAddress
+    nodes.kbClientLatency.textContent =
+      typeof s.client.latencyMs === 'number' ? `${Math.round(s.client.latencyMs)} ms` : '—'
+    nodes.kbClientInjection.textContent = formatInjectionSummary(s)
+    nodes.kbDisconnectBtn.disabled = busy
+  } else {
+    nodes.kbClientEmpty.hidden = false
+    nodes.kbClientDetails.hidden = true
+  }
+}
+
 async function runAction(action, payload = {}) {
   setBusy(true)
   try {
     const res = await bridge.invoke({ action, ...payload })
-    if (res.ok && res.value && typeof res.value === 'object' && 'streamState' in res.value) {
-      snapshot = res.value
+    if (res.ok && res.value && typeof res.value === 'object') {
+      if ('streamState' in res.value) {
+        snapshot = res.value
+        render()
+      } else if ('sessionState' in res.value) {
+        inputSnapshot = res.value
+        renderKeyboard()
+      }
     } else if (!res.ok && res.error?.message) {
       showBanner(nodes.errorBanner, res.error.message)
     }
@@ -248,6 +302,20 @@ async function runAction(action, payload = {}) {
     setBusy(false)
   }
 }
+
+function selectTab(tab) {
+  const audio = tab === 'audio'
+  nodes.tabAudio.classList.toggle('active', audio)
+  nodes.tabKeyboard.classList.toggle('active', !audio)
+  nodes.panelAudio.hidden = !audio
+  nodes.panelKeyboard.hidden = audio
+}
+
+nodes.tabAudio.addEventListener('click', () => selectTab('audio'))
+nodes.tabKeyboard.addEventListener('click', () => {
+  selectTab('keyboard')
+  void runAction('kb-status')
+})
 
 nodes.toggleBtn.addEventListener('click', () => {
   if (snapshot?.serverRunning) {
@@ -274,6 +342,10 @@ nodes.rotateBtn.addEventListener('click', () => {
 
 nodes.disconnectBtn.addEventListener('click', () => {
   void runAction('disconnect')
+})
+
+nodes.kbDisconnectBtn.addEventListener('click', () => {
+  void runAction('kb-disconnect')
 })
 
 nodes.copyUrlBtn.addEventListener('click', async () => {
@@ -311,5 +383,6 @@ nodes.mutePcCheckbox.addEventListener('change', () => {
 
 bridge.whenConnected(() => {
   void runAction('status')
+  void runAction('kb-status')
 })
 bridge.start()

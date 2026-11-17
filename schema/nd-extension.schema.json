@@ -110,7 +110,9 @@
           "phoneaudio.read",
           "phoneaudio.write",
           "phoneinput.read",
-          "phoneinput.write"
+          "phoneinput.write",
+          "openspec.read",
+          "openspec.write"
         ]
       }
     },
@@ -650,7 +652,31 @@
         "phoneinput.session.stop",
         "phoneinput.client.disconnect",
         "phoneinput.token.rotate",
-        "phoneinput.options.set"
+        "phoneinput.options.set",
+        "openspec.health",
+        "openspec.projects.list",
+        "openspec.roots.list",
+        "openspec.roots.add",
+        "openspec.roots.remove",
+        "openspec.projects.pick",
+        "openspec.snapshot.get",
+        "openspec.change.get",
+        "openspec.spec.get",
+        "openspec.doc.get",
+        "openspec.validation.get",
+        "openspec.refresh",
+        "openspec.tickets.list",
+        "openspec.tickets.save",
+        "openspec.tickets.delete",
+        "openspec.assistant.status",
+        "openspec.assistant.models",
+        "openspec.assistant.ask",
+        "openspec.assistant.poll",
+        "openspec.assistant.active.get",
+        "openspec.assistant.active.set",
+        "openspec.actions.list",
+        "openspec.actions.approve",
+        "openspec.actions.reject"
       ]
     }
   }

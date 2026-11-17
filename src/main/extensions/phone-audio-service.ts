@@ -3,7 +3,6 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from 'node:net'
 import { WebSocketServer, type WebSocket } from 'ws'
 import {
-  PHONE_AUDIO_TOKEN_TTL_MS,
   type PhoneAudioCaptureInfo,
   type PhoneAudioCaptureMode,
   type PhoneAudioClientInfo,
@@ -21,6 +20,15 @@ import {
   type PhoneAudioSystemVolume,
 } from '../../shared/phone-audio.js'
 import {
+  PHONE_INPUT_MAX_TEXT_CHARS,
+  isPhoneInputKey,
+  type PhoneInputClientInfo,
+  type PhoneInputOptions,
+  type PhoneInputSessionState,
+  type PhoneInputSnapshot,
+} from '../../shared/phone-input.js'
+import type { CoreInput } from '../core/core-input.js'
+import {
   classifyRemoteTransport,
   discoverPhoneAudioInterfaces,
   isAllowedLocalRemoteIp,
@@ -28,6 +36,9 @@ import {
 } from './phone-audio-network.js'
 import { renderPairingQrSvg } from './phone-audio-qr.js'
 import { renderPhoneAudioReceiverHtml } from './phone-audio-receiver.js'
+import { renderPhoneInputPageHtml } from './phone-input-page.js'
+import { renderPhoneLinkShellHtml } from './phone-link-page.js'
+import { createMemoryCredentialsStore, type PhoneLinkCredentialsStore } from './phone-link-credentials.js'
 import { readWindowsOutputEndpoints } from './phone-audio-devices.js'
 
 const FIREWALL_HINT =
@@ -62,9 +73,14 @@ export interface PhoneAudioServiceOptions {
   onCommand?: (command: PhoneAudioCommand) => void
   onSignalToRenderer?: (signal: PhoneAudioSignalToRenderer) => void
   onLog?: (line: string) => void
+  /** nd-core keyboard injection surface; injection fails closed without it. */
+  inject?: CoreInput
+  onInputSnapshot?: (snapshot: PhoneInputSnapshot) => void
+  /** Durable pairing PIN/token; defaults to in-memory (per service instance). */
+  credentialsStore?: PhoneLinkCredentialsStore
   /** Skip renderer handshake in headless HTTP/WS integration tests. */
   headless?: boolean
-  /** Override token TTL for tests. */
+  /** Override token TTL for tests; omitted means the pairing never expires. */
   tokenTtlMs?: number
   /** Disable periodic refresh timer for deterministic tests. */
   disableRefreshTimer?: boolean
@@ -79,8 +95,11 @@ export class PhoneAudioService {
   private readonly onCommandCb: ((command: PhoneAudioCommand) => void) | undefined
   private readonly onSignalToRendererCb: ((signal: PhoneAudioSignalToRenderer) => void) | undefined
   private readonly onLogFn: (line: string) => void
+  private readonly injectFn: CoreInput | undefined
+  private readonly onInputSnapshotCb: ((snapshot: PhoneInputSnapshot) => void) | undefined
+  private readonly credentialsStore: PhoneLinkCredentialsStore
   private readonly headless: boolean
-  private readonly tokenTtlMs: number
+  private readonly tokenTtlMs: number | null
   private readonly disableRefreshTimer: boolean
 
   private streamState: PhoneAudioStreamState = 'stopped'
@@ -114,6 +133,11 @@ export class PhoneAudioService {
   private wss: WebSocketServer | null = null
   private activeSocket: WebSocket | null = null
   private activeClientId: string | null = null
+  private keyboardSocket: WebSocket | null = null
+  private keyboardClient: PhoneInputClientInfo | null = null
+  private injectedChars = 0
+  private injectedKeys = 0
+  private injectQueue: Promise<void> = Promise.resolve()
   private pairAttempts = new Map<string, PairAttemptRecord>()
   private refreshTimer: NodeJS.Timeout | null = null
   private disposed = false
@@ -129,8 +153,11 @@ export class PhoneAudioService {
     this.onCommandCb = opts.onCommand
     this.onSignalToRendererCb = opts.onSignalToRenderer
     this.onLogFn = opts.onLog ?? (() => undefined)
+    this.injectFn = opts.inject
+    this.onInputSnapshotCb = opts.onInputSnapshot
+    this.credentialsStore = opts.credentialsStore ?? createMemoryCredentialsStore()
     this.headless = opts.headless === true
-    this.tokenTtlMs = opts.tokenTtlMs ?? PHONE_AUDIO_TOKEN_TTL_MS
+    this.tokenTtlMs = opts.tokenTtlMs ?? null
     this.disableRefreshTimer = opts.disableRefreshTimer === true
   }
 
@@ -145,6 +172,40 @@ export class PhoneAudioService {
   async snapshot(): Promise<PhoneAudioSnapshot> {
     await this.refreshSystemAndInterfaces()
     return this.currentSnapshot()
+  }
+
+  async inputSnapshot(): Promise<PhoneInputSnapshot> {
+    await this.refreshSystemAndInterfaces()
+    return this.currentInputSnapshot()
+  }
+
+  currentInputSnapshot(): PhoneInputSnapshot {
+    const selected = this.resolveSelectedInterface()
+    const options: PhoneInputOptions = {}
+    if (this.options.preferredInterfaceId) options.preferredInterfaceId = this.options.preferredInterfaceId
+    return {
+      sessionState: this.keyboardSessionState(),
+      serverRunning: this.serverRunning,
+      port: this.port,
+      pairingCode: this.pairingCode,
+      tokenExpiresAt: this.tokenExpiresAt,
+      selectedInterfaceId: selected?.id ?? null,
+      selectedUrl: selected?.url ?? null,
+      interfaces: this.interfaces,
+      options,
+      client: this.keyboardClient ? { ...this.keyboardClient } : null,
+      injectedChars: this.injectedChars,
+      injectedKeys: this.injectedKeys,
+      lastError: this.lastError,
+      firewallHint: FIREWALL_HINT,
+    }
+  }
+
+  private keyboardSessionState(): PhoneInputSessionState {
+    if (this.streamState === 'starting') return 'starting'
+    if (!this.serverRunning) return this.streamState === 'error' ? 'error' : 'stopped'
+    if (this.keyboardSocket && this.keyboardSocket.readyState <= 1) return 'connected'
+    return 'waiting'
   }
 
   currentSnapshot(): PhoneAudioSnapshot {
@@ -172,7 +233,7 @@ export class PhoneAudioService {
   }
 
   async start(partialOptions?: Partial<PhoneAudioOptions>): Promise<PhoneAudioSnapshot> {
-    if (this.disposed) throw new Error('Phone Audio service is disposed')
+    if (this.disposed) throw new Error('Phone Link service is disposed')
     if (partialOptions) this.applyOptions(partialOptions)
 
     if (this.serverRunning) {
@@ -183,7 +244,7 @@ export class PhoneAudioService {
     this.lastError = null
     this.streamState = 'starting'
     this.sessionId = randomBytes(12).toString('hex')
-    this.issueFreshCredentials()
+    await this.ensureCredentials()
     this.emitSnapshot()
 
     try {
@@ -255,10 +316,26 @@ export class PhoneAudioService {
       return this.currentSnapshot()
     }
     await this.disconnectClient()
+    await this.disconnectKeyboardClient()
     this.issueFreshCredentials()
     await this.refreshSystemAndInterfaces()
     this.emitSnapshot()
     return this.currentSnapshot()
+  }
+
+  async disconnectKeyboardClient(): Promise<PhoneInputSnapshot> {
+    if (this.keyboardSocket) {
+      this.sendWs(this.keyboardSocket, { type: 'server-stop', reason: 'Disconnected by desktop.' })
+      try {
+        this.keyboardSocket.close(4003, 'Disconnected by desktop')
+      } catch {
+        // Ignore close errors.
+      }
+      this.keyboardSocket = null
+    }
+    this.keyboardClient = null
+    this.emitSnapshot()
+    return this.currentInputSnapshot()
   }
 
   async setOptions(partial: Partial<PhoneAudioOptions>): Promise<PhoneAudioSnapshot> {
@@ -386,24 +463,40 @@ export class PhoneAudioService {
     }
   }
 
+  private async ensureCredentials(): Promise<void> {
+    if (this.token && this.pairingCode) return
+    const stored = await this.credentialsStore.load()
+    if (stored) {
+      this.token = stored.token
+      this.pairingCode = stored.pairingCode
+      this.tokenExpiresAt = this.tokenTtlMs !== null ? Date.now() + this.tokenTtlMs : null
+      this.pairAttempts.clear()
+      return
+    }
+    this.issueFreshCredentials()
+  }
+
   private issueFreshCredentials(): void {
     this.token = randomBytes(16).toString('hex')
     this.pairingCode = String(randomInt(100_000, 1_000_000))
-    this.tokenExpiresAt = Date.now() + this.tokenTtlMs
+    this.tokenExpiresAt = this.tokenTtlMs !== null ? Date.now() + this.tokenTtlMs : null
     this.pairAttempts.clear()
+    void this.credentialsStore.save({ token: this.token, pairingCode: this.pairingCode }).catch((error: unknown) => {
+      this.onLogFn(`[phone-link] Could not persist pairing credentials: ${error instanceof Error ? error.message : String(error)}`)
+    })
   }
 
   private isTokenValid(candidate: string | null | undefined): boolean {
-    if (!candidate || !this.token || !this.tokenExpiresAt) return false
-    if (Date.now() > this.tokenExpiresAt) return false
+    if (!candidate || !this.token) return false
+    if (this.tokenExpiresAt !== null && Date.now() > this.tokenExpiresAt) return false
     const a = Buffer.from(candidate, 'utf8')
     const b = Buffer.from(this.token, 'utf8')
     return a.length === b.length && timingSafeEqual(a, b)
   }
 
   private isCodeValid(candidate: string): boolean {
-    if (!this.pairingCode || !this.tokenExpiresAt) return false
-    if (Date.now() > this.tokenExpiresAt) return false
+    if (!this.pairingCode) return false
+    if (this.tokenExpiresAt !== null && Date.now() > this.tokenExpiresAt) return false
     const a = Buffer.from(candidate.trim(), 'utf8')
     const b = Buffer.from(this.pairingCode, 'utf8')
     return a.length === b.length && timingSafeEqual(a, b)
@@ -459,8 +552,8 @@ export class PhoneAudioService {
 
   private async tickRefresh(): Promise<void> {
     if (!this.serverRunning || this.disposed) return
-    if (this.tokenExpiresAt && Date.now() > this.tokenExpiresAt) {
-      await this.stopInternal(`Pairing session expired after ${Math.round(this.tokenTtlMs / 60_000)} minutes. Start streaming again to get a new pairing code.`, true)
+    if (this.tokenExpiresAt !== null && Date.now() > this.tokenExpiresAt) {
+      await this.stopInternal(`Pairing session expired after ${Math.round((this.tokenTtlMs ?? 0) / 60_000)} minutes. Start Phone Link again to get a new pairing code.`, true)
       return
     }
     await this.refreshSystemAndInterfaces()
@@ -478,7 +571,7 @@ export class PhoneAudioService {
     this.listeners.push(primary)
     const addr = primary.server.address() as AddressInfo | null
     if (!addr || typeof addr.port !== 'number') {
-      throw new Error('Could not bind local audio signaling port')
+      throw new Error('Could not bind local Phone Link port')
     }
     this.port = addr.port
     this.serverRunning = true
@@ -491,7 +584,7 @@ export class PhoneAudioService {
         const bound = await this.listenOnAddress(iface.address, this.port)
         this.listeners.push(bound)
       } catch (err) {
-        this.onLogFn(`[phone-audio] Could not bind ${iface.address}:${this.port}: ${err instanceof Error ? err.message : String(err)}`)
+        this.onLogFn(`[phone-link] Could not bind ${iface.address}:${this.port}: ${err instanceof Error ? err.message : String(err)}`)
       }
     }
   }
@@ -507,7 +600,7 @@ export class PhoneAudioService {
         const bound = await this.listenOnAddress(address, this.port)
         this.listeners.push(bound)
       } catch (err) {
-        this.onLogFn(`[phone-audio] Could not bind new interface ${address}:${this.port}: ${err instanceof Error ? err.message : String(err)}`)
+        this.onLogFn(`[phone-link] Could not bind new interface ${address}:${this.port}: ${err instanceof Error ? err.message : String(err)}`)
       }
     }
 
@@ -578,24 +671,25 @@ export class PhoneAudioService {
       return
     }
 
-    if (req.method === 'GET' && url.pathname === '/') {
+    if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/keyboard' || url.pathname === '/audio')) {
+      const render =
+        url.pathname === '/keyboard'
+          ? renderPhoneInputPageHtml
+          : url.pathname === '/audio'
+            ? renderPhoneAudioReceiverHtml
+            : renderPhoneLinkShellHtml
       const providedToken = url.searchParams.get('token')
-      if (providedToken) {
-        if (!this.isTokenValid(providedToken)) {
-          res.writeHead(401, { ...securityHeaders, 'content-type': 'text/html; charset=utf-8' })
-          res.end(
-            renderPhoneAudioReceiverHtml({
-              error: 'This QR link expired or is invalid. Enter the current 6-digit pairing code or rescan QR.',
-            }),
-          )
-          return
-        }
-        res.writeHead(200, { ...securityHeaders, 'content-type': 'text/html; charset=utf-8' })
-        res.end(renderPhoneAudioReceiverHtml({ initialToken: providedToken }))
+      if (providedToken && !this.isTokenValid(providedToken)) {
+        res.writeHead(401, { ...securityHeaders, 'content-type': 'text/html; charset=utf-8' })
+        res.end(
+          render({
+            error: 'This QR link expired or is invalid. Enter the current 6-digit pairing code or rescan QR.',
+          }),
+        )
         return
       }
       res.writeHead(200, { ...securityHeaders, 'content-type': 'text/html; charset=utf-8' })
-      res.end(renderPhoneAudioReceiverHtml({}))
+      res.end(render(providedToken ? { initialToken: providedToken } : {}))
       return
     }
 
@@ -681,6 +775,18 @@ export class PhoneAudioService {
   private handleWsConnection(socket: WebSocket, req: IncomingMessage): void {
     if (!this.serverRunning) {
       socket.close(4001, 'Server stopped')
+      return
+    }
+
+    let app = 'audio'
+    try {
+      const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`)
+      if (url.searchParams.get('app') === 'keyboard') app = 'keyboard'
+    } catch {
+      // Fall back to the audio receiver route.
+    }
+    if (app === 'keyboard') {
+      this.handleKeyboardWsConnection(socket, req)
       return
     }
 
@@ -780,6 +886,119 @@ export class PhoneAudioService {
     })
   }
 
+  private handleKeyboardWsConnection(socket: WebSocket, req: IncomingMessage): void {
+    // One keyboard client at a time, independent of the audio receiver slot.
+    if (this.keyboardSocket && this.keyboardSocket.readyState <= 1) {
+      socket.close(4008, 'Another phone keyboard is already connected')
+      return
+    }
+
+    const remoteAddress = normalizeRemoteIp(req.socket.remoteAddress)
+    const transport = classifyRemoteTransport(remoteAddress, this.interfaces)
+    const userAgent = typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'].slice(0, 180) : 'Phone Browser'
+
+    this.keyboardSocket = socket
+    this.keyboardClient = {
+      id: randomBytes(8).toString('hex'),
+      remoteAddress,
+      transport,
+      userAgent,
+      connectedAt: Date.now(),
+      charsSent: 0,
+      keysSent: 0,
+    }
+    this.emitSnapshot()
+
+    socket.on('message', (raw) => {
+      if (this.keyboardSocket !== socket) return
+      let msg: Record<string, unknown>
+      try {
+        msg = JSON.parse(String(raw)) as Record<string, unknown>
+      } catch {
+        return
+      }
+      const type = msg.type
+      if (type === 'client-hello') {
+        if (typeof msg.userAgent === 'string' && this.keyboardClient) {
+          this.keyboardClient.userAgent = msg.userAgent.slice(0, 180)
+        }
+        this.emitSnapshot()
+        return
+      }
+      if (type === 'ping' && typeof msg.t === 'number') {
+        this.sendWs(socket, { type: 'pong', t: msg.t })
+        return
+      }
+      if (type === 'text') {
+        void this.handleKeyboardText(socket, msg)
+        return
+      }
+      if (type === 'key') {
+        void this.handleKeyboardKey(socket, msg)
+        return
+      }
+      if (type === 'client-disconnect') {
+        socket.close(1000, 'Client disconnected')
+      }
+    })
+
+    socket.on('close', () => {
+      if (this.keyboardSocket !== socket) return
+      this.keyboardSocket = null
+      this.keyboardClient = null
+      this.emitSnapshot()
+    })
+  }
+
+  private async handleKeyboardText(socket: WebSocket, msg: Record<string, unknown>): Promise<void> {
+    const id = typeof msg.id === 'number' ? msg.id : 0
+    const text = typeof msg.text === 'string' ? msg.text : ''
+    if (!text || text.length > PHONE_INPUT_MAX_TEXT_CHARS) {
+      this.sendWs(socket, { type: 'ack', id, ok: false, error: `Text must be 1–${PHONE_INPUT_MAX_TEXT_CHARS} characters.` })
+      return
+    }
+    await this.enqueueInjection(socket, id, async () => {
+      if (!this.injectFn) throw new Error('Keyboard injection unavailable: the nd-core sidecar is not running.')
+      await this.injectFn.typeText(text)
+      this.injectedChars += text.length
+      if (this.keyboardClient) this.keyboardClient.charsSent += text.length
+      this.sendWs(socket, { type: 'ack', id, ok: true, chars: text.length })
+      this.emitSnapshot()
+    })
+  }
+
+  private async handleKeyboardKey(socket: WebSocket, msg: Record<string, unknown>): Promise<void> {
+    const id = typeof msg.id === 'number' ? msg.id : 0
+    const key = msg.key
+    if (!isPhoneInputKey(key)) {
+      this.sendWs(socket, { type: 'ack', id, ok: false, error: 'Unknown key.' })
+      return
+    }
+    await this.enqueueInjection(socket, id, async () => {
+      if (!this.injectFn) throw new Error('Keyboard injection unavailable: the nd-core sidecar is not running.')
+      await this.injectFn.sendKey(key)
+      this.injectedKeys += 1
+      if (this.keyboardClient) this.keyboardClient.keysSent += 1
+      this.sendWs(socket, { type: 'ack', id, ok: true })
+      this.emitSnapshot()
+    })
+  }
+
+  /** One injection at a time: overlapping SendInput batches would interleave keys. */
+  private enqueueInjection(socket: WebSocket, id: number, job: () => Promise<void>): Promise<void> {
+    const run = this.injectQueue.then(job, job)
+    this.injectQueue = run.then(
+      () => undefined,
+      (error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error)
+        this.lastError = message
+        this.sendWs(socket, { type: 'ack', id, ok: false, error: message })
+        this.emitSnapshot()
+      },
+    )
+    return this.injectQueue
+  }
+
   private sendWs(socket: WebSocket, payload: Record<string, unknown>): void {
     if (socket.readyState === 1) {
       socket.send(JSON.stringify(payload))
@@ -807,6 +1026,20 @@ export class PhoneAudioService {
     this.activeClientId = null
     this.client = null
     this.stats = {}
+
+    if (this.keyboardSocket) {
+      this.sendWs(this.keyboardSocket, {
+        type: 'server-stop',
+        reason: reason || 'Phone Link stopped by desktop.',
+      })
+      try {
+        this.keyboardSocket.close(1000, 'Server stopped')
+      } catch {
+        // Ignore close errors.
+      }
+      this.keyboardSocket = null
+    }
+    this.keyboardClient = null
 
     if (this.wss) {
       try {
@@ -854,6 +1087,7 @@ export class PhoneAudioService {
 
   private emitSnapshot(): void {
     this.onSnapshotCb?.(this.currentSnapshot())
+    this.onInputSnapshotCb?.(this.currentInputSnapshot())
   }
 }
 

@@ -395,6 +395,8 @@ export function registerIpc(deps: IpcDependencies): () => void {
     ...(deps.coreInput ? { coreInput: deps.coreInput } : {}),
     ...(deps.phoneAudioCaptureGate ? { phoneAudioCaptureGate: deps.phoneAudioCaptureGate } : {}),
     ...(deps.nineRouterManaged ? { nineRouterManaged: deps.nineRouterManaged } : {}),
+    workspaces: deps.workspaces,
+    ...(deps.routerService ? { router: deps.routerService } : {}),
     onHomeChanged: () => { void syncHomeSessions() },
   })
   const disposeLiveIpc = deps.routerService

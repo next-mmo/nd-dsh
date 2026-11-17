@@ -30,7 +30,7 @@ export function renderPhoneInputPageHtml(options: PhoneInputPageOptions): string
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
   <meta name="color-scheme" content="light dark" />
-  <title>ND Phone Keyboard</title>
+  <title>ND Phone Link — Keyboard</title>
   <style>
     :root {
       color-scheme: dark;
@@ -105,7 +105,7 @@ export function renderPhoneInputPageHtml(options: PhoneInputPageOptions): string
 <body>
   <section id="pair" class="card hidden">
     <h1>Pair with ND</h1>
-    <p class="sub">Enter the 6-digit code shown in ND → Phone Keyboard.</p>
+    <p class="sub">Enter the 6-digit code shown in ND → Phone Link.</p>
     <div style="height:12px"></div>
     <input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000" />
     <div style="height:10px"></div>
@@ -116,7 +116,7 @@ export function renderPhoneInputPageHtml(options: PhoneInputPageOptions): string
 
   <section id="board" class="hidden" style="display:flex;flex-direction:column;gap:12px;flex:1">
     <div class="row">
-      <h1 class="grow" style="margin:0">Phone Keyboard</h1>
+      <h1 class="grow" style="margin:0">Keyboard</h1>
       <span class="pill"><span id="dot" class="dot"></span><span id="status">Connecting…</span></span>
     </div>
 
@@ -149,7 +149,7 @@ export function renderPhoneInputPageHtml(options: PhoneInputPageOptions): string
     </div>
   </section>
 
-  <footer>ND Phone Keyboard · local network only · nothing leaves your LAN</footer>
+  <footer>ND Phone Link · local network only · nothing leaves your LAN</footer>
 
   <script>
     const BOOT = ${bootstrap};
@@ -157,10 +157,25 @@ export function renderPhoneInputPageHtml(options: PhoneInputPageOptions): string
     const pairView = $('pair'), boardView = $('board');
     const buffer = $('buffer'), statusEl = $('status'), dot = $('dot');
     const sentEl = $('sent'), boardErr = $('boardErr'), pairErr = $('pairErr');
+    const STORAGE_KEY = 'nd-phone-link.token';
     let token = BOOT.initialToken || '';
     let ws = null, reconnectTimer = null, attempts = 0, pingTimer = null;
     let charsSent = 0, pendingId = 0;
     const pending = new Map();
+
+    function readStoredToken() {
+      try { return localStorage.getItem(STORAGE_KEY) || ''; } catch { return ''; }
+    }
+    function storeToken(value) {
+      try {
+        if (value) localStorage.setItem(STORAGE_KEY, value);
+        else localStorage.removeItem(STORAGE_KEY);
+      } catch {}
+    }
+    function notifyParent(kind, extra) {
+      if (window.parent === window) return;
+      try { window.parent.postMessage(Object.assign({ kind }, extra), location.origin); } catch {}
+    }
 
     function showBoard() { pairView.classList.add('hidden'); boardView.classList.remove('hidden'); }
     function showPair(msg) { boardView.classList.add('hidden'); pairView.classList.remove('hidden'); if (msg) pairErr.textContent = msg; }
@@ -176,6 +191,8 @@ export function renderPhoneInputPageHtml(options: PhoneInputPageOptions): string
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Pairing failed');
         token = data.token;
+        storeToken(token);
+        notifyParent('nd-phone-link:paired', { token });
         showBoard(); connect();
       } catch (err) {
         pairErr.textContent = err.message || 'Pairing failed';
@@ -186,7 +203,7 @@ export function renderPhoneInputPageHtml(options: PhoneInputPageOptions): string
       if (!token) { showPair(); return; }
       showBoard();
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-      ws = new WebSocket(proto + '://' + location.host + '/ws?token=' + encodeURIComponent(token));
+      ws = new WebSocket(proto + '://' + location.host + '/ws?token=' + encodeURIComponent(token) + '&app=keyboard');
       ws.onopen = () => {
         attempts = 0; setStatus('Connected', 'ok'); setErr('');
         send({ type: 'client-hello', userAgent: navigator.userAgent });
@@ -202,7 +219,9 @@ export function renderPhoneInputPageHtml(options: PhoneInputPageOptions): string
           if (settle) { pending.delete(msg.id); settle(msg); }
         } else if (msg.type === 'server-stop') {
           setStatus('Stopped', 'bad'); setErr(msg.reason || 'Stopped on the PC.');
-          token = ''; cleanup(); showPair(msg.reason || 'Start Phone Keyboard again on the PC.');
+          token = ''; storeToken(''); cleanup();
+          notifyParent('nd-phone-link:unpaired', { reason: msg.reason });
+          showPair(msg.reason || 'Start Phone Link again on the PC.');
         }
       };
       ws.onclose = (ev) => {
@@ -260,8 +279,9 @@ export function renderPhoneInputPageHtml(options: PhoneInputPageOptions): string
       if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendBuffer(); }
     });
 
+    if (!token) token = readStoredToken();
     if (BOOT.initialError) { showPair(BOOT.initialError); }
-    else if (token) { showBoard(); connect(); }
+    else if (token) { storeToken(token); showBoard(); connect(); }
     else { showPair(); }
   </script>
 </body>

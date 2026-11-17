@@ -1,6 +1,6 @@
 import { extensionOpensFullscreen, extensionRunsInBackground, normalizeExtensionRuntimePolicy, setBackgroundExtension, setExtensionFullscreen } from '../../../shared/extension-runtime-policy'
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { BookOpen, Braces, Check, ChevronLeft, ChevronRight, Download, ExternalLink, Eye, FolderOpen, FolderPlus, Gamepad2, HardDrive, Image, Keyboard, Languages, Layers, Link2, ListChecks, Maximize2, Mic, Minimize2, MonitorPlay, Package, PanelsTopLeft, Pencil, Plus, Power, Puzzle, RefreshCw, Repeat, Search, Settings2, ShieldCheck, Shuffle, SkipBack, SkipForward, Smartphone, Sparkles, SquareTerminal, Sunrise, Trash2, Undo2, Upload, Users, Volume2, Workflow, Globe, Network } from 'lucide-react'
+import { BookOpen, Braces, Check, ChevronLeft, ChevronRight, Download, ExternalLink, Eye, FolderOpen, FolderPlus, Gamepad2, HardDrive, Image, Languages, Layers, Link2, ListChecks, Maximize2, Mic, Minimize2, MonitorPlay, Package, PanelsTopLeft, Pencil, Plus, Power, Puzzle, RefreshCw, Repeat, Search, Settings2, ShieldCheck, Shuffle, SkipBack, SkipForward, Smartphone, Sparkles, SquareTerminal, Sunrise, Trash2, Undo2, Upload, Users, Workflow, Globe, Network } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { cn } from '../lib/utils'
 import type { NdContext } from '../../../shared/nd-context'
@@ -72,8 +72,8 @@ const EXTENSION_ACCENTS: Record<string, { icon: LucideIcon; tileClassName: strin
   'nd.emulator': { icon: Smartphone, tileClassName: 'border-emerald-500/25 bg-emerald-500/15 text-emerald-500' },
   'nd.os-toolkit': { icon: Sunrise, tileClassName: 'border-yellow-500/25 bg-yellow-500/15 text-yellow-500' },
   'nd.tutor': { icon: BookOpen, tileClassName: 'border-emerald-500/25 bg-emerald-500/15 text-emerald-500' },
-  'nd.phone-audio': { icon: Volume2, tileClassName: 'border-sky-500/25 bg-sky-500/15 text-sky-500' },
-  'nd.phone-input': { icon: Keyboard, tileClassName: 'border-indigo-500/25 bg-indigo-500/15 text-indigo-500' },
+  'nd.phone-audio': { icon: Smartphone, tileClassName: 'border-sky-500/25 bg-sky-500/15 text-sky-500' },
+  'nd.openspec-hub': { icon: Layers, tileClassName: 'border-blue-500/25 bg-blue-500/15 text-blue-500' },
 }
 
 function ExtensionIconTile({ id, large = false }: { id: string; large?: boolean }): React.ReactNode {
@@ -259,7 +259,7 @@ export function ExtensionPackagesCard({ state, organization, contexts, requested
 
       <details className="rounded-xl border border-border-soft bg-surface-0/60 p-4">
         <summary className="cursor-pointer text-sm font-semibold">Background extension limits</summary>
-        <p className="mt-2 text-xs text-faint">Every extension card has Full screen and Background run switches. Views open full screen by default; background run stays off except for ND's live audio extensions (Phone Audio, ND Tutor), so closing the window never cuts the sound. Both choices are remembered per extension, and a backgrounded view reopens in the mode you left it. Idle views can lose unsaved state when released. Native reminders and clipboard recording use their own settings.</p>
+        <p className="mt-2 text-xs text-faint">Every extension card has Full screen and Background run switches. Views open full screen by default; background run stays off except for ND's live audio extensions (Phone Link, ND Tutor), so closing the window never cuts the sound. Both choices are remembered per extension, and a backgrounded view reopens in the mode you left it. Idle views can lose unsaved state when released. Native reminders and clipboard recording use their own settings.</p>
         <div className="mt-3 flex flex-wrap gap-4">
           <label className="text-xs">Maximum background views
             <select aria-label="Maximum background extension views" className="ml-2 rounded border border-border-soft bg-surface-1 p-1" value={policy.maxBackgroundViews} disabled={busy}

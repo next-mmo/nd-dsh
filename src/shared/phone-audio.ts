@@ -1,14 +1,10 @@
 /**
- * Shared contracts for ND Phone Audio (`nd.phone-audio`): PC-to-phone
- * low-latency system audio streaming over local Wi-Fi or USB tethering via
- * Electron loopback capture, local HTTP/WebSocket signaling, and WebRTC.
+ * Shared contracts for ND Phone Link (`nd.phone-audio`): one local server and
+ * one pairing QR that serve both the PC-to-phone audio receiver (WebRTC) and
+ * the phone keyboard, over local Wi-Fi or USB tethering.
  */
 
 export const PHONE_AUDIO_EXTENSION_ID = 'nd.phone-audio'
-
-// A phone used as a speaker stays paired for a whole listening session; the
-// token is LAN-scoped and PIN-gated, so a long TTL is an acceptable trade.
-export const PHONE_AUDIO_TOKEN_TTL_MS = 2 * 60 * 60 * 1000
 
 export type PhoneAudioStreamState =
   | 'stopped'

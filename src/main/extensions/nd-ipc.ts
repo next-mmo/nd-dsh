@@ -115,7 +115,7 @@ import { PayGuardScheduler } from './pay-guard-scheduler.js'
 import { OsToolkitScheduler } from './os-toolkit-scheduler.js'
 import { TutorStore } from './tutor-store.js'
 import { PhoneAudioService } from './phone-audio-service.js'
-import { PhoneInputService } from './phone-input-service.js'
+import { createFileCredentialsStore } from './phone-link-credentials.js'
 import type { CoreInput } from '../core/core-input.js'
 import type { CoreSystemVolume } from '../core/core-system-volume.js'
 import {
@@ -124,11 +124,19 @@ import {
   type PhoneAudioRendererReport,
   type PhoneAudioSignalFromRenderer,
 } from '../../shared/phone-audio.js'
-import { PHONE_INPUT_EXTENSION_ID, PHONE_INPUT_IPC } from '../../shared/phone-input.js'
+import { PHONE_INPUT_IPC } from '../../shared/phone-input.js'
 import { ND_TRANSLATE_ID, ND_TRANSLATE_MAX_TEXT, isLlmProvider } from '../../shared/nd-translate.js'
 import { ND_WEBVIEW_URL_SCHEME } from '../../shared/extension-webview.js'
 import type { ProviderStore } from '../providers.js'
 import { registerSkillComposeHost, type SkillCatalogPort } from './skill-compose-host.js'
+import { OPENSPEC_HUB_ID, OpenSpecHubService, type OpenSpecRouterPort } from './openspec-hub/nd-service.js'
+import { assertSafeId, readProjectFile } from './openspec-hub/security.js'
+import { findProject } from './openspec-hub/config.js'
+import { docRelPath, parseChecklist } from './openspec-hub/scanner.js'
+import { HttpError, type TicketInput } from './openspec-hub/types.js'
+import type { TicketPatch } from './openspec-hub/tickets.js'
+import type { ChatRequest } from './openspec-hub/assistant.js'
+import type { WorkspaceRegistry } from '../workspace/workspace-registry.js'
 
 export interface NdOrganizationPortFull extends NdOrganizationPort {
   mutate(mutation: OrganizationMutation): Promise<unknown>
@@ -204,6 +212,10 @@ export interface NdIpcDependencies {
   /** Notified after ND Home records change, so other services can re-derive views. */
   onHomeChanged?: () => void
   nineRouterManaged?: NineRouterManagedRuntime
+  /** Pinned workspaces; OpenSpec Hub derives its project portfolio from them. */
+  workspaces?: Pick<WorkspaceRegistry, 'list'>
+  /** ND Router playground lane for the OpenSpec assistant; no external key needed. */
+  router?: OpenSpecRouterPort
 }
 
 const NOTE_TITLE_MAX = 80
@@ -225,7 +237,6 @@ export const NINE_ROUTER_ID = 'nd.9router'
 export const EMULATOR_ID = 'nd.emulator'
 export const ND_TUTOR_ID = 'nd.tutor'
 export const PHONE_AUDIO_ID = PHONE_AUDIO_EXTENSION_ID
-export const PHONE_INPUT_ID = PHONE_INPUT_EXTENSION_ID
 
 /**
  * Development package sources. Release Discover uses separately published metadata.
@@ -265,7 +276,7 @@ const AVAILABLE_PACKAGES: readonly { id: string; path: () => string }[] = app.is
     { id: OS_TOOLKIT_ID, path: osToolkitPackagePath },
     { id: ND_TUTOR_ID, path: tutorPackagePath },
     { id: PHONE_AUDIO_ID, path: phoneAudioPackagePath },
-    { id: PHONE_INPUT_ID, path: phoneInputPackagePath },
+    { id: OPENSPEC_HUB_ID, path: openspecHubPackagePath },
   ]),
 ]
 
@@ -354,6 +365,29 @@ function wizardChessPackagePath(): string {
     : join(app.getAppPath(), 'extensions', 'wizard-chess-3d')
 }
 
+/**
+ * OpenSpec Hub lives in its own sibling git repo. The installer copies the
+ * whole source tree, so prefer the staged `dist/nd-package` (manifest + ui +
+ * vendored CLI only); the repo root carries workspace node_modules that would
+ * break the symlink/size caps. Build it with `pnpm build:nd-package` there.
+ */
+function openspecHubPackagePath(): string {
+  const neighbors = [
+    join(dirname(app.getAppPath()), 'openspec-hub'),
+    join(process.cwd(), '..', 'openspec-hub'),
+  ]
+  for (const repo of neighbors) {
+    const staged = join(repo, 'dist', 'nd-package')
+    if (existsSync(join(staged, ND_EXTENSION_MANIFEST_FILENAME))) return staged
+  }
+  for (const repo of neighbors) {
+    if (existsSync(join(repo, ND_EXTENSION_MANIFEST_FILENAME))) return repo
+  }
+  return app.isPackaged
+    ? join(process.resourcesPath, 'nd-extensions', 'openspec-hub')
+    : join(app.getAppPath(), 'extensions', 'openspec-hub')
+}
+
 function miniBrowserPackagePath(): string {
   return app.isPackaged
     ? join(process.resourcesPath, 'nd-extensions', 'nd-mini-browser')
@@ -416,12 +450,6 @@ function phoneAudioPackagePath(): string {
   return app.isPackaged
     ? join(process.resourcesPath, 'nd-extensions', 'nd-phone-audio')
     : join(app.getAppPath(), 'extensions', 'nd-phone-audio')
-}
-
-function phoneInputPackagePath(): string {
-  return app.isPackaged
-    ? join(process.resourcesPath, 'nd-extensions', 'nd-phone-input')
-    : join(app.getAppPath(), 'extensions', 'nd-phone-input')
 }
 
 /**
@@ -565,7 +593,7 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
           osToolkitCatalogView(state),
           tutorCatalogView(state),
           phoneAudioCatalogView(state),
-          phoneInputCatalogView(state),
+          openspecHubCatalogView(state),
         ]),
       ]),
     }
@@ -624,28 +652,18 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
       if (!deps.window.isDestroyed()) deps.window.webContents.send(PHONE_AUDIO_IPC.signalEvent, signal)
     },
     onLog: (line) => console.warn(line),
-  })
-  if (deps.phoneAudioCaptureGate) deps.phoneAudioCaptureGate.current = phoneAudio
-  const stopPhoneAudioOnDisable = (id: string): void => {
-    if (id === PHONE_AUDIO_ID) void phoneAudio.stop('Phone Audio was deactivated or updated.').catch(() => undefined)
-  }
-
-  const phoneInput = new PhoneInputService({
     ...(deps.coreInput ? { inject: deps.coreInput } : {}),
-    onSnapshot: (snapshot) => {
+    onInputSnapshot: (snapshot) => {
       if (!deps.window.isDestroyed()) deps.window.webContents.send(PHONE_INPUT_IPC.stateEvent, snapshot)
     },
-    onLog: (line) => console.warn(line),
+    credentialsStore: createFileCredentialsStore(join(app.getPath('userData'), 'nd-phone-link', 'pairing.json')),
   })
-  const stopPhoneInputOnDisable = (id: string): void => {
-    if (id === PHONE_INPUT_ID) void phoneInput.stop('Phone Keyboard was deactivated or updated.').catch(() => undefined)
-  }
+  if (deps.phoneAudioCaptureGate) deps.phoneAudioCaptureGate.current = phoneAudio
   const stopPhoneServicesOnDisable = (id: string): void => {
-    stopPhoneAudioOnDisable(id)
-    stopPhoneInputOnDisable(id)
+    if (id === PHONE_AUDIO_ID) void phoneAudio.stop('Phone Link was deactivated or updated.').catch(() => undefined)
   }
 
-  const disposeNativeHost = registerNativeHostHandlers(deps, clipboardHistory, computerUse, mediaDownload, phoneAudio, phoneInput)
+  const disposeNativeHost = registerNativeHostHandlers(deps, clipboardHistory, computerUse, mediaDownload, phoneAudio)
 
 
   deps.broker.setOnApprovalRequested(() => { void emitState() })
@@ -945,8 +963,8 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
     phoneAudio.handleRendererReport(asPhoneAudioReport(rawReport))
   })
 
-  // --- ND Phone Keyboard bridge -----------------------------------------------
-  handle(PHONE_INPUT_IPC.state, () => phoneInput.snapshot())
+  // --- ND Phone Link keyboard bridge (same unified service) -------------------
+  handle(PHONE_INPUT_IPC.state, () => phoneAudio.inputSnapshot())
 
   // Seeding happens before the first state read; failures stay visible instead
   // of silently shipping a half-registered platform.
@@ -958,7 +976,6 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
       delete deps.phoneAudioCaptureGate.current
     }
     void phoneAudio.dispose()
-    void phoneInput.dispose()
     if (wallpaperTimer) clearInterval(wallpaperTimer)
     for (const channel of channels) ipcMain.removeHandler(channel)
     void clipboardHistory.dispose()
@@ -980,7 +997,6 @@ export function registerNativeHostHandlers(
   computerUse?: ComputerUseService | null,
   mediaDownload?: MediaDownloadService | null,
   phoneAudioService?: PhoneAudioService | null,
-  phoneInputService?: PhoneInputService | null,
 ): { dispose: () => void } {
   const { host, providers } = deps
   registerSkillComposeHost(host, deps.skills, (request) => {
@@ -2582,6 +2598,271 @@ export function registerNativeHostHandlers(
     return wizardChessStats.reset()
   })
 
+  // --- OpenSpec Hub -----------------------------------------------------------
+  //
+  // Multi-project OpenSpec 2.0 dashboard. The UI is the package's web view;
+  // this side ports the Hub's Fastify-free engine over pinned workspaces and
+  // the vendored CLI inside the installed snapshot. Reads are scoped and
+  // sanitized; writes need the openspec.write grant, the enableWrites setting,
+  // and (for repository edits) a human-approved diff. Personal-only.
+
+  const openspecHub = new OpenSpecHubService({
+    workspaces: deps.workspaces ?? { list: async () => ({ version: 1 as const, items: [] }) },
+    packages: deps.packages,
+    ...(deps.router ? { router: deps.router } : {}),
+    dataDir: join(app.getPath('userData'), 'openspec-hub'),
+  })
+  const openspecBundle = (settings: Record<string, unknown>) => openspecHub.bundleFor(settings)
+  const requireOpenSpecWrites = (writesEnabled: boolean): void => {
+    if (!writesEnabled) {
+      throw new HttpError(403, 'writes-disabled', 'writes require the enableWrites package setting and the openspec.write permission')
+    }
+  }
+  const requireAvailableSnapshot = (snapshot: { available: boolean; error?: string }): void => {
+    if (!snapshot.available) throw new HttpError(503, 'project-unavailable', snapshot.error ?? 'project is unavailable')
+  }
+  const openspecProjectId = (input: Record<string, unknown>): string => {
+    assertSafeId(input.projectId, 'project id')
+    return input.projectId as string
+  }
+
+  host.register('openspec.health', async (_input, context) => {
+    requirePersonalContext(context)
+    return { ok: true, service: 'openspec-hub' }
+  })
+
+  host.register('openspec.projects.list', async (_input, context) => {
+    requirePersonalContext(context)
+    const { cache } = await openspecBundle(context.settings)
+    return { projects: await cache.portfolio() }
+  })
+
+  host.register('openspec.roots.list', async (_input, context) => {
+    requirePersonalContext(context)
+    return { roots: openspecHub.roots.list() }
+  })
+
+  host.register('openspec.roots.add', async (input, context) => {
+    requirePersonalContext(context)
+    const root = openspecHub.roots.add(input.path, input.name)
+    return { root }
+  })
+
+  host.register('openspec.roots.remove', async (input, context) => {
+    requirePersonalContext(context)
+    openspecHub.roots.remove(input.path)
+    return { ok: true }
+  })
+
+  host.register('openspec.projects.pick', async (_input, context) => {
+    requirePersonalContext(context)
+    const picked = await dialog.showOpenDialog({
+      title: 'Choose an OpenSpec project directory',
+      properties: ['openDirectory'],
+    })
+    return { path: picked.canceled ? null : (picked.filePaths[0] ?? null) }
+  })
+
+  host.register('openspec.snapshot.get', async (input, context) => {
+    requirePersonalContext(context)
+    const projectId = openspecProjectId(input)
+    const { cache } = await openspecBundle(context.settings)
+    const snapshot = await cache.get(projectId)
+    // The webview bridge caps messages at 262,144 chars; fail closed with an
+    // actionable error instead of truncating a spec silently.
+    if (JSON.stringify(snapshot).length > 250_000) {
+      throw new HttpError(503, 'snapshot-too-large', 'This project snapshot exceeds the ND webview message cap; browse it with the standalone OpenSpec Hub server')
+    }
+    return snapshot
+  })
+
+  host.register('openspec.change.get', async (input, context) => {
+    requirePersonalContext(context)
+    const projectId = openspecProjectId(input)
+    assertSafeId(input.changeId, 'change id')
+    const { cache } = await openspecBundle(context.settings)
+    return cache.changeDetail(projectId, input.changeId as string)
+  })
+
+  host.register('openspec.spec.get', async (input, context) => {
+    requirePersonalContext(context)
+    const projectId = openspecProjectId(input)
+    assertSafeId(input.capability, 'capability id')
+    const { cache } = await openspecBundle(context.settings)
+    const snapshot = await cache.get(projectId)
+    requireAvailableSnapshot(snapshot)
+    const spec = snapshot.specs.find((s) => s.id === input.capability)
+    if (!spec) throw new HttpError(404, 'unknown-spec', 'capability not found in this project')
+    return spec
+  })
+
+  host.register('openspec.doc.get', async (input, context) => {
+    requirePersonalContext(context)
+    const projectId = openspecProjectId(input)
+    if (typeof input.docId !== 'string' || !input.docId.trim()) {
+      throw new HttpError(400, 'invalid-doc-id', 'docId must be a non-empty string')
+    }
+    const docId = input.docId
+    const { cache, config } = await openspecBundle(context.settings)
+    const project = findProject(config, projectId)
+    const snapshot = await cache.get(projectId)
+    requireAvailableSnapshot(snapshot)
+    const relPath = docRelPath(docId)
+    const meta = snapshot.docs.find((d) => d.id === docId)
+    if (!meta) throw new HttpError(404, 'unknown-doc', 'document not present in this project')
+    const markdown = readProjectFile(project.path, relPath)
+    if (meta.kind === 'checklist') {
+      const items = parseChecklist(markdown)
+      return {
+        meta,
+        markdown,
+        checklist: {
+          pending: items.filter((i) => !i.done),
+          resolved: items.filter((i) => i.done),
+        },
+      }
+    }
+    return { meta, markdown }
+  })
+
+  host.register('openspec.validation.get', async (input, context) => {
+    requirePersonalContext(context)
+    const projectId = openspecProjectId(input)
+    const { cache } = await openspecBundle(context.settings)
+    const snapshot = await cache.get(projectId)
+    requireAvailableSnapshot(snapshot)
+    return { validation: snapshot.validation, doctor: snapshot.doctor }
+  })
+
+  host.register('openspec.refresh', async (input, context) => {
+    requirePersonalContext(context)
+    const projectId = openspecProjectId(input)
+    const { cache } = await openspecBundle(context.settings)
+    const snapshot = await cache.refresh(projectId)
+    return {
+      ok: snapshot.available,
+      id: snapshot.id,
+      updatedAt: snapshot.updatedAt,
+      totals: snapshot.totals,
+      validationStatus: snapshot.validation.status,
+      ...(snapshot.error !== undefined ? { error: snapshot.error } : {}),
+    }
+  })
+
+  host.register('openspec.tickets.list', async (input, context) => {
+    requirePersonalContext(context)
+    const projectId = openspecProjectId(input)
+    const { tickets, config } = await openspecBundle(context.settings)
+    findProject(config, projectId)
+    return { tickets: tickets.list(projectId) }
+  })
+
+  host.register('openspec.tickets.save', async (input, context) => {
+    requirePersonalContext(context)
+    const projectId = openspecProjectId(input)
+    const { tickets, config, engine } = await openspecBundle(context.settings)
+    requireOpenSpecWrites(engine.writesEnabled)
+    findProject(config, projectId)
+    const { projectId: _pid, ticketId, ...body } = input
+    if (ticketId !== undefined) {
+      assertSafeId(ticketId, 'ticket id')
+      return { ticket: tickets.update(projectId, ticketId as string, body as TicketPatch) }
+    }
+    return { ticket: tickets.create(projectId, body as unknown as TicketInput) }
+  })
+
+  host.register('openspec.tickets.delete', async (input, context) => {
+    requirePersonalContext(context)
+    const projectId = openspecProjectId(input)
+    assertSafeId(input.ticketId, 'ticket id')
+    const { tickets, config, engine } = await openspecBundle(context.settings)
+    requireOpenSpecWrites(engine.writesEnabled)
+    findProject(config, projectId)
+    tickets.delete(projectId, input.ticketId as string)
+    return { ok: true }
+  })
+
+  host.register('openspec.assistant.status', async (_input, context) => {
+    requirePersonalContext(context)
+    const { engine } = await openspecBundle(context.settings)
+    return {
+      configured: engine.configured && (await openspecHub.routerConfigured()),
+      writesEnabled: engine.writesEnabled,
+    }
+  })
+
+  host.register('openspec.assistant.models', async (_input, context) => {
+    requirePersonalContext(context)
+    const { engine } = await openspecBundle(context.settings)
+    return engine.models()
+  })
+
+  host.register('openspec.assistant.ask', async (input, context) => {
+    requirePersonalContext(context)
+    const { engine } = await openspecBundle(context.settings)
+    const req: ChatRequest = { message: input.message as string }
+    if (input.projectId !== undefined) {
+      assertSafeId(input.projectId, 'project id')
+      req.projectId = input.projectId as string
+    }
+    if (input.model !== undefined) {
+      if (typeof input.model !== 'string') throw new HttpError(400, 'invalid-body', 'model must be a string')
+      req.model = input.model
+    }
+    if (input.history !== undefined) {
+      if (!Array.isArray(input.history) || input.history.length > 12) {
+        throw new HttpError(400, 'invalid-body', 'history must be an array of at most 12 messages')
+      }
+      req.history = input.history as NonNullable<ChatRequest['history']>
+    }
+    return engine.ask(req)
+  })
+
+  host.register('openspec.assistant.poll', async (input, context) => {
+    requirePersonalContext(context)
+    assertSafeId(input.jobId, 'job id')
+    const since = typeof input.since === 'number' && Number.isInteger(input.since) && input.since >= 0 ? input.since : 0
+    const { engine } = await openspecBundle(context.settings)
+    return engine.poll(input.jobId as string, since)
+  })
+
+  host.register('openspec.assistant.active.get', async (_input, context) => {
+    requirePersonalContext(context)
+    const { engine } = await openspecBundle(context.settings)
+    return { projectId: engine.getActiveProject() }
+  })
+
+  host.register('openspec.assistant.active.set', async (input, context) => {
+    requirePersonalContext(context)
+    const raw = input.projectId
+    if (raw !== null && raw !== undefined && typeof raw !== 'string') {
+      throw new HttpError(400, 'invalid-body', 'projectId must be a string or null')
+    }
+    const { engine } = await openspecBundle(context.settings)
+    return { projectId: engine.setActiveProject(raw === undefined ? null : (raw as string | null)) }
+  })
+
+  host.register('openspec.actions.list', async (_input, context) => {
+    requirePersonalContext(context)
+    const { engine } = await openspecBundle(context.settings)
+    return { actions: engine.listActions() }
+  })
+
+  host.register('openspec.actions.approve', async (input, context) => {
+    requirePersonalContext(context)
+    assertSafeId(input.actionId, 'action id')
+    const { engine } = await openspecBundle(context.settings)
+    requireOpenSpecWrites(engine.writesEnabled)
+    return { action: await engine.approve(input.actionId as string) }
+  })
+
+  host.register('openspec.actions.reject', async (input, context) => {
+    requirePersonalContext(context)
+    assertSafeId(input.actionId, 'action id')
+    const { engine } = await openspecBundle(context.settings)
+    return { action: engine.reject(input.actionId as string) }
+  })
+
   // --- Mini ND Browser ----------------------------------------------------------
   //
   // The browser chrome is the package's web view (sandboxed iframe, no
@@ -3489,37 +3770,39 @@ export function registerNativeHostHandlers(
     return phoneAudio.setOptions(parsePhoneAudioOptionsInput(input))
   })
 
-  // --- ND Phone Keyboard ------------------------------------------------------
-  const phoneInput = phoneInputService ?? new PhoneInputService({ headless: true })
-
+  // --- ND Phone Link keyboard tab (delegates to the unified service) ----------
   host.register('phoneinput.status.get', async (_input, context) => {
     requirePersonalContext(context)
-    return phoneInput.snapshot()
+    return phoneAudio.inputSnapshot()
   })
 
   host.register('phoneinput.session.start', async (input, context) => {
     requirePersonalContext(context)
-    return phoneInput.start(parsePhoneInputOptionsInput(input))
+    await phoneAudio.start(parsePhoneInputOptionsInput(input))
+    return phoneAudio.currentInputSnapshot()
   })
 
   host.register('phoneinput.session.stop', async (_input, context) => {
     requirePersonalContext(context)
-    return phoneInput.stop('Stopped by user.')
+    await phoneAudio.stop('Stopped by user.')
+    return phoneAudio.currentInputSnapshot()
   })
 
   host.register('phoneinput.client.disconnect', async (_input, context) => {
     requirePersonalContext(context)
-    return phoneInput.disconnectClient()
+    return phoneAudio.disconnectKeyboardClient()
   })
 
   host.register('phoneinput.token.rotate', async (_input, context) => {
     requirePersonalContext(context)
-    return phoneInput.rotateToken()
+    await phoneAudio.rotateToken()
+    return phoneAudio.currentInputSnapshot()
   })
 
   host.register('phoneinput.options.set', async (input, context) => {
     requirePersonalContext(context)
-    return phoneInput.setOptions(parsePhoneInputOptionsInput(input))
+    await phoneAudio.setOptions(parsePhoneInputOptionsInput(input))
+    return phoneAudio.currentInputSnapshot()
   })
 
   return {
@@ -3599,6 +3882,14 @@ async function wizardChessCatalogView(state: NdExtensionsStateView): Promise<NdA
     name: 'ND Wizard Chess 3D',
     description: 'Play 3D Gothic Cathedral Wizard Chess with sculpted stone pieces, cinematic melee captures, stone shatter physics, and single-player AI. Ships its own sandboxed UI; the package stays fully external to the app bundle.',
     permissions: ['wizardchess.read', 'wizardchess.write'],
+  })
+}
+
+async function openspecHubCatalogView(state: NdExtensionsStateView): Promise<NdAvailablePackageView> {
+  return packageCatalogView(state, OPENSPEC_HUB_ID, openspecHubPackagePath(), {
+    name: 'OpenSpec Hub',
+    description: 'Multi-project OpenSpec 2.0 dashboard across your pinned workspaces: portfolio health, changes board, specs explorer, PM docs, strict validation, tickets, and an ND Router assistant with propose-and-approve document writes. Fully external; installs on demand.',
+    permissions: ['openspec.read', 'openspec.write'],
   })
 }
 
@@ -3692,17 +3983,9 @@ async function tutorCatalogView(state: NdExtensionsStateView): Promise<NdAvailab
 
 async function phoneAudioCatalogView(state: NdExtensionsStateView): Promise<NdAvailablePackageView> {
   return packageCatalogView(state, PHONE_AUDIO_ID, phoneAudioPackagePath(), {
-    name: 'Phone Audio',
-    description: 'Stream Windows system playback audio (YouTube, games, music, browsers) to your Android or iPhone over local Wi-Fi or USB tethering via low-latency WebRTC. No APK, App Store install, or cloud server required.',
-    permissions: ['phoneaudio.read', 'phoneaudio.write', 'clipboard.write'],
-  })
-}
-
-async function phoneInputCatalogView(state: NdExtensionsStateView): Promise<NdAvailablePackageView> {
-  return packageCatalogView(state, PHONE_INPUT_ID, phoneInputPackagePath(), {
-    name: 'Phone Keyboard',
-    description: 'Use your Android phone as a wireless keyboard for this PC over local Wi-Fi, USB tethering, or LAN. Type in English or Khmer, and dictate with your phone keyboard’s own voice input (Gboard). Text is injected as real Unicode; nothing leaves your LAN.',
-    permissions: ['phoneinput.read', 'phoneinput.write', 'clipboard.write'],
+    name: 'Phone Link',
+    description: 'One QR pairs your phone as both a wireless keyboard (English / Khmer, Gboard dictation) and a low-latency speaker for Windows system audio. Wi-Fi or USB tethering; no APK, App Store install, or cloud server required.',
+    permissions: ['phoneaudio.read', 'phoneaudio.write', 'phoneinput.read', 'phoneinput.write', 'clipboard.write'],
   })
 }
 

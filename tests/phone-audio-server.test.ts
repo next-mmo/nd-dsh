@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { WebSocket } from 'ws'
 import { PhoneAudioService } from '../src/main/extensions/phone-audio-service.js'
+import { createMemoryCredentialsStore } from '../src/main/extensions/phone-link-credentials.js'
 import type { PhoneAudioCommand, PhoneAudioSignalToRenderer } from '../src/shared/phone-audio.js'
 
 const activeServices: PhoneAudioService[] = []
@@ -89,8 +90,17 @@ describe('PhoneAudioService HTTP + WebSocket signaling server', () => {
     const pairData = (await goodPair.json()) as { token: string }
     expect(pairData.token).toBeTruthy()
 
+    // The QR lands on the unified shell: one pairing, Keyboard + Audio tabs
+    const shellPage = await fetch(`${base}/?token=${encodeURIComponent(pairData.token)}`)
+    expect(shellPage.status).toBe(200)
+    const shellHtml = await shellPage.text()
+    expect(shellHtml).toContain('ND Phone Link')
+    expect(shellHtml).toContain('tab-keyboard')
+    expect(shellHtml).toContain('tab-audio')
+    expect(shellHtml).toContain('nd-phone-link.token')
+
     // Receiver HTML loads with valid token and requests zero mic/camera APIs
-    const okPage = await fetch(`${base}/?token=${encodeURIComponent(pairData.token)}`)
+    const okPage = await fetch(`${base}/audio?token=${encodeURIComponent(pairData.token)}`)
     expect(okPage.status).toBe(200)
     const html = await okPage.text()
     expect(html).toContain('Connect &amp; Play Audio')
@@ -102,10 +112,10 @@ describe('PhoneAudioService HTTP + WebSocket signaling server', () => {
     expect(html).toContain('ios-hint')
 
     // Reject unauthorized WebSocket upgrade
-    await expect(connectWs(`ws://127.0.0.1:${started.port}/ws?token=invalid`)).rejects.toThrow()
+    await expect(connectWs(`ws://127.0.0.1:${started.port}/ws?token=invalid&app=audio`)).rejects.toThrow()
 
     // Connect authorized Android WebSocket client
-    const { ws, closeCode } = await connectWs(`ws://127.0.0.1:${started.port}/ws?token=${encodeURIComponent(pairData.token)}`)
+    const { ws, closeCode } = await connectWs(`ws://127.0.0.1:${started.port}/ws?token=${encodeURIComponent(pairData.token)}&app=audio`)
     const receivedMessages: Array<Record<string, unknown>> = []
     ws.on('message', (raw) => {
       receivedMessages.push(JSON.parse(String(raw)) as Record<string, unknown>)
@@ -136,7 +146,7 @@ describe('PhoneAudioService HTTP + WebSocket signaling server', () => {
     expect(svc.currentSnapshot().client?.latencyMs).toBe(11)
 
     // Second concurrent client is rejected (single receiver policy)
-    const second = await connectWs(`ws://127.0.0.1:${started.port}/ws?token=${encodeURIComponent(pairData.token)}`)
+    const second = await connectWs(`ws://127.0.0.1:${started.port}/ws?token=${encodeURIComponent(pairData.token)}&app=audio`)
     expect(await second.closeCode).toBe(4008)
 
     // Token rotation disconnects active receiver and invalidates previous token
@@ -151,5 +161,67 @@ describe('PhoneAudioService HTTP + WebSocket signaling server', () => {
     expect(stopped.serverRunning).toBe(false)
     expect(stopped.streamState).toBe('stopped')
     expect(svc.isCaptureArmed()).toBe(false)
+  })
+
+  it('persists the pairing PIN/token across stop/start and service restarts', async () => {
+    const store = createMemoryCredentialsStore()
+    const makeService = () =>
+      new PhoneAudioService({
+        headless: true,
+        disableRefreshTimer: true,
+        credentialsStore: store,
+        discoverInterfaces: async (port, token) => [
+          {
+            id: 'wifi:127.0.0.1',
+            name: 'Wi-Fi',
+            address: '127.0.0.1',
+            netmask: '255.0.0.0',
+            cidr: '127.0.0.1/8',
+            kind: 'wifi',
+            label: 'Wi-Fi (Loopback Test)',
+            url: `http://127.0.0.1:${port}/?token=${token}`,
+            qrSvg: `<svg>${port}</svg>`,
+          },
+        ],
+      })
+
+    const first = makeService()
+    activeServices.push(first)
+    const started = await first.start()
+    expect(started.tokenExpiresAt).toBeNull()
+    const originalCode = started.pairingCode
+    expect(originalCode).toMatch(/^\d{6}$/)
+
+    const base = `http://127.0.0.1:${started.port}`
+    const pairRes = await fetch(`${base}/api/pair`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code: originalCode }),
+    })
+    const { token } = (await pairRes.json()) as { token: string }
+    expect(token).toMatch(/^[0-9a-f]{32}$/)
+
+    // Stop/start keeps the same PIN — the phone never rescans
+    await first.stop('restart')
+    const restarted = await first.start()
+    expect(restarted.pairingCode).toBe(originalCode)
+
+    // A brand-new service instance (app restart) reuses the stored credentials
+    await first.dispose()
+    activeServices.pop()
+    const second = makeService()
+    activeServices.push(second)
+    const resumed = await second.start()
+    expect(resumed.pairingCode).toBe(originalCode)
+    expect(resumed.tokenExpiresAt).toBeNull()
+
+    const page = await fetch(`http://127.0.0.1:${resumed.port}/audio?token=${token}`)
+    expect(page.status).toBe(200)
+
+    // Only "New Code" rotates the durable PIN
+    const rotated = await second.rotateToken()
+    expect(rotated.pairingCode).not.toBe(originalCode)
+    const stale = await fetch(`http://127.0.0.1:${resumed.port}/audio?token=${token}`)
+    expect(stale.status).toBe(401)
   })
 })

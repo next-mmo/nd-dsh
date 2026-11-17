@@ -97,7 +97,7 @@ import { ImageGalleryDialog, ImagePreviewDialog, MarkdownLite } from './Markdown
 import { Button } from './ui/button'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from './ui/dropdown-menu'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'
+import { EnginePicker } from './EnginePicker'
 
 interface ChatPanelProps {
   onGitEditableChange?(editable: boolean): void
@@ -3892,28 +3892,15 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
 
         <div className="flex items-center justify-between gap-2 px-3 pb-2.5 pt-1.5">
           <div className="flex shrink-0 items-center gap-1.5">
-            <Select value={activeEngineId} onValueChange={selectHeaderEngine}>
-              <SelectTrigger
-                aria-label="Coding engine"
-                className="h-6! w-[122px] gap-1 rounded-md border-border-soft bg-transparent px-2 font-mono text-[9px] text-faint shadow-none hover:bg-accent hover:text-foreground"
-                title="Coding engine — selecting another engine starts a new chat"
-              >
-                <SelectValue placeholder="Default" />
-              </SelectTrigger>
-              <SelectContent align="end">
-                <SelectItem value={ND_HARNESS_ENGINE_ID}>Default · ND Harness</SelectItem>
-                {headerEngines.map((engine) => (
-                  <SelectItem
-                    key={engine.id}
-                    value={engine.id}
-                    disabled={!engine.available}
-                    title={engine.available ? engine.description : engine.unavailableReason ?? `${engine.name} is unavailable`}
-                  >
-                    {engine.name}{engine.available ? '' : ' · Unavailable'}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <EnginePicker
+              value={activeEngineId}
+              engines={headerEngines}
+              onValueChange={selectHeaderEngine}
+              side="top"
+              align="start"
+              triggerClassName="h-6 w-[122px] px-2 text-[9px]"
+              title="Coding engine — selecting another engine starts a new chat"
+            />
             <button
               type="button"
               aria-pressed={terminalOpen}

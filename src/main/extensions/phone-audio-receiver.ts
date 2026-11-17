@@ -31,7 +31,7 @@ export function renderPhoneAudioReceiverHtml(options: ReceiverPageOptions): stri
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="color-scheme" content="light dark" />
-  <title>ND Phone Audio Receiver</title>
+  <title>ND Phone Link — Audio</title>
   <style>
     :root {
       color-scheme: dark;
@@ -231,7 +231,7 @@ export function renderPhoneAudioReceiverHtml(options: ReceiverPageOptions): stri
     <section class="card">
       <div class="top">
         <div>
-          <h1>Phone Audio</h1>
+          <h1>Audio</h1>
           <p class="sub">Local PC-to-phone WebRTC audio speaker</p>
         </div>
         <span id="status-pill" class="pill"><span class="dot"></span><span id="status-text">Ready</span></span>
@@ -330,6 +330,20 @@ export function renderPhoneAudioReceiverHtml(options: ReceiverPageOptions): stri
       if (IS_IOS) iosHint.hidden = false;
 
       let token = BOOT.initialToken || '';
+      const STORAGE_KEY = 'nd-phone-link.token';
+      function readStoredToken() {
+        try { return localStorage.getItem(STORAGE_KEY) || ''; } catch { return ''; }
+      }
+      function storeToken(value) {
+        try {
+          if (value) localStorage.setItem(STORAGE_KEY, value);
+          else localStorage.removeItem(STORAGE_KEY);
+        } catch {}
+      }
+      function notifyParent(kind, extra) {
+        if (window.parent === window) return;
+        try { window.parent.postMessage(Object.assign({ kind }, extra), location.origin); } catch {}
+      }
       let ws = null;
       let pc = null;
       let intentionalClose = false;
@@ -416,7 +430,7 @@ export function renderPhoneAudioReceiverHtml(options: ReceiverPageOptions): stri
         try {
           if (typeof MediaMetadata === 'function' && !navigator.mediaSession.metadata) {
             navigator.mediaSession.metadata = new MediaMetadata({
-              title: 'Phone Audio',
+              title: 'ND Phone Link',
               artist: 'ND-DSH · PC system audio',
               album: 'Local Wi-Fi / USB stream',
             });
@@ -535,7 +549,7 @@ export function renderPhoneAudioReceiverHtml(options: ReceiverPageOptions): stri
         setStatus('Connecting…', 'accent');
 
         const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const url = wsProto + '//' + location.host + '/ws?token=' + encodeURIComponent(token);
+        const url = wsProto + '//' + location.host + '/ws?token=' + encodeURIComponent(token) + '&app=audio';
         ws = new WebSocket(url);
 
         ws.onopen = () => {
@@ -573,6 +587,9 @@ export function renderPhoneAudioReceiverHtml(options: ReceiverPageOptions): stri
           if (msg.type === 'server-stop') {
             intentionalClose = true;
             showError(msg.reason || 'Streaming stopped by desktop.');
+            token = '';
+            storeToken('');
+            notifyParent('nd-phone-link:unpaired', { reason: msg.reason });
             cleanupPeer();
             cleanupSocket();
             clearMediaSession();
@@ -592,6 +609,7 @@ export function renderPhoneAudioReceiverHtml(options: ReceiverPageOptions): stri
           if (ev.code === 4001) {
             intentionalClose = true;
             token = '';
+            storeToken('');
             pairCard.hidden = false;
             playerCard.hidden = true;
             showError('Pairing token expired or invalid. Enter the current 6-digit code or rescan QR.');
@@ -722,6 +740,8 @@ export function renderPhoneAudioReceiverHtml(options: ReceiverPageOptions): stri
             return;
           }
           token = data.token;
+          storeToken(token);
+          notifyParent('nd-phone-link:paired', { token });
           pairCard.hidden = true;
           playerCard.hidden = false;
           setStatus('Paired — Tap Connect', 'accent');
@@ -731,8 +751,10 @@ export function renderPhoneAudioReceiverHtml(options: ReceiverPageOptions): stri
         }
       });
 
+      if (!token) token = readStoredToken();
       if (BOOT.initialError) showError(BOOT.initialError);
       if (token) {
+        storeToken(token);
         pairCard.hidden = true;
         playerCard.hidden = false;
         setStatus('Ready — Tap Connect', 'accent');

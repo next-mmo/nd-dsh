@@ -7,6 +7,7 @@ const FAST_ANNOUNCE_ATTEMPTS = 40
 export function createBridge(options = {}) {
   const onTheme = options.onTheme ?? (() => undefined)
   const onPhoneAudioState = options.onPhoneAudioState ?? (() => undefined)
+  const onPhoneInputState = options.onPhoneInputState ?? (() => undefined)
 
   let hello = null
   let hostOrigin = null
@@ -40,6 +41,12 @@ export function createBridge(options = {}) {
     if (data.kind === 'nd-webview:phone-audio-state') {
       if (data.state && typeof data.state === 'object') {
         onPhoneAudioState(data.state)
+      }
+      return
+    }
+    if (data.kind === 'nd-webview:phone-input-state') {
+      if (data.state && typeof data.state === 'object') {
+        onPhoneInputState(data.state)
       }
       return
     }

@@ -348,7 +348,7 @@ export function ExtensionWebView({ data, theme, docked = true, retained = false,
     }
   }, [webView?.url, webView?.token, data.extensionId, data.viewId, data.context, viewKey])
 
-  // ── Phone Audio live state push (nd.phone-audio only) ──
+  // ── Phone Link audio live state push (nd.phone-audio only) ──
   useEffect(() => {
     if (data.extensionId !== 'nd.phone-audio') return
     const frame = frameRef.current
@@ -365,9 +365,9 @@ export function ExtensionWebView({ data, theme, docked = true, retained = false,
     return () => unsubscribe()
   }, [data.extensionId, webView?.url, ready])
 
-  // ── Phone Keyboard live state push (nd.phone-input only) ──
+  // ── Phone Link keyboard live state push (same nd.phone-audio package) ──
   useEffect(() => {
-    if (data.extensionId !== 'nd.phone-input') return
+    if (data.extensionId !== 'nd.phone-audio') return
     const frame = frameRef.current
     const api = window.ndDsh?.phoneInput
     if (!frame || !webView?.url || !api) return

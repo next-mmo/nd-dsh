@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="light dark" />
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'none'; script-src nd-extension-ui:; style-src nd-extension-ui: 'unsafe-inline'; img-src nd-extension-ui: data: blob:; font-src nd-extension-ui:; connect-src 'none'; base-uri 'none'; form-action 'none'" />
-  <title>Phone Audio</title>
+  <title>Phone Link</title>
   <style>
     :root {
       color-scheme: dark;
@@ -121,6 +121,22 @@
     button.danger {
       color: var(--bad);
       border-color: color-mix(in srgb, var(--bad) 35%, transparent);
+    }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+    }
+    .tabs button {
+      flex: 1;
+      padding: 9px 12px;
+      font-weight: 600;
+      border-radius: 9px;
+    }
+    .tabs button.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
     }
 
     .grid {
@@ -297,144 +313,193 @@
 <body>
   <header class="header">
     <div class="title-group">
-      <h1>Phone Audio</h1>
-      <p>Use your phone (Android or iPhone) as a low-latency local speaker over Wi-Fi or USB tethering.</p>
+      <h1>Phone Link</h1>
+      <p>One QR code turns your phone (Android or iPhone) into a wireless keyboard and a low-latency speaker over Wi-Fi or USB tethering.</p>
     </div>
     <div class="controls-top">
       <span id="state-pill" class="pill"><span class="dot"></span><span id="state-label">Stopped</span></span>
-      <button id="toggle-btn" class="primary" type="button">Start Streaming</button>
+      <button id="toggle-btn" class="primary" type="button">Start Phone Link</button>
     </div>
   </header>
 
   <div id="error-banner" class="banner bad" hidden></div>
   <div id="warning-banner" class="banner warn" hidden></div>
 
-  <div class="grid">
-    <section class="card" id="quick-start">
-      <h2 class="card-title">How to use — 3 steps</h2>
-      <ol class="steps">
-        <li><strong>On this PC:</strong> press <em>Start Streaming</em>. ND captures whatever Windows is playing — YouTube, games, music, calls.</li>
-        <li><strong>On your phone:</strong> scan the QR code below (iPhone: Camera app; Android: any QR scanner), or type the URL into the phone browser. Use the same Wi-Fi as the PC, or plug in a USB cable — see the note under the interface selector.</li>
-        <li><strong>On the phone page:</strong> tap <em>Connect &amp; Play Audio</em> once. Sound now plays through the phone speaker, wired headset, or Bluetooth earphones.</li>
-      </ol>
-      <div class="note">
-        iPhone / iPad: open in Safari and tap once; audio pauses while the screen is locked and resumes when you return. Android: Chrome works best. No app install and no microphone permission are needed.
+  <section class="card">
+    <h2 class="card-title">Phone Pairing — one QR for Keyboard + Audio</h2>
+    <div class="row">
+      <label class="note" for="iface-select">Network interface:</label>
+      <select id="iface-select" style="flex:1;min-width:180px;"></select>
+    </div>
+    <div id="usb-hint" class="note"></div>
+    <div class="note">Scan once: the phone page opens with Keyboard and Audio tabs. The 6-digit code pairs both and stays valid until you press <strong>New Code</strong> — no rescanning after a restart.</div>
+    <div class="qr-wrap">
+      <div class="qr-box">
+        <img id="qr-img" alt="QR code to open Phone Link on your phone" hidden />
+        <div id="qr-placeholder" class="qr-placeholder">Start Phone Link to generate QR code</div>
       </div>
-    </section>
-
-    <section class="card">
-      <h2 class="card-title">Phone Pairing (Wi-Fi / USB)</h2>
-      <div class="row">
-        <label class="note" for="iface-select">Network interface:</label>
-        <select id="iface-select" style="flex:1;min-width:180px;"></select>
-      </div>
-      <div id="usb-hint" class="note"></div>
-      <div class="note">Scan the QR with your phone, or open the URL in its browser. The 6-digit pairing code is only needed if the phone page asks for it.</div>
-      <div class="qr-wrap">
-        <div class="qr-box">
-          <img id="qr-img" alt="QR code to open the Phone Audio receiver on your phone" hidden />
-          <div id="qr-placeholder" class="qr-placeholder">Start streaming to generate QR code</div>
-        </div>
-        <div style="flex:1;min-width:170px;display:flex;flex-direction:column;gap:8px;">
-          <div class="kv-list">
-            <span class="kv-k">Local IP &amp; Port</span>
-            <span id="ip-port" class="kv-v">—</span>
-            <span class="kv-k">Pairing Code</span>
-            <span class="kv-v"><span id="pairing-code" class="pin-badge">------</span></span>
-          </div>
-          <div id="conn-url" class="url-box">Start streaming to reveal local URL</div>
-          <div class="row">
-            <button id="copy-url-btn" type="button" disabled>Copy URL</button>
-            <button id="rotate-btn" type="button" disabled>New Code</button>
-          </div>
-        </div>
-      </div>
-      <div id="firewall-note" class="note"></div>
-    </section>
-
-    <section class="card">
-      <h2 class="card-title">Connected Phone</h2>
-      <div id="client-empty" class="note">
-        No phone receiver connected yet. Open the URL or scan the QR code in your phone browser (Android Chrome or iOS Safari) and tap <strong>Connect &amp; Play Audio</strong>.
-      </div>
-      <div id="client-details" hidden style="display:flex;flex-direction:column;gap:10px;">
+      <div style="flex:1;min-width:170px;display:flex;flex-direction:column;gap:8px;">
         <div class="kv-list">
-          <span class="kv-k">Device</span>
-          <span id="client-ua" class="kv-v">—</span>
-          <span class="kv-k">Transport</span>
-          <span id="client-transport" class="kv-v">—</span>
-          <span class="kv-k">Address</span>
-          <span id="client-ip" class="kv-v">—</span>
-          <span class="kv-k">Playback</span>
-          <span id="client-playback" class="kv-v">—</span>
-          <span class="kv-k">Measured Latency</span>
-          <span id="client-latency" class="kv-v">—</span>
-          <span class="kv-k">Codec &amp; Rate</span>
-          <span id="client-codec" class="kv-v">—</span>
+          <span class="kv-k">Local IP &amp; Port</span>
+          <span id="ip-port" class="kv-v">—</span>
+          <span class="kv-k">Pairing Code</span>
+          <span class="kv-v"><span id="pairing-code" class="pin-badge">------</span></span>
         </div>
+        <div id="conn-url" class="url-box">Start Phone Link to reveal local URL</div>
         <div class="row">
-          <button id="disconnect-btn" class="danger" type="button">Disconnect Receiver</button>
+          <button id="copy-url-btn" type="button" disabled>Copy URL</button>
+          <button id="rotate-btn" type="button" disabled>New Code</button>
         </div>
       </div>
-    </section>
+    </div>
+    <div id="firewall-note" class="note"></div>
+  </section>
 
-    <section class="card">
-      <h2 class="card-title">System Audio Capture &amp; Activity</h2>
-      <div style="display:flex;flex-direction:column;gap:6px;">
-        <div class="row" style="justify-content:space-between;">
-          <span class="note">Live PC Audio Meter</span>
-          <span id="meter-text" class="note">0%</span>
-        </div>
-        <div class="meter-track"><div id="meter-fill" class="meter-fill"></div></div>
-      </div>
-      <div class="kv-list">
-        <span class="kv-k">Capture Status</span>
-        <span id="capture-status" class="kv-v">Inactive</span>
-        <span class="kv-k">Stream Format</span>
-        <span id="capture-format" class="kv-v">—</span>
-      </div>
-      <div class="row">
-        <label class="note" for="capture-mode-select">Capture Source:</label>
-        <select id="capture-mode-select" style="flex:1;">
-          <option value="loopback">Windows System Audio Loopback (Recommended)</option>
-          <option value="device">Virtual Audio Device Fallback (e.g. VB-CABLE)</option>
-        </select>
-      </div>
-      <div id="fallback-device-row" class="row" hidden>
-        <label class="note" for="input-device-select">Virtual Input:</label>
-        <select id="input-device-select" style="flex:1;"></select>
-      </div>
-      <label class="check">
-        <input id="mute-pc-checkbox" type="checkbox" />
-        <span>Mute PC speakers while streaming (loopbackWithMute — prevents room echo)</span>
-      </label>
-    </section>
-
-    <section class="card">
-      <h2 class="card-title">Windows Output Devices</h2>
-      <div class="kv-list">
-        <span class="kv-k">Master Output Volume</span>
-        <span id="sys-volume" class="kv-v">Checking…</span>
-      </div>
-      <ul id="output-device-list" class="device-list"></ul>
-      <div class="row">
-        <button id="refresh-btn" type="button">Refresh Devices &amp; Network</button>
-      </div>
-    </section>
+  <div class="tabs">
+    <button id="tab-audio" class="active" type="button">Audio</button>
+    <button id="tab-keyboard" type="button">Keyboard</button>
   </div>
 
-  <details class="card">
-    <summary>Help &amp; Troubleshooting (Wi-Fi, USB, iPhone, Firewall, Audio Devices)</summary>
-    <ul>
-      <li><strong>New here?</strong> Follow the three steps at the top; the phone page explains itself too. Pairing codes and QR links stay valid for 2 hours — press <em>New Code</em> or start streaming again if one expires.</li>
-      <li><strong>Wi-Fi Mode:</strong> Ensure your Windows PC and phone are on the same local Wi-Fi/LAN subnet, then scan the QR code and tap <em>Connect &amp; Play Audio</em> in the phone browser (Android Chrome or iOS Safari).</li>
-      <li><strong>iPhone / iPad:</strong> Open the URL in Safari (the Camera app opens it there), tap <em>Connect &amp; Play Audio</em> once, and optionally use Share → <em>Add to Home Screen</em>. iOS pauses web audio while the screen is locked or Safari is backgrounded; the receiver reconnects and resumes when you return, and lock-screen play/pause controls are provided.</li>
-      <li><strong>USB Tethering Mode (No Wi-Fi needed):</strong> Connect Android via a USB data cable, turn on <em>USB tethering</em> in Android Network settings, wait a moment or click <em>Refresh Devices &amp; Network</em>, and select the <code>USB Tethering</code> interface. iPhone USB tethering (Personal Hotspot over USB) works the same way once the hotspot interface appears.</li>
-      <li><strong>Windows Firewall:</strong> If the phone hangs while loading the URL over Wi-Fi, allow <code>ND-DSH</code> (or Electron) on <strong>Private</strong> networks in Windows Defender Firewall, or use USB tethering.</li>
-      <li><strong>Silent audio or missing playback device:</strong> Verify an active Windows output (such as <code>Speakers (Realtek(R) Audio)</code> or <code>U27N3R (Intel(R) Display Audio)</code>) is enabled and playing audio. On drivers that silence WASAPI loopback when hardware-muted, unmute Windows and use the <em>Mute PC speakers while streaming</em> option instead.</li>
-      <li><strong>VB-CABLE Optional Fallback:</strong> If a specific audio driver blocks Windows loopback, install VB-Audio Virtual Cable, set Windows output to <em>CABLE Input</em>, and choose <em>Virtual Audio Device Fallback</em> → <em>CABLE Output</em>.</li>
-    </ul>
-  </details>
+  <div id="panel-audio">
+    <div class="grid">
+      <section class="card" id="quick-start">
+        <h2 class="card-title">How to use — 3 steps</h2>
+        <ol class="steps">
+          <li><strong>On this PC:</strong> press <em>Start Phone Link</em>. ND captures whatever Windows is playing — YouTube, games, music, calls.</li>
+          <li><strong>On your phone:</strong> scan the QR code above (iPhone: Camera app; Android: any QR scanner), or type the URL into the phone browser. Use the same Wi-Fi as the PC, or plug in a USB cable — see the note under the interface selector.</li>
+          <li><strong>On the phone page:</strong> open the <em>Audio</em> tab and tap <em>Connect &amp; Play Audio</em> once. Sound now plays through the phone speaker, wired headset, or Bluetooth earphones — even while you use the Keyboard tab.</li>
+        </ol>
+        <div class="note">
+          iPhone / iPad: open in Safari and tap once; audio pauses while the screen is locked and resumes when you return. Android: Chrome works best. No app install and no microphone permission are needed.
+        </div>
+      </section>
+
+      <section class="card">
+        <h2 class="card-title">Connected Phone (Audio)</h2>
+        <div id="client-empty" class="note">
+          No phone receiver connected yet. Open the Phone Link page on your phone, switch to the <strong>Audio</strong> tab, and tap <strong>Connect &amp; Play Audio</strong>.
+        </div>
+        <div id="client-details" hidden style="display:flex;flex-direction:column;gap:10px;">
+          <div class="kv-list">
+            <span class="kv-k">Device</span>
+            <span id="client-ua" class="kv-v">—</span>
+            <span class="kv-k">Transport</span>
+            <span id="client-transport" class="kv-v">—</span>
+            <span class="kv-k">Address</span>
+            <span id="client-ip" class="kv-v">—</span>
+            <span class="kv-k">Playback</span>
+            <span id="client-playback" class="kv-v">—</span>
+            <span class="kv-k">Measured Latency</span>
+            <span id="client-latency" class="kv-v">—</span>
+            <span class="kv-k">Codec &amp; Rate</span>
+            <span id="client-codec" class="kv-v">—</span>
+          </div>
+          <div class="row">
+            <button id="disconnect-btn" class="danger" type="button">Disconnect Receiver</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2 class="card-title">System Audio Capture &amp; Activity</h2>
+        <div style="display:flex;flex-direction:column;gap:6px;">
+          <div class="row" style="justify-content:space-between;">
+            <span class="note">Live PC Audio Meter</span>
+            <span id="meter-text" class="note">0%</span>
+          </div>
+          <div class="meter-track"><div id="meter-fill" class="meter-fill"></div></div>
+        </div>
+        <div class="kv-list">
+          <span class="kv-k">Capture Status</span>
+          <span id="capture-status" class="kv-v">Inactive</span>
+          <span class="kv-k">Stream Format</span>
+          <span id="capture-format" class="kv-v">—</span>
+        </div>
+        <div class="row">
+          <label class="note" for="capture-mode-select">Capture Source:</label>
+          <select id="capture-mode-select" style="flex:1;">
+            <option value="loopback">Windows System Audio Loopback (Recommended)</option>
+            <option value="device">Virtual Audio Device Fallback (e.g. VB-CABLE)</option>
+          </select>
+        </div>
+        <div id="fallback-device-row" class="row" hidden>
+          <label class="note" for="input-device-select">Virtual Input:</label>
+          <select id="input-device-select" style="flex:1;"></select>
+        </div>
+        <label class="check">
+          <input id="mute-pc-checkbox" type="checkbox" />
+          <span>Mute PC speakers while streaming (loopbackWithMute — prevents room echo)</span>
+        </label>
+      </section>
+
+      <section class="card">
+        <h2 class="card-title">Windows Output Devices</h2>
+        <div class="kv-list">
+          <span class="kv-k">Master Output Volume</span>
+          <span id="sys-volume" class="kv-v">Checking…</span>
+        </div>
+        <ul id="output-device-list" class="device-list"></ul>
+        <div class="row">
+          <button id="refresh-btn" type="button">Refresh Devices &amp; Network</button>
+        </div>
+      </section>
+    </div>
+
+    <details class="card" style="margin-top:12px;">
+      <summary>Help &amp; Troubleshooting (Wi-Fi, USB, iPhone, Firewall, Audio Devices)</summary>
+      <ul>
+        <li><strong>New here?</strong> Follow the three steps at the top; the phone page explains itself too. The pairing code and QR link stay valid until you press <em>New Code</em> — the same code works again after stopping or restarting ND.</li>
+        <li><strong>Wi-Fi Mode:</strong> Ensure your Windows PC and phone are on the same local Wi-Fi/LAN subnet, then scan the QR code and tap <em>Connect &amp; Play Audio</em> in the phone browser (Android Chrome or iOS Safari).</li>
+        <li><strong>iPhone / iPad:</strong> Open the URL in Safari (the Camera app opens it there), tap <em>Connect &amp; Play Audio</em> once, and optionally use Share → <em>Add to Home Screen</em>. iOS pauses web audio while the screen is locked or Safari is backgrounded; the receiver reconnects and resumes when you return, and lock-screen play/pause controls are provided.</li>
+        <li><strong>USB Tethering Mode (No Wi-Fi needed):</strong> Connect Android via a USB data cable, turn on <em>USB tethering</em> in Android Network settings, wait a moment or click <em>Refresh Devices &amp; Network</em>, and select the <code>USB Tethering</code> interface. iPhone USB tethering (Personal Hotspot over USB) works the same way once the hotspot interface appears.</li>
+        <li><strong>Windows Firewall:</strong> If the phone hangs while loading the URL over Wi-Fi, allow <code>ND-DSH</code> (or Electron) on <strong>Private</strong> networks in Windows Defender Firewall, or use USB tethering.</li>
+        <li><strong>Silent audio or missing playback device:</strong> Verify an active Windows output (such as <code>Speakers (Realtek(R) Audio)</code> or <code>U27N3R (Intel(R) Display Audio)</code>) is enabled and playing audio. On drivers that silence WASAPI loopback when hardware-muted, unmute Windows and use the <em>Mute PC speakers while streaming</em> option instead.</li>
+        <li><strong>VB-CABLE Optional Fallback:</strong> If a specific audio driver blocks Windows loopback, install VB-Audio Virtual Cable, set Windows output to <em>CABLE Input</em>, and choose <em>Virtual Audio Device Fallback</em> → <em>CABLE Output</em>.</li>
+      </ul>
+    </details>
+  </div>
+
+  <div id="panel-keyboard" hidden>
+    <div class="grid">
+      <section class="card">
+        <h2 class="card-title">Connected Keyboard</h2>
+        <div class="row" style="justify-content:space-between;">
+          <span class="note">Keyboard link</span>
+          <span id="kb-state-pill" class="pill"><span class="dot"></span><span id="kb-state-label">Stopped</span></span>
+        </div>
+        <div id="kb-client-empty" class="note">
+          No phone keyboard connected yet. Open the Phone Link page on your phone (scan the QR above) and stay on the <strong>Keyboard</strong> tab. If Phone Link is stopped, press <strong>Start Phone Link</strong> at the top first.
+        </div>
+        <div id="kb-client-details" hidden style="display:flex;flex-direction:column;gap:10px;">
+          <div class="kv-list">
+            <span class="kv-k">Device</span>
+            <span id="kb-client-ua" class="kv-v">—</span>
+            <span class="kv-k">Link</span>
+            <span id="kb-client-transport" class="kv-v">—</span>
+            <span class="kv-k">IP</span>
+            <span id="kb-client-ip" class="kv-v">—</span>
+            <span class="kv-k">Latency</span>
+            <span id="kb-client-latency" class="kv-v">—</span>
+            <span class="kv-k">Injected</span>
+            <span id="kb-client-injection" class="kv-v">—</span>
+          </div>
+          <div class="row">
+            <button id="kb-disconnect-btn" class="danger" type="button">Disconnect Keyboard</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2 class="card-title">How to type</h2>
+        <ol class="steps">
+          <li>Press <em>Start Phone Link</em> and scan the QR once — the phone page opens with <em>Keyboard</em> and <em>Audio</em> tabs.</li>
+          <li>On the phone's <em>Keyboard</em> tab, tap the text box and type — or tap your keyboard's mic (Gboard) to dictate in English or Khmer.</li>
+          <li>Press <em>Send to PC</em> to type the text into whatever Windows app is focused. Direct keys (Enter, Backspace, arrows) apply immediately.</li>
+        </ol>
+        <div class="note">Wi-Fi, USB tethering, and wired LAN all work. The pairing code is shared with Audio and stays valid until you press New Code. Nothing leaves your LAN.</div>
+      </section>
+    </div>
+  </div>
 
   <script type="module" src="./app.js"></script>
 </body>

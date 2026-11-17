@@ -15,6 +15,7 @@ import {
 } from '../src/shared/extension-package.js'
 import { personalContext } from '../src/shared/nd-context.js'
 import { PHONE_AUDIO_EXTENSION_ID, preferLowLatencyOpusSdp } from '../src/shared/phone-audio.js'
+import { isPhoneInputKey } from '../src/shared/phone-input.js'
 import {
   describeStreamState,
   detectOutputDiagnostics,
@@ -22,6 +23,10 @@ import {
   formatTransportKind,
   summarizeUserAgent,
 } from '../extensions/nd-phone-audio/ui/phone-audio-core.js'
+import {
+  describeSessionState,
+  formatInjectionSummary,
+} from '../extensions/nd-phone-audio/ui/phone-input-core.js'
 
 const packagePath = fileURLToPath(new URL('../extensions/nd-phone-audio/', import.meta.url))
 const manifestPath = new URL('../extensions/nd-phone-audio/nd-extension.json', import.meta.url)
@@ -41,13 +46,19 @@ async function loadManifest(): Promise<NdExtensionManifest> {
   return result.manifest
 }
 
-describe('ND Phone Audio extension package', () => {
+describe('ND Phone Link extension package', () => {
   it('validates manifest, permissions, and explicit Personal context scoping', async () => {
     const manifest = await loadManifest()
     expect(manifest.id).toBe(PHONE_AUDIO_EXTENSION_ID)
-    expect(manifest.name).toBe('Phone Audio')
+    expect(manifest.name).toBe('Phone Link')
     expect(manifest.contexts).toEqual(['personal'])
-    expect(manifest.permissions).toEqual(['phoneaudio.read', 'phoneaudio.write', 'clipboard.write'])
+    expect(manifest.permissions).toEqual([
+      'phoneaudio.read',
+      'phoneaudio.write',
+      'phoneinput.read',
+      'phoneinput.write',
+      'clipboard.write',
+    ])
     expect(manifestPermissionIssues(manifest)).toEqual([])
 
     const [view] = manifest.contributions.views
@@ -61,6 +72,8 @@ describe('ND Phone Audio extension package', () => {
       ['rotate-token', 'phoneaudio.token.rotate'],
       ['set-options', 'phoneaudio.options.set'],
       ['copy-url', 'clipboard.write'],
+      ['kb-status', 'phoneinput.status.get'],
+      ['kb-disconnect', 'phoneinput.client.disconnect'],
     ])
 
     for (const c of [...manifest.contributions.commands, ...manifest.contributions.views]) {
@@ -68,6 +81,8 @@ describe('ND Phone Audio extension package', () => {
     }
     expect(ndHostMethod('phoneaudio.session.start')?.sensitive).toBe(true)
     expect(ndHostMethod('phoneaudio.status.get')?.sensitive).toBe(false)
+    expect(ndHostMethod('phoneinput.session.start')?.sensitive).toBe(true)
+    expect(ndHostMethod('phoneinput.status.get')?.sensitive).toBe(false)
   })
 
   it('installs, activates, enforces broker permissions/approvals, and uninstalls cleanly', async () => {
@@ -75,7 +90,7 @@ describe('ND Phone Audio extension package', () => {
     try {
       const packages = new ExtensionPackageStore(root)
       const installed = await packages.installFromDirectory(packagePath, { expectId: PHONE_AUDIO_EXTENSION_ID })
-      for (const asset of ['ui/index.html', 'ui/bridge.js', 'ui/phone-audio-core.js', 'ui/app.js']) {
+      for (const asset of ['ui/index.html', 'ui/bridge.js', 'ui/phone-audio-core.js', 'ui/phone-input-core.js', 'ui/app.js']) {
         expect(await packages.snapshotFileFor(PHONE_AUDIO_EXTENSION_ID, installed.version, asset)).not.toBeNull()
       }
 
@@ -91,6 +106,7 @@ describe('ND Phone Audio extension package', () => {
         running = false
         return { streamState: 'stopped' }
       })
+      host.register('phoneinput.status.get', async () => ({ sessionState: running ? 'waiting' : 'stopped' }))
 
       const broker = new InvocationBroker({ packages, state, host, organization })
       await state.setActivation(PHONE_AUDIO_EXTENSION_ID, personalContext(), true)
@@ -109,6 +125,17 @@ describe('ND Phone Audio extension package', () => {
       })
       expect(userStart.ok).toBe(true)
       expect(running).toBe(true)
+
+      const kbStatus = await broker.invoke({
+        extensionId: PHONE_AUDIO_EXTENSION_ID,
+        contributionId: 'main',
+        contributionKind: 'view',
+        context: personalContext(),
+        caller: 'user',
+        input: { action: 'kb-status' },
+      })
+      expect(kbStatus.ok).toBe(true)
+      expect((kbStatus.value as { sessionState: string }).sessionState).toBe('waiting')
 
       const wrongContext = await broker.invoke({
         extensionId: PHONE_AUDIO_EXTENSION_ID,
@@ -180,5 +207,18 @@ describe('ND Phone Audio extension package', () => {
     const tunedChrome = preferLowLatencyOpusSdp(chromeSdp)
     expect(tunedChrome.endsWith('\r\n')).toBe(true)
     expect(tunedChrome).toContain('a=ssrc:1794043603 msid:stream-id track-id\r\n')
+  })
+
+  it('formats keyboard UI helpers and validates the key allowlist', () => {
+    expect(describeSessionState('waiting')).toEqual({ label: 'Waiting for phone', tone: 'accent' })
+    expect(describeSessionState('connected')).toEqual({ label: 'Connected', tone: 'ok' })
+    expect(describeSessionState('nonsense')).toEqual({ label: 'Stopped', tone: 'idle' })
+    expect(formatInjectionSummary({ injectedChars: 12, injectedKeys: 3 })).toBe('12 chars · 3 keys sent')
+
+    expect(isPhoneInputKey('enter')).toBe(true)
+    expect(isPhoneInputKey('backspace')).toBe(true)
+    expect(isPhoneInputKey('ctrl+c')).toBe(false)
+    expect(isPhoneInputKey('')).toBe(false)
+    expect(isPhoneInputKey(42)).toBe(false)
   })
 })

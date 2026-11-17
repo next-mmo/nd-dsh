@@ -1,7 +1,8 @@
 /**
- * Shared contracts for ND Phone Keyboard (`nd.phone-input`): a paired Android
- * phone types (English / Khmer) and dictates through its own keyboard's voice
- * input into the focused Windows app, over local Wi-Fi, USB tethering, or LAN.
+ * Shared contracts for the Phone Link keyboard tab: a paired phone types
+ * (English / Khmer) and dictates through its own keyboard's voice input into
+ * the focused Windows app, over the same local server and pairing token as
+ * the audio receiver.
  *
  * Transport descriptors reuse the Phone Audio network shapes — the interface
  * discovery, QR pairing, and LAN allowlist are the same proven code path.
@@ -10,10 +11,6 @@
 import type { PhoneAudioInterfaceInfo, PhoneAudioTransportKind } from './phone-audio.js'
 
 export const PHONE_INPUT_EXTENSION_ID = 'nd.phone-input'
-
-// A paired keyboard stays usable for a whole typing session; the token is
-// LAN-scoped and PIN-gated, matching Phone Audio's trade.
-export const PHONE_INPUT_TOKEN_TTL_MS = 2 * 60 * 60 * 1000
 
 /** One WS text message bound; the sidecar accepts a little more headroom. */
 export const PHONE_INPUT_MAX_TEXT_CHARS = 2_000

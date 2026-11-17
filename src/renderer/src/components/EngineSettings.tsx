@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { CodingEngineDescriptor } from '../../../shared/contracts'
 import { ND_HARNESS_ENGINE_ID } from '../../../shared/coding-engines'
 import { EngineInstallHelp } from './engine-install-help'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'
+import { EnginePicker } from './EnginePicker'
 import type { CapabilityDescriptor, CapabilityProviderStatus } from '../../../shared/capabilities'
 import {
   SettingsButton,
@@ -178,23 +178,15 @@ export function EngineSettings({ onError, subTab: propSubTab, onSelectSubTab }: 
               <span className={rowDesc}>Engine used when starting a new chat in the workbench. Synchronized with the chat header engine selector.</span>
             </div>
             <div className="flex shrink-0 items-center">
-              <Select value={preferredEngine} onValueChange={updatePreferredEngine}>
-                <SelectTrigger className="h-7 w-[180px] font-mono text-[11px]">
-                  <SelectValue placeholder="Default · ND Harness" />
-                </SelectTrigger>
-                <SelectContent align="end">
-                  <SelectItem value={ND_HARNESS_ENGINE_ID}>Default · ND Harness</SelectItem>
-                  {engines.filter((engine) => engine.id !== ND_HARNESS_ENGINE_ID).map((engine) => (
-                    <SelectItem
-                      key={engine.id}
-                      value={engine.id}
-                      disabled={!engine.available}
-                    >
-                      {engine.name}{engine.available ? '' : ' · Unavailable'}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <EnginePicker
+                value={preferredEngine}
+                engines={engines}
+                onValueChange={updatePreferredEngine}
+                side="bottom"
+                align="end"
+                triggerClassName="h-7 w-[180px] px-2.5 text-[11px]"
+                title="Engine used when starting a new chat"
+              />
             </div>
           </SettingsRow>
           {loading ? (
