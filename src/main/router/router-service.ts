@@ -91,9 +91,8 @@ export class RouterService {
     }
   }
 
-  async initialize(webLaneBridge?: WebLaneBridgeDescriptor): Promise<void> {
-    if (webLaneBridge) this.lastWebBridgeDescriptor = webLaneBridge
-    this.webLaneBridge = undefined
+  async initialize(webLaneBridge?: WebLaneBridgeDescriptor | null): Promise<void> {
+    const effectiveBridge = webLaneBridge === null ? undefined : (webLaneBridge ?? this.lastWebBridgeDescriptor)
     const external = this.externalKeys.loadOrCreate()
     try {
       const result = await this.core.request<InitializeResult>('router.initialize', {
@@ -101,8 +100,10 @@ export class RouterService {
         externalKey: external.key,
         safeMode: this.safeMode.enabled(),
         preferredPort: preferredPort(),
-        ...(this.lastWebBridgeDescriptor ? { webBridge: this.lastWebBridgeDescriptor } : {}),
+        ...(effectiveBridge ? { webBridge: effectiveBridge } : {}),
       }, 30_000)
+      if (webLaneBridge === null) this.lastWebBridgeDescriptor = undefined
+      else if (webLaneBridge) this.lastWebBridgeDescriptor = webLaneBridge
       this.endpoint = result.endpoint
       this.key = result.key
       this.persistServerInfo(result.port)

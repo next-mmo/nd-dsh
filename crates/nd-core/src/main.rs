@@ -815,26 +815,36 @@ fn dispatch(
         "router.testCandidate" => {
             let input = from_params::<SaveProviderInput>(params)?;
             let state_ref = router_state(&state)?;
-            let guard = state
-                .router
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            let server = guard
-                .as_ref()
-                .ok_or_else(|| errors::coded(CODE_METHOD_FAILED, "ND Router is not initialized"))?;
-            Ok(server.block_on(state_ref.test_candidate(input))?)
+            let handle = {
+                let guard = state
+                    .router
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                guard
+                    .as_ref()
+                    .ok_or_else(|| {
+                        errors::coded(CODE_METHOD_FAILED, "ND Router is not initialized")
+                    })?
+                    .handle()
+            };
+            Ok(handle.block_on(state_ref.test_candidate(input))?)
         }
         "router.testProvider" => {
             let input = from_params::<ProviderIdInput>(params)?;
             let state_ref = router_state(&state)?;
-            let guard = state
-                .router
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            let server = guard
-                .as_ref()
-                .ok_or_else(|| errors::coded(CODE_METHOD_FAILED, "ND Router is not initialized"))?;
-            Ok(server.block_on(state_ref.test_provider(&input.provider_id))?)
+            let handle = {
+                let guard = state
+                    .router
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                guard
+                    .as_ref()
+                    .ok_or_else(|| {
+                        errors::coded(CODE_METHOD_FAILED, "ND Router is not initialized")
+                    })?
+                    .handle()
+            };
+            Ok(handle.block_on(state_ref.test_provider(&input.provider_id))?)
         }
         "router.usage" => Ok(router_state(&state)?.usage_summary()),
         "router.resetUsage" => Ok(router_state(&state)?.reset_usage()?),

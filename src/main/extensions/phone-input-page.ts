@@ -85,11 +85,13 @@ export function renderPhoneInputPageHtml(options: PhoneInputPageOptions): string
       width: 100%; min-height: 96px; padding: 12px; resize: vertical;
       font-size: 17px; line-height: 1.5;
     }
-    button { padding: 12px 14px; cursor: pointer; font-weight: 600; }
-    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-    button:disabled { opacity: 0.5; cursor: default; }
+    button { padding: 12px 14px; cursor: pointer; font-weight: 600; transition: transform 100ms ease, background-color 140ms ease; }
+    button:active { transform: scale(0.975); }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; box-shadow: 0 2px 8px rgba(10, 132, 255, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.22); }
+    button:disabled { opacity: 0.5; cursor: default; transform: none; }
     .keys { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
-    .keys button { padding: 14px 6px; font-size: 14px; font-weight: 600; }
+    .keys button { padding: 14px 6px; font-size: 14px; font-weight: 600; border-radius: 10px; box-shadow: 0 1px 0 rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.06); }
+    #board { display: flex; flex-direction: column; gap: 12px; flex: 1; }
     .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted);
       background: var(--card-2); border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px; }
     .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
@@ -114,7 +116,7 @@ export function renderPhoneInputPageHtml(options: PhoneInputPageOptions): string
     <div id="pairErr" class="err"></div>
   </section>
 
-  <section id="board" class="hidden" style="display:flex;flex-direction:column;gap:12px;flex:1">
+  <section id="board" class="hidden">
     <div class="row">
       <h1 class="grow" style="margin:0">Keyboard</h1>
       <span class="pill"><span id="dot" class="dot"></span><span id="status">Connecting…</span></span>
@@ -159,7 +161,7 @@ export function renderPhoneInputPageHtml(options: PhoneInputPageOptions): string
     const sentEl = $('sent'), boardErr = $('boardErr'), pairErr = $('pairErr');
     const STORAGE_KEY = 'nd-phone-link.token';
     let token = BOOT.initialToken || '';
-    let ws = null, reconnectTimer = null, attempts = 0, pingTimer = null;
+    let ws = null, reconnectTimer = null, attempts = 0, pingTimer = null, lastRtt = null;
     let charsSent = 0, pendingId = 0;
     const pending = new Map();
 
@@ -208,25 +210,37 @@ export function renderPhoneInputPageHtml(options: PhoneInputPageOptions): string
         attempts = 0; setStatus('Connected', 'ok'); setErr('');
         send({ type: 'client-hello', userAgent: navigator.userAgent });
         buffer.focus();
-        pingTimer = setInterval(() => send({ type: 'ping', t: performance.now() }), 5000);
+        pingTimer = setInterval(() => send({ type: 'ping', t: performance.now(), ...(lastRtt !== null ? { latencyMs: lastRtt } : {}) }), 5000);
       };
       ws.onmessage = (ev) => {
         let msg; try { msg = JSON.parse(ev.data); } catch { return; }
         if (msg.type === 'pong' && typeof msg.t === 'number') {
-          setStatus('Connected · ' + Math.max(0, Math.round(performance.now() - msg.t)) + ' ms', 'ok');
+          lastRtt = Math.max(0, Math.round(performance.now() - msg.t));
+          setStatus('Connected · ' + lastRtt + ' ms', 'ok');
         } else if (msg.type === 'ack') {
           const settle = pending.get(msg.id);
           if (settle) { pending.delete(msg.id); settle(msg); }
-        } else if (msg.type === 'server-stop') {
-          setStatus('Stopped', 'bad'); setErr(msg.reason || 'Stopped on the PC.');
+        } else if (msg.type === 'token-rotated') {
+          setStatus('Unauthorized', 'bad'); setErr(msg.reason || 'Pairing code rotated on the PC.');
           token = ''; storeToken(''); cleanup();
           notifyParent('nd-phone-link:unpaired', { reason: msg.reason });
-          showPair(msg.reason || 'Start Phone Link again on the PC.');
+          showPair(msg.reason || 'Enter the new 6-digit code shown on your PC.');
+        } else if (msg.type === 'server-stop') {
+          setStatus('Stopped', 'bad'); setErr(msg.reason || 'Stopped on the PC.');
+          cleanup();
         }
       };
       ws.onclose = (ev) => {
         cleanup();
-        if (ev.code === 4003 || ev.code === 4001) { setStatus('Disconnected', 'bad'); return; }
+        if (ev.code === 4001) {
+          token = ''; storeToken('');
+          notifyParent('nd-phone-link:unpaired', { reason: 'Session expired — enter the new 6-digit code.' });
+          showPair('Session expired — enter the new 6-digit code.');
+          setStatus('Unauthorized', 'bad');
+          return;
+        }
+        if (ev.code === 4003) { setStatus('Disconnected', 'bad'); return; }
+        if (ev.code === 4008) { setStatus('Busy', 'bad'); setErr('Another phone keyboard is already connected.'); return; }
         setStatus('Reconnecting…', 'bad');
         attempts += 1;
         const delay = Math.min(8000, 500 * Math.pow(2, Math.min(attempts, 4)));

@@ -11,10 +11,10 @@ interface PersonalDialpadProps {
 }
 
 const TILE_TINTS = [
-  'bg-primary/12 text-primary',
-  'bg-warning/15 text-warning',
-  'bg-info/15 text-info',
-  'bg-destructive/12 text-destructive',
+  'border-primary/25 bg-gradient-to-b from-primary/20 to-primary/10 text-primary',
+  'border-amber-500/25 bg-gradient-to-b from-amber-500/20 to-amber-500/10 text-amber-700 dark:text-amber-400',
+  'border-sky-500/25 bg-gradient-to-b from-sky-500/20 to-sky-500/10 text-sky-700 dark:text-sky-400',
+  'border-rose-500/25 bg-gradient-to-b from-rose-500/20 to-rose-500/10 text-rose-700 dark:text-rose-400',
 ]
 
 /** Stable tint per site, so a tile keeps its colour between sessions. */
@@ -55,17 +55,20 @@ export function PersonalDialpad({ links, onOpen, onRemoveLink, onError }: Person
               <button
                 type="button"
                 aria-label={tile.title}
-                className="flex w-full flex-col items-center gap-2 rounded-xl px-2 py-3 text-left transition-colors hover:bg-accent"
+                className="flex w-full flex-col items-center gap-2 rounded-2xl px-2 py-3 text-left transition-all duration-150 hover:bg-accent/70 active:scale-[0.97]"
                 title={tile.url}
                 onClick={() => open(tile)}
               >
                 <span
                   aria-hidden="true"
-                  className={cn('grid size-10 shrink-0 place-items-center rounded-full text-[15px] font-bold', tileTint(tile.url))}
+                  className={cn(
+                    'grid size-12 shrink-0 place-items-center rounded-[14px] border text-[16px] font-bold shadow-[0_4px_12px_rgba(0,0,0,0.10),inset_0_1px_0_rgba(255,255,255,0.22)] transition-transform duration-150 group-hover:-translate-y-0.5',
+                    tileTint(tile.url),
+                  )}
                 >
                   {tile.title.slice(0, 1).toUpperCase()}
                 </span>
-                <span className="w-full truncate text-center text-[11px] text-soft">{tile.title}</span>
+                <span className="w-full truncate text-center text-[11px] font-medium text-soft">{tile.title}</span>
               </button>
               {tile.kind === 'saved' ? (
                 <button

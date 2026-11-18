@@ -600,12 +600,18 @@ export function registerNdExtensionIpc(deps: NdIpcDependencies): () => void {
   }
   const emitState = async (): Promise<void> => {
     if (deps.window.isDestroyed()) return
-    deps.window.webContents.send(ND_EXTENSIONS_IPC.changedEvent, await stateView())
+    const next = await stateView()
+    if (!deps.window.isDestroyed() && !deps.window.webContents.isDestroyed()) {
+      deps.window.webContents.send(ND_EXTENSIONS_IPC.changedEvent, next)
+    }
   }
   const homeView = async () => deps.home.state()
   const emitHome = async (): Promise<void> => {
     if (deps.window.isDestroyed()) return
-    deps.window.webContents.send(ND_HOME_IPC.changedEvent, await homeView())
+    const next = await homeView()
+    if (!deps.window.isDestroyed() && !deps.window.webContents.isDestroyed()) {
+      deps.window.webContents.send(ND_HOME_IPC.changedEvent, next)
+    }
   }
 
   const computerUse = deps.coreComputer ? new ComputerUseService(deps.coreComputer) : null
@@ -2656,7 +2662,7 @@ export function registerNativeHostHandlers(
 
   host.register('openspec.projects.pick', async (_input, context) => {
     requirePersonalContext(context)
-    const picked = await dialog.showOpenDialog({
+    const picked = await dialog.showOpenDialog(deps.window, {
       title: 'Choose an OpenSpec project directory',
       properties: ['openDirectory'],
     })
@@ -2941,7 +2947,9 @@ export function registerNativeHostHandlers(
     await miniBrowser.rememberTab(tab.id, tab.url, tab.title)
     // The chrome auto-hides and the app surfaces the ND browser pane so the
     // site is visible right away, not behind a dashboard.
-    deps.window.webContents.send(ND_EXTENSIONS_IPC.browserFocusEvent, asBrowserFocus(tab.id, tab.url, context))
+    if (!deps.window.isDestroyed() && !deps.window.webContents.isDestroyed()) {
+      deps.window.webContents.send(ND_EXTENSIONS_IPC.browserFocusEvent, asBrowserFocus(tab.id, tab.url, context))
+    }
     return { tab: asChromeRow(tab), session: await sessionFor() }
   })
 
@@ -2950,7 +2958,9 @@ export function registerNativeHostHandlers(
     const id = asMiniEntryId(input.id)
     const activated = await requireBrowserPlatform().activateTab(BUILTIN_BROWSER_TARGET_ID, id)
     await miniBrowser.touchTab(id)
-    deps.window.webContents.send(ND_EXTENSIONS_IPC.browserFocusEvent, asBrowserFocus(id, activated.url, context))
+    if (!deps.window.isDestroyed() && !deps.window.webContents.isDestroyed()) {
+      deps.window.webContents.send(ND_EXTENSIONS_IPC.browserFocusEvent, asBrowserFocus(id, activated.url, context))
+    }
     return { session: await sessionFor() }
   })
 
@@ -3807,6 +3817,7 @@ export function registerNativeHostHandlers(
 
   return {
     dispose: () => {
+      if (!phoneAudioService) void phoneAudio.dispose()
       translator.dispose()
       payGuardScheduler.stop()
       diskScans?.dispose()

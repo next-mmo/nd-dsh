@@ -72,6 +72,15 @@ impl RouterServer {
             .block_on(future)
     }
 
+    /// Clone a handle to the tokio runtime so callers do not hold a lock across awaits.
+    pub fn handle(&self) -> tokio::runtime::Handle {
+        self.runtime
+            .as_ref()
+            .expect("router runtime is running")
+            .handle()
+            .clone()
+    }
+
     pub fn stop(&mut self) {
         if let Some(sender) = self.shutdown.take() {
             let _ = sender.send(());

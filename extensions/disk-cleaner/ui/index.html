@@ -173,13 +173,14 @@
     .toast {
       padding: 6px 14px;
       border-radius: 999px;
-      background: rgba(27, 30, 37, 0.92);
+      background: var(--panel);
       border: 1px solid var(--border);
       color: var(--text);
       font-size: 12px;
       font-weight: 600;
       white-space: nowrap;
-      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.20);
+      backdrop-filter: blur(14px);
       animation: toast-in 180ms ease-out;
     }
     .toast.ok { border-color: var(--ok); color: var(--ok); }

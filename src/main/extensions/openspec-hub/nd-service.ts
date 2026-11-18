@@ -35,7 +35,15 @@ export interface OpenSpecHubDeps {
 
 function canonicalRoot(root: string): string {
   const resolved = path.resolve(root)
-  return existsSync(resolved) ? realpathSync(resolved) : resolved
+  try {
+    return existsSync(resolved) ? realpathSync(resolved) : resolved
+  } catch {
+    return resolved
+  }
+}
+
+function pathKey(p: string): string {
+  return process.platform === 'win32' ? p.toLowerCase() : p
 }
 
 function projectIdFor(root: string, taken: Set<string>): string {
@@ -59,9 +67,10 @@ export function buildHubConfig(
   const takenIds = new Set<string>()
   const add = (root: string, name: string | undefined, requireOpenSpec: boolean): void => {
     const canonical = canonicalRoot(root)
-    if (seenPaths.has(canonical)) return
+    const key = pathKey(canonical)
+    if (seenPaths.has(key)) return
     if (requireOpenSpec && !existsSync(path.join(canonical, 'openspec'))) return
-    seenPaths.add(canonical)
+    seenPaths.add(key)
     projects.push({
       id: projectIdFor(canonical, takenIds),
       name: name && name.trim() ? name.trim() : path.basename(canonical),
@@ -191,7 +200,7 @@ export class OpenSpecHubService {
     }
     const view = await this.deps.workspaces.list()
     const config = buildHubConfig(view.items, extraRoots, this.roots.list())
-    const signature = JSON.stringify([config.projects.map((p) => [p.id, p.path]), enableWrites, packageDir])
+    const signature = JSON.stringify([config.projects.map((p) => [p.id, p.name, p.path]), enableWrites, packageDir])
     if (this.bundle && this.bundle.signature === signature) return this.bundle
     const cache = new SnapshotCache(config, new OpenSpecCli(bin))
     const tickets = new TicketStore(this.deps.dataDir)

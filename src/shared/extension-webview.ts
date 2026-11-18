@@ -145,6 +145,12 @@ export interface NdWebViewPhoneAudioStateMessage {
   state: unknown
 }
 
+/** Parent -> frame: push live Phone Keyboard snapshot into the sandboxed extension UI. */
+export interface NdWebViewPhoneInputStateMessage {
+  kind: 'nd-webview:phone-input-state'
+  state: unknown
+}
+
 export type NdWebViewBridgeMessage =
   | NdWebViewHelloMessage
   | NdWebViewThemeMessage
@@ -161,6 +167,7 @@ export type NdWebViewBridgeMessage =
   | NdWebViewLiveLevelMessage
   | NdWebViewLiveToolCallMessage
   | NdWebViewPhoneAudioStateMessage
+  | NdWebViewPhoneInputStateMessage
 
 // ── Mirror capture extension (nd.emulator internal) ──
 
@@ -255,7 +262,7 @@ export function isNdWebViewBridgeMessage(value: unknown): value is NdWebViewBrid
       && typeof raw.name === 'string' && raw.name.length <= 64
       && Boolean(raw.args) && typeof raw.args === 'object' && !Array.isArray(raw.args)
   }
-  if (record.kind === 'nd-webview:phone-audio-state') {
+  if (record.kind === 'nd-webview:phone-audio-state' || record.kind === 'nd-webview:phone-input-state') {
     const state = (value as { state?: unknown }).state
     return Boolean(state) && typeof state === 'object' && !Array.isArray(state)
   }

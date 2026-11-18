@@ -447,8 +447,8 @@ export class NineRouterManagedRuntime {
           HOSTNAME: '127.0.0.1',
           PORT: String(port),
           DATA_DIR: join(this.root, 'data'),
-          BASE_URL: 'http://127.0.0.1:' + port,
-          NEXT_PUBLIC_BASE_URL: 'http://127.0.0.1:' + port,
+          BASE_URL: `http://127.0.0.1:${port}`,
+          NEXT_PUBLIC_BASE_URL: `http://127.0.0.1:${port}`,
           // Signed releases receive ND-generated secrets. Unverified imports
           // deliberately do not: they keep their own dashboard credentials.
           ...(secrets ? {

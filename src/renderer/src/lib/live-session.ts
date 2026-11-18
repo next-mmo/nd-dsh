@@ -170,6 +170,7 @@ export class LiveSessionClient {
     const ctx = new AudioCtx()
     this.captureContext = ctx
     if (ctx.state === 'suspended') await ctx.resume()
+    if (this.stopped) return
     const source = ctx.createMediaStreamSource(stream)
 
     // Keep graph alive silently so Chromium pumps audio frames
@@ -197,6 +198,7 @@ export class LiveSessionClient {
       source.connect(node)
       node.connect(silentGain)
     } catch {
+      if (this.stopped) return
       // Fallback for packaged file:// environments that reject AudioWorklet modules
       const processor = ctx.createScriptProcessor(2048, 1, 1)
       this.fallbackProcessor = processor

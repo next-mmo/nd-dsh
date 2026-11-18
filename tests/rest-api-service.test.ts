@@ -300,5 +300,19 @@ Hello world`
     expect(translateOut).toContain('[SPEAKER_00] ឪពុក! ឪពុក! ភ្ញាក់ឡើងទៅ!')
     expect(translateOut).toContain('[SPEAKER_01] លោកគ្រូ')
   })
+
+  it('blocks browser Origin requests and DNS-rebinding Host headers', async () => {
+    const { endpoint } = await service.start()
+
+    const originRes = await fetch(`${endpoint}/api/sessions`, {
+      headers: { Origin: 'http://localhost:3000' },
+    })
+    expect(originRes.status).toBe(403)
+
+    const { stdout: rebindOut } = await execAsync(
+      `curl.exe -s -w "\\n%{http_code}" -H "Host: evil.example:3125" "${endpoint}/api/sessions"`,
+    )
+    expect(rebindOut.trim().endsWith('403')).toBe(true)
+  })
 })
 

@@ -1,3 +1,5 @@
+#![allow(clippy::await_holding_lock)]
+
 use crate::RouterServer;
 use crate::state::{RouterOptions, RouterState};
 use crate::types::{
@@ -185,8 +187,10 @@ async fn retries_the_next_lane_on_retryable_upstream_failure() {
     assert_eq!(usage["failed"], 1);
 }
 
-async fn mock_web_bridge() -> (String, String, Arc<Mutex<Vec<(Option<String>, Value)>>>) {
-    let calls: Arc<Mutex<Vec<(Option<String>, Value)>>> = Arc::new(Mutex::new(Vec::new()));
+type WebBridgeCalls = Arc<Mutex<Vec<(Option<String>, Value)>>>;
+
+async fn mock_web_bridge() -> (String, String, WebBridgeCalls) {
+    let calls: WebBridgeCalls = Arc::new(Mutex::new(Vec::new()));
     let token = "ndr_bridge_test".to_owned();
     let handler_calls = Arc::clone(&calls);
     let handler_token = token.clone();
@@ -679,10 +683,10 @@ async fn safe_mode_locks_external_auth_and_web_lanes_but_keeps_internal_routing(
         ))
         .expect("combo");
     assert!(state.accepts_key("ndr_ext_test_external_key_1234"));
-    assert_eq!(state.safe_mode_enabled(), false);
+    assert!(!state.safe_mode_enabled());
 
     state.set_safe_mode(true);
-    assert!(state.accepts_key(&state.key().to_owned()));
+    assert!(state.accepts_key(state.key()));
     assert!(!state.accepts_key("ndr_ext_test_external_key_1234"));
     assert_eq!(state.snapshot()["safeMode"].as_bool(), Some(true));
 

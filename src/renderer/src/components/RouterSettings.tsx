@@ -1381,7 +1381,7 @@ function ProviderRow({
 function providerBadge(kind: string): string {
   if (isRouterTtsProviderKind(kind)) return 'TTS'
   if (isRouterWebProviderKind(kind)) return 'WEB'
-  if (kind === 'antigravity' || kind === 'qoder') return 'CLI'
+  if (isRouterCliProviderKind(kind)) return 'CLI'
   return 'API'
 }
 

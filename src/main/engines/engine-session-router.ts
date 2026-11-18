@@ -262,11 +262,17 @@ export class EngineSessionRouter {
       this.genericWebBrowser = genericWebRuntime.browser
       this.genericWebLog = genericWebRuntime.log
       for (const config of Object.values(GENERIC_WEB_CONFIGS)) {
-        const engine = genericWebRuntime.engines?.get(config.engineId) ?? new GenericWebEngine({
+        const existing = genericWebRuntime.engines?.get(config.engineId)
+        if (existing) {
+          this.genericWebEngines.set(config.engineId, existing)
+          continue
+        }
+        if (!genericWebRuntime.storeDir) continue
+        const engine = new GenericWebEngine({
           config,
           browser: genericWebRuntime.browser,
           workspace,
-          storePath: join(genericWebRuntime.storeDir ?? '', `${config.engineId}-sessions.json`),
+          storePath: join(genericWebRuntime.storeDir, `${config.engineId}-sessions.json`),
           ...(genericWebRuntime.log ? { log: genericWebRuntime.log } : {}),
         })
         this.genericWebEngines.set(config.engineId, engine)
@@ -384,15 +390,10 @@ export class EngineSessionRouter {
     if (workspaceDirect && requestedSessionId) {
       if (!sessionCwd || !this.sessionRootAllowed(sessionCwd)) throw new Error('Session belongs to a different project workspace')
     }
-    if (!options?.sessionId && this.browserAccess) {
-      const defaultCwd = workspaceDirect ? this.workspace.state().root : undefined
-      const created = await this.createSession(requested, defaultCwd)
-      options = { ...options, sessionId: created.sessionId }
-    }
     const webChatSkill = this.isWebEngine(requested)
     const skill = await this.skills?.prepare(prompt, options?.skillScope, options?.skillSelectionId, webChatSkill ? 'chat' : 'agent')
     const targetSessionId = options?.sessionId
-    if (skill && targetSessionId && !directTarget && requested !== CHATGPT_WEB_ENGINE_ID && requested !== GEMINI_WEB_ENGINE_ID && requested !== DEEPSEEK_WEB_ENGINE_ID && requested !== GROK_WEB_ENGINE_ID) {
+    if (skill && targetSessionId && !directTarget && !this.isWebEngine(requested)) {
       const result = await this.harness.gatewayRpc('session.list')
       const items = (result.value as { items?: Array<{ sessionId?: string; cwd?: string }> } | undefined)?.items
       const session = items?.find((item) => item.sessionId === targetSessionId)
@@ -414,6 +415,11 @@ export class EngineSessionRouter {
       const session = this.grokWeb?.listSessions().find((candidate) => candidate.sessionId === targetSessionId)
       if (session?.cwd && !this.sessionRootAllowed(session.cwd)) throw new Error('Skill session does not belong to the active workspace')
     }
+    const genericSkillEngine = this.genericWebEngines.get(requested)
+    if (skill && targetSessionId && genericSkillEngine) {
+      const session = genericSkillEngine.listSessions().find((candidate) => candidate.sessionId === targetSessionId)
+      if (session?.cwd && !this.sessionRootAllowed(session.cwd)) throw new Error('Skill session does not belong to the active workspace')
+    }
 
     let routedPrompt = this.extensions
       ? await this.extensions.decoratePrompt(skill?.prompt ?? prompt, requested, providerId)
@@ -421,7 +427,12 @@ export class EngineSessionRouter {
     // Prompt Shield runs on the user/skill/extension text before ND appends its
     // own scoped tokens, which must reach the engine untouched.
     routedPrompt = this.shieldPrompt(routedPrompt, options?.promptShieldOverride)
-    if (options?.sessionId && this.browserAccess && requested !== ND_NATIVE_ENGINE_ID && requested !== CHATGPT_WEB_ENGINE_ID && requested !== GEMINI_WEB_ENGINE_ID && requested !== DEEPSEEK_WEB_ENGINE_ID && requested !== GROK_WEB_ENGINE_ID) {
+    if (!options?.sessionId && this.browserAccess && requested !== ND_NATIVE_ENGINE_ID && !this.isWebEngine(requested)) {
+      const defaultCwd = workspaceDirect ? this.workspace.state().root : undefined
+      const created = await this.createSession(requested, defaultCwd)
+      options = { ...options, sessionId: created.sessionId }
+    }
+    if (options?.sessionId && this.browserAccess && requested !== ND_NATIVE_ENGINE_ID && !this.isWebEngine(requested)) {
       const token = this.browserAccess.issueSessionAccess(options.sessionId)
       routedPrompt += `\n\n<nd-browser-access>\nOpaque browser access token for this ND session: ${token}\nPass it unchanged as accessToken on every nd_browser_call. Do not expose it in user-facing output.\n</nd-browser-access>`
     }
@@ -429,10 +440,7 @@ export class EngineSessionRouter {
     // engines and the Rust agent have no shell, so they never see it.
     if (this.vaultAccess
       && requested !== ND_NATIVE_ENGINE_ID
-      && requested !== CHATGPT_WEB_ENGINE_ID
-      && requested !== GEMINI_WEB_ENGINE_ID
-      && requested !== DEEPSEEK_WEB_ENGINE_ID
-      && requested !== GROK_WEB_ENGINE_ID) {
+      && !this.isWebEngine(requested)) {
       const hint = await this.vaultAccess.hint().catch(() => undefined)
       if (hint) routedPrompt += `\n\n${hint}`
     }
@@ -523,11 +531,14 @@ export class EngineSessionRouter {
       if (this.grokWeb?.listSessions().some((session) => session.running)) {
         throw new Error('ChatGPT Web and Grok Web share the visible browser. Finish the active Grok Web turn before starting ChatGPT Web.')
       }
+      if (this.hasRunningWebTurnExcept(this.chatGptWeb)) {
+        throw new Error('ChatGPT Web and other Web chats share the visible browser. Finish the active web chat turn before starting ChatGPT Web.')
+      }
       const engine = this.requireChatGptWeb()
       const workspaceRoot = this.workspace.state().root
       if (options?.sessionId) {
         const session = engine.listSessions().find((candidate) => candidate.sessionId === options.sessionId)
-        if (session?.cwd && session.cwd !== workspaceRoot) {
+        if (session?.cwd && !sameWorkspaceRoot(session.cwd, workspaceRoot)) {
           throw new Error('This ChatGPT Web chat belongs to a different project workspace. Reopen that project before continuing the chat.')
         }
       }
@@ -561,11 +572,14 @@ export class EngineSessionRouter {
       if (this.grokWeb?.listSessions().some((session) => session.running)) {
         throw new Error('Gemini Web and Grok Web share the visible browser. Finish the active Grok Web turn before starting Gemini Web.')
       }
+      if (this.hasRunningWebTurnExcept(this.geminiWeb)) {
+        throw new Error('Gemini Web and other Web chats share the visible browser. Finish the active web chat turn before starting Gemini Web.')
+      }
       const engine = this.requireGeminiWeb()
       const workspaceRoot = this.workspace.state().root
       if (options?.sessionId) {
         const session = engine.listSessions().find((candidate) => candidate.sessionId === options.sessionId)
-        if (session?.cwd && session.cwd !== workspaceRoot) {
+        if (session?.cwd && !sameWorkspaceRoot(session.cwd, workspaceRoot)) {
           throw new Error('This Gemini Web chat belongs to a different project workspace. Reopen that project before continuing the chat.')
         }
       }
@@ -598,11 +612,14 @@ export class EngineSessionRouter {
       if (this.grokWeb?.listSessions().some((session) => session.running)) {
         throw new Error('DeepSeek Web and Grok Web share the visible browser. Finish the active Grok Web turn before starting DeepSeek Web.')
       }
+      if (this.hasRunningWebTurnExcept(this.deepSeekWeb)) {
+        throw new Error('DeepSeek Web and other Web chats share the visible browser. Finish the active web chat turn before starting DeepSeek Web.')
+      }
       const engine = this.requireDeepSeekWeb()
       const workspaceRoot = this.workspace.state().root
       if (options?.sessionId) {
         const session = engine.listSessions().find((candidate) => candidate.sessionId === options.sessionId)
-        if (session?.cwd && session.cwd !== workspaceRoot) {
+        if (session?.cwd && !sameWorkspaceRoot(session.cwd, workspaceRoot)) {
           throw new Error('This DeepSeek Web chat belongs to a different project workspace. Reopen that project before continuing the chat.')
         }
       }
@@ -631,11 +648,14 @@ export class EngineSessionRouter {
       if (this.deepSeekWeb?.listSessions().some((session) => session.running)) {
         throw new Error('Grok Web and DeepSeek Web share the visible browser. Finish the active DeepSeek Web turn before starting Grok Web.')
       }
+      if (this.hasRunningWebTurnExcept(this.grokWeb)) {
+        throw new Error('Grok Web and other Web chats share the visible browser. Finish the active web chat turn before starting Grok Web.')
+      }
       const engine = this.requireGrokWeb()
       const workspaceRoot = this.workspace.state().root
       if (options?.sessionId) {
         const session = engine.listSessions().find((candidate) => candidate.sessionId === options.sessionId)
-        if (session?.cwd && session.cwd !== workspaceRoot) {
+        if (session?.cwd && !sameWorkspaceRoot(session.cwd, workspaceRoot)) {
           throw new Error('This Grok Web chat belongs to a different project workspace. Reopen that project before continuing the chat.')
         }
       }
@@ -650,10 +670,35 @@ export class EngineSessionRouter {
       await this.restoreBrowserFocus(browser, focus)
       return result
     }
-    if (this.chatGptWeb?.listSessions().some((session) => session.running)
-      || this.geminiWeb?.listSessions().some((session) => session.running)
-      || this.deepSeekWeb?.listSessions().some((session) => session.running)
-      || this.grokWeb?.listSessions().some((session) => session.running)) {
+    const genericWeb = this.genericWebEngines.get(requested)
+    if (genericWeb) {
+      const harnessState = this.harness.status().state
+      const engineName = genericWeb.config.name
+      if (harnessState === 'running' || harnessState === 'starting') {
+        throw new Error(`${engineName} and ND Harness share the visible browser. Finish the active ND Harness turn before starting ${engineName}.`)
+      }
+      if (this.hasRunningWebTurnExcept(genericWeb)) {
+        throw new Error(`${engineName} and other Web chats share the visible browser. Finish the active web chat turn before starting ${engineName}.`)
+      }
+      const workspaceRoot = this.workspace.state().root
+      if (options?.sessionId) {
+        const session = genericWeb.listSessions().find((candidate) => candidate.sessionId === options.sessionId)
+        if (session?.cwd && !sameWorkspaceRoot(session.cwd, workspaceRoot)) {
+          throw new Error(`This ${engineName} chat belongs to a different project workspace. Reopen that project before continuing the chat.`)
+        }
+      }
+      const browser = this.genericWebBrowser
+      const focus = this.browserFocus(browser)
+      const result = await genericWeb.run(this.shieldPrompt(appendWebTextFiles(optimizedPrompt, options?.files ?? [], engineName), options?.promptShieldOverride), {
+        ...(options?.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
+        ...(options?.model !== undefined ? { model: options.model } : {}),
+        cwd: workspaceRoot,
+        ...(options?.images?.length ? { images: options.images } : {}),
+      })
+      await this.restoreBrowserFocus(browser, focus)
+      return result
+    }
+    if (this.hasRunningWebTurn()) {
       throw new Error('ND Harness and its Web chats share the visible browser. Finish the active web chat turn before starting ND Harness.')
     }
     const harnessCwd = sessionCwd ?? requestedRunCwd
@@ -991,7 +1036,7 @@ export class EngineSessionRouter {
    */
   private async renameHarnessSession(sessionId: string, title?: string): Promise<void> {
     const trimmed = title?.trim()
-    if (!trimmed) return
+    if (!trimmed || typeof this.harness.renameSession !== 'function') return
     try {
       await this.harness.renameSession(sessionId, trimmed)
     } catch (cause) {
@@ -1022,6 +1067,11 @@ export class EngineSessionRouter {
     }
     if (engine === GROK_WEB_ENGINE_ID) {
       await this.requireGrokWeb().stop(sessionId)
+      return
+    }
+    const genericWeb = this.genericWebEngines.get(engine)
+    if (genericWeb) {
+      await genericWeb.stop(sessionId)
       return
     }
     const result = await this.harness.gatewayRpc('session.cancel', { sessionId })
@@ -1211,6 +1261,7 @@ export class EngineSessionRouter {
       || engineId === GEMINI_WEB_ENGINE_ID
       || engineId === DEEPSEEK_WEB_ENGINE_ID
       || engineId === GROK_WEB_ENGINE_ID
+      || this.genericWebEngines.has(engineId)
       || this.directEngines.has(engineId)
     ) return
     throw new Error(`Unknown coding engine: ${engineId}`)

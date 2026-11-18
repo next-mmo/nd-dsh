@@ -76,12 +76,15 @@ pub fn send_text(params: InputTextParams) -> Result<InputTextResult> {
     validate_text(&params.text)?;
     let units = text_units(&params.text);
     inject_units(&units)?;
-    Ok(InputTextResult { sent: true, units: units.len() })
+    Ok(InputTextResult {
+        sent: true,
+        units: units.len(),
+    })
 }
 
 pub fn send_key(params: InputKeyParams) -> Result<InputKeyResult> {
-    let (vk, extended) = key_vk(&params.key)
-        .ok_or_else(|| anyhow::anyhow!("unknown input key: {}", params.key))?;
+    let (vk, extended) =
+        key_vk(&params.key).ok_or_else(|| anyhow::anyhow!("unknown input key: {}", params.key))?;
     press_key(vk, extended)?;
     Ok(InputKeyResult { sent: true })
 }
@@ -98,7 +101,13 @@ fn inject_units(units: &[u16]) -> Result<()> {
             inputs.push(INPUT {
                 r#type: INPUT_KEYBOARD,
                 Anonymous: INPUT_0 {
-                    ki: KEYBDINPUT { wVk: 0, wScan: unit, dwFlags: flags, time: 0, dwExtraInfo: 0 },
+                    ki: KEYBDINPUT {
+                        wVk: 0,
+                        wScan: unit,
+                        dwFlags: flags,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
                 },
             });
         }
@@ -128,7 +137,13 @@ fn press_key(vk: u16, extended: bool) -> Result<()> {
         INPUT {
             r#type: INPUT_KEYBOARD,
             Anonymous: INPUT_0 {
-                ki: KEYBDINPUT { wVk: vk, wScan: 0, dwFlags: base, time: 0, dwExtraInfo: 0 },
+                ki: KEYBDINPUT {
+                    wVk: vk,
+                    wScan: 0,
+                    dwFlags: base,
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
             },
         },
         INPUT {
@@ -174,7 +189,16 @@ mod tests {
     #[test]
     fn maps_every_named_key_and_rejects_unknown() {
         for name in [
-            "enter", "backspace", "tab", "escape", "delete", "home", "end", "left", "up", "right",
+            "enter",
+            "backspace",
+            "tab",
+            "escape",
+            "delete",
+            "home",
+            "end",
+            "left",
+            "up",
+            "right",
             "down",
         ] {
             assert!(key_vk(name).is_some(), "{name} must map");

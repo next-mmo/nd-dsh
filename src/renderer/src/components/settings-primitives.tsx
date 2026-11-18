@@ -5,7 +5,7 @@ import { cn } from '../lib/utils'
 export function SettingsSection({ title, children, className }: { title: string; children: ReactNode; className?: string }) {
   return (
     <section className={cn('mt-[22px]', className)}>
-      <h2 className="mb-2.5 text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground">{title}</h2>
+      <h2 className="mb-2.5 px-0.5 text-[10px] font-semibold uppercase tracking-[0.11em] text-muted-foreground">{title}</h2>
       {children}
     </section>
   )
@@ -15,7 +15,10 @@ export function SettingsRow({ children, className, label }: { children: ReactNod
   return (
     <div
       {...(label === undefined ? {} : { role: 'group', 'aria-label': label })}
-      className={cn('flex min-w-0 items-center justify-between gap-4 rounded-lg border border-border-soft bg-surface-1 px-[13px] py-[11px]', className)}
+      className={cn(
+        'flex min-w-0 items-center justify-between gap-4 rounded-[11px] border border-border-soft bg-surface-1 px-3.5 py-3 shadow-[0_1px_2px_rgba(0,0,0,0.06),inset_0_1px_0_rgba(255,255,255,0.04)] dark:shadow-[0_1px_3px_rgba(0,0,0,0.18),inset_0_1px_0_rgba(255,255,255,0.05)]',
+        className,
+      )}
     >
       {children}
     </div>
@@ -23,17 +26,23 @@ export function SettingsRow({ children, className, label }: { children: ReactNod
 }
 
 export const rowStack = 'flex min-w-0 flex-col gap-[3px]'
-export const rowTitle = 'text-xs font-semibold text-foreground'
-export const rowDesc = 'text-[10px]/[1.45] text-faint'
-export const rowPathText = 'max-w-[300px] truncate text-[10px]/[1.45] text-faint'
-export const rowValueText = 'shrink-0 font-mono text-[9px] text-muted-foreground'
+export const rowTitle = 'text-[12.5px] font-semibold tracking-[-0.01em] text-foreground'
+export const rowDesc = 'text-[11px]/[1.45] text-faint'
+export const rowPathText = 'max-w-[320px] truncate text-[10.5px]/[1.45] text-faint'
+export const rowValueText = 'shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground'
 
 export function StatusChip({ good, warn, neutral, children }: { good?: boolean | undefined; warn?: boolean | undefined; neutral?: boolean | undefined; children: ReactNode }) {
   return (
     <span
       className={cn(
-        'shrink-0 text-[10px] font-semibold',
-        neutral ? 'text-muted-foreground' : good ? 'text-primary' : warn ? 'text-warning' : 'text-muted-foreground',
+        'inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[10px] font-medium leading-tight',
+        neutral
+          ? 'border-border-soft bg-muted text-muted-foreground'
+          : good
+            ? 'border-primary/25 bg-primary/10 text-primary'
+            : warn
+              ? 'border-warning/30 bg-warning/10 text-warning'
+              : 'border-border-soft bg-muted text-muted-foreground',
       )}
     >
       {children}
@@ -56,15 +65,17 @@ export function SettingsSwitch({ label, checked, disabled, onCheckedChange }: {
       aria-checked={checked}
       disabled={disabled}
       className={cn(
-        'relative h-[20px] w-[34px] shrink-0 rounded-full border transition-colors',
-        checked ? 'border-primary bg-primary' : 'border-border-strong bg-secondary',
+        'relative inline-flex h-[20px] w-[36px] shrink-0 items-center rounded-full border p-[2px] transition-[background-color,border-color,box-shadow] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/35',
+        checked
+          ? 'border-primary/80 bg-primary shadow-[inset_0_1px_1px_rgba(0,0,0,0.12)]'
+          : 'border-black/10 bg-black/[0.14] shadow-[inset_0_1px_2px_rgba(0,0,0,0.16)] dark:border-white/10 dark:bg-white/[0.16]',
         'disabled:pointer-events-none disabled:opacity-45',
       )}
       onClick={() => onCheckedChange(!checked)}
     >
       <span className={cn(
-        'absolute top-[2px] size-[14px] rounded-full bg-background shadow-sm transition-[left]',
-        checked ? 'left-[16px]' : 'left-[2px]',
+        'pointer-events-none block size-[14px] rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.30),0_1px_1px_rgba(0,0,0,0.16),inset_0_0.5px_0_rgba(255,255,255,0.95)] transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]',
+        checked ? 'translate-x-[16px]' : 'translate-x-0',
       )} />
     </button>
   )
@@ -76,10 +87,11 @@ export function SettingsButton({ active, className, ...props }: ButtonHTMLAttrib
       type="button"
       {...props}
       className={cn(
-        'shrink-0 rounded-md border border-border bg-secondary px-2.5 py-1.5 text-[10px] text-soft transition-colors',
-        'hover:border-(--border-focus) hover:text-foreground',
-        'disabled:pointer-events-none disabled:opacity-45',
-        active && 'border-primary/40 text-primary',
+        'shrink-0 rounded-[8px] border border-border-strong/80 bg-secondary bg-gradient-to-b from-white/[0.06] to-transparent px-2.5 py-1.5 text-[11px] font-medium text-soft shadow-[0_1px_2px_rgba(0,0,0,0.08),inset_0_1px_0_rgba(255,255,255,0.08)] transition-all duration-150',
+        'hover:border-(--border-focus) hover:bg-accent hover:text-foreground active:scale-[0.985]',
+        'focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/25',
+        'disabled:pointer-events-none disabled:opacity-45 disabled:active:scale-100',
+        active && 'border-primary/45 bg-primary/12 text-primary shadow-[0_1px_2px_rgba(10,132,255,0.16),inset_0_1px_0_rgba(255,255,255,0.12)]',
         className,
       )}
     />

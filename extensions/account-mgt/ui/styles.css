@@ -107,9 +107,9 @@ button.danger { color: var(--danger); border-color: rgba(248, 113, 113, 0.35); }
   margin: 8px 0 12px;
   padding: 8px 10px;
   border-left: 3px solid var(--warn);
-  background: rgba(251, 191, 36, 0.08);
-  color: #f3d28a;
-  border-radius: 4px;
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+  color: var(--warn);
+  border-radius: 6px;
   font-size: 12px;
 }
 
@@ -122,7 +122,7 @@ button.danger { color: var(--danger); border-color: rgba(248, 113, 113, 0.35); }
   padding: 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.015);
+  background: var(--panel-2);
 }
 .step.current { border-color: rgba(96, 165, 250, 0.5); }
 .step.done { opacity: 0.7; }
@@ -152,9 +152,9 @@ input, select, textarea {
   width: 100%;
   padding: 7px 9px;
   color: var(--text);
-  background: #12151a;
+  background: var(--panel-2);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 7px;
   font: inherit;
 }
 input:focus, select:focus, textarea:focus { outline: 1px solid var(--accent); border-color: var(--accent); }

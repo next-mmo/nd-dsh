@@ -112,7 +112,7 @@ function launcherIcon(command: LauncherCommandItem): ReactNode {
 
 function Keycap({ children }: { children: ReactNode }): ReactNode {
   return (
-    <kbd className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-[5px] border border-border bg-surface-2/80 px-1 font-mono text-[10px] leading-none text-soft">
+    <kbd className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-[5px] border border-border bg-surface-2/90 px-1 font-mono text-[10px] leading-none text-soft shadow-[0_1px_0_rgba(0,0,0,0.16),inset_0_1px_0_rgba(255,255,255,0.08)]">
       {children}
     </kbd>
   )
@@ -402,10 +402,10 @@ export function QuickLauncher({
       title="ND Quick Launcher"
       description="Search one registry of ND, company, project, and extension commands."
       className={cn(
-        'rounded-[18px] border-border-strong bg-surface-1/98',
+        'rounded-[18px] border-border-strong bg-surface-1/95 backdrop-blur-3xl',
         popupSurface
           ? 'top-10 h-[min(640px,calc(100vh-80px))] translate-y-0 max-w-[780px] sm:max-w-[780px]'
-          : 'max-w-[720px] shadow-[0_28px_90px_rgba(0,0,0,0.58)] sm:max-w-[720px]',
+          : 'max-w-[720px] shadow-(--launcher-card-shadow) sm:max-w-[720px]',
       )}
       showCloseButton={false}
     >

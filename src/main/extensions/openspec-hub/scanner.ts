@@ -3,6 +3,7 @@ import path from 'node:path'
 import { parse as parseYaml } from 'yaml'
 import type { OpenSpecCli } from './openspec-cli.js'
 import {
+  SAFE_ID,
   listSubdirs,
   projectFileExists,
   readProjectFile,
@@ -218,8 +219,9 @@ export function collectDocs(root: string): DocMeta[] {
     if (projectFileExists(root, source.relPath)) docs.push({ ...source })
   }
   for (const file of walkProjectDir(root, 'docs/adr')) {
-    if (!file.endsWith('.md')) continue
+    if (!file.endsWith('.md') || file.includes('/')) continue
     const name = path.posix.basename(file, '.md')
+    if (!SAFE_ID.test(name)) continue
     docs.push({ id: `adr/${name}`, title: `ADR: ${name}`, kind: 'adr', relPath: `docs/adr/${file}` })
   }
   return docs
@@ -295,6 +297,7 @@ export async function scanProject(project: ProjectConfig, cli: OpenSpecCli): Pro
   for (const entry of changeEntries) {
     if (typeof entry.name !== 'string') continue
     const id = entry.name
+    if (!SAFE_ID.test(id)) continue
     const archived = entry.archived === true
     const completedTasks = typeof entry.completedTasks === 'number' ? entry.completedTasks : 0
     const totalTasks = typeof entry.totalTasks === 'number' ? entry.totalTasks : 0
@@ -338,6 +341,7 @@ export async function scanProject(project: ProjectConfig, cli: OpenSpecCli): Pro
   for (const entry of specEntries) {
     if (typeof entry.id !== 'string') continue
     const id = entry.id
+    if (!SAFE_ID.test(id)) continue
     const showResult = await cli.showSpec(project, id)
     const showJson = asRecord(showResult.json)
     const requirements = mapRequirements(showJson?.requirements)

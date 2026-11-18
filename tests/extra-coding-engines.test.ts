@@ -6,6 +6,8 @@ import { PassThrough } from 'node:stream'
 import type { ChildProcess } from 'node:child_process'
 import { afterAll, describe, expect, it } from 'vitest'
 import { EngineSessionRouter } from '../src/main/engines/engine-session-router.js'
+import { GenericWebEngine } from '../src/main/engines/generic-web/generic-web-engine.js'
+import { GENERIC_WEB_CONFIGS } from '../src/main/engines/generic-web/generic-web-configs.js'
 import { createExtraCliEngines, gooseAdapter, hermesAdapter, jcodeAdapter, opencodeAdapter, parseOpencodeModelList } from '../src/main/engines/agent-cli/extra-cli-engines.js'
 import { opencodeBinPath } from '../src/main/engines/agent-cli/extra-cli-paths.js'
 import { StructuredCliEngine, type StructuredCliAdapter } from '../src/main/engines/agent-cli/structured-cli-engine.js'
@@ -431,6 +433,54 @@ describe('extra coding engines', () => {
       await expect(router.run('hello', { engineId: MINIMAX_CLI_ENGINE_ID })).rejects.toThrow(/MiniMax CLI.*not installed/)
     } finally {
       await router.close()
+    }
+  })
+
+  it('persists non-Grok GenericWebEngine sessions across reloads and routes them in EngineSessionRouter', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'nd-generic-web-'))
+    try {
+      const qwenConfig = GENERIC_WEB_CONFIGS['qwen-web']!
+      const storeFile = join(root, 'qwen-sessions.json')
+      const workspace = {
+        state: () => ({ root, binding: 'valid' }),
+        assertUsable: () => root,
+      }
+      const browser = {
+        openTab: async () => ({ id: 'tab-1', url: 'https://chat.qwen.ai/' }),
+        listTabs: () => [{ id: 'tab-1', url: 'https://chat.qwen.ai/' }],
+      }
+      const engine1 = new GenericWebEngine({ config: qwenConfig, browser: browser as never, workspace: workspace as never, storePath: storeFile })
+      const created = await engine1.createSession()
+      expect(created.sessionId.startsWith('qwen-web-')).toBe(true)
+
+      const engine2 = new GenericWebEngine({ config: qwenConfig, browser: browser as never, workspace: workspace as never, storePath: storeFile })
+      expect(engine2.listSessions().map((s) => s.sessionId)).toContain(created.sessionId)
+
+      const codex = {
+        run: async () => ({ sessionId: 'codex' }),
+        createSession: async () => ({ sessionId: 'codex' }),
+        stop: async () => {},
+        listSessions: () => [],
+        transcript: () => ({ sessionId: 'codex', engineId: 'codex-cli', events: [] }),
+        ownsSession: () => false,
+        handlesApproval: () => false,
+        respond: async () => {},
+        listModels: async () => [],
+      }
+      const router = new EngineSessionRouter(
+        { listSessions: async () => [], stopSession: async () => {} } as never,
+        codex as never,
+        workspace as never,
+        undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+        { browser: browser as never, storeDir: root, engines: new Map([['qwen-web', engine2]]) },
+      )
+      const routedSession = await router.createSession('qwen-web')
+      expect(routedSession.engineId).toBe('qwen-web')
+      expect(routedSession.sessionId.startsWith('qwen-web-')).toBe(true)
+      await expect(router.stopSession(routedSession.sessionId)).resolves.toBeUndefined()
+      await router.close()
+    } finally {
+      rmSync(root, { recursive: true, force: true })
     }
   })
 })

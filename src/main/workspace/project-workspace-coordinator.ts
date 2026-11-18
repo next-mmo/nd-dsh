@@ -14,6 +14,14 @@ const ACTIVE_CONTEXT_MUTATIONS = new Set<OrganizationMutation['type']>([
   'project.activate',
 ])
 
+function sameRoot(left: string, right: string): boolean {
+  const normalize = (value: string) => {
+    const trimmed = resolve(value).replace(/[\\/]+$/, '')
+    return process.platform === 'win32' ? trimmed.toLowerCase() : trimmed
+  }
+  return normalize(left) === normalize(right)
+}
+
 export class ProjectWorkspaceCoordinator {
   constructor(
     private readonly store: OrganizationStore,
@@ -87,7 +95,7 @@ export class ProjectWorkspaceCoordinator {
     const previous = this.workspace.state()
     await this.harness.close()
     const selected = await this.workspace.pick()
-    if (selected.root === previous.root) return this.workspace.state()
+    if (sameRoot(selected.root, previous.root)) return this.workspace.state()
     const next = await this.bindSelectedRoot(selected.root)
     this.onContextChanged?.()
     return next
@@ -114,7 +122,7 @@ export class ProjectWorkspaceCoordinator {
     if (!this.workspaceRegistry) throw new Error('Workspace registry is unavailable')
     const entry = this.workspaceRegistry.get(id)
     if (!entry) throw new Error('Unknown saved workspace')
-    const isOpenWorkspace = entry.root.replace(/[\\/]+$/, '') === this.workspace.state().root.replace(/[\\/]+$/, '')
+    const isOpenWorkspace = sameRoot(entry.root, this.workspace.state().root)
     if (isOpenWorkspace) await this.assertNoRunningOrganizationRun('remove the workspace that is currently open')
     return this.workspaceRegistry.remove(id)
   }
@@ -209,8 +217,8 @@ export class ProjectWorkspaceCoordinator {
       }
     }
 
-    if (this.workspace.state().root !== absolute && closeHarness) await this.harness.close()
-    if (this.workspace.state().root !== absolute) await this.workspace.setRoot(absolute)
+    if (!sameRoot(this.workspace.state().root, absolute) && closeHarness) await this.harness.close()
+    if (!sameRoot(this.workspace.state().root, absolute)) await this.workspace.setRoot(absolute)
     return this.workspace.setContext({
       binding: 'project',
       companyId: company.id,

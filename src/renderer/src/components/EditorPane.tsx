@@ -98,12 +98,14 @@ export function EditorPane({ file, onAgentPrompt, onOpenLink, onError }: EditorP
 
   if (file.previewHtml !== undefined) {
     return (
-      <section className="flex h-full min-h-0 flex-col" aria-label={`Document ${file.relativePath}`}>
-        <div className="border-b border-border-soft px-3 py-2 text-xs text-soft">
+      <section className="flex h-full min-h-0 flex-col bg-surface-0" aria-label={`Document ${file.relativePath}`}>
+        <div className="shrink-0 border-b border-border-soft bg-secondary px-3 py-2 text-xs text-soft">
           {file.relativePath} · Content preview (page layout and images omitted)
         </div>
-        <iframe title={`DOCX preview ${file.relativePath}`} sandbox="" referrerPolicy="no-referrer"
-          srcDoc={file.previewHtml} className="min-h-0 w-full flex-1 border-0 bg-white" />
+        <div className="flex min-h-0 flex-1 justify-center overflow-auto bg-surface-0 p-4">
+          <iframe title={`DOCX preview ${file.relativePath}`} sandbox="" referrerPolicy="no-referrer"
+            srcDoc={file.previewHtml} className="min-h-0 w-full max-w-[920px] flex-1 rounded-xl border border-border-soft bg-white shadow-lg" />
+        </div>
       </section>
     )
   }
@@ -121,25 +123,25 @@ export function EditorPane({ file, onAgentPrompt, onOpenLink, onError }: EditorP
   }
 
   return (
-    <section className="code-editor grid h-full w-full grid-rows-[31px_auto_minmax(0,1fr)] min-h-0 bg-surface-0" aria-label={`Editor ${file.relativePath}`}>
-      <div className="flex items-center justify-between border-b border-border-soft bg-secondary">
+    <section className="code-editor flex h-full min-h-0 w-full flex-col bg-surface-0" aria-label={`Editor ${file.relativePath}`}>
+      <div className="flex h-[31px] shrink-0 items-center justify-between border-b border-border-soft bg-secondary">
         <div
-          className="flex min-w-0 items-center gap-1.5 border-r border-border-soft px-[11px] text-[10px] text-soft [&_svg]:size-[13px]"
+          className="flex h-full min-w-0 items-center gap-1.5 border-r border-border-soft px-[11px] text-[11px] font-medium text-soft [&_svg]:size-[13px]"
           title={file.relativePath}
         >
           <FileIcon style={{ color: fileAccent(file.relativePath) }} />
           <span className="truncate">{file.relativePath}</span>
         </div>
         {isMarkdown ? (
-          <div className="flex items-center gap-0.5 px-1.5">
+          <div className="flex items-center gap-0.5 rounded-md bg-inset p-0.5 mr-1.5">
             <button
               type="button"
               onClick={() => setViewMode('code')}
               className={cn(
-                'rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors',
+                'rounded-[5px] px-2 py-0.5 text-[10px] font-medium transition-all',
                 viewMode === 'code'
-                  ? 'bg-primary/10 text-primary font-semibold'
-                  : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                  ? 'bg-surface-1 text-strong shadow-xs font-semibold'
+                  : 'text-muted-foreground hover:text-foreground'
               )}
             >
               Code
@@ -148,10 +150,10 @@ export function EditorPane({ file, onAgentPrompt, onOpenLink, onError }: EditorP
               type="button"
               onClick={() => setViewMode('preview')}
               className={cn(
-                'rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors',
+                'rounded-[5px] px-2 py-0.5 text-[10px] font-medium transition-all',
                 viewMode === 'preview'
-                  ? 'bg-primary/10 text-primary font-semibold'
-                  : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                  ? 'bg-surface-1 text-strong shadow-xs font-semibold'
+                  : 'text-muted-foreground hover:text-foreground'
               )}
             >
               Preview
@@ -160,20 +162,20 @@ export function EditorPane({ file, onAgentPrompt, onOpenLink, onError }: EditorP
         ) : null}
       </div>
       {viewMode === 'preview' && isMarkdown ? (
-        <div className="min-h-0 flex-1 overflow-auto px-4 py-3 text-[12px]/[1.65]">
+        <div className="min-h-0 flex-1 overflow-auto px-5 py-4 text-[13px]/[1.68]">
           <MarkdownLite text={file.content} {...(onOpenLink ? { onOpenLink } : {})} />
         </div>
       ) : (
         <>
           {file.truncated ? (
-            <div className="border-b border-warning/25 bg-warning/10 px-2.5 py-[5px] text-[9px] text-warning">Preview truncated at 1 MiB.</div>
+            <div className="shrink-0 border-b border-warning/25 bg-warning/10 px-2.5 py-[5px] text-[10px] text-warning">Preview truncated at 1 MiB.</div>
           ) : null}
-          <div className="min-h-0 overflow-auto" ref={scrollRef}>
+          <div className="min-h-0 flex-1 overflow-auto" ref={scrollRef}>
             <div className="flex min-w-full items-start">
-              <div aria-hidden="true" className="shrink-0 select-none whitespace-pre py-[13px] pr-[13px] pb-10 text-right font-mono text-[11px]/[1.62] text-code-dim">
+              <div aria-hidden="true" className="min-w-[3.25rem] shrink-0 select-none whitespace-pre border-r border-border-soft/50 py-[13px] pr-3 pl-3.5 pb-10 text-right font-mono text-[11px]/[1.62] tabular-nums text-code-dim">
                 {lineNumbers}
               </div>
-              <pre className="m-0 block min-w-0 flex-1 overflow-visible whitespace-pre pt-[13px] pr-[18px] pb-10 font-mono text-[11px]/[1.62] text-soft">
+              <pre className="m-0 block min-w-0 flex-1 overflow-visible whitespace-pre pt-[13px] pr-[18px] pb-10 pl-3.5 font-mono text-[11px]/[1.62] text-soft">
                 {highlighted !== null ? <code dangerouslySetInnerHTML={{ __html: highlighted }} /> : <code>{file.content}</code>}
               </pre>
             </div>

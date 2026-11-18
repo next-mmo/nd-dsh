@@ -657,9 +657,19 @@ function summarize(value: unknown): string {
   return `${cleaned.slice(0, RESULT_SNIPPET_MAX_CHARS - 1)}…`
 }
 
+import { isCoreManagedChildProcess, stopCoreManagedChildProcess } from '../../core/core-child-process.js'
+
 /** Terminate the whole child tree; SIGTERM first, then hard teardown. */
 async function killProcessTree(child: ChildProcess | undefined): Promise<void> {
-  if (!child || child.pid === undefined || child.exitCode !== null || child.signalCode !== null) return
+  if (!child || child.exitCode !== null || child.signalCode !== null) return
+  if (isCoreManagedChildProcess(child)) {
+    await stopCoreManagedChildProcess(child)
+    return
+  }
+  if (child.pid === undefined) {
+    try { child.kill() } catch { /* Already gone. */ }
+    return
+  }
   const pid = child.pid
 
   if (process.platform === 'win32') {

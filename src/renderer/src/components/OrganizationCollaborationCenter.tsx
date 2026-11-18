@@ -270,9 +270,9 @@ export function OrganizationCollaborationCenter({ companyId, projectId, onAskAge
                   <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
                     <span className="text-xs">{authorKind === 'agent' ? '🤖' : authorKind === 'human' ? '👤' : '⚙️'}</span>
                     <strong className="text-foreground">{author}</strong>
-                    <span className="rounded border border-border-soft bg-secondary px-1 py-0.2 text-[9px] uppercase text-faint">{authorKind}</span>
+                    <span className="rounded border border-border-soft bg-secondary px-1 py-0.5 text-[9px] uppercase text-faint">{authorKind}</span>
                     {message.category && message.category !== 'chat' ? (
-                      <span className="rounded border border-primary/25 bg-primary/10 px-1 py-0.2 font-mono text-[9px] uppercase text-primary">{message.category}</span>
+                      <span className="rounded border border-primary/25 bg-primary/10 px-1 py-0.5 font-mono text-[9px] uppercase text-primary">{message.category}</span>
                     ) : null}
                     {message.runId ? (
                       <span className="font-mono text-[9px] text-faint">run #{message.runId.slice(0, 8)}</span>
@@ -344,10 +344,12 @@ export function OrganizationCollaborationCenter({ companyId, projectId, onAskAge
                     ) : null}
                   </div>
                   {lastHandoff ? (
-                    <div className="mt-1 rounded bg-secondary/50 px-2 py-1 text-[10px] text-faint">
-                      <span>Handoff: {lastHandoff.fromAssignee?.kind ?? 'agent'} ➔ {lastHandoff.toAssignee?.kind ?? 'human'}</span>
-                      {lastHandoff.reason ? <span className="ml-1 text-soft">({lastHandoff.reason})</span> : null}
-                      <span className="ml-auto float-right">{new Date(lastHandoff.timestamp).toLocaleTimeString()}</span>
+                    <div className="mt-1 flex flex-wrap items-center justify-between gap-2 rounded bg-secondary/50 px-2 py-1 text-[10px] text-faint">
+                      <span>
+                        Handoff: {lastHandoff.fromAssignee?.kind ?? 'agent'} ➔ {lastHandoff.toAssignee?.kind ?? 'human'}
+                        {lastHandoff.reason ? <span className="ml-1 text-soft">({lastHandoff.reason})</span> : null}
+                      </span>
+                      <span className="tabular-nums">{new Date(lastHandoff.timestamp).toLocaleTimeString()}</span>
                     </div>
                   ) : null}
 
@@ -520,7 +522,7 @@ function MemberLine({ member, active, onSelect }: { member: OrganizationMember; 
       <div className="min-w-0">
         <div className="flex items-center gap-1.5">
           <strong className="block truncate text-xs">{member.displayName}</strong>
-          <span className={cn('rounded px-1.5 py-0.2 text-[9px] font-bold uppercase tracking-wide', roleBadgeClass(role))}>
+          <span className={cn('rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide', roleBadgeClass(role))}>
             {role}
           </span>
         </div>
@@ -536,13 +538,13 @@ function MemberLine({ member, active, onSelect }: { member: OrganizationMember; 
 function roleBadgeClass(role: OrganizationAccessRole): string {
   switch (role) {
     case 'owner':
-      return 'border border-purple-500/30 bg-purple-500/10 text-purple-400'
+      return 'border border-purple-500/30 bg-purple-500/10 text-purple-700 dark:text-purple-400'
     case 'admin':
-      return 'border border-blue-500/30 bg-blue-500/10 text-blue-400'
+      return 'border border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-blue-400'
     case 'pm':
-      return 'border border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+      return 'border border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
     case 'reviewer':
-      return 'border border-amber-500/30 bg-amber-500/10 text-amber-400'
+      return 'border border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400'
     case 'guest':
       return 'border border-border-soft bg-secondary text-muted-foreground'
     case 'contributor':

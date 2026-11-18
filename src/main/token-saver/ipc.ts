@@ -10,13 +10,13 @@ import { setTokenSaverRuntime } from './token-saver-runtime.js'
 
 type Handler = (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown | Promise<unknown>
 
-export function registerTokenSaverIpc(window: BrowserWindow): () => void {
+export function registerTokenSaverIpc(window: BrowserWindow, providers?: ProviderStore): () => void {
   const channels: string[] = []
   const root = join(app.getPath('userData'), 'token-saver')
   const accounts = new ProviderAccountService(root)
   const external = new RtkManager(root)
   const service = new TokenSaverService(join(root, 'state.json'), { accounts, external })
-  const disposeGatewayIpc = registerNdGatewayIpc(window, () => new ProviderStore(), service)
+  const disposeGatewayIpc = registerNdGatewayIpc(window, () => providers ?? new ProviderStore(), service)
   setTokenSaverRuntime(service)
 
   const handle = (channel: string, listener: Handler): void => {

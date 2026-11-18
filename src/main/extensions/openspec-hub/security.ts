@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { HttpError } from './types.js'
 
@@ -27,37 +27,99 @@ function toPosix(rel: string): string {
   return rel.split(path.sep).join('/')
 }
 
+function tryRealpath(target: string): string {
+  const resolved = path.resolve(target)
+  try {
+    return existsSync(resolved) ? realpathSync(resolved) : resolved
+  } catch {
+    return resolved
+  }
+}
+
+function hasDanglingSymlinkComponent(canonicalRoot: string, resolved: string): boolean {
+  const rel = path.relative(canonicalRoot, resolved)
+  if (!rel || rel.startsWith('..')) return true
+  const parts = rel.split(path.sep).filter(Boolean)
+  let cursor = canonicalRoot
+  for (const part of parts) {
+    cursor = path.join(cursor, part)
+    let lst
+    try {
+      lst = lstatSync(cursor)
+    } catch {
+      return false
+    }
+    if (lst.isSymbolicLink() && !existsSync(cursor)) {
+      return true
+    }
+  }
+  return false
+}
+
+function resolveRealTarget(canonicalRoot: string, resolved: string): string {
+  if (hasDanglingSymlinkComponent(canonicalRoot, resolved)) {
+    throw new HttpError(400, 'invalid-path', 'dangling symbolic links are not permitted')
+  }
+  if (existsSync(resolved)) {
+    return realpathSync(resolved)
+  }
+  let current = resolved
+  const tail: string[] = []
+  while (!existsSync(current)) {
+    const parent = path.dirname(current)
+    if (parent === current) return resolved
+    tail.unshift(path.basename(current))
+    current = parent
+  }
+  const realAncestor = realpathSync(current)
+  return path.join(realAncestor, ...tail)
+}
+
+function assertScopedRelPath(relNorm: string): void {
+  const segments = relNorm.split('/')
+  if (segments.some((s) => s.toLowerCase().startsWith('.env'))) {
+    throw new HttpError(400, 'invalid-path', 'path is not readable')
+  }
+  const cmp = process.platform === 'win32' ? relNorm.toLowerCase() : relNorm
+  const allowedRoots = process.platform === 'win32' ? ALLOWED_ROOT_FILES.map((f) => f.toLowerCase()) : ALLOWED_ROOT_FILES
+  const allowedDirs = process.platform === 'win32' ? ALLOWED_DIRS.map((d) => d.toLowerCase()) : ALLOWED_DIRS
+  const allowed =
+    allowedRoots.includes(cmp) ||
+    allowedDirs.some((d) => cmp === d || cmp.startsWith(`${d}/`))
+  if (!allowed) {
+    throw new HttpError(400, 'invalid-path', 'path is outside the allowed read scope')
+  }
+}
+
 /**
  * Resolve a project-relative path and enforce the read scope:
  * inside the canonical root, under openspec/ or docs/, or an allowed root file.
- * Symlinks may not escape the root. Never returns a path for .env* files.
+ * Symlinks may not escape the root or the allowed scope. Never returns a path for .env* files.
  */
 export function safeJoin(root: string, rel: string): string {
   if (typeof rel !== 'string' || rel.length === 0 || rel.includes('\0')) {
     throw new HttpError(400, 'invalid-path', 'path is not valid')
   }
-  const canonicalRoot = existsSync(root) ? realpathSync(root) : path.resolve(root)
+  const canonicalRoot = tryRealpath(root)
   const resolved = path.resolve(canonicalRoot, rel)
   if (!within(canonicalRoot, resolved)) {
     throw new HttpError(400, 'invalid-path', 'path escapes the project root')
   }
   const relNorm = toPosix(path.relative(canonicalRoot, resolved))
-  const segments = relNorm.split('/')
-  if (segments.some((s) => s.startsWith('.env'))) {
-    throw new HttpError(400, 'invalid-path', 'path is not readable')
+  assertScopedRelPath(relNorm)
+
+  let realTarget: string
+  try {
+    realTarget = resolveRealTarget(canonicalRoot, resolved)
+  } catch (err) {
+    if (err instanceof HttpError) throw err
+    throw new HttpError(400, 'invalid-path', 'path is not accessible')
   }
-  const allowed =
-    ALLOWED_ROOT_FILES.includes(relNorm) ||
-    ALLOWED_DIRS.some((d) => relNorm === d || relNorm.startsWith(`${d}/`))
-  if (!allowed) {
-    throw new HttpError(400, 'invalid-path', 'path is outside the allowed read scope')
+  if (!within(canonicalRoot, realTarget)) {
+    throw new HttpError(400, 'invalid-path', 'path escapes the project root')
   }
-  if (existsSync(resolved)) {
-    const real = realpathSync(resolved)
-    if (!within(canonicalRoot, real)) {
-      throw new HttpError(400, 'invalid-path', 'path escapes the project root')
-    }
-  }
+  const realRelNorm = toPosix(path.relative(canonicalRoot, realTarget))
+  assertScopedRelPath(realRelNorm)
   return resolved
 }
 
@@ -107,7 +169,7 @@ export function walkProjectDir(root: string, relDir: string): string[] {
     }
     for (const entry of entries) {
       if (out.length >= MAX_WALK_FILES) return
-      if (entry.name.startsWith('.env')) continue
+      if (entry.name.toLowerCase().startsWith('.env')) continue
       const abs = path.join(dir, entry.name)
       if (entry.isSymbolicLink()) continue
       if (entry.isDirectory()) {

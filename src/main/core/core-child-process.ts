@@ -59,6 +59,10 @@ export function createCoreSpawn(
  * unlike the legacy Node teardown helpers, this path never launches taskkill or
  * signals a process group from Electron.
  */
+export function isCoreManagedChildProcess(child: unknown): boolean {
+  return child instanceof CoreChildProcess
+}
+
 export async function stopCoreManagedChildProcess(
   child: ChildProcess,
   timeoutMs = 5_000,
@@ -102,6 +106,7 @@ class CoreChildProcess extends EventEmitter {
   private readonly spawnPromise: Promise<ProcessSpawnResult>
   private disposeOutput: (() => void) | undefined
   private disposeExit: (() => void) | undefined
+  private disposeCoreExit: (() => void) | undefined
   private settled = false
 
   constructor(
@@ -119,6 +124,9 @@ class CoreChildProcess extends EventEmitter {
 
     this.disposeOutput = core.onResourceEvent<ProcessOutputEvent>('process.output', this.processId, (frame) => this.onOutput(frame))
     this.disposeExit = core.onResourceEvent<ProcessExitEvent>('process.exit', this.processId, (frame) => this.onExit(frame))
+    if (typeof (core as { onEvent?: unknown }).onEvent === 'function') {
+      this.disposeCoreExit = core.onEvent('core.exit', () => this.onCoreDisconnected())
+    }
 
     const environment: Record<string, string> = {}
     const childEnvironment = backgroundPolicyPath
@@ -151,9 +159,14 @@ class CoreChildProcess extends EventEmitter {
     }, (error) => {
       if (this.settled) return
       this.settled = true
+      this.exitCode = -1
+      this.stdout.end()
+      this.stderr.end()
       this.dispose()
       queueMicrotask(() => {
-        this.emit('error', error instanceof Error ? error : new Error(String(error)))
+        const normalized = error instanceof Error ? error : new Error(String(error))
+        if (this.listenerCount('error') > 0) this.emit('error', normalized)
+        this.emit('exit', -1, null)
         this.emit('close', -1, null)
       })
     })
@@ -221,6 +234,17 @@ class CoreChildProcess extends EventEmitter {
     this.emit('close', this.exitCode, this.signalCode)
   }
 
+  private onCoreDisconnected(): void {
+    if (this.settled) return
+    this.settled = true
+    this.exitCode = -1
+    this.stdout.end()
+    this.stderr.end()
+    this.dispose()
+    this.emit('exit', -1, null)
+    this.emit('close', -1, null)
+  }
+
   private async cancel(): Promise<void> {
     try {
       await this.spawnPromise
@@ -233,7 +257,9 @@ class CoreChildProcess extends EventEmitter {
   private dispose(): void {
     this.disposeOutput?.()
     this.disposeExit?.()
+    this.disposeCoreExit?.()
     this.disposeOutput = undefined
     this.disposeExit = undefined
+    this.disposeCoreExit = undefined
   }
 }

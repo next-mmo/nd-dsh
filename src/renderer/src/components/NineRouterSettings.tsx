@@ -203,12 +203,12 @@ export function NineRouterSettings({ onError, onConnected, onNavigateToExtension
                   </Badge>
                 ) : null}
                 {state?.installed && unverified ? (
-                  <Badge variant="secondary" className="border-amber-500/30 bg-amber-500/10 text-[10px] text-amber-300">
+                  <Badge variant="secondary" className="border-amber-500/30 bg-amber-500/10 text-[10px] text-amber-800 dark:text-amber-300">
                     Unverified import
                   </Badge>
                 ) : null}
                 {state?.installed && !unverified && state?.trusted ? (
-                  <Badge variant="secondary" className="border-emerald-500/30 bg-emerald-500/10 text-[10px] text-emerald-300">
+                  <Badge variant="secondary" className="border-emerald-500/30 bg-emerald-500/10 text-[10px] text-emerald-800 dark:text-emerald-300">
                     <ShieldCheck className="mr-0.5 size-3" /> Release verified
                   </Badge>
                 ) : null}
@@ -218,7 +218,7 @@ export function NineRouterSettings({ onError, onConnected, onNavigateToExtension
                   {state?.running ? (
                     <>
                       <span className="size-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.7)] animate-pulse" />
-                      <span className="text-emerald-400">Running on {state.endpoint ?? baseUrl}</span>
+                      <span className="text-emerald-700 dark:text-emerald-400">Running on {state.endpoint ?? baseUrl}</span>
                     </>
                   ) : state?.installed ? (
                     <>
@@ -480,7 +480,7 @@ export function NineRouterSettings({ onError, onConnected, onNavigateToExtension
               >
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
-                    <span className="rounded bg-orange-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-orange-400">
+                    <span className="rounded bg-orange-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-orange-700 dark:text-orange-400">
                       9R
                     </span>
                     <strong className="truncate font-mono text-xs text-foreground" title={item.id}>
@@ -488,7 +488,7 @@ export function NineRouterSettings({ onError, onConnected, onNavigateToExtension
                     </strong>
                   </div>
                   <div className="mt-1 flex items-center gap-2 text-[10px] text-faint">
-                    <span className="inline-flex items-center gap-1 text-emerald-400">
+                    <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400">
                       <Zap className="size-2.5" /> RTK Token Saver
                     </span>
                     <span>·</span>

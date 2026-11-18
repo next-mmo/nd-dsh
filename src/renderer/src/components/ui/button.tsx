@@ -10,13 +10,13 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default:
-          "border border-primary/70 bg-primary text-primary-foreground shadow-[0_1px_2px_rgba(0,0,0,0.22),inset_0_1px_0_rgba(255,255,255,0.18)] hover:bg-primary/90",
+          "border border-primary/80 bg-primary bg-gradient-to-b from-white/[0.15] to-transparent text-primary-foreground shadow-[0_1px_2px_rgba(0,0,0,0.22),inset_0_1px_0_rgba(255,255,255,0.24)] hover:brightness-105 active:brightness-95",
         destructive:
-          "border border-destructive/70 bg-destructive text-white shadow-[0_1px_2px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.16)] hover:bg-destructive/90 focus-visible:ring-destructive/20",
+          "border border-destructive/80 bg-destructive bg-gradient-to-b from-white/[0.14] to-transparent text-white shadow-[0_1px_2px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.20)] hover:brightness-105 active:brightness-95 focus-visible:ring-destructive/20",
         outline:
-          "border border-border-strong bg-surface-1/80 text-foreground shadow-[0_1px_2px_rgba(0,0,0,0.16),inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur-xl hover:bg-accent hover:text-accent-foreground",
+          "border border-border-strong/90 bg-surface-1/85 bg-gradient-to-b from-white/[0.06] to-transparent text-foreground shadow-[0_1px_2px_rgba(0,0,0,0.12),inset_0_1px_0_rgba(255,255,255,0.08)] backdrop-blur-xl hover:bg-accent hover:text-accent-foreground",
         secondary:
-          "border border-border-soft bg-secondary text-secondary-foreground shadow-[0_1px_2px_rgba(0,0,0,0.12),inset_0_1px_0_rgba(255,255,255,0.05)] hover:bg-accent",
+          "border border-border-soft bg-secondary bg-gradient-to-b from-white/[0.05] to-transparent text-secondary-foreground shadow-[0_1px_2px_rgba(0,0,0,0.10),inset_0_1px_0_rgba(255,255,255,0.07)] hover:bg-accent",
         ghost:
           "border border-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground",
         link: "rounded-none text-primary underline-offset-4 hover:underline active:scale-100",

@@ -35,6 +35,7 @@ function createBridge() {
     const meta = document.querySelector('meta[name="color-scheme"]')
     if (meta) meta.setAttribute('content', effective)
     if (renderer) renderer.setClearColor(effective === 'light' ? 0xf6f7f9 : 0x131519, 1)
+    if (typeof syncSceneTheme === 'function') syncSceneTheme(effective)
   }
 
   window.addEventListener('message', (event) => {
@@ -188,6 +189,7 @@ function createRenderer() {
   }
 }
 
+let syncSceneTheme = null
 const renderer = createRenderer()
 if (renderer) {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
@@ -258,6 +260,17 @@ if (renderer) {
     const alongZ = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.1, 3.5), gridMaterial)
     alongZ.position.set(offset, 0.05, 0)
     scene.add(alongZ)
+  }
+
+  syncSceneTheme = (effective) => {
+    const isLight = effective === 'light'
+    scene.background.setHex(isLight ? 0xf4f5f8 : 0x111318)
+    base.material.color.setHex(isLight ? 0xffffff : 0x1d212b)
+    gridMaterial.color.setHex(isLight ? 0xd2d7e2 : 0x2c3240)
+    requestRender()
+  }
+  if (document.documentElement.dataset.theme === 'light') {
+    syncSceneTheme('light')
   }
 
   const hover = new THREE.Mesh(

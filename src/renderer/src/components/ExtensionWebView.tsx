@@ -88,8 +88,14 @@ export function ExtensionWebView({ data, theme, docked = true, retained = false,
   const webView = data.webView
   const onErrorRef = useRef(onError)
   onErrorRef.current = onError
+  const themeRef = useRef(theme)
+  themeRef.current = theme
   const liveClientRef = useRef<LiveSessionClient | null>(null)
   const viewKey = liveStatusKey(data.extensionId, data.viewId, data.context)
+
+  useEffect(() => {
+    setReady(false)
+  }, [webView?.url])
 
   // ── Mirror capture state (nd.emulator only) ──
   const mirrorStateRef = useRef<{
@@ -116,6 +122,7 @@ export function ExtensionWebView({ data, theme, docked = true, retained = false,
     if (!frame || !webView?.url) return
     const expectedOrigin = new URL(webView.url).origin
     const ms = mirrorStateRef.current
+    let disposed = false
 
     const stopCapture = () => {
       if (ms.rafId) {
@@ -147,6 +154,10 @@ export function ExtensionWebView({ data, theme, docked = true, retained = false,
             },
           },
         })
+        if (disposed) {
+          for (const t of stream.getTracks()) t.stop()
+          return
+        }
         const track = stream.getVideoTracks()[0]
         if (!track) throw new Error('No video track in capture stream')
         ms.track = track
@@ -156,6 +167,13 @@ export function ExtensionWebView({ data, theme, docked = true, retained = false,
         video.muted = true
         video.playsInline = true
         await video.play()
+        if (disposed) {
+          stopCapture()
+          video.pause()
+          video.srcObject = null
+          video.remove()
+          return
+        }
         ms.video = video
 
         const onFrame = () => {
@@ -209,6 +227,7 @@ export function ExtensionWebView({ data, theme, docked = true, retained = false,
 
     window.addEventListener('message', onMirrorMessage)
     return () => {
+      disposed = true
       window.removeEventListener('message', onMirrorMessage)
       stopCapture()
     }
@@ -390,14 +409,6 @@ export function ExtensionWebView({ data, theme, docked = true, retained = false,
     // origin equality is a strong sender check. Comparing event.source to
     // frame.contentWindow is not reliable across the cross-origin boundary.
     const expectedOrigin = new URL(webView.url).origin
-    const hello: NdWebViewHelloMessage = {
-      kind: 'nd-webview:hello',
-      protocol: ND_WEBVIEW_BRIDGE_PROTOCOL,
-      extensionId: data.extensionId,
-      viewId: data.viewId,
-      context: data.context,
-      theme,
-    }
     let pendingCalls = 0
     const onMessage = (event: MessageEvent): void => {
       if (event.origin !== expectedOrigin) return
@@ -407,6 +418,14 @@ export function ExtensionWebView({ data, theme, docked = true, retained = false,
       if (!isNdWebViewBridgeMessage(event.data)) return
       const message = event.data
       if (message.kind === 'nd-webview:ready') {
+        const hello: NdWebViewHelloMessage = {
+          kind: 'nd-webview:hello',
+          protocol: ND_WEBVIEW_BRIDGE_PROTOCOL,
+          extensionId: data.extensionId,
+          viewId: data.viewId,
+          context: data.context,
+          theme: themeRef.current,
+        }
         frame.contentWindow?.postMessage(hello, expectedOrigin)
         setReady(true)
         return
@@ -435,14 +454,23 @@ export function ExtensionWebView({ data, theme, docked = true, retained = false,
           }, expectedOrigin)
           if (!result.ok && result.error && result.error.code !== 'denied') onErrorRef.current?.(result.error.message)
         })
-        .catch((cause) => onErrorRef.current?.(cause instanceof Error ? cause.message : String(cause)))
+        .catch((cause) => {
+          const messageText = cause instanceof Error ? cause.message : String(cause)
+          frame.contentWindow?.postMessage({
+            kind: 'nd-webview:result',
+            requestId: message.requestId,
+            ok: false,
+            error: { code: 'failed', message: messageText || 'The action could not run.' },
+          }, expectedOrigin)
+          onErrorRef.current?.(messageText)
+        })
         .finally(() => { pendingCalls -= 1 })
     }
     window.addEventListener('message', onMessage)
     return () => {
       window.removeEventListener('message', onMessage)
     }
-  }, [webView?.url, webView?.token, data.extensionId, data.viewId, data.context, theme])
+  }, [webView?.url, webView?.token, data.extensionId, data.viewId, data.context])
 
   if (!webView?.url) return null
   return (

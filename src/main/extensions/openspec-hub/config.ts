@@ -43,7 +43,12 @@ export function loadConfig(configPath: string): HubConfig {
       throw new Error(`project ${id}: "path" must be a non-empty string`)
     }
     const resolved = path.resolve(baseDir, entry.path)
-    const canonical = existsSync(resolved) ? realpathSync(resolved) : resolved
+    let canonical = resolved
+    try {
+      if (existsSync(resolved)) canonical = realpathSync(resolved)
+    } catch {
+      canonical = resolved
+    }
     const project: ProjectConfig = {
       id,
       name: typeof entry.name === 'string' && entry.name.length > 0 ? entry.name : id,

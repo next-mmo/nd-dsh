@@ -534,8 +534,16 @@ export class AssistantEngine {
 
   private pruneActions(): void {
     const now = Date.now()
-    for (const action of this.actions.values()) {
+    for (const [id, action] of this.actions) {
       if (action.status === 'pending' && action.expiresAt <= now) action.status = 'expired'
+      if (action.status !== 'pending' && action.expiresAt + 600_000 <= now) {
+        this.actions.delete(id)
+      }
+    }
+    while (this.actions.size > 100) {
+      const oldest = this.actions.keys().next().value
+      if (!oldest) break
+      this.actions.delete(oldest)
     }
   }
 

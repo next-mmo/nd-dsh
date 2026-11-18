@@ -477,7 +477,7 @@ export function ModelSettings({ onError }: ModelSettingsProps) {
                   </>
                 )}
               </div>
-              <div className="flex shrink-0 items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className={pillBadge(selected.enabled)}>{selected.enabled ? 'Enabled' : 'Disabled'}</span>
                 <button type="button" className={scopeButton} disabled={enableBlocked} onClick={() => { if (!enableBlocked) updateSelected({ enabled: !selected.enabled }) }}>{selected.enabled ? 'Disable' : 'Enable'}</button>
                 {enableBlocked ? (
@@ -516,7 +516,7 @@ export function ModelSettings({ onError }: ModelSettingsProps) {
                     {API_FORMATS.map((format) => <SelectItem key={format} value={format}>{format}</SelectItem>)}
                   </SelectContent>
                 </Select>
-                <span className="max-w-[300px] truncate text-[10px]/[1.45] text-(--models-muted)">Native/catalog mode lets the runtime use a known provider's own protocol and ambient authentication. Custom gateways can use OpenAI Completions, OpenAI Responses, or Anthropic Messages.</span>
+                <span className="text-[10.5px]/[1.5] text-(--models-muted)">Native/catalog mode lets the runtime use a known provider's own protocol and ambient authentication. Custom gateways can use OpenAI Completions, OpenAI Responses, or Anthropic Messages.</span>
               </div>
               <div className="flex flex-col gap-[5px]">
                 <label htmlFor="provider-api-key" className="text-[11px] font-medium text-(--models-muted)">Credential</label>
@@ -541,7 +541,7 @@ export function ModelSettings({ onError }: ModelSettingsProps) {
                     {showApiKey ? <EyeOffIcon /> : <EyeIcon />}
                   </button>
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <span className={pillBadge(selected.hasApiKey)}>{selected.hasApiKey ? 'Credential stored' : 'No stored credential'}</span>
                   <button type="button" className={scopeButton} disabled={!apiKeyDraft.trim() || savingCredential} onClick={() => void saveCredential()}>{selected.hasApiKey ? 'Replace key' : 'Save key'}</button>
                   {selected.hasApiKey ? <button type="button" className={scopeButton} disabled={savingCredential} onClick={() => void clearCredential()}>Clear key</button> : null}

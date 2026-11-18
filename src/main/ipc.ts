@@ -705,7 +705,10 @@ export function registerIpc(deps: IpcDependencies): () => void {
       return await operation
     } finally {
       if (!deps.window.isDestroyed()) {
-        deps.window.webContents.send(CAPABILITIES_IPC.statusChangedEvent, await deps.capabilities.statuses())
+        const statuses = await deps.capabilities.statuses().catch(() => undefined)
+        if (statuses !== undefined && !deps.window.isDestroyed() && !deps.window.webContents.isDestroyed()) {
+          deps.window.webContents.send(CAPABILITIES_IPC.statusChangedEvent, statuses)
+        }
       }
     }
   }

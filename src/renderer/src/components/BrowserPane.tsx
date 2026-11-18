@@ -582,12 +582,12 @@ export function BrowserPane({ active, state, onSnapshot, onError, onOpenSettings
         ) : null}
       </div>
 
-      <div className="flex h-[39px] shrink-0 min-w-0 items-center gap-[3px] border-b border-border-soft bg-secondary px-[7px] py-[5px]">
+      <div className="flex h-[40px] shrink-0 min-w-0 items-center gap-1 overflow-x-auto border-b border-border-soft bg-secondary px-2 py-[5px] [scrollbar-width:none]">
         <button className={iconButtonClasses} disabled={!state?.canGoBack || state?.annotationMode} onClick={() => void runBrowserAction(() => window.ndDsh.browser.back())} title="Back"><ArrowLeftIcon /></button>
         <button className={iconButtonClasses} disabled={!state?.canGoForward || state?.annotationMode} onClick={() => void runBrowserAction(() => window.ndDsh.browser.forward())} title="Forward"><ArrowRightIcon /></button>
         <button className={iconButtonClasses} disabled={Boolean(state?.annotationMode)} onClick={() => void runBrowserAction(() => window.ndDsh.browser.reload())} title="Reload"><ReloadIcon className={state?.loading ? 'animate-spin' : ''} /></button>
         <form
-          className="mx-1 flex h-7 min-w-0 flex-1 items-center gap-[7px] rounded-[7px] border border-border-strong bg-background px-[9px] transition-colors focus-within:border-(--border-focus)"
+          className="mx-1 flex h-7 min-w-[160px] flex-1 items-center gap-2 rounded-[8px] border border-border-soft bg-inset px-2.5 shadow-[inset_0_1px_2px_rgba(0,0,0,0.12)] transition-[border-color,box-shadow,background-color] focus-within:border-ring focus-within:bg-surface-1 focus-within:ring-[3px] focus-within:ring-ring/20"
           onSubmit={(event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (!state?.annotationMode) void navigate() }}
         >
           <span className={cn('size-1.5 shrink-0 rounded-full', state?.url.startsWith('https:') ? 'bg-primary' : 'bg-warning')} />
@@ -599,7 +599,7 @@ export function BrowserPane({ active, state, onSnapshot, onError, onOpenSettings
             onFocus={() => { addressFocused.current = true }}
             onBlur={() => { addressFocused.current = false }}
             spellCheck={false}
-            className="min-w-0 flex-1 border-0 bg-transparent font-mono text-[9px] text-soft outline-none"
+            className="min-w-0 flex-1 border-0 bg-transparent text-[12px] text-foreground outline-none placeholder:text-faint"
           />
         </form>
         {onSaveSite ? (

@@ -5,19 +5,32 @@ import { registerPromptShieldIpc } from '../prompt-shield/ipc.js'
 import { registerRouterIpc } from '../router/ipc.js'
 import type { NineRouterManagedRuntime } from '../router/nine-router-managed.js'
 import type { RouterService } from '../router/router-service.js'
+import type { CoreClient } from '../core/core-client.js'
+import type { DecisionSupportService } from '../organization/decision-support.js'
 import { registerToolRoutingIpc } from '../organization/tool-routing-ipc.js'
+import type { ProviderStore } from '../providers.js'
 import type { TerminalManager } from './terminal-manager.js'
 
 type Handler = (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown | Promise<unknown>
 
-export function registerTerminalIpc(window: BrowserWindow, manager: TerminalManager, router?: RouterService, nineRouter?: NineRouterManagedRuntime): () => void {
+export function registerTerminalIpc(
+  window: BrowserWindow,
+  manager: TerminalManager,
+  router?: RouterService,
+  nineRouter?: NineRouterManagedRuntime,
+  options?: {
+    providers?: ProviderStore | undefined
+    decisionSupport?: DecisionSupportService | undefined
+    core?: CoreClient | undefined
+  },
+): () => void {
   // Token Saver, Prompt Shield, ND Router and Tool Routing are registered
   // beside the small terminal preload/IPC bridge to avoid expanding the
   // already-large desktop IPC composition root.
-  const disposeTokenSaverIpc = registerTokenSaverIpc(window)
+  const disposeTokenSaverIpc = registerTokenSaverIpc(window, options?.providers)
   const disposePromptShieldIpc = registerPromptShieldIpc(window)
   const disposeRouterIpc = router ? registerRouterIpc(window, router, nineRouter) : () => undefined
-  const { dispose: disposeToolRoutingIpc } = registerToolRoutingIpc(window)
+  const { dispose: disposeToolRoutingIpc } = registerToolRoutingIpc(window, options?.decisionSupport, options?.core)
   const channels: string[] = []
   const handle = (channel: string, listener: Handler): void => {
     ipcMain.removeHandler(channel)

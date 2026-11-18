@@ -1,48 +1,53 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
 
+@custom-variant dark (&:where(:root:not([data-theme='light']), :root:not([data-theme='light']) *));
+
 /*
  * ND-DSH desktop design system.
  *
- * The visual language is inspired by modern macOS: quiet graphite surfaces,
- * restrained translucency, system-blue focus states, soft separators and
- * generous corner radii. It intentionally uses original ND components and
- * does not copy Apple artwork or private assets.
+ * Visual language: realistic modern macOS (Sequoia / Tahoe Liquid Glass) —
+ * layered vibrancy, specular hairline rims, tactile controls, system-blue
+ * focus states, soft separators, and continuous corner radii. Uses original
+ * ND components and never copies Apple artwork or private assets.
  */
 :root {
   --background: #0b0c0f;
   --foreground: #f5f5f7;
   --bg-glow: rgb(10 132 255 / 14%);
+  --primary-rgb: 10, 132, 255;
 
-  --card: rgb(29 30 35 / 94%);
+  --card: rgb(28 29 35 / 92%);
   --card-foreground: #f5f5f7;
-  --popover: rgb(35 36 42 / 96%);
+  --popover: rgb(34 35 42 / 94%);
   --popover-foreground: #f5f5f7;
 
   --primary: #0a84ff;
   --primary-foreground: #ffffff;
 
-  --secondary: rgb(31 32 37 / 92%);
+  --secondary: rgb(32 33 39 / 92%);
   --secondary-foreground: #f5f5f7;
 
   --muted: rgb(255 255 255 / 6%);
   --muted-foreground: #a1a1aa;
 
-  --accent: rgb(255 255 255 / 8%);
+  --accent: rgb(255 255 255 / 8.5%);
   --accent-foreground: #f5f5f7;
 
   --destructive: #ff453a;
   --destructive-foreground: #ffffff;
 
-  --border: rgb(255 255 255 / 10%);
-  --border-soft: rgb(255 255 255 / 7%);
-  --border-strong: rgb(255 255 255 / 15%);
+  --border: rgb(255 255 255 / 10.5%);
+  --border-soft: rgb(255 255 255 / 7.5%);
+  --border-strong: rgb(255 255 255 / 16%);
   --input: rgb(255 255 255 / 13%);
   --ring: #0a84ff;
 
   /* Product surfaces */
   --info: #64d2ff;
   --warning: #ffd60a;
+  --warning-foreground: #1c1917;
+  --success: #30d158;
   --strong: #ffffff;
   --soft: #d1d1d6;
   --faint: #8e8e93;
@@ -97,38 +102,41 @@
 }
 
 :root[data-theme='light'] {
-  --background: #eef0f4;
+  --background: #eef0f5;
   --foreground: #1d1d1f;
-  --bg-glow: rgb(0 122 255 / 11%);
+  --bg-glow: rgb(0 122 255 / 10%);
+  --primary-rgb: 0, 122, 255;
 
-  --card: rgb(255 255 255 / 90%);
+  --card: rgb(255 255 255 / 88%);
   --card-foreground: #1d1d1f;
-  --popover: rgb(255 255 255 / 96%);
+  --popover: rgb(255 255 255 / 94%);
   --popover-foreground: #1d1d1f;
 
   --primary: #007aff;
   --primary-foreground: #ffffff;
 
-  --secondary: rgb(255 255 255 / 78%);
+  --secondary: rgb(255 255 255 / 82%);
   --secondary-foreground: #1d1d1f;
 
-  --muted: rgb(30 30 35 / 5%);
+  --muted: rgb(28 28 32 / 5.5%);
   --muted-foreground: #6e6e73;
 
-  --accent: rgb(30 30 35 / 7%);
+  --accent: rgb(28 28 32 / 7%);
   --accent-foreground: #1d1d1f;
 
   --destructive: #ff3b30;
   --destructive-foreground: #ffffff;
 
-  --border: rgb(30 30 35 / 12%);
-  --border-soft: rgb(30 30 35 / 8%);
-  --border-strong: rgb(30 30 35 / 17%);
-  --input: rgb(30 30 35 / 14%);
+  --border: rgb(28 28 32 / 11%);
+  --border-soft: rgb(28 28 32 / 7.5%);
+  --border-strong: rgb(28 28 32 / 16%);
+  --input: rgb(28 28 32 / 13%);
   --ring: #007aff;
 
   --info: #007aff;
-  --warning: #9a6700;
+  --warning: #b45309;
+  --warning-foreground: #ffffff;
+  --success: #248a3d;
   --strong: #1d1d1f;
   --soft: #3a3a3c;
   --faint: #8e8e93;
@@ -209,6 +217,8 @@
 
   --color-info: var(--info);
   --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-success: var(--success);
   --color-strong: var(--strong);
   --color-soft: var(--soft);
   --color-faint: var(--faint);
@@ -267,6 +277,36 @@
   select {
     font: inherit;
   }
+
+  /* Realistic macOS popup-button treatment for native <select> elements so
+     even JSX-tested native selects render with crisp Apple chevrons & sheen. */
+  select:not([multiple]):not([size]) {
+    appearance: none;
+    background-image:
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2398989d' stroke-width='2.25' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 15 5 5 5-5'/%3E%3Cpath d='m7 9 5-5 5 5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.5rem center;
+    background-size: 12px 12px;
+    padding-right: 1.65rem;
+    box-shadow:
+      0 1px 2px rgb(0 0 0 / 12%),
+      inset 0 1px 0 rgb(255 255 255 / 6%);
+    transition: border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
+  }
+
+  :root[data-theme='light'] select:not([multiple]):not([size]) {
+    background-image:
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236e6e73' stroke-width='2.25' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 15 5 5 5-5'/%3E%3Cpath d='m7 9 5-5 5 5'/%3E%3C/svg%3E");
+    box-shadow:
+      0 1px 2px rgb(28 28 32 / 6%),
+      inset 0 1px 0 rgb(255 255 255 / 85%);
+  }
+
+  select:not([multiple]):not([size]):focus-visible {
+    border-color: var(--ring);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 22%, transparent);
+    outline: none;
+  }
 }
 
 /* Electron window drag regions for the custom titlebars. */
@@ -299,10 +339,12 @@ body.float-mode,
 [data-slot='select-content'],
 [data-slot='command'] {
   border-color: var(--border-soft);
-  backdrop-filter: blur(24px) saturate(1.25);
+  backdrop-filter: blur(32px) saturate(1.5);
   box-shadow:
-    0 20px 55px rgb(0 0 0 / 24%),
-    inset 0 1px 0 rgb(255 255 255 / 5%);
+    0 0 0 0.5px rgb(255 255 255 / 4%),
+    0 2px 6px rgb(0 0 0 / 18%),
+    0 22px 58px -10px rgb(0 0 0 / 38%),
+    inset 0 1px 0 rgb(255 255 255 / 8%);
 }
 
 :root[data-theme='light'] [data-slot='card'],
@@ -313,8 +355,10 @@ body.float-mode,
 :root[data-theme='light'] [data-slot='select-content'],
 :root[data-theme='light'] [data-slot='command'] {
   box-shadow:
-    0 18px 48px rgb(31 35 48 / 12%),
-    inset 0 1px 0 rgb(255 255 255 / 75%);
+    0 0 0 0.5px rgb(28 28 32 / 5%),
+    0 2px 6px rgb(28 28 32 / 5%),
+    0 20px 50px -10px rgb(28 28 32 / 14%),
+    inset 0 1px 0 rgb(255 255 255 / 92%);
 }
 
 [data-slot='dialog-content'],

@@ -9,6 +9,8 @@ import type {
 } from '../../../shared/design'
 import { BrowserPane } from './BrowserPane'
 import { cn } from '../lib/utils'
+import { useMiniBrowserActive } from '../lib/use-mini-browser'
+import { useNativeViewOcclusion } from '../lib/use-native-view-occlusion'
 import { Button } from './ui/button'
 import { Badge } from './ui/badge'
 import { Card } from './ui/card'
@@ -226,8 +228,8 @@ export function DesignView({ active, workspace, workspaceSelected, browser, harn
     <TooltipProvider>
       <div className="flex h-full w-full min-h-0 min-w-0 flex-col bg-surface-0">
         {/* Top bar: Design surface switcher */}
-        <header className="flex h-11 shrink-0 items-center justify-between border-b border-border-soft bg-surface-1/80 px-3 backdrop-blur">
-          <div className="flex items-center gap-3">
+        <header className="flex h-11 shrink-0 min-w-0 items-center justify-between gap-2 overflow-x-auto border-b border-border-soft bg-surface-1/85 px-3 backdrop-blur-xl [scrollbar-width:none]">
+          <div className="flex shrink-0 items-center gap-3">
             <div className="flex items-center gap-2">
               <span className="flex size-6 items-center justify-center rounded-md bg-primary/10 text-[11px] font-black tracking-wider text-primary">
                 ND
@@ -731,12 +733,16 @@ function NdPencilPane({
     }
   }, [active, onError])
 
+  const nativeOverlayOpen = useNativeViewOcclusion()
+  const miniBrowserActive = useMiniBrowserActive()
+  const visible = active && !nativeOverlayOpen && !miniBrowserActive
+
   useEffect(() => {
-    void window.ndDshDesign.freeformSetVisible(active).catch((cause: unknown) => onError(errorMessage(cause)))
+    void window.ndDshDesign.freeformSetVisible(visible).catch((cause: unknown) => onError(errorMessage(cause)))
     return () => {
       void window.ndDshDesign.freeformSetVisible(false).catch((cause: unknown) => onError(errorMessage(cause)))
     }
-  }, [active, onError])
+  }, [visible, onError])
 
   return (
     <div className="flex h-full w-full min-h-0 min-w-0 flex-col bg-surface-0">
@@ -809,7 +815,7 @@ function NdPencilPane({
       </header>
 
       {/* Surface target container for child WebContentsView bounds sync */}
-      <div ref={surfaceRef} className="relative flex-1 min-h-0 min-w-0 bg-[#121212]">
+      <div ref={surfaceRef} className="relative flex-1 min-h-0 min-w-0 bg-surface-0">
         {state.status !== 'ready' && (
           <div className="absolute inset-0 flex items-center justify-center bg-surface-0/90 backdrop-blur text-xs text-muted-foreground">
             {state.status === 'starting' ? (

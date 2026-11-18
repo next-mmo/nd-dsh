@@ -584,12 +584,24 @@ export function renderPhoneAudioReceiverHtml(options: ReceiverPageOptions): stri
             statRtt.textContent = lastLatencyMs + ' ms';
             return;
           }
-          if (msg.type === 'server-stop') {
+          if (msg.type === 'token-rotated') {
             intentionalClose = true;
-            showError(msg.reason || 'Streaming stopped by desktop.');
+            showError(msg.reason || 'Pairing code was rotated on the PC. Enter the new 6-digit code.');
             token = '';
             storeToken('');
             notifyParent('nd-phone-link:unpaired', { reason: msg.reason });
+            cleanupPeer();
+            cleanupSocket();
+            clearMediaSession();
+            pairCard.hidden = false;
+            playerCard.hidden = true;
+            setStatus('Unauthorized', 'bad');
+            updateControls();
+            return;
+          }
+          if (msg.type === 'server-stop') {
+            intentionalClose = true;
+            showError(msg.reason || 'Streaming stopped by desktop.');
             cleanupPeer();
             cleanupSocket();
             clearMediaSession();

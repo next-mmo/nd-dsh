@@ -275,9 +275,9 @@ export class GenericWebEngine {
     }
     if (!session) throw new Error(`${this.config.engineId} session could not be created`)
     if (input.isolated) session.isolated = true
-    if (session.running) throw new Error('This ${this.config.name} chat already has an active turn')
+    if (session.running) throw new Error(`This ${this.config.name} chat already has an active turn`)
     if ([...this.sessions.values()].some((candidate) => candidate.running && candidate.sessionId !== session.sessionId)) {
-      throw new Error('${this.config.name} uses ND\'s single visible browser pane. Finish the active ${this.config.name} turn before starting another one.')
+      throw new Error(`${this.config.name} uses ND's single visible browser pane. Finish the active ${this.config.name} turn before starting another one.`)
     }
 
     const hasImages = (input.images?.length ?? 0) > 0
@@ -320,7 +320,7 @@ export class GenericWebEngine {
             this.persistStore()
           }
           if (index < transports.length - 1 && canSwitchTransport(turnError)) {
-            this.options.log?.(`[grok-web] ${transport} failed (${turnError.message}); falling back to ${transports[index + 1]}`)
+            this.options.log?.(`[${this.config.engineId}] ${transport} failed (${turnError.message}); falling back to ${transports[index + 1]}`)
             continue
           }
           throw turnError
@@ -470,7 +470,7 @@ export class GenericWebEngine {
       }
       throw new WebTurnError({
         code: 'login-required',
-        message: "${this.config.name} is open in ND's visible Browser pane, but its composer is unavailable. Sign in to grok.com (or complete any verification challenge), then resend this message.",
+        message: `${this.config.name} is open in ND's visible Browser pane, but its composer is unavailable. Sign in to ${this.config.name} (or complete any verification challenge), then resend this message.`,
         phase: 'open',
       })
     } catch (error) {
@@ -495,7 +495,7 @@ export class GenericWebEngine {
       if (!this.options.browser.windowIsOnScreen()) {
         throw new WebTurnError({
           code: 'page-busy',
-          message: "${this.config.name} needs ND's window on screen to render its reply. Restore the ND window, then resend this message.",
+          message: `${this.config.name} needs ND's window on screen to render its reply. Restore the ND window, then resend this message.`,
           phase: 'open',
         })
       }
@@ -551,7 +551,7 @@ export class GenericWebEngine {
       const completed = await this.waitForAssistant(driver, session, baselineAssistantCount, signal)
       this.captureConversationUrl(session, completed.url)
       const assistant = [...completed.turns].reverse().find((turn) => turn.role === 'assistant')
-      if (!assistant?.text.trim()) throw new Error('${this.config.name} completed without a readable assistant message')
+      if (!assistant?.text.trim()) throw new Error(`${this.config.name} completed without a readable assistant message`)
       progress.enter('read')
       this.recordAssistantMessage(session, assistant.text.trim())
       this.markAllTurnsSeen(session, completed)
@@ -567,10 +567,10 @@ export class GenericWebEngine {
     const classified = progress.classify(error)
     if (!(error instanceof PageGuardError)) return classified
     const host = (() => { try { return new URL(error.origin).hostname } catch { return '' } })()
-    if (host.endsWith('grok.com') || host.endsWith('x.ai')) {
+    if (isGenericPageUrl(error.origin, this.config.origins)) {
       return new WebTurnError({
         code: 'login-required',
-        message: "${this.config.name} needs you signed in to grok.com in ND's visible Browser pane. Sign in there, then resend this message.",
+        message: `${this.config.name} needs you signed in in ND's visible Browser pane. Sign in there, then resend this message.`,
         phase: classified.phase,
         submission: classified.submission,
         ...(classified.transport ? { transport: classified.transport } : {}),
@@ -600,7 +600,7 @@ export class GenericWebEngine {
   private pageBusyError(): WebTurnError {
     return new WebTurnError({
       code: 'page-busy',
-      message: "Grok is still answering or uploading in ND's Browser pane. Let it finish (or stop it), then resend this message.",
+      message: `${this.config.name} is still answering or uploading in ND's Browser pane. Let it finish (or stop it), then resend this message.`,
       phase: 'observe',
     })
   }
@@ -609,21 +609,21 @@ export class GenericWebEngine {
     if (snapshot.challenge) {
       throw new WebTurnError({
         code: 'challenge',
-        message: "Cloudflare or Grok is showing a verification challenge in ND's Browser pane. Complete the challenge and resend this message.",
+        message: `Cloudflare or ${this.config.name} is showing a verification challenge in ND's Browser pane. Complete the challenge and resend this message.`,
         phase: 'observe',
       })
     }
     if (snapshot.loginRequired) {
       throw new WebTurnError({
         code: 'login-required',
-        message: "${this.config.name} needs you signed in to grok.com in ND's visible Browser pane. Sign in there, then resend this message.",
+        message: `${this.config.name} needs you signed in in ND's visible Browser pane. Sign in there, then resend this message.`,
         phase: 'observe',
       })
     }
     if (snapshot.rateLimited) {
       throw new WebTurnError({
         code: 'rate-limited',
-        message: 'Grok has rate limited requests. Wait a few moments, then try again.',
+        message: `${this.config.name} has rate limited requests. Wait a few moments, then try again.`,
         phase: 'observe',
       })
     }
@@ -674,12 +674,12 @@ export class GenericWebEngine {
     try {
       staged = stageWebImages(images)
       const hasInput = await driver.evaluate<boolean>(`${this.fileInputExpression()} !== null`)
-      if (!hasInput) throw new Error("${this.config.name} has no file input in ND's Browser pane. Sign in to grok.com, then resend this message.")
+      if (!hasInput) throw new Error(`${this.config.name} has no file input in ND's Browser pane. Sign in to ${this.config.name}, then resend this message.`)
       await sleep(200)
       const baseline = await driver.evaluate<{ count: number; uploading: boolean }>(GROK_ATTACHMENT_STATE_SCRIPT)
       assertTurnActive(signal)
       if (!await driver.setFilesOnInput(this.fileInputExpression(), staged.files)) {
-        throw new Error('${this.config.name} did not expose its file input. Reload Grok and resend this message.')
+        throw new Error(`${this.config.name} did not expose its file input. Reload ${this.config.name} and resend this message.`)
       }
       const deadline = Date.now() + ATTACHMENT_TIMEOUT_MS
       while (Date.now() < deadline) {
@@ -688,7 +688,7 @@ export class GenericWebEngine {
         if (state.count >= baseline.count + images.length && !state.uploading) return staged
         await sleep(ATTACHMENT_POLL_MS)
       }
-      throw new Error('${this.config.name} did not finish attaching the image in time. Try a smaller PNG, JPEG, WebP, or GIF and resend.')
+      throw new Error(`${this.config.name} did not finish attaching the image in time. Try a smaller PNG, JPEG, WebP, or GIF and resend.`)
     } catch (error) {
       discardWebImages(staged)
       throw error
@@ -720,7 +720,7 @@ export class GenericWebEngine {
         }
         return false;
       })()`)
-      if (!typed) throw new Error('${this.config.name} composer is unavailable.')
+      if (!typed) throw new Error(`${this.config.name} composer is unavailable.`)
       await sleep(250)
       if (composerKey(await this.readComposerText(driver)) === expected) {
         await sleep(250)
@@ -728,7 +728,7 @@ export class GenericWebEngine {
       }
       if (!accepted) await sleep(200)
     }
-    if (!accepted) throw new Error('${this.config.name} composer did not keep the full message. Reload Grok and retry.')
+    if (!accepted) throw new Error(`${this.config.name} composer did not keep the full message. Reload ${this.config.name} and retry.`)
 
     progress.enter('submit')
     const baselineUserTurns = await this.readUserTurnCount(driver)
@@ -817,7 +817,7 @@ export class GenericWebEngine {
     }
     throw new WebTurnError({
       code: 'submission-uncertain',
-      message: "${this.config.name} did not confirm that it accepted the message. The message may already have been sent — check ND's Browser pane before resending; ND will not resend it automatically.",
+      message: `${this.config.name} did not confirm that it accepted the message. The message may already have been sent — check ND's Browser pane before resending; ND will not resend it automatically.`,
       phase: 'confirm',
       submission: 'uncertain',
       transport: progress.transport,
@@ -850,7 +850,7 @@ export class GenericWebEngine {
     let stableCount = 0
     let polls = 0
     while (Date.now() < deadline) {
-      if (signal.aborted) throw new Error('${this.config.name} turn was stopped.')
+      if (signal.aborted) throw new Error(`${this.config.name} turn was stopped.`)
       const snapshot = await this.captureSnapshot(driver)
       this.throwStopConditions(snapshot)
       this.captureConversationUrl(session, snapshot.url)
@@ -858,7 +858,7 @@ export class GenericWebEngine {
       const latest = assistants.at(-1)?.text.trim() ?? ''
       if (session.isolated && polls % 10 === 0) {
         this.options.log?.(
-          `[grok-web] isolated wait polls=${polls} complete=${snapshot.complete} busy=${snapshot.busy} assistants=${assistants.length}/${baselineAssistantCount} stable=${stableCount} latest=${latest.length}`,
+          `[${this.config.engineId}] isolated wait polls=${polls} complete=${snapshot.complete} busy=${snapshot.busy} assistants=${assistants.length}/${baselineAssistantCount} stable=${stableCount} latest=${latest.length}`,
         )
       }
       polls += 1
@@ -873,13 +873,13 @@ export class GenericWebEngine {
         && Date.now() - startedAt > 45_000) {
         throw new WebTurnError({
           code: 'empty-reply',
-          message: "Grok finished without rendering a reply. Keep ND's window on screen and the Browser pane available, then resend this message.",
+          message: `${this.config.name} finished without rendering a reply. Keep ND's window on screen and the Browser pane available, then resend this message.`,
           phase: 'wait',
         })
       }
       await sleep(TURN_POLL_MS)
     }
-    throw new Error('${this.config.name} turn exceeded the 10 minute completion deadline.')
+    throw new Error(`${this.config.name} turn exceeded the 10 minute completion deadline.`)
   }
 
   private async captureSnapshot(driver: PageDriver): Promise<GrokDomSnapshot> {
@@ -937,6 +937,9 @@ export class GenericWebEngine {
 
       const isBusy = stops.length > 0;
       const host = location.hostname;
+      const origin = location.origin.toLowerCase();
+      const allowedOrigins = ${JSON.stringify(this.config.origins.map((o) => o.toLowerCase()))};
+      const isExpectedOrigin = allowedOrigins.includes(origin);
       const body = document.body?.innerText || '';
       const signInPath = /\\/sign_?in|\\/login|\\/auth/i.test(location.pathname);
       const hasPasswordField = document.querySelector('input[type="password"]') !== null;
@@ -950,8 +953,8 @@ export class GenericWebEngine {
         complete: !isBusy && (Boolean(sendButton) || turns.length > 0),
         pendingSend: false,
         challenge: host === 'challenges.cloudflare.com' || /just a moment|checking your browser|verify you are human|unusual traffic/i.test(document.title + ' ' + body),
-        loginRequired: signInPath || ((host.endsWith('grok.com') || host.endsWith('x.ai')) && !composer && hasPasswordField)
-          || ((host.endsWith('grok.com') || host.endsWith('x.ai')) && !composer && /log in|sign in/i.test(body)),
+        loginRequired: signInPath || (isExpectedOrigin && !composer && hasPasswordField)
+          || (isExpectedOrigin && !composer && /log in|sign in/i.test(body)),
         rateLimited: /rate limit|too many requests|server busy|temporarily unavailable/i.test(body),
         sendEnabled: Boolean(sendButton) && !sendDisabled && !isBusy,
         userTurns: nodes.filter((node) => node.role === 'user').length,
@@ -1134,8 +1137,9 @@ export class GenericWebEngine {
     try {
       const parsed = JSON.parse(readFileSync(this.options.storePath, 'utf8')) as PersistedGrokWebStore
       if (parsed.version === 1 && Array.isArray(parsed.sessions)) {
+        const prefix = `${this.config.engineId}-`
         for (const session of parsed.sessions) {
-          if (typeof session.sessionId !== 'string' || !session.sessionId.startsWith('grok-web-')) continue
+          if (typeof session.sessionId !== 'string' || !session.sessionId.startsWith(prefix)) continue
           this.sessions.set(session.sessionId, {
             ...session,
             running: false,

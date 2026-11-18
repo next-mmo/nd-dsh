@@ -129,30 +129,39 @@ export class NdRestApiService {
     for (let offset = 0; offset < 10; offset++) {
       const candidatePort = preferredPort + offset
       const bound = await new Promise<boolean>((resolve) => {
-        server.once('error', (err: NodeJS.ErrnoException) => {
-          if (err.code === 'EADDRINUSE') {
-            resolve(false)
-          } else {
-            resolve(false)
-          }
-        })
-        server.listen(candidatePort, BIND_HOST, () => {
+        const onError = (): void => {
+          server.off('listening', onListening)
+          resolve(false)
+        }
+        const onListening = (): void => {
+          server.off('error', onError)
           resolve(true)
-        })
+        }
+        server.once('error', onError)
+        server.once('listening', onListening)
+        server.listen(candidatePort, BIND_HOST)
       })
       if (bound) return candidatePort
     }
 
     // Ephemeral port fallback
     return new Promise<number>((resolve, reject) => {
-      server.listen(0, BIND_HOST, () => {
+      const onError = (err: Error): void => {
+        server.off('listening', onListening)
+        reject(err)
+      }
+      const onListening = (): void => {
+        server.off('error', onError)
         const address = server.address()
         if (address && typeof address === 'object') {
           resolve(address.port)
         } else {
           reject(new Error('Failed to resolve bound port'))
         }
-      })
+      }
+      server.once('error', onError)
+      server.once('listening', onListening)
+      server.listen(0, BIND_HOST)
     })
   }
 
@@ -179,10 +188,16 @@ export class NdRestApiService {
   }
 
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    // CORS headers for loopback clients
-    res.setHeader('Access-Control-Allow-Origin', '*')
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept')
+    const host = typeof req.headers.host === 'string' ? req.headers.host.trim() : ''
+    if (host && !/^(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/i.test(host)) {
+      sendJson(res, 403, { ok: false, error: 'Non-loopback Host header is not permitted' })
+      return
+    }
+    const origin = typeof req.headers.origin === 'string' ? req.headers.origin.trim() : ''
+    if (origin && origin !== 'file://') {
+      sendJson(res, 403, { ok: false, error: 'Browser Origin requests are not permitted on the local CLI REST API' })
+      return
+    }
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204)

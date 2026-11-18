@@ -137,7 +137,7 @@ export function SettingsPane({
         <h1 className="m-0 text-sm font-semibold tracking-tight text-strong">Settings</h1>
       </header>
 
-      <aside className="flex min-h-0 flex-col gap-2 border-r border-border-soft px-2.5 py-3">
+      <aside className="flex min-h-0 flex-col gap-2.5 border-r border-border-soft bg-sidebar/75 px-2.5 py-3 backdrop-blur-xl">
         <input
           aria-label="Search settings"
           placeholder="Search settings"
@@ -148,7 +148,7 @@ export function SettingsPane({
             if (event.key === 'Enter' && results[0]) openSearchResult(results[0])
           }}
           spellCheck={false}
-          className="h-[28px] w-full shrink-0 rounded-md border border-border bg-background px-2.5 text-[11px] text-soft outline-none focus:border-(--border-focus)"
+          className="h-[30px] w-full shrink-0 rounded-[8px] border border-input bg-inset px-2.5 text-[11.5px] text-foreground shadow-[inset_0_1px_2px_rgba(0,0,0,0.12)] outline-none placeholder:text-faint focus:border-ring focus:bg-surface-1 focus:ring-[3px] focus:ring-ring/20"
         />
         {search.trim() ? (
           <div aria-label="Settings search results" className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-auto">
@@ -178,8 +178,10 @@ export function SettingsPane({
                 role="tab"
                 aria-selected={tab === id}
                 className={cn(
-                  'flex shrink-0 items-center gap-2 rounded-md px-2.5 py-[7px] text-left text-[11px] font-semibold transition-colors [&_svg]:size-[14px] [&_svg]:shrink-0',
-                  tab === id ? 'bg-primary/10 text-primary' : 'text-soft hover:bg-accent hover:text-strong',
+                  'flex shrink-0 items-center gap-2.5 rounded-[8px] px-2.5 py-[7px] text-left text-[12px] font-medium transition-all duration-150 [&_svg]:size-[14px] [&_svg]:shrink-0',
+                  tab === id
+                    ? 'bg-primary text-primary-foreground font-semibold shadow-[0_1px_3px_rgba(10,132,255,0.28),inset_0_1px_0_rgba(255,255,255,0.20)] [&_svg]:text-primary-foreground'
+                    : 'text-soft hover:bg-accent hover:text-strong [&_svg]:text-muted-foreground',
                 )}
                 onClick={() => onSelectTab(id)}
               >

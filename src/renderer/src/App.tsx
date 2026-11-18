@@ -342,6 +342,7 @@ export default function App() {
   const [personalPane, setPersonalPane] = useState<PersonalPane>('records')
   useEffect(() => window.ndDsh.ndExtensions.onBrowserFocus((focus) => {
     lastBrowserFocusAt.current = Date.now()
+    setExtensionViewRequest(null)
     const context = asNdContext(focus.context)
     setBrowserFocusNudge((nudge) => nudge + 1)
     if (browserFocusView(context) === 'personal') {
@@ -1107,17 +1108,15 @@ export default function App() {
   }
 
   const closeFileTab = (relativePath: string): void => {
-    setOpenFileTabs((tabs) => {
-      const index = tabs.findIndex((tab) => tab.relativePath === relativePath)
-      if (index < 0) return tabs
-      const next = tabs.filter((_, i) => i !== index)
-      setSelectedFile((current) =>
-        current && current.relativePath === relativePath
-          ? next[Math.min(index, next.length - 1)] ?? null
-          : current
-      )
-      return next
-    })
+    const index = openFileTabs.findIndex((tab) => tab.relativePath === relativePath)
+    if (index < 0) return
+    const next = openFileTabs.filter((_, i) => i !== index)
+    setOpenFileTabs(next)
+    setSelectedFile((current) =>
+      current && current.relativePath === relativePath
+        ? next[Math.min(index, next.length - 1)] ?? null
+        : current
+    )
   }
 
   const openDiff = (relativePath: string, staged: boolean): void => {
@@ -1882,7 +1881,7 @@ export default function App() {
           // Equal side tracks keep the main menu pill centred in the usable
           // titlebar (the pr band belongs to the native window buttons); the
           // brand column truncates before the pill can collide with anything.
-          'app-drag grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-[18px] border-b border-border-soft bg-titlebar pr-[148px] pl-3',
+          'app-drag grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1.5 border-b border-border-soft bg-titlebar py-1.5 pr-[148px] pl-3',
           headerKeepAlive && 'pointer-events-auto relative z-[60]',
         )}
       >
@@ -1894,11 +1893,11 @@ export default function App() {
             >
               <SidebarToggleIcon collapsed={sessionsCollapsed} />
             </TitlebarIconButton>
-            <span className="grid size-6 shrink-0 place-items-center rounded-[7px] border border-primary/30 bg-primary/10 text-sm font-extrabold tracking-[0.08em] text-primary">ND</span>
+            <span className="grid size-6 shrink-0 place-items-center rounded-[7px] border border-primary/30 bg-primary/10 text-sm font-extrabold tracking-[0.08em] text-primary shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]">ND</span>
             <div
               role="group"
               aria-label="Workspace profile"
-              className="app-no-drag flex h-7 shrink-0 items-center rounded-lg border border-border-soft bg-inset p-[2px] shadow-[inset_0_1px_2px_rgba(0,0,0,0.18)]"
+              className="app-no-drag flex h-7 shrink-0 items-center rounded-[8px] border border-border-soft bg-inset p-[2px] shadow-[inset_0_1px_2px_rgba(0,0,0,0.16)]"
             >
               {(['general', 'coding'] as const).map((profile) => (
                 <button
@@ -1907,11 +1906,11 @@ export default function App() {
                   aria-pressed={workspaceProfile === profile}
                   disabled={workspaceProfile === null || workspaceProfilePending}
                   className={cn(
-                    'grid h-[22px] min-w-[52px] place-items-center rounded-md border px-2 text-[9px] font-extrabold tracking-[0.06em] transition-[color,background-color,border-color,box-shadow] disabled:cursor-not-allowed disabled:opacity-50',
+                    'grid h-[22px] min-w-[52px] place-items-center rounded-[6px] border px-2 text-[9px] font-extrabold tracking-[0.06em] transition-[color,background-color,border-color,box-shadow] disabled:cursor-not-allowed disabled:opacity-50',
                     workspaceProfile === profile
                       ? (profile === 'general'
-                          ? 'border-blue-500/30 bg-blue-500/15 text-blue-400 shadow-[0_1px_3px_rgba(59,130,246,0.25)]'
-                          : 'border-emerald-500/30 bg-emerald-500/15 text-emerald-400 shadow-[0_1px_3px_rgba(16,185,129,0.25)]')
+                          ? 'border-sky-500/35 bg-sky-500/15 text-sky-700 shadow-[0_1px_3px_rgba(14,165,233,0.18)] dark:text-sky-400'
+                          : 'border-emerald-500/35 bg-emerald-500/15 text-emerald-700 shadow-[0_1px_3px_rgba(16,185,129,0.18)] dark:text-emerald-400')
                       : 'border-transparent text-faint hover:bg-accent hover:text-foreground',
                   )}
                   title={profile === 'general' ? 'General: Create, learn, and explore — everyday AI, personal notes, browser & design' : 'Coding: Build, debug, and ship — developer workbench, git controls, files, terminal & QA'}
@@ -1925,15 +1924,15 @@ export default function App() {
               <div
                 role="group"
                 aria-label="Coding surface"
-                className="app-no-drag flex h-7 shrink-0 items-center rounded-lg border border-border-soft bg-inset p-[2px] shadow-[inset_0_1px_2px_rgba(0,0,0,0.18)]"
+                className="app-no-drag flex h-7 shrink-0 items-center rounded-[8px] border border-border-soft bg-inset p-[2px] shadow-[inset_0_1px_2px_rgba(0,0,0,0.16)]"
               >
                 <button
                   type="button"
                   aria-pressed={surface === 'workbench'}
                   className={cn(
-                    'grid h-[22px] min-w-[32px] place-items-center rounded-md border px-1.5 text-[9px] font-extrabold tracking-[0.08em] transition-[color,background-color,border-color,box-shadow]',
+                    'grid h-[22px] min-w-[32px] place-items-center rounded-[6px] border px-1.5 text-[9px] font-extrabold tracking-[0.08em] transition-[color,background-color,border-color,box-shadow]',
                     surface === 'workbench'
-                      ? 'border-primary/25 bg-primary/12 text-primary shadow-[0_1px_3px_rgba(0,0,0,0.2)]'
+                      ? 'border-primary/25 bg-primary/12 text-primary shadow-[0_1px_3px_rgba(0,0,0,0.16)]'
                       : 'border-transparent text-faint hover:bg-accent hover:text-foreground',
                   )}
                   title="Use the ND coding workbench"
@@ -1945,9 +1944,9 @@ export default function App() {
                   type="button"
                   aria-pressed={surface === 'dsh'}
                   className={cn(
-                    'grid h-[22px] min-w-[36px] place-items-center rounded-md border px-1.5 text-[9px] font-extrabold tracking-[0.08em] transition-[color,background-color,border-color,box-shadow]',
+                    'grid h-[22px] min-w-[36px] place-items-center rounded-[6px] border px-1.5 text-[9px] font-extrabold tracking-[0.08em] transition-[color,background-color,border-color,box-shadow]',
                     surface === 'dsh'
-                      ? 'border-primary/25 bg-primary/12 text-primary shadow-[0_1px_3px_rgba(0,0,0,0.2)]'
+                      ? 'border-primary/25 bg-primary/12 text-primary shadow-[0_1px_3px_rgba(0,0,0,0.16)]'
                       : 'border-transparent text-faint hover:bg-accent hover:text-foreground',
                   )}
                   title="Use the DSH coding surface"
@@ -1959,8 +1958,8 @@ export default function App() {
             ) : null}
             <div className="flex min-w-0 flex-col">
               <div className="flex items-center gap-1.5">
-                <strong className="text-[14px] font-extrabold tracking-[0.06em] text-strong">ND-DSH</strong>
-                <span className={cn('rounded-full px-1.5 py-0.2 text-[9px] font-bold tracking-wider uppercase', workspaceProfile === 'general' ? 'border border-blue-500/20 bg-blue-500/10 text-blue-400' : 'border border-emerald-500/20 bg-emerald-500/10 text-emerald-400')}>{workspaceProfile === 'general' ? 'General' : 'Coding'}</span>
+                <strong className="text-[13.5px] font-extrabold tracking-[0.04em] text-strong">ND-DSH</strong>
+                <span className={cn('rounded-full px-1.5 py-0.5 text-[9px] font-bold tracking-wider uppercase', workspaceProfile === 'general' ? 'border border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-400' : 'border border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400')}>{workspaceProfile === 'general' ? 'General' : 'Coding'}</span>
               </div>
               <span className="overflow-hidden text-[11px] text-faint text-ellipsis whitespace-nowrap" title={workspaceProfile === 'general' ? 'Everyday AI · Create, learn, and explore' : (headerWorkspaceLabel && headerWorkspaceLabel !== 'No workspace' ? `${headerWorkspaceLabel} · Build, debug, and ship` : 'Build, debug, and ship')}>
                 {workspaceProfile === 'general' ? 'Create, learn, and explore' : (headerWorkspaceLabel && headerWorkspaceLabel !== 'No workspace' ? `${headerWorkspaceLabel} · Build, debug, and ship` : 'Build, debug, and ship')}
@@ -1969,7 +1968,7 @@ export default function App() {
           </div>
 
         </div>
-        <nav className="app-no-drag flex min-w-0 self-start items-center justify-center pt-[2px]" aria-label="ND-DSH navigation">
+        <nav className="app-no-drag flex min-w-0 items-center justify-center" aria-label="ND-DSH navigation">
           <div className="flex min-w-0 items-center justify-center gap-0.5 rounded-lg border border-border-soft bg-surface-1/70 p-[3px] shadow-[inset_0_1px_0_rgba(255,255,255,0.025),0_4px_14px_rgba(0,0,0,0.12)]">
             {navItems.map((item) => (
               <button
@@ -2293,29 +2292,31 @@ export default function App() {
                     {agentPane === 'files' ? (
                       <div className="h-full w-full min-h-0">
                         <Group orientation="horizontal" className="h-full w-full">
-                          <Panel className="min-h-0 min-w-0 overflow-hidden" minSize={FILES_EDITOR_MIN_PX}>
+                          <Panel className="flex min-h-0 min-w-0 flex-col overflow-hidden" minSize={FILES_EDITOR_MIN_PX}>
                             {activeDiff ? (
-                              <SurfaceErrorBoundary label="Diff" resetKey={`${activeDiff.relativePath}:${String(activeDiff.staged)}`} onError={notify}>
-                                <Suspense fallback={null}>
-                                  <DiffView
-                                    relativePath={activeDiff.relativePath}
-                                    staged={activeDiff.staged}
-                                    onClose={() => setActiveDiff(null)}
-                                    onError={notify}
-                                  />
-                                </Suspense>
-                              </SurfaceErrorBoundary>
+                              <div className="min-h-0 flex-1 overflow-hidden">
+                                <SurfaceErrorBoundary label="Diff" resetKey={`${activeDiff.relativePath}:${String(activeDiff.staged)}`} onError={notify}>
+                                  <Suspense fallback={null}>
+                                    <DiffView
+                                      relativePath={activeDiff.relativePath}
+                                      staged={activeDiff.staged}
+                                      onClose={() => setActiveDiff(null)}
+                                      onError={notify}
+                                    />
+                                  </Suspense>
+                                </SurfaceErrorBoundary>
+                              </div>
                             ) : (
                               <>
                                 {openFileTabs.length ? (
-                                  <div className="flex items-stretch overflow-x-auto border-b border-border-soft bg-secondary" role="tablist" aria-label="Open files">
+                                  <div className="flex shrink-0 items-stretch overflow-x-auto border-b border-border-soft bg-secondary" role="tablist" aria-label="Open files">
                                     {openFileTabs.map((tab) => {
                                       const active = selectedFile?.relativePath === tab.relativePath
                                       return (
                                         <div
                                           key={tab.relativePath}
                                           className={cn(
-                                            'group flex max-w-[220px] shrink-0 cursor-pointer items-center gap-1.5 border-r border-border-soft px-[11px] py-[7px] text-[10px]',
+                                            'group flex max-w-[220px] shrink-0 cursor-pointer items-center gap-1.5 border-r border-border-soft px-[11px] py-[7px] text-[11px] font-medium transition-colors',
                                             active ? 'bg-surface-0 text-strong' : 'text-soft hover:bg-accent/60'
                                           )}
                                           title={tab.relativePath}
@@ -2339,11 +2340,13 @@ export default function App() {
                                     })}
                                   </div>
                                 ) : null}
-                                <SurfaceErrorBoundary label="Editor" resetKey={selectedFile?.relativePath ?? ''} onError={notify}>
-                                  <Suspense fallback={null}>
-                                    <EditorPane file={selectedFile} onAgentPrompt={askAgent} onOpenLink={(url) => void openLink(url)} onError={notify} />
-                                  </Suspense>
-                                </SurfaceErrorBoundary>
+                                <div className="min-h-0 flex-1 overflow-hidden">
+                                  <SurfaceErrorBoundary label="Editor" resetKey={selectedFile?.relativePath ?? ''} onError={notify}>
+                                    <Suspense fallback={null}>
+                                      <EditorPane file={selectedFile} onAgentPrompt={askAgent} onOpenLink={(url) => void openLink(url)} onError={notify} />
+                                    </Suspense>
+                                  </SurfaceErrorBoundary>
+                                </div>
                               </>
                             )}
                           </Panel>
@@ -2698,7 +2701,7 @@ export default function App() {
         </div>
       ) : null}
       {pendingAppInspect ? (
-        <div role="dialog" aria-label="Inspected app info" className="fixed right-4 bottom-[46px] z-[150] flex w-[300px] flex-col gap-2 rounded-[10px] border border-border-strong bg-surface-1 p-3 shadow-[0_14px_40px_rgba(0,0,0,0.5)]">
+        <div role="dialog" aria-label="Inspected app info" className={cn('fixed right-4 z-[150] flex w-[300px] flex-col gap-2 rounded-xl border border-border-strong bg-surface-1/95 p-3 shadow-2xl backdrop-blur-xl', pendingPick ? 'bottom-[210px]' : 'bottom-[46px]')}>
           <div className="flex min-w-0 items-center gap-[7px]">
             <CameraIcon className="size-[13px] shrink-0 text-primary" />
             <strong className="overflow-hidden font-mono text-[11px] text-ellipsis whitespace-nowrap">
@@ -2747,7 +2750,7 @@ export default function App() {
         </div>
       ) : null}
       {appInspectCountdown !== null ? (
-        <div role="status" className="fixed right-[18px] bottom-[38px] z-50 max-w-[min(420px,calc(100vw-36px))] rounded-lg border border-border-strong bg-secondary px-3 py-2 text-xs text-soft shadow-[0_18px_50px_rgba(0,0,0,0.46)]">
+        <div role="status" className="fixed right-[18px] bottom-[38px] z-[160] max-w-[min(420px,calc(100vw-36px))] rounded-xl border border-border-strong bg-popover/95 px-3.5 py-2 text-xs text-soft shadow-2xl backdrop-blur-xl">
           {`Screen capture in ${appInspectCountdown}s — switch to the app you want to inspect`}
         </div>
       ) : null}

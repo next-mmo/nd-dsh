@@ -528,19 +528,12 @@ export class PiCodingEngine {
       }
     }
 
-    const targetDirs = [dir]
-    if (userPiAgentDir && userPiAgentDir !== dir && existsSync(userPiAgentDir)) {
-      targetDirs.push(userPiAgentDir)
-    }
-
-    for (const targetDir of targetDirs) {
-      try {
-        mkdirSync(targetDir, { recursive: true })
-        writeFileSync(join(targetDir, 'models.json'), JSON.stringify({ providers: providersConfig }, null, 2), 'utf8')
-        writeFileSync(join(targetDir, 'auth.json'), JSON.stringify(authConfig, null, 2), 'utf8')
-      } catch {
-        // Ignore write errors
-      }
+    try {
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(join(dir, 'models.json'), JSON.stringify({ providers: providersConfig }, null, 2), { encoding: 'utf8', mode: 0o600 })
+      writeFileSync(join(dir, 'auth.json'), JSON.stringify(authConfig, null, 2), { encoding: 'utf8', mode: 0o600 })
+    } catch {
+      // Ignore write errors
     }
 
     return dir

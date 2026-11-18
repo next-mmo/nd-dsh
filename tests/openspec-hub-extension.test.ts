@@ -13,6 +13,8 @@ import { SnapshotCache } from '../src/main/extensions/openspec-hub/cache.js'
 import { OpenSpecCli } from '../src/main/extensions/openspec-hub/openspec-cli.js'
 import { TicketStore } from '../src/main/extensions/openspec-hub/tickets.js'
 import { RootsStore } from '../src/main/extensions/openspec-hub/roots.js'
+import { safeJoin } from '../src/main/extensions/openspec-hub/security.js'
+import { flipCheckbox, replaceSection } from '../src/main/extensions/openspec-hub/writes.js'
 import { HttpError } from '../src/main/extensions/openspec-hub/types.js'
 import {
   buildHubConfig,
@@ -42,8 +44,73 @@ const realVendorBin = join(hubRepo, vendorBinRel)
 const demoAlpha = join(hubRepo, 'fixtures', 'demo-alpha')
 const demoBeta = join(hubRepo, 'fixtures', 'demo-beta')
 
+const FALLBACK_MANIFEST_JSON = JSON.stringify({
+  protocol: 'nd.extension/1',
+  apiVersion: 1,
+  id: OPENSPEC_HUB_ID,
+  name: 'OpenSpec Hub',
+  version: '0.1.0',
+  description: 'Multi-project OpenSpec 2.0 dashboard across your pinned workspaces.',
+  contexts: ['personal'],
+  permissions: ['openspec.read', 'openspec.write'],
+  settings: [
+    { key: 'enableWrites', title: 'Allow assistant write proposals', type: 'boolean', default: false },
+    { key: 'extraRoots', title: 'Extra project roots (; separated)', type: 'string', default: '' },
+  ],
+  contributions: {
+    tools: [],
+    skills: [],
+    commands: [
+      {
+        id: 'open-hub',
+        title: 'Open OpenSpec Hub',
+        contexts: ['personal'],
+        host: 'openspec.health',
+        openViewId: 'hub',
+      },
+    ],
+    views: [
+      {
+        id: 'hub',
+        title: 'OpenSpec Hub',
+        contexts: ['personal'],
+        kind: 'web',
+        entry: 'ui/index.html',
+        actions: [
+          { id: 'health', title: 'Health', host: 'openspec.health' },
+          { id: 'projects', title: 'List projects', host: 'openspec.projects.list' },
+          { id: 'roots-list', title: 'List roots', host: 'openspec.roots.list' },
+          { id: 'roots-add', title: 'Add root', host: 'openspec.roots.add' },
+          { id: 'roots-remove', title: 'Remove root', host: 'openspec.roots.remove' },
+          { id: 'projects-pick', title: 'Pick project', host: 'openspec.projects.pick' },
+          { id: 'snapshot', title: 'Get snapshot', host: 'openspec.snapshot.get' },
+          { id: 'change', title: 'Get change', host: 'openspec.change.get' },
+          { id: 'spec', title: 'Get spec', host: 'openspec.spec.get' },
+          { id: 'doc', title: 'Get doc', host: 'openspec.doc.get' },
+          { id: 'validation', title: 'Get validation', host: 'openspec.validation.get' },
+          { id: 'refresh', title: 'Refresh project', host: 'openspec.refresh' },
+          { id: 'tickets-list', title: 'List tickets', host: 'openspec.tickets.list' },
+          { id: 'tickets-save', title: 'Save ticket', host: 'openspec.tickets.save' },
+          { id: 'tickets-delete', title: 'Delete ticket', host: 'openspec.tickets.delete' },
+          { id: 'assistant-status', title: 'Assistant status', host: 'openspec.assistant.status' },
+          { id: 'assistant-models', title: 'Assistant models', host: 'openspec.assistant.models' },
+          { id: 'assistant-ask', title: 'Ask assistant', host: 'openspec.assistant.ask' },
+          { id: 'assistant-poll', title: 'Poll assistant', host: 'openspec.assistant.poll' },
+          { id: 'assistant-active-get', title: 'Get active project', host: 'openspec.assistant.active.get' },
+          { id: 'assistant-active-set', title: 'Set active project', host: 'openspec.assistant.active.set' },
+          { id: 'actions-list', title: 'List actions', host: 'openspec.actions.list' },
+          { id: 'actions-approve', title: 'Approve action', host: 'openspec.actions.approve' },
+          { id: 'actions-reject', title: 'Reject action', host: 'openspec.actions.reject' },
+        ],
+      },
+    ],
+    workflows: [],
+  },
+})
+
 async function loadManifest(): Promise<NdExtensionManifest> {
-  const parsed: unknown = JSON.parse(await readFile(join(hubRepo, 'nd-extension.json'), 'utf8'))
+  const raw = hasSibling ? await readFile(join(hubRepo, 'nd-extension.json'), 'utf8') : FALLBACK_MANIFEST_JSON
+  const parsed: unknown = JSON.parse(raw)
   const result = validateNdExtensionManifest(parsed)
   if (!result.ok) throw new Error(result.issues.map((issue) => `${issue.path}: ${issue.message}`).join('; '))
   return result.manifest
@@ -53,7 +120,8 @@ async function installablePackage(root: string): Promise<string> {
   if (hasStaged) return stagedDir
   const dir = join(root, 'fixture-package')
   await mkdir(join(dir, 'ui'), { recursive: true })
-  await writeFile(join(dir, 'nd-extension.json'), await readFile(join(hubRepo, 'nd-extension.json'), 'utf8'))
+  const raw = hasSibling ? await readFile(join(hubRepo, 'nd-extension.json'), 'utf8') : FALLBACK_MANIFEST_JSON
+  await writeFile(join(dir, 'nd-extension.json'), raw)
   await writeFile(join(dir, 'ui', 'index.html'), '<!doctype html><title>OpenSpec Hub</title>')
   const bin = join(dir, vendorBinRel)
   await mkdir(join(bin, '..'), { recursive: true })
@@ -140,7 +208,7 @@ describe.skipIf(!hasSibling)('OpenSpec Hub extension package', () => {
   })
 })
 
-describe.skipIf(!hasSibling)('OpenSpec Hub broker gating', () => {
+describe('OpenSpec Hub broker gating', () => {
   let root: string
   let packages: ExtensionPackageStore
   let state: InvocationStateStore
@@ -183,15 +251,18 @@ describe.skipIf(!hasSibling)('OpenSpec Hub broker gating', () => {
   })
 
   const invoke = (overrides: Partial<Parameters<InvocationBroker['invoke']>[0]>) =>
-    broker.invoke({
-      extensionId: OPENSPEC_HUB_ID,
-      contributionId: 'hub',
-      contributionKind: 'view',
-      context: personalContext(),
-      caller: 'user',
-      input: {},
-      ...overrides,
-    })
+    broker.invoke(
+      {
+        extensionId: OPENSPEC_HUB_ID,
+        contributionId: 'hub',
+        contributionKind: 'view',
+        context: personalContext(),
+        caller: 'user',
+        input: {},
+        ...overrides,
+      },
+      overrides.caller === 'agent' ? { credentialBacked: true } : undefined,
+    )
 
   it('loads the web view with its entry and without running any host method', async () => {
     const view = await broker.loadView(OPENSPEC_HUB_ID, 'hub', personalContext())
@@ -271,18 +342,22 @@ describe('buildHubConfig', () => {
   it('keeps pinned workspaces with openspec/, adds extraRoots, and dedupes by canonical path', async () => {
     const root = await mkdtemp(join(tmpdir(), 'nd-openspec-hub-config-'))
     try {
+      const alpha = join(root, 'demo-alpha')
+      const beta = join(root, 'demo-beta')
       const plain = join(root, 'No Spec Here')
+      await mkdir(join(alpha, 'openspec'), { recursive: true })
+      await mkdir(join(beta, 'openspec'), { recursive: true })
       await mkdir(plain, { recursive: true })
       const config = buildHubConfig(
         [
-          { root: demoAlpha, name: 'Demo Alpha' },
+          { root: alpha, name: 'Demo Alpha' },
           { root: plain, name: 'Plain' },
         ],
-        `${demoBeta};${demoAlpha}`,
+        `${beta};${alpha}`,
       )
       expect(config.projects.map((p) => p.id)).toEqual(['demo-alpha', 'demo-beta'])
       expect(config.projects[0]?.name).toBe('Demo Alpha')
-      expect(config.projects[1]?.path).toBe(demoBeta)
+      expect(config.projects[1]?.path).toBe(beta)
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -291,11 +366,15 @@ describe('buildHubConfig', () => {
   it('appends registered roots with display names and dedupes against earlier sources', async () => {
     const root = await mkdtemp(join(tmpdir(), 'nd-openspec-hub-registered-'))
     try {
+      const alpha = join(root, 'demo-alpha')
+      const beta = join(root, 'demo-beta')
       const extra = join(root, 'Extra Repo')
+      await mkdir(join(alpha, 'openspec'), { recursive: true })
+      await mkdir(join(beta, 'openspec'), { recursive: true })
       await mkdir(join(extra, 'openspec'), { recursive: true })
-      const config = buildHubConfig([{ root: demoAlpha }], demoBeta, [
+      const config = buildHubConfig([{ root: alpha }], beta, [
         { path: extra, name: 'Extra Repo' },
-        { path: demoBeta, name: 'Should Dedupe' },
+        { path: beta, name: 'Should Dedupe' },
       ])
       expect(config.projects.map((p) => p.id)).toEqual(['demo-alpha', 'demo-beta', 'extra-repo'])
       expect(config.projects[1]?.name).toBe('demo-beta')
@@ -567,15 +646,19 @@ describe('NdRouterChatPort', () => {
   })
 })
 
-describe.skipIf(!hasSibling)('OpenSpecHubService', () => {
+describe('OpenSpecHubService', () => {
   it('gates on installation, rebuilds bundles on settings changes, and caches scans', async () => {
     const root = await mkdtemp(join(tmpdir(), 'nd-openspec-hub-service-'))
     try {
+      const alpha = join(root, 'demo-alpha')
+      const beta = join(root, 'demo-beta')
+      await mkdir(join(alpha, 'openspec'), { recursive: true })
+      await mkdir(join(beta, 'openspec'), { recursive: true })
       const packages = new ExtensionPackageStore(join(root, 'packages'))
       const workspaces = {
         list: async () => ({
           version: 1 as const,
-          items: [{ id: 'w1', root: demoAlpha, name: 'Demo Alpha', addedAt: 0 }],
+          items: [{ id: 'w1', root: alpha, name: 'Demo Alpha', addedAt: 0 }],
         }),
       }
       const service = new OpenSpecHubService({ workspaces, packages, dataDir: join(root, 'data') })
@@ -592,7 +675,7 @@ describe.skipIf(!hasSibling)('OpenSpecHubService', () => {
       expect(writable).not.toBe(bundle)
       expect(writable.engine.writesEnabled).toBe(true)
 
-      const extra = await service.bundleFor({ enableWrites: true, extraRoots: demoBeta })
+      const extra = await service.bundleFor({ enableWrites: true, extraRoots: beta })
       expect(extra.config.projects.map((p) => p.id)).toEqual(['demo-alpha', 'demo-beta'])
 
       expect(await service.routerConfigured()).toBe(false)
@@ -604,11 +687,15 @@ describe.skipIf(!hasSibling)('OpenSpecHubService', () => {
   it('rebuilds the bundle when a project root is registered or removed', async () => {
     const root = await mkdtemp(join(tmpdir(), 'nd-openspec-hub-roots-svc-'))
     try {
+      const alpha = join(root, 'demo-alpha')
+      const beta = join(root, 'demo-beta')
+      await mkdir(join(alpha, 'openspec'), { recursive: true })
+      await mkdir(join(beta, 'openspec'), { recursive: true })
       const packages = new ExtensionPackageStore(join(root, 'packages'))
       const workspaces = {
         list: async () => ({
           version: 1 as const,
-          items: [{ id: 'w1', root: demoAlpha, name: 'Demo Alpha', addedAt: 0 }],
+          items: [{ id: 'w1', root: alpha, name: 'Demo Alpha', addedAt: 0 }],
         }),
       }
       const service = new OpenSpecHubService({ workspaces, packages, dataDir: join(root, 'data') })
@@ -617,13 +704,13 @@ describe.skipIf(!hasSibling)('OpenSpecHubService', () => {
       const before = await service.bundleFor({})
       expect(before.config.projects.map((p) => p.id)).toEqual(['demo-alpha'])
 
-      service.roots.add(demoBeta, 'Registered Beta')
+      service.roots.add(beta, 'Registered Beta')
       const added = await service.bundleFor({})
       expect(added).not.toBe(before)
       expect(added.config.projects.map((p) => p.id)).toEqual(['demo-alpha', 'demo-beta'])
       expect(added.config.projects[1]?.name).toBe('Registered Beta')
 
-      service.roots.remove(demoBeta)
+      service.roots.remove(beta)
       const removed = await service.bundleFor({})
       expect(removed.config.projects.map((p) => p.id)).toEqual(['demo-alpha'])
     } finally {
@@ -670,6 +757,25 @@ describe.skipIf(!hasSibling)('OpenSpecHubService', () => {
         router: routerStub({ state: async () => { throw new Error('sidecar down') } }),
       })
       expect(await broken.routerConfigured()).toBe(false)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('preserves CRLF line endings in flipCheckbox and replaceSection and blocks case-insensitive .env paths', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'nd-openspec-hub-crlf-'))
+    try {
+      const projectRoot = join(root, 'proj')
+      await mkdir(join(projectRoot, 'openspec', 'changes', 'add-feature'), { recursive: true })
+
+      expect(flipCheckbox('- [ ] 1.1 First item\r', true)).toBe('- [x] 1.1 First item\r')
+      expect(flipCheckbox('- [x] 1.2 Second item\r', false)).toBe('- [ ] 1.2 Second item\r')
+
+      const proposalMd = '# Change: Demo\r\n\r\n## Why\r\nOld reason.\r\n\r\n## What Changes\r\n- Item A\r\n'
+      const afterReplace = replaceSection(proposalMd, 'Why', 'Updated reason line 1.\nUpdated reason line 2.')
+      expect(afterReplace).toContain('## Why\r\n\r\nUpdated reason line 1.\r\nUpdated reason line 2.\r\n\r\n## What Changes\r\n')
+
+      expect(() => safeJoin(projectRoot, 'openspec/.ENV.local')).toThrow(/not readable/i)
     } finally {
       await rm(root, { recursive: true, force: true })
     }

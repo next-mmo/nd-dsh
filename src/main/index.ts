@@ -636,8 +636,10 @@ async function createWindow(cdpPort: number): Promise<void> {
     activeWebLaneBridge = webLaneBridge
   } catch (error) {
     console.warn('ND Router web lane bridge could not start:', error instanceof Error ? error.message : String(error))
-    await routerService.initialize()
     await webLaneBridge.stop().catch(() => undefined)
+    await routerService.initialize(null).catch((fallbackError) => {
+      console.warn('ND Router fallback initialization failed:', fallbackError instanceof Error ? fallbackError.message : String(fallbackError))
+    })
   }
   const restApiService = new NdRestApiService({
     engineRouter,
@@ -741,7 +743,11 @@ async function createWindow(cdpPort: number): Promise<void> {
     if (!window.isDestroyed()) window.webContents.send('browser-companion:changed-event', state)
     void browserPlatform.notifyCompanionChanged()
   })
-  const disposeTerminalIpc = registerTerminalIpc(window, terminalManager, routerService, nineRouterManaged)
+  const disposeTerminalIpc = registerTerminalIpc(window, terminalManager, routerService, nineRouterManaged, {
+    providers,
+    decisionSupport,
+    ...(core ? { core } : {}),
+  })
   const disposeDesignIpc = registerDesignIpc(window, design, ndPencil)
   const disposeOrganizationIpc = registerOrganizationIpc(window, organizationStore, organization, projectWorkspace, projectRuntime, executionCoordinator, () => launcherPopup.window(), localRuntime)
   const disposeLocalRuntimeIpc = registerLocalRuntimeIpc(window, localRuntime)
@@ -1136,7 +1142,7 @@ async function createWindow(cdpPort: number): Promise<void> {
     if (activeQa === qa) { activeQa = undefined; beginQaClose(qa) }
     if (activeProjectRuntime === projectRuntime) { activeProjectRuntime = undefined; beginProjectRuntimeClose(projectRuntime) }
     design.destroy()
-    if (activeNdPencil === ndPencil) { activeNdPencil = undefined; beginNdPencilClose(ndPencil) }
+    if (activeNdPencil === ndPencil) { activeNdPencil = undefined; beginNdPencilClose(ndPencil, true) }
     if (activeWebLaneBridge === webLaneBridge) { activeWebLaneBridge = undefined; beginWebLaneBridgeClose(webLaneBridge) }
     if (activeEngineRouter === engineRouter) { activeEngineRouter = undefined; beginEngineRouterClose(engineRouter) }
     if (activeRestApiService === restApiService) { activeRestApiService = undefined; beginRestApiClose(restApiService) }
@@ -1188,6 +1194,22 @@ app.on('will-quit', () => {
 
 app.on('before-quit', (event) => {
   if (shutdownStarted) return
+  if (activeNdPencil?.state().dirty && mainWindow && !mainWindow.isDestroyed()) {
+    event.preventDefault()
+    shutdownStarted = true
+    const pencil = activeNdPencil
+    void pencil.close().then(
+      () => {
+        shutdownStarted = false
+        app.quit()
+      },
+      (error) => {
+        shutdownStarted = false
+        console.error('ND quit was canceled because the Freeform document could not be saved safely:', error)
+      },
+    )
+    return
+  }
   const ndPencilForRetry = activeNdPencil
   let coreToClose: CoreClient | undefined
   if (activeHarness) {
@@ -1428,7 +1450,18 @@ function beginTerminalClose(terminalManager: TerminalManager): void {
   trackClose(terminalManager.shutdown().catch((error) => console.error('Failed to close session terminals cleanly:', error)))
 }
 
-function beginNdPencilClose(ndPencil: NdPencilController): void {
+function beginNdPencilClose(ndPencil: NdPencilController, windowAlreadyClosed = false): void {
+  if (windowAlreadyClosed) {
+    trackClose(ndPencil.close()
+      .catch((error) => {
+        console.error('Failed to save/close ND Pencil after window closed:', error)
+      })
+      .then(() => ndPencil.destroy())
+      .catch((error) => {
+        console.error('Failed to destroy ND Pencil cleanly:', error)
+      }))
+    return
+  }
   trackClose(ndPencil.close()
     .catch((error) => {
       console.error('Failed to save/close ND Pencil cleanly:', error)

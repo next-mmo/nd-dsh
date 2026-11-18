@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, realpathSync, renameSync, writeFileSync, mkdirSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync, mkdirSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { HttpError } from './types.js'
 
@@ -11,7 +11,15 @@ const MAX_ROOTS = 64
 
 function canonical(dir: string): string {
   const resolved = path.resolve(dir)
-  return existsSync(resolved) ? realpathSync(resolved) : resolved
+  try {
+    return existsSync(resolved) ? realpathSync(resolved) : resolved
+  } catch {
+    return resolved
+  }
+}
+
+function pathKey(dir: string): string {
+  return process.platform === 'win32' ? dir.toLowerCase() : dir
 }
 
 /**
@@ -61,7 +69,8 @@ export class RootsStore {
       throw new HttpError(400, 'root-not-openspec', 'directory has no openspec/ folder; run `openspec init` there first')
     }
     const roots = this.list()
-    if (roots.some((root) => root.path === dir)) {
+    const key = pathKey(dir)
+    if (roots.some((root) => pathKey(root.path) === key)) {
       throw new HttpError(409, 'duplicate-root', 'this directory is already registered')
     }
     if (roots.length >= MAX_ROOTS) {
@@ -78,16 +87,21 @@ export class RootsStore {
       throw new HttpError(400, 'invalid-root', 'path must be a non-empty string')
     }
     const dir = canonical(rawPath.trim())
+    const key = pathKey(dir)
     const roots = this.list()
-    const next = roots.filter((root) => root.path !== dir)
+    const next = roots.filter((root) => pathKey(root.path) !== key)
     if (next.length === roots.length) throw new HttpError(404, 'unknown-root', 'directory is not registered')
     this.persist(next)
   }
 
   private persist(roots: RegisteredRoot[]): void {
     mkdirSync(path.dirname(this.file), { recursive: true })
-    const tmp = `${this.file}.tmp`
-    writeFileSync(tmp, JSON.stringify(roots, null, 2))
-    renameSync(tmp, this.file)
+    const tmp = `${this.file}.${process.pid}.${Date.now()}-${Math.random().toString(16).slice(2, 8)}.tmp`
+    try {
+      writeFileSync(tmp, JSON.stringify(roots, null, 2))
+      renameSync(tmp, this.file)
+    } finally {
+      if (existsSync(tmp)) rmSync(tmp, { force: true })
+    }
   }
 }

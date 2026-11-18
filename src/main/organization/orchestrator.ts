@@ -1523,6 +1523,7 @@ export class OrganizationOrchestrator {
    * failure must never fail the run the session belongs to.
    */
   private async nameSession(sessionId: string, title: string): Promise<void> {
+    if (typeof this.harness.renameSession !== 'function') return
     try {
       await this.harness.renameSession(sessionId, title)
     } catch (cause) {

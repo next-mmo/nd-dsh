@@ -140,6 +140,9 @@ export class PhoneAudioService {
   private injectQueue: Promise<void> = Promise.resolve()
   private pairAttempts = new Map<string, PairAttemptRecord>()
   private refreshTimer: NodeJS.Timeout | null = null
+  private refreshInFlight: Promise<void> | null = null
+  private startInFlight: Promise<PhoneAudioSnapshot> | null = null
+  private lastOutputDevicesReadAt = 0
   private disposed = false
 
   constructor(opts: PhoneAudioServiceOptions = {}) {
@@ -236,11 +239,27 @@ export class PhoneAudioService {
     if (this.disposed) throw new Error('Phone Link service is disposed')
     if (partialOptions) this.applyOptions(partialOptions)
 
+    if (this.startInFlight) {
+      return this.startInFlight
+    }
+
     if (this.serverRunning) {
       await this.refreshSystemAndInterfaces()
       return this.currentSnapshot()
     }
 
+    const run = this.startInternal()
+    this.startInFlight = run
+    try {
+      return await run
+    } finally {
+      if (this.startInFlight === run) {
+        this.startInFlight = null
+      }
+    }
+  }
+
+  private async startInternal(): Promise<PhoneAudioSnapshot> {
     this.lastError = null
     this.streamState = 'starting'
     this.sessionId = randomBytes(12).toString('hex')
@@ -250,6 +269,9 @@ export class PhoneAudioService {
     try {
       await this.startNetworkServer()
       await this.refreshSystemAndInterfaces()
+      if (this.disposed || !this.serverRunning) {
+        return this.currentSnapshot()
+      }
       if (!this.headless) {
         this.onCommandCb?.({
           kind: 'start',
@@ -267,7 +289,8 @@ export class PhoneAudioService {
         }
         this.streamState = 'waiting'
       }
-      if (!this.disableRefreshTimer) {
+      if (!this.disableRefreshTimer && !this.disposed && this.serverRunning) {
+        if (this.refreshTimer) clearInterval(this.refreshTimer)
         this.refreshTimer = setInterval(() => {
           void this.tickRefresh()
         }, 4_000)
@@ -289,7 +312,6 @@ export class PhoneAudioService {
 
   async disconnectClient(): Promise<PhoneAudioSnapshot> {
     if (this.activeSocket) {
-      this.sendWs(this.activeSocket, { type: 'server-stop', reason: 'Disconnected by desktop.' })
       try {
         this.activeSocket.close(4003, 'Disconnected by desktop')
       } catch {
@@ -315,6 +337,12 @@ export class PhoneAudioService {
     if (!this.serverRunning) {
       return this.currentSnapshot()
     }
+    if (this.activeSocket) {
+      this.sendWs(this.activeSocket, { type: 'token-rotated', reason: 'Pairing code rotated on desktop.' })
+    }
+    if (this.keyboardSocket) {
+      this.sendWs(this.keyboardSocket, { type: 'token-rotated', reason: 'Pairing code rotated on desktop.' })
+    }
     await this.disconnectClient()
     await this.disconnectKeyboardClient()
     this.issueFreshCredentials()
@@ -325,7 +353,6 @@ export class PhoneAudioService {
 
   async disconnectKeyboardClient(): Promise<PhoneInputSnapshot> {
     if (this.keyboardSocket) {
-      this.sendWs(this.keyboardSocket, { type: 'server-stop', reason: 'Disconnected by desktop.' })
       try {
         this.keyboardSocket.close(4003, 'Disconnected by desktop')
       } catch {
@@ -530,15 +557,34 @@ export class PhoneAudioService {
   }
 
   private async refreshSystemAndInterfaces(): Promise<void> {
+    if (this.refreshInFlight) {
+      return this.refreshInFlight
+    }
+    const run = this.refreshSystemAndInterfacesInternal()
+    this.refreshInFlight = run
+    try {
+      await run
+    } finally {
+      if (this.refreshInFlight === run) {
+        this.refreshInFlight = null
+      }
+    }
+  }
+
+  private async refreshSystemAndInterfacesInternal(): Promise<void> {
     try {
       this.systemVolume = await this.readSystemVolumeFn()
     } catch {
       this.systemVolume = { available: false, reason: 'System audio endpoint unavailable' }
     }
-    try {
-      this.systemOutputDevices = await this.readOutputDevicesFn()
-    } catch {
-      this.systemOutputDevices = []
+    const now = Date.now()
+    if (this.systemOutputDevices.length === 0 || now - this.lastOutputDevicesReadAt >= 20_000) {
+      try {
+        this.systemOutputDevices = await this.readOutputDevicesFn()
+        this.lastOutputDevicesReadAt = now
+      } catch {
+        this.systemOutputDevices = []
+      }
     }
     const activePort = this.port ?? 0
     const activeToken = this.token ?? ''
@@ -926,6 +972,10 @@ export class PhoneAudioService {
         return
       }
       if (type === 'ping' && typeof msg.t === 'number') {
+        if (typeof msg.latencyMs === 'number' && Number.isFinite(msg.latencyMs) && this.keyboardClient) {
+          this.keyboardClient.latencyMs = Math.max(0, Math.min(10_000, Math.round(msg.latencyMs)))
+          this.emitSnapshot()
+        }
         this.sendWs(socket, { type: 'pong', t: msg.t })
         return
       }

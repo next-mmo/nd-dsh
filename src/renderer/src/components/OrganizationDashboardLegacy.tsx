@@ -976,7 +976,7 @@ export function OrganizationDashboard({ workspace, onOpenDeepSeek, onAskAgent, o
                 key={agent.id}
                 left={<><strong className="truncate text-sm">{agent.name}</strong><small className="text-xs text-faint">{agentRole?.name ?? 'Role'} · {agent.status}</small></>}
                 right={
-                  <div className="flex shrink-0 items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <label title="LLM model assigned to this agent" className="flex items-center gap-1.5 text-[11px] text-faint">
                       Model
                       <Select value={activeModelValue} disabled={busy !== null} onValueChange={(value) => void assignAgentModel(agent.id, value)}>
@@ -1693,7 +1693,7 @@ function RepositoryTaskModal({ task, snapshot, onClose }: { task: RepositoryWork
 /** List row with a two-line label block on the left and optional trailing control. */
 function Row({ left, right }: { left: ReactNode; right?: ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-[9px] border-b border-border-soft py-2 last:border-b-0">
+    <div className="flex flex-wrap items-center justify-between gap-[9px] border-b border-border-soft py-2 last:border-b-0">
       <div className="flex min-w-0 flex-col gap-0.5">{left}</div>
       {right}
     </div>

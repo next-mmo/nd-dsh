@@ -76,24 +76,32 @@ export function renderPhoneLinkShellHtml(options: PhoneLinkPageOptions): string 
     header span { font-size: 12px; color: var(--muted); }
     nav {
       display: flex;
-      gap: 8px;
-      padding: 4px 14px 10px;
+      gap: 3px;
+      margin: 4px 14px 10px;
+      padding: 3px;
+      border-radius: 11px;
+      background: var(--card-2);
+      border: 1px solid var(--border);
+      box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.14);
     }
     nav button {
       flex: 1;
       font: inherit;
+      font-size: 13.5px;
       font-weight: 600;
-      padding: 11px 10px;
-      border-radius: 10px;
-      border: 1px solid var(--border);
-      background: var(--card);
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1px solid transparent;
+      background: transparent;
       color: var(--muted);
       cursor: pointer;
+      transition: background-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
     }
     nav button.active {
-      background: var(--accent);
-      border-color: var(--accent);
-      color: #fff;
+      background: var(--card);
+      border-color: var(--border);
+      color: var(--text);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.08);
     }
     #frames { position: relative; flex: 1; min-height: 0; }
     #frames iframe {

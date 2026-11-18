@@ -842,10 +842,9 @@ export class BrowserController {
    * Returns a restore callback that reapplies the normal visibility sync.
    */
   attachTabForBackgroundRendering(tabId: string): () => void {
-    const tab = this.requireTab(tabId)
+    this.requireTab(tabId)
     this.backgroundAttached.add(tabId)
-    tab.view.setVisible(true)
-    tab.view.setBounds(this.backgroundRenderBounds())
+    this.syncViewVisibility()
     let restored = false
     return () => {
       if (restored) return
@@ -1461,14 +1460,15 @@ export class BrowserController {
         tab.view.setVisible(true)
         continue
       }
+      const active = tab.id === this.activeTabIdValue
       if (this.backgroundAttached.has(tab.id)) {
-        // Attached tabs render offscreen while the surface is hidden and fill
-        // the pane when the user opens the browser during a translation.
-        tab.view.setBounds(this.visible ? this.bounds : this.backgroundRenderBounds())
+        // Attached tabs render offscreen while the surface is hidden (or while
+        // another tab is active) and fill the pane only when this tab is the
+        // active tab and the user opens the browser during a translation.
+        tab.view.setBounds(active && this.visible ? this.bounds : this.backgroundRenderBounds())
         tab.view.setVisible(true)
         continue
       }
-      const active = tab.id === this.activeTabIdValue
       // A blank tab belongs to the shell, not the page: the native view steps
       // aside so the renderer can paint its new-tab page into the same rect.
       // The WebContents stays alive, so the agent still drives a blank tab.

@@ -53,13 +53,17 @@ export async function openExtensionProviderTab(
 }
 
 const EXTENSION_ACCENTS: Record<string, { icon: LucideIcon; tileClassName: string }> = {
+  'nd.security': { icon: ShieldCheck, tileClassName: 'border-emerald-500/25 bg-emerald-500/15 text-emerald-500' },
   'nd.daily-essentials': { icon: Sparkles, tileClassName: 'border-amber-500/25 bg-amber-500/15 text-amber-500' },
+  'nd.clipboard-history': { icon: Layers, tileClassName: 'border-cyan-500/25 bg-cyan-500/15 text-cyan-500' },
   'nd.wallpaper-manager': { icon: Image, tileClassName: 'border-violet-500/25 bg-violet-500/15 text-violet-500' },
   'nd.project-workflow': { icon: ListChecks, tileClassName: 'border-sky-500/25 bg-sky-500/15 text-sky-500' },
   'nd.translate': { icon: Languages, tileClassName: 'border-emerald-500/25 bg-emerald-500/15 text-emerald-500' },
   'nd.quit-process': { icon: Power, tileClassName: 'border-rose-500/25 bg-rose-500/15 text-rose-500' },
   'nd.tic-tac-toe': { icon: Gamepad2, tileClassName: 'border-teal-500/25 bg-teal-500/15 text-teal-500' },
   'nd.account-mgt': { icon: Users, tileClassName: 'border-blue-500/25 bg-blue-500/15 text-blue-500' },
+  'nd.access': { icon: Globe, tileClassName: 'border-indigo-500/25 bg-indigo-500/15 text-indigo-500' },
+  'nd.password-vault': { icon: ShieldCheck, tileClassName: 'border-amber-500/25 bg-amber-500/15 text-amber-500' },
   'nd.wizard-chess-3d': { icon: Gamepad2, tileClassName: 'border-amber-500/25 bg-amber-500/15 text-amber-500' },
   'nd.mini-browser': { icon: Globe, tileClassName: 'border-red-500/25 bg-red-500/15 text-red-500' },
   'nd.pay-guard': { icon: ShieldCheck, tileClassName: 'border-indigo-500/25 bg-indigo-500/15 text-indigo-500' },
@@ -74,6 +78,10 @@ const EXTENSION_ACCENTS: Record<string, { icon: LucideIcon; tileClassName: strin
   'nd.tutor': { icon: BookOpen, tileClassName: 'border-emerald-500/25 bg-emerald-500/15 text-emerald-500' },
   'nd.phone-audio': { icon: Smartphone, tileClassName: 'border-sky-500/25 bg-sky-500/15 text-sky-500' },
   'nd.openspec-hub': { icon: Layers, tileClassName: 'border-blue-500/25 bg-blue-500/15 text-blue-500' },
+  'gpt-project-brief': { icon: Sparkles, tileClassName: 'border-emerald-500/25 bg-emerald-500/15 text-emerald-500' },
+  'nd-project-brief': { icon: BookOpen, tileClassName: 'border-sky-500/25 bg-sky-500/15 text-sky-500' },
+  'nd-task-results': { icon: ListChecks, tileClassName: 'border-violet-500/25 bg-violet-500/15 text-violet-500' },
+  'nd-workspace-checks': { icon: Workflow, tileClassName: 'border-amber-500/25 bg-amber-500/15 text-amber-500' },
 }
 
 function ExtensionIconTile({ id, large = false }: { id: string; large?: boolean }): React.ReactNode {
@@ -278,7 +286,7 @@ export function ExtensionPackagesCard({ state, organization, contexts, requested
 
       {state.pendingApprovals.length > 0 ? (
         <section className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4" aria-label="Pending extension approvals">
-          <div className="flex items-center gap-2 text-xs font-semibold text-amber-200">
+          <div className="flex items-center gap-2 text-xs font-semibold text-amber-800 dark:text-amber-200">
             <ShieldCheck className="size-3.5" /> Agent requests waiting for your approval
           </div>
           <div className="mt-3 space-y-2">
@@ -2802,6 +2810,7 @@ export function ExtensionViewDialog({
       setData(reloaded)
       if (actionId.startsWith('links-')) await loadDiscoveryLinks()
       if (actionId.startsWith('folders-')) await loadFolders()
+      if (actionId === 'apply' && activeFolder) await loadFolderRows()
       if (actionId.startsWith('collections-')) await Promise.all([loadCollections(), loadDiscoveryLinks(), loadFolders()])
       // Now playing's Prev/Next/Random can land on a collection entry or a link.
       if (actionId === 'prev' || actionId === 'next' || actionId === 'random') {
@@ -2828,7 +2837,7 @@ export function ExtensionViewDialog({
       'apply',
       'os.wallpaper.applySelected',
       previewItem,
-      previewSource === 'setup' && linksData?.defaultFolder ? { folder: linksData.defaultFolder } : undefined,
+      previewSource === 'setup' && activeFolder ? { folder: activeFolder } : undefined,
     )
   }
 
@@ -3876,7 +3885,7 @@ export function ExtensionViewDialog({
             </div>
 
             <div className="relative group/viewport flex min-h-[340px] max-h-[58vh] items-center justify-center overflow-hidden rounded-xl border border-border-soft bg-black/70 p-3 shadow-inner">
-              {visibleRows.length > 1 ? (
+              {browseRows.length > 1 ? (
                 <button
                   type="button"
                   aria-label="Previous wallpaper"
@@ -3888,7 +3897,7 @@ export function ExtensionViewDialog({
                 </button>
               ) : null}
 
-              {visibleRows.length > 1 ? (
+              {browseRows.length > 1 ? (
                 <button
                   type="button"
                   aria-label="Next wallpaper"
@@ -4103,6 +4112,7 @@ export function ExtensionViewDialog({
 
 /** Plain-language permission summaries; unknown slugs stay honest instead of guessing. */
 const PERMISSION_LABELS: Record<string, string> = {
+  'security.read': 'View ND Security status and grants',
   'notes.read': 'Read your notes',
   'notes.write': 'Create and edit notes',
   'capture.screen': 'Take screen captures',
@@ -4113,6 +4123,7 @@ const PERMISSION_LABELS: Record<string, string> = {
   'browser.navigate': 'Navigate the built-in browser',
   'browser.openExternal': 'Open links in your system browser',
   'media.download': 'Download YouTube video and audio',
+  'translate.history': 'Read and save translation history',
   'os.launch': 'Open apps and files on this device',
   'os.wallpaper.write': 'Change desktop wallpaper',
   'process.read': 'See running processes',
@@ -4120,12 +4131,41 @@ const PERMISSION_LABELS: Record<string, string> = {
   'computer.read': 'Read app window screenshots and accessibility trees',
   'vault.read': 'Read saved vault secrets',
   'vault.write': 'Create and delete vault entries',
+  'accountmgt.read': 'Read managed accounts and usage',
+  'accountmgt.write': 'Manage accounts and credentials',
+  'access.read': 'Read remote access status',
+  'access.write': 'Configure remote access',
+  'tictactoe.read': 'Read Tic-Tac-Toe game state',
+  'tictactoe.write': 'Save Tic-Tac-Toe game state',
+  'wizardchess.read': 'Read Wizard Chess 3D game state',
+  'wizardchess.write': 'Save Wizard Chess 3D game state',
+  'minibrowser.read': 'Read Mini Browser bookmarks and tabs',
+  'minibrowser.write': 'Manage Mini Browser bookmarks and tabs',
+  'payguard.read': 'Read Pay Guard reminders and bills',
+  'payguard.write': 'Create and update Pay Guard reminders',
+  'disk.read': 'Scan disk usage and cleanable caches',
+  'disk.write': 'Clean selected cache and temp folders',
+  'apistudio.read': 'Read API Studio collections and history',
+  'apistudio.write': 'Save API Studio collections and requests',
+  'apistudio.execute': 'Send HTTP requests from API Studio',
   'workflow.read': 'Read the project task board',
   'chat.start': 'Start chats as you',
   'chat.compose': 'Prepare skill requests in chat',
+  'ninerouter.read': 'Read 9Router gateway status',
+  'ninerouter.write': 'Manage 9Router gateway runtime',
+  'emulator.read': 'Read Android emulator status',
+  'emulator.write': 'Control Android emulator instances',
+  'ostoolkit.read': 'Read OS Toolkit display and power state',
+  'ostoolkit.write': 'Adjust OS Toolkit display and power settings',
   'tutor.read': 'Read ND Tutor progress',
   'tutor.write': 'Save ND Tutor progress',
   'live.voice': 'Use microphone for live voice tutor sessions via ND Router',
+  'phoneaudio.read': 'Read Phone Link audio receiver status',
+  'phoneaudio.write': 'Control Phone Link audio streaming and pairing',
+  'phoneinput.read': 'Read Phone Link remote input status',
+  'phoneinput.write': 'Control Phone Link remote keyboard and trackpad',
+  'openspec.read': 'Read OpenSpec specifications and changes',
+  'openspec.write': 'Create and update OpenSpec specifications and tasks',
 }
 
 function describePermissions(permissions: string[]): string {

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ChevronDownIcon, RotateIcon } from './Icons'
-import { diffLineClass } from './DiffView'
+import { diffLineClass } from '../lib/diff-line-class'
 import { fileAccent } from '../lib/file-accents'
 import { cn } from '../lib/utils'
 

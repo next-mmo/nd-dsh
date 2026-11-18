@@ -9,7 +9,7 @@ import type { ActionPayload, ActionPreview, DiffLine, HubConfig } from './types.
 import { HttpError } from './types.js'
 
 const MAX_WRITE_BYTES = 2 * 1024 * 1024
-const CHECKBOX = /^(\s*-\s+\[)( |x|X)(\]\s+)(.*)$/
+const CHECKBOX = /^(\s*-\s+\[)( |x|X)(\]\s+)(.*?)\r?$/
 
 export function clip(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, max)}…`
@@ -41,7 +41,8 @@ export function lineDiff(before: string, after: string): DiffLine[] {
 
 /** Replace the body under a markdown heading, keeping the heading itself. */
 export function replaceSection(markdown: string, section: string, body: string): string {
-  const lines = markdown.split('\n')
+  const eol = markdown.includes('\r\n') ? '\r\n' : '\n'
+  const lines = markdown.replace(/\r\n/g, '\n').split('\n')
   const wanted = section.trim()
   let index = -1
   let level = 0
@@ -64,9 +65,9 @@ export function replaceSection(markdown: string, section: string, body: string):
       break
     }
   }
-  const normalizedBody = body.replace(/\s+$/, '')
-  const next = [...lines.slice(0, index + 1), '', normalizedBody, '', ...lines.slice(end)]
-  return next.join('\n')
+  const normalizedBody = body.replace(/\r\n/g, '\n').replace(/\s+$/, '')
+  const next = [...lines.slice(0, index + 1), '', ...normalizedBody.split('\n'), '', ...lines.slice(end)]
+  return next.join(eol)
 }
 
 interface CheckboxMatch {
@@ -94,10 +95,11 @@ function findCheckbox(lines: string[], text: string): CheckboxMatch {
   return matches[0] as CheckboxMatch
 }
 
-function flipCheckbox(line: string, done: boolean): string {
+export function flipCheckbox(line: string, done: boolean): string {
   const m = CHECKBOX.exec(line)
   if (!m) throw new HttpError(409, 'stale-document', 'the item line changed shape')
-  return `${m[1]}${done ? 'x' : ' '}${m[3]}${m[4]}`
+  const cr = line.endsWith('\r') ? '\r' : ''
+  return `${m[1]}${done ? 'x' : ' '}${m[3]}${m[4]}${cr}`
 }
 
 function changeTasksRelPath(summary: { id: string; archived: boolean }): string {
@@ -246,7 +248,10 @@ export class WriteService {
     if (Buffer.byteLength(after, 'utf8') > MAX_WRITE_BYTES) {
       throw new HttpError(413, 'too-large', 'resulting document exceeds the write size limit')
     }
-    writeFileSync(safeJoin(project.path, rel), after, 'utf8')
+    const abs = safeJoin(project.path, rel)
+    mkdirSync(path.dirname(abs), { recursive: true })
+    const postDirTarget = safeJoin(project.path, rel)
+    writeFileSync(postDirTarget, after, 'utf8')
     await this.deps.cache.refresh(payload.projectId).catch(() => undefined)
     return `Wrote ${rel} (${payload.mode})`
   }

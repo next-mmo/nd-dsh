@@ -425,7 +425,6 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
   const [modelMenuPane, setModelMenuPane] = useState<ModelMenuPane>('root')
   const [contextMenuOpen, setContextMenuOpen] = useState(false)
-  const [changedFiles, setChangedFiles] = useState<string[]>([])
   const [mentionCaret, setMentionCaret] = useState(0)
   const [mentionDismissed, setMentionDismissed] = useState<string | null>(null)
   const [mentionIndex, setMentionIndex] = useState(0)
@@ -552,6 +551,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
 
   const activeSession = useMemo(() => sessions.find((s) => s.sessionId === activeSessionId) ?? null, [sessions, activeSessionId])
   const entries = useMemo(() => threads[activeSessionId ?? ''] ?? [], [threads, activeSessionId])
+  const changedFiles = useMemo(() => collectChangedFiles(entries), [entries])
   const activeSessionLogs = useMemo(() => {
     const sid = activeSessionId ?? 'draft'
     const existing = sessionLogs[sid]
@@ -621,7 +621,8 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   const setEngineModel = (model: string | null): void => {
     setEngineModelSelections((current) => ({ ...current, [activeEngineId]: model }))
   }
-  const activeEngineName = engines.find((engine) => engine.id === activeEngineId)?.name ?? 'Codex CLI'
+  const activeEngineName = engines.find((engine) => engine.id === activeEngineId)?.name
+    ?? (activeEngineId === ND_HARNESS_ENGINE_ID ? 'ND Harness' : activeEngineId)
   const activeWorkspaceRoot = workspaceRoot ?? terminalCwd ?? ''
   const currentProjectName = workspaceName ?? ''
   // A root bound to a listed project is already shown in PROJECTS with its ACTIVE
@@ -852,7 +853,6 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
       const events = ((result.value ?? {}) as { events?: { event?: HistoryEventEnvelope }[] }).events ?? []
       const entries = foldHistory(events.flatMap((item) => (item.event ? [item.event] : [])))
       setThreads((current) => ({ ...current, [sessionId]: entries }))
-      setChangedFiles(collectChangedFiles(entries))
     } catch (cause) {
       onError(cause instanceof Error ? cause.message : String(cause))
     }
@@ -919,7 +919,6 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
       const result = await window.ndDsh.engines.transcript(sessionId)
       const restored = foldHistory(result.events)
       setThreads((current) => ({ ...current, [sessionId]: restored }))
-      setChangedFiles(collectChangedFiles(restored))
     } catch (cause) {
       onError(cause instanceof Error ? cause.message : String(cause))
     }
@@ -956,7 +955,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   const selectEngineSession = useCallback((summary: EngineSessionSummary): void => {
     setDraftEngineId(null)
     setActiveSessionId(summary.sessionId)
-    if (summary.engineId === CHATGPT_WEB_ENGINE_ID || summary.engineId === GEMINI_WEB_ENGINE_ID || summary.engineId === AISTUDIO_WEB_ENGINE_ID || summary.engineId === DEEPSEEK_WEB_ENGINE_ID || summary.engineId === GROK_WEB_ENGINE_ID) {
+    if (summary.engineId in WEB_ENGINE_INFO) {
       // The engine owns (and persists) the tab mapping; it recreates the tab
       // when the user closed it or the app restarted.
       void window.ndDsh.engines.browserTab(summary.sessionId)
@@ -1034,7 +1033,6 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
     }
     setDraftEngineId(engineId)
     setActiveSessionId(null)
-    setChangedFiles([])
   }, [])
 
   const handleNewSession = useCallback(async (): Promise<void> => {
@@ -1058,7 +1056,6 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
       setThreads((current) => ({ ...current, [sessionId]: [] }))
       setActiveSessionId(sessionId)
       setDraftEngineId(null)
-      setChangedFiles([])
     } catch (cause) {
       onError(cause instanceof Error ? cause.message : String(cause))
     }
@@ -1082,7 +1079,6 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
       // while the Harness gateway is still starting or lacks a credential.
       setDraftEngineId(null)
       setActiveSessionId(null)
-      setChangedFiles([])
       return
     }
     startEngineDraft(engineId)
@@ -1587,7 +1583,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
         setEngineSessions((current) =>
           current.map((s) => (s.sessionId === sessionId ? { ...s, running: Boolean(frame.running) } : s))
         )
-        if (sessionId !== activeSessionId) {
+        if (sessionId !== activeSessionId && !(activeSessionId === null && draftEngineId !== null)) {
           setThreads((current) => {
             if (!(sessionId in current)) return current
             const next = { ...current }
@@ -1627,7 +1623,6 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
           const next = foldEvent(previous, envelope)
           if (next === previous) return current
           const updated = { ...current, [sessionId]: next }
-          if (sessionId === activeSessionId) setChangedFiles(collectChangedFiles(next))
           const keys = Object.keys(updated)
           if (keys.length > 12) {
             const keep = new Set([activeSessionId, ...keys.slice(-10)].filter(Boolean))
@@ -2159,6 +2154,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   const openAntigravityAccountTerminal = useCallback(async (): Promise<void> => {
     const terminalSession = 'antigravity-account'
     try {
+      if (!window.ndDshTerminal) throw new Error('Terminal API unavailable')
       const existing = await window.ndDshTerminal.state(terminalSession)
       if (existing.terminals.length === 0) {
         const created = await window.ndDshTerminal.create({ sessionId: terminalSession, title: 'Antigravity account (agy)' })
@@ -2172,15 +2168,23 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   }, [onError])
 
   const retry = async (retryPrompt: string): Promise<void> => {
-    if (busy || !retryPrompt.trim()) return
+    if (busy || submitting || !retryPrompt.trim()) return
+    const draftEngine = activeSessionId === null ? draftEngineId : null
     const options = activeSessionId
-      ? { sessionId: activeSessionId, ...(supportsEngineModels && engineModel !== null ? { model: engineModel } : {}) }
-      : undefined
+      ? { sessionId: activeSessionId, permissionMode, ...(supportsEngineModels && engineModel !== null ? { model: engineModel } : {}) }
+      : {
+          permissionMode,
+          ...(draftEngine !== null ? { engineId: draftEngine } : {}),
+          ...(supportsEngineModels && engineModel !== null ? { model: engineModel } : {}),
+        }
+    setSubmitting(true)
     try {
       const catalog = /^\s*\//.test(retryPrompt) ? await window.ndDsh.skills.catalog(activeProjectId ?? null) : undefined
       const result = await window.ndDsh.harness.run(retryPrompt, { ...options, ...(catalog ? { skillScope: catalog.scope } : {}) })
       storeSessionProject(result.sessionId, activeProjectId ?? PERSONAL_PROJECT_ID)
       setActiveSessionId(result.sessionId)
+      if (draftEngine !== null) setDraftEngineId(null)
+      void refreshEngineSessions()
       void refreshElementChips()
       // User messages arrive through session events, including on retry.
       if (!sessions.some((s) => s.sessionId === result.sessionId)) void refreshSessions()
@@ -2189,10 +2193,12 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
       const blocked = parsePromptShieldBlockedError(failure)
       if (blocked) {
         setPrompt(retryPrompt)
-        setShieldReview({ payload: blocked, prompt: retryPrompt, options: options ?? {}, draftEngine: null })
+        setShieldReview({ payload: blocked, prompt: retryPrompt, options, draftEngine })
         return
       }
       onError(ipcFailureMessage(failure))
+    } finally {
+      setSubmitting(false)
     }
   }
 
@@ -2485,6 +2491,13 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   const sessionsWidthRef = useRef(sessionsWidth)
   sessionsWidthRef.current = sessionsWidth
   const sessionsDragRef = useRef<{ pointerId: number; startX: number; startWidth: number; rowWidth: number } | null>(null)
+  useEffect(() => () => {
+    if (sessionsDragRef.current) {
+      sessionsDragRef.current = null
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+  }, [])
 
   const clampSessionsWidth = (width: number, rowWidth = sessionsRowRef.current?.getBoundingClientRect().width ?? 0): number => {
     const roomForSidebar = rowWidth > 0 ? rowWidth - SESSIONS_SEPARATOR_PX - CHAT_COLUMN_MIN_PX : SESSIONS_SIDEBAR_MAX_PX
@@ -2630,9 +2643,9 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 py-2">
-          <div className="mb-1.5 flex items-center justify-between">
+          <div className="mb-1.5 flex items-center justify-between gap-1">
             <span className="min-w-0 truncate text-[11px] font-semibold text-faint">Workspaces</span>
-            <div className="flex shrink-0 items-center gap-1">
+            <div className="flex shrink-0 items-center gap-0.5">
               <button className="grid size-[22px] place-items-center rounded-[5px] text-faint transition-colors hover:bg-accent hover:text-foreground [&_svg]:size-[13px]" title="Refresh sessions" onClick={() => { void refreshSessions({ userInitiated: true }); void refreshEngineSessions() }}>
                 <SearchIcon />
               </button>
@@ -2712,9 +2725,9 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
               <div className="flex items-center gap-0.5">
                 <button
                   className="grid size-[22px] shrink-0 place-items-center rounded-[5px] text-faint transition-colors hover:bg-accent hover:text-foreground [&_svg]:size-[13px]"
-                  title="Create project in Google AI Studio (https://aistudio.google.com/apps)"
-                  aria-label="Create project in Google AI Studio"
-                  onClick={() => onOpenLink?.('https://aistudio.google.com/apps')}
+                  title="New chat"
+                  aria-label="New chat"
+                  onClick={() => void handleNewSession()}
                 >
                   <PlusIcon />
                 </button>
@@ -3065,20 +3078,20 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
               <span className={cn(
                 'mb-1.5 grid size-[48px] place-items-center rounded-2xl border text-primary shadow-sm [&_svg]:size-5',
                 workspaceProfile === 'general'
-                  ? 'border-blue-500/30 bg-blue-500/10 text-blue-400 shadow-[0_0_20px_rgba(59,130,246,0.15)]'
-                  : 'border-primary/30 bg-primary/10 text-primary shadow-[0_0_20px_rgba(var(--primary-rgb),0.15)]',
+                  ? 'border-sky-500/30 bg-sky-500/10 text-sky-600 shadow-[0_6px_22px_rgba(14,165,233,0.16),inset_0_1px_0_rgba(255,255,255,0.16)] dark:text-sky-400'
+                  : 'border-primary/30 bg-primary/10 text-primary shadow-[0_6px_22px_rgba(var(--primary-rgb),0.18),inset_0_1px_0_rgba(255,255,255,0.16)]',
               )}>
                 {workspaceProfile === 'general' ? <SparkIcon /> : <TerminalIcon />}
               </span>
               <div className="flex items-center gap-2">
-                <h3 className="m-0 text-[14px] font-bold text-foreground">
+                <h3 className="m-0 text-[14px] font-bold tracking-[-0.015em] text-foreground">
                   {workspaceProfile === 'general' ? 'ND Assistant' : onHarnessThread ? 'ND Coding Agent' : activeEngineName}
                 </h3>
                 <span className={cn(
                   'rounded-full px-2 py-0.5 text-[9px] font-semibold tracking-wide uppercase',
                   workspaceProfile === 'general'
-                    ? 'border border-blue-500/20 bg-blue-500/15 text-blue-400'
-                    : 'border border-emerald-500/20 bg-emerald-500/15 text-emerald-400',
+                    ? 'border border-sky-500/25 bg-sky-500/12 text-sky-700 dark:text-sky-400'
+                    : 'border border-emerald-500/25 bg-emerald-500/12 text-emerald-700 dark:text-emerald-400',
                 )}>
                   {workspaceProfile === 'general' ? 'General' : 'Coding'}
                 </span>
@@ -3236,16 +3249,10 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
           </Suspense>
         ) : null}
 
-        <ZcodeModelConfigDialog
-          open={zcodeConfigOpen}
-          onClose={() => setZcodeConfigOpen(false)}
-          onError={onError}
-        />
-
         {activeProjectId && activeProjectId !== PERSONAL_PROJECT_ID ? <ProjectServerControl key={activeProjectId} projectId={activeProjectId} /> : null}
 
         <div
-          className="mx-3 my-1.5 flex flex-col rounded-xl border border-border bg-surface-1 px-2.5 py-2 shadow-[0_4px_16px_rgba(0,0,0,0.18)]"
+          className="mx-3 my-2 flex flex-col rounded-2xl border border-border-strong/80 bg-composer/95 px-3 py-2.5 shadow-[0_8px_28px_-6px_rgba(0,0,0,0.20),inset_0_1px_0_rgba(255,255,255,0.07)] backdrop-blur-xl transition-[border-color,box-shadow] focus-within:border-ring/65 focus-within:ring-[3px] focus-within:ring-ring/15"
           ref={menuRef}
           onDragOver={(event) => {
             if (Array.from(event.dataTransfer.types).includes('Files')) {
@@ -3323,7 +3330,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
               {elementChips.map((chip) => (
                 <span
                   key={chip.id}
-                  className="inline-flex cursor-help items-center gap-[5px] rounded-full border border-[#a78bfa]/35 bg-[#a78bfa]/10 py-0.5 pl-[7px] pr-1 font-mono text-[10px] text-[#a78bfa]"
+                  className="inline-flex cursor-help items-center gap-[5px] rounded-full border border-violet-500/35 bg-violet-500/10 py-0.5 pl-[7px] pr-1 font-mono text-[10px] text-violet-700 dark:text-[#a78bfa]"
                   title={chip.hover}
                 >
                   <CrosshairIcon className="size-2.5" />
@@ -3589,7 +3596,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
               {onHarnessThread || activeEngineId === ANTIGRAVITY_ENGINE_ID || activeEngineId === ND_NATIVE_ENGINE_ID ? (
                 <div className="relative">
                   <button
-                    className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-[#f59e0b]/30 bg-[#f59e0b]/10 px-1.5 py-[3px] text-[10px] font-medium text-[#f59e0b] transition-colors hover:bg-[#f59e0b]/20 [&_svg]:size-3"
+                    className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-amber-500/30 bg-amber-500/10 px-1.5 py-[3px] text-[10px] font-medium text-amber-700 transition-colors hover:bg-amber-500/20 dark:text-[#f59e0b] [&_svg]:size-3"
                     onClick={() => { setPermissionMenuOpen(!permissionMenuOpen); setModelMenuOpen(false); setModelMenuPane('root'); closeMention() }}
                     title={activeEngineId === ND_NATIVE_ENGINE_ID ? 'Permission mode for the next ND Agent turn' : undefined}
                   >
@@ -3598,7 +3605,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
                     <ChevronDownIcon />
                   </button>
                   {permissionMenuOpen ? (
-                    <div className="absolute bottom-full left-0 z-[130] mb-1.5 min-w-40 rounded-[10px] border border-border-strong bg-surface-1 p-1 shadow-[0_10px_30px_rgba(0,0,0,0.4)]">
+                    <div className="absolute bottom-full left-0 z-[130] mb-1.5 min-w-40 rounded-[10px] border border-border-strong bg-popover/95 p-1 shadow-2xl backdrop-blur-xl">
                       {PERMISSION_MODES.map((mode) => (
                         <MenuItem key={mode.id} active={permissionMode === mode.id} onClick={() => void setSessionPermission(mode.id)}>
                           {mode.label}
@@ -3612,7 +3619,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
                 // Engine threads manage their own permission policy (Codex runs
                 // fail-closed unless an approval card is answered).
                 <span
-                  className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-[#f59e0b]/30 bg-[#f59e0b]/10 px-1.5 py-[3px] text-[10px] font-medium text-[#f59e0b] opacity-85 [&_svg]:size-3"
+                  className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-amber-500/30 bg-amber-500/10 px-1.5 py-[3px] text-[10px] font-medium text-amber-700 opacity-90 dark:text-[#f59e0b] [&_svg]:size-3"
                   title={`${activeEngineName} manages its own sandbox and approval policy`}
                 >
                   <ShieldIcon />
@@ -3729,7 +3736,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
                                     <span className="flex items-center gap-1.5">
                                       <span className="block truncate text-[11px] font-medium">{model.name ?? compactModelLabel(model.id)}</span>
                                       {isVisionModel(providerRoutes, group.id, model.id) ? (
-                                        <span className="shrink-0 rounded-full bg-green-400/10 px-1.5 py-px text-[8px] font-semibold uppercase tracking-wide text-green-400" title="This model accepts image input">Vision</span>
+                                        <span className="shrink-0 rounded-full bg-emerald-500/12 px-1.5 py-px text-[8px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400" title="This model accepts image input">Vision</span>
                                       ) : null}
                                     </span>
                                     {model.name ? <span className="block truncate font-mono text-[8px] text-fainter">{model.id}</span> : null}
@@ -3978,7 +3985,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
         onSendMasked={() => void resolveShieldReview('mask')}
         onSendOnce={() => void resolveShieldReview('allow')}
       />
-      <ZcodeModelConfigDialog open={zcodeConfigOpen} onClose={() => setZcodeConfigOpen(false)} />
+      <ZcodeModelConfigDialog open={zcodeConfigOpen} onClose={() => setZcodeConfigOpen(false)} onError={onError} />
       <ChatGptProjectDialog
         open={chatGptProjectModalOpen}
         workspaceRoot={activeWorkspaceRoot}
@@ -4679,9 +4686,9 @@ function ToolGroupView({ group, onOpenFile }: {
                   const info = changes.find((c) => c.path === path) ?? (changes.length === 1 ? changes[0] : undefined)
                   if (!info || (info.added === 0 && info.removed === 0)) return null
                   return (
-                    <span className="ml-auto flex shrink-0 gap-1 font-sans text-[8px] not-italic">
-                      {info.added > 0 ? <span className="text-green-400">+{info.added}</span> : null}
-                      {info.removed > 0 ? <span className="text-red-400">−{info.removed}</span> : null}
+                    <span className="ml-auto flex shrink-0 gap-1 font-sans text-[8px] font-medium not-italic tabular-nums">
+                      {info.added > 0 ? <span className="text-emerald-600 dark:text-green-400">+{info.added}</span> : null}
+                      {info.removed > 0 ? <span className="text-rose-600 dark:text-red-400">−{info.removed}</span> : null}
                     </span>
                   )
                 })()}
@@ -5052,7 +5059,7 @@ function SkillMessage({ text, skill, onOpenLink }: { text: string; skill: SkillS
         <div className="max-h-[65vh] overflow-auto whitespace-normal" aria-live="polite">
           {error ? <p role="alert">{error}</p> : detail === null ? <p>Loading skill…</p> : <MarkdownLite text={detail} />}
         </div>
-        <DialogFooter><DialogClose asChild><button type="button" className="rounded-md border border-border px-3 py-1.5">Close</button></DialogClose></DialogFooter>
+        <DialogFooter><DialogClose asChild><Button type="button" variant="outline" size="sm">Close</Button></DialogClose></DialogFooter>
       </DialogContent>
     </Dialog>
   </>

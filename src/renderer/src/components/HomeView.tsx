@@ -99,10 +99,10 @@ export function HomeView({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto p-6">
+    <div className="@container flex h-full min-h-0 flex-col gap-4 overflow-y-auto p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold text-foreground">Personal</h2>
+          <h2 className="text-lg font-semibold tracking-[-0.015em] text-foreground">Personal</h2>
           <p className="text-xs text-faint">
             Notes, captures, and chats — stored in ND-managed user storage, independent of any company or project.
           </p>
@@ -120,10 +120,10 @@ export function HomeView({
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-2">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 @[720px]:grid-cols-2">
         <Card className="flex min-h-0 flex-col gap-3 border-border-soft p-4">
           <div className="flex items-center justify-between">
-            <span className="text-sm font-medium text-foreground">Personal notes</span>
+            <span className="text-sm font-semibold tracking-[-0.01em] text-foreground">Personal notes</span>
             <Badge variant="secondary">{state.notes.length}</Badge>
           </div>
           <div className="flex items-start gap-2">
@@ -141,19 +141,19 @@ export function HomeView({
             </Button>
           </div>
           <div className="relative">
-            <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-faint" />
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-faint" />
             <Input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search personal notes"
-              className="h-8 pl-7 text-xs"
+              className="h-8 pl-8 text-xs"
             />
           </div>
           <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
             {notes.length === 0 ? (
               <p className="text-xs text-faint">No notes yet. Notes you save from the launcher or here appear instantly.</p>
             ) : notes.map((note) => (
-              <div key={note.id} className="rounded-md border border-border-soft bg-surface-0/40 p-2.5">
+              <div key={note.id} className="rounded-[10px] border border-border-soft bg-surface-0/50 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-colors hover:border-border">
                 {editing?.id === note.id ? (
                   <div className="space-y-2">
                     <Input value={editing.title} onChange={(event) => setEditing({ ...editing, title: event.target.value })} className="h-7 text-xs" />

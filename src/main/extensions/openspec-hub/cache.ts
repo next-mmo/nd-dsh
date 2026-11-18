@@ -39,6 +39,11 @@ export class SnapshotCache {
 
   async refresh(projectId: string): Promise<ProjectSnapshot> {
     const project = findProject(this.config, projectId)
+    const inflight = this.inflight.get(project.id)
+    if (inflight) {
+      await inflight.catch(() => undefined)
+    }
+    this.snapshots.delete(project.id)
     this.details.clear()
     return this.scan(project.id)
   }
