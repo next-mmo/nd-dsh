@@ -11,6 +11,28 @@
       "block": "2.29.0-block.js",
       "block_sha256": "9c01783223460308d9e1db7e7dc2166e9aba30e10d650d3c546d9f53fca53521",
       "validation": "Live Windows UI checks on 2026-11-04: picker, rectangle, draft with/without screenshot, Escape and Cancel. Source ported for owned WebContentsViews; inspect again for every new version."
+    },
+    {
+      "id": "browser-annotate",
+      "revision": 3,
+      "app_version": "2.33.0",
+      "entry": "dist/preload.js",
+      "entry_sha256": "2f1e963bbcbcb47426597c89667f85c415f1a09e8fc8b0e903a4e1f8baeb41dc",
+      "marker": "// AGY_TEMP_ANNOTATOR_V1",
+      "block": "2.33.0-block.js",
+      "block_sha256": "455b140de7869a73dad68a5b976fe629a3d4ed20e9e3f9884a396a4ef32dade1",
+      "validation": "Inspected 2.33.0 preload, guest snapshots, owned isolated-world IPC, and focus/overlay handling. Live validation is recorded in the transaction."
+    },
+    {
+      "id": "browser-annotate",
+      "revision": 4,
+      "app_version": "2.33.0",
+      "entry": "dist/preload.js",
+      "entry_sha256": "2f1e963bbcbcb47426597c89667f85c415f1a09e8fc8b0e903a4e1f8baeb41dc",
+      "marker": "// AGY_TEMP_ANNOTATOR_V1",
+      "block": "2.33.0-screenshot-block.js",
+      "block_sha256": "30ab838c9f225ff96553aaa89079e600afb467ab22b14152245b1a241669bbd3",
+      "validation": "Adds a local screenshot editor using the existing owned guest capture API and the native draft paste pipeline."
     }
   ]
 }

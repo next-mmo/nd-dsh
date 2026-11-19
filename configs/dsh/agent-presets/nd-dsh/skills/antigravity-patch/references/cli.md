@@ -16,7 +16,7 @@ python $patchCli apply --dry-run
 python $patchCli apply
 ```
 
-The default patch is `browser-annotate`; use `--patch browser-annotate` explicitly if desired. The bundled recipe is for **Antigravity 2.29.0**. Its exact vendor preload and implementation hashes are in `assets/browser-annotate/recipes.json`. The older `annotate.js` is retained as historical 2.28.2 source, not an automatic upgrade recipe. Other patches in separate packed entries survive; an altered preload needs a newly inspected compatible recipe.
+The default patch is `browser-annotate`; use `--patch browser-annotate` explicitly if desired. Bundled recipes cover **Antigravity 2.29.0 and 2.33.0**. On 2.33.0, apply installs revision 4 or upgrades an exact registered revision 3 at the top of the stack. Reset after an upgrade restores revision 3. The exact vendor preload and implementation hashes are in `assets/browser-annotate/recipes.json`. The older `annotate.js` is retained as historical 2.28.2 source, not an automatic upgrade recipe. Other patches in separate packed entries survive; an altered preload needs a newly inspected compatible recipe.
 
 ## Adopt an existing patch into ND
 

@@ -182,27 +182,42 @@ class Manager:
         return {'status': 'awaiting_ui', 'transaction': str(transaction), 'backup': record['backup'],
                 'next': 'Restart Antigravity, check the feature and cancel/failure path, then run confirm --validation "observed checks". Use reset to undo this pending change.'}
 
+    def read_recipe_block(self, item):
+        path = (self.catalog.parent / item['block']).resolve()
+        if not path.is_relative_to(self.catalog.parent.resolve()):
+            raise ValueError('Recipe source must stay inside the recipe directory.')
+        data = path.read_bytes()
+        if sha(data) != item['block_sha256']:
+            raise ValueError('Recipe source hash mismatch.')
+        return path, data
+
     def apply(self, patch_id, dry_run=False):
         self.no_pending()
         archive = self.current()
         reg = self.registry(archive)
         catalog = read_json(self.catalog)
         choices = [r for r in catalog['recipes'] if r['id'] == patch_id and r['app_version'] == archive.version()]
-        if len(choices) != 1:
+        if not choices or len({r['revision'] for r in choices}) != len(choices):
             raise ValueError(f'No inspected recipe for {patch_id} on {archive.version()}. Use the skill to inspect and port it; older archives will not be restored.')
-        recipe = choices[0]
+        recipe = max(choices, key=lambda item: item['revision'])
         entry = recipe['entry']
         original = archive.content(entry)
-        block_path = (self.catalog.parent / recipe['block']).resolve()
-        if not block_path.is_relative_to(self.catalog.parent.resolve()):
-            raise ValueError('Recipe source must stay inside the recipe directory.')
-        block = block_path.read_bytes()
-        if sha(block) != recipe['block_sha256']:
-            raise ValueError('Recipe source hash mismatch.')
-        if any(p['id'] == patch_id for p in reg['patches']):
-            if original.count(block) == 1:
+        block_path, block = self.read_recipe_block(recipe)
+        registered = [p for p in reg['patches'] if p['id'] == patch_id]
+        if registered:
+            if len(registered) != 1:
+                raise ValueError('Multiple registered revisions; inspect the patch stack.')
+            active = registered[0]
+            if active.get('revision') == recipe['revision'] and original.count(block) == 1:
                 return {'status': 'already_applied', 'patch': patch_id, 'sha256': sha(archive.raw)}
-            raise ValueError('Registered patch differs from this recipe; inspect before revising.')
+            prior = next((r for r in choices if r['revision'] == active.get('revision') and
+                          r['revision'] < recipe['revision'] and r['entry'] == entry), None)
+            if prior is None or active is not reg['patches'][-1]:
+                raise ValueError('Registered patch differs from this recipe or has later patches above it; inspect before revising.')
+            _, previous_block = self.read_recipe_block(prior)
+            if not original.endswith(previous_block) or original.count(previous_block) != 1:
+                raise ValueError('Installed patch differs from the registered recipe.')
+            original = original[:-len(previous_block)]
         if recipe['marker'].encode() in original:
             raise ValueError('Unexpected patch marker; refusing duplicate or unknown patch.')
         if sha(original) != recipe['entry_sha256']:
@@ -214,6 +229,8 @@ class Manager:
             return {'status': 'dry_run', 'action': 'apply', 'version': archive.version(),
                     'before_sha256': sha(archive.raw), 'after_sha256': sha(result), 'entries': [entry]}
         reg_after = json.loads(json.dumps(reg))
+        if registered:
+            reg_after['patches'].pop()
         reg_after['active_sha256'] = sha(result)
         return self.install(archive, result, reg, reg_after, 'apply', patch_id, [entry],
                             {'revision': recipe['revision'], 'source': str(block_path)})
@@ -227,16 +244,17 @@ class Manager:
             return {'status': 'already_managed', 'patch': patch_id}
         choices = [r for r in read_json(self.catalog)['recipes']
                    if r['id'] == patch_id and r['app_version'] == archive.version()]
-        if len(choices) != 1:
+        if not choices or len({r['revision'] for r in choices}) != len(choices):
             raise ValueError('No inspected recipe for this installed version; inspect before adopting.')
-        recipe = choices[0]
-        source = (self.catalog.parent / recipe['block']).resolve()
-        if not source.is_relative_to(self.catalog.parent.resolve()):
-            raise ValueError('Recipe source must stay inside the recipe directory.')
-        block = source.read_bytes()
-        entry = archive.content(recipe['entry'])
-        if sha(block) != recipe['block_sha256'] or entry.count(block) != 1 or not entry.endswith(block):
-            raise ValueError('Existing patch does not exactly match the inspected recipe.')
+        matches = []
+        for recipe in choices:
+            source, block = self.read_recipe_block(recipe)
+            entry = archive.content(recipe['entry'])
+            if block and entry.endswith(block) and entry.count(block) == 1:
+                matches.append((recipe, source, block, entry))
+        if len(matches) != 1:
+            raise ValueError('Existing patch does not exactly match one inspected recipe.')
+        recipe, source, block, entry = matches[0]
         original = entry[:-len(block)]
         if sha(original) != recipe['entry_sha256']:
             raise ValueError('Underlying preload differs; inspect other patches before adopting.')

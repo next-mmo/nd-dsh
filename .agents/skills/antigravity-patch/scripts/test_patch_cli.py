@@ -247,6 +247,31 @@ class CliTests(unittest.TestCase):
             self.manager.adopt('browser-annotate')
         self.assertFalse(self.state.exists())
 
+    def test_adopts_prior_revision_then_upgrades_and_rolls_back(self):
+        archive = Archive(self.before)
+        patched = build(archive, {'dist/preload.js': archive.content('dist/preload.js') + self.block},
+                        sha(self.before), '2.29.0')
+        self.live.write_bytes(patched)
+        newer_block = self.block.replace(b'annotation = 1', b'annotation = 2')
+        (self.assets/'newer.js').write_bytes(newer_block)
+        newer = {**self.recipe, 'revision': 3, 'block': 'newer.js', 'block_sha256': sha(newer_block)}
+        self.catalog.write_text(json.dumps({'recipes': [newer, self.recipe]}))
+
+        self.manager.adopt('browser-annotate')
+        self.manager.confirm('Synthetic adoption of the exact older recipe.')
+        self.assertEqual(self.manager.status()['patches'], [{'id': 'browser-annotate', 'revision': 2}])
+        self.manager.apply('browser-annotate')
+        self.manager.confirm('Synthetic upgrade.')
+        self.assertEqual(self.manager.status()['patches'], [{'id': 'browser-annotate', 'revision': 3}])
+        self.assertEqual(Archive(self.live.read_bytes()).content('dist/preload.js'),
+                         archive.content('dist/preload.js') + newer_block)
+        self.assertEqual(self.manager.apply('browser-annotate')['status'], 'already_applied')
+
+        self.manager.reset('browser-annotate')
+        self.manager.confirm('Synthetic rollback to the prior revision.')
+        self.assertEqual(self.live.read_bytes(), patched)
+        self.assertEqual(self.manager.status()['patches'], [{'id': 'browser-annotate', 'revision': 2}])
+
 
 if __name__ == '__main__':
     unittest.main()

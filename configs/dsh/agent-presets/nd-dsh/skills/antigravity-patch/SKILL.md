@@ -13,7 +13,7 @@ In ND, invoke `/antigravity-patch <request>` through the skill picker or compose
 
 Map `/antigravity-patch -h` (or `help`), `status`, `apply`, `reset`, and `adopt` to this resource directory's `scripts/patch.py`. Help is read-only. Read [references/cli.md](references/cli.md) for arguments and recovery. Resolve every helper, recipe, and reference relative to ND's supplied **Skill resource directory** or the workspace `.agents/skills/antigravity-patch` directory, never a global skill installation.
 
-The helper defaults to `%LOCALAPPDATA%/ND/Patches/Antigravity/`. It supports the inspected 2.29.0 browser-annotate recipe; new versions require inspection. Start with `status` and the requested command's `--dry-run`. Save active work and quit Antigravity normally before `apply` or `reset`. Neither command closes processes or bypasses file locks. After restarting, observe actual UI behavior and record it with `confirm --validation`; do not claim UI checks from code or archive tests.
+The helper defaults to `%LOCALAPPDATA%/ND/Patches/Antigravity/`. It supports inspected browser-annotate recipes for 2.29.0 and 2.33.0. On 2.33.0, choose **Edit screenshot** after selecting a page element or area to crop or draw a red circle or arrow before adding the PNG to the draft. New app versions require inspection. Start with `status` and the requested command's `--dry-run`. Save active work and quit Antigravity normally before `apply` or `reset`. Neither command closes processes or bypasses file locks. After restarting, observe actual UI behavior and record it with `confirm --validation`; do not claim UI checks from code or archive tests.
 
 For a known patch already installed by a different tool, use `adopt --dry-run` before `adopt`. Adoption verifies the exact implementation and underlying preload, saves an ND-owned reconstructed baseline and current snapshot, and leaves the app archive untouched. It does not read another tool's state or assume a pristine vendor archive. Observe the existing feature before confirming. Unknown preloads, patches above the requested patch, or hash mismatches require investigation rather than a forced reset.
 
@@ -21,7 +21,7 @@ For a known patch already installed by a different tool, use `adopt --dry-run` b
 
 - Locate the actual executable/resources; determine the version from the executable and archive package metadata. The known Windows archive is `%LOCALAPPDATA%/Programs/Antigravity/resources/app.asar`; discover rather than assume on other installations.
 - Read `%LOCALAPPDATA%/ND/Patches/Antigravity/registry.json` and `pending.json` when present. Compare the active/pending hashes with the installed archive before changing anything. A mismatch may mean an update, another patch, or a partial transaction; investigate rather than overwrite.
-- For browser, preload, or Electron shell work, read [references/antigravity-desktop.md](references/antigravity-desktop.md). The original findings concern 2.28.2; the pinned CLI recipe contains the UI-tested 2.29.0 WebContentsView port. Reinspect other versions.
+- For browser, preload, or Electron shell work, read [references/antigravity-desktop.md](references/antigravity-desktop.md). The reference describes the original 2.28.2 implementation and the inspected ports for 2.29.0 and 2.33.0. Reinspect other versions.
 - Before installation, rollback, or an upgrade, read [references/patch-lifecycle.md](references/patch-lifecycle.md).
 
 ## Implement the smallest integration

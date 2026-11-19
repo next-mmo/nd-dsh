@@ -24,6 +24,12 @@ The implementation and [recipe](../assets/browser-annotate/recipe.json) are bund
 
 The original one-off installer is replaced by the portable candidate builder. It did not support patch-stack removal. ND now maintains `%LOCALAPPDATA%/ND/Patches/Antigravity/` independently. Use the CLI's exact-recipe `adopt` workflow for a recognized existing patch; do not copy another manager's history or blindly restore `app.asar.orig`. All managers must recheck the live archive hash before any write, so a stale registry is refused instead of overwriting another manager's changes.
 
+## 2.33.0 screenshot editor
+
+Revision 4 adds **Edit screenshot** to the annotation panel. Select **Crop**, **Red circle**, or **Red arrow**, then drag on the preview. **Undo** reverses the last edit. **Add to chat** places the edited PNG and comment in the draft. **Cancel** discards edits before adding them.
+
+The patch uses the existing ownership-checked WebContentsView capture API and Antigravity's draft attachment path. The live Windows app was checked for cropping, both red marks, Undo, opening the edited draft attachment, and canceling without adding a draft. No message was sent.
+
 ## Inspected 2.29.0 port
 
 The pinned `assets/browser-annotate/2.29.0-block.js` observes native `electronNative.wcvBrowser.onGuestEvent` snapshots and matches tab identity to the current browser tab. It retains the existing ownership-checked isolated-world execution API and uses native elevation/overlay methods for picking and the comment editor. It adds no IPC or Node capability. Inspect the block hash and expected preload hash in `recipes.json` before changing this recipe.
