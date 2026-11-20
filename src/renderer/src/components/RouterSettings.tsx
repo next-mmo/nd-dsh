@@ -74,6 +74,7 @@ type ProviderKindChoice =
   | 'ovh-kepler'
   | 'free-ai'
   | 'kilo-gateway'
+  | 'free-gemini-api'
   | RouterTtsProviderKind
   | RouterCliProviderKind
   | 'chatgpt-web'
@@ -993,6 +994,7 @@ export function RouterSettings({ onError, subTab: propSubTab, onSelectSubTab, on
                   <option value="ovh-kepler">OVH Kepler Cloud (120B / Qwen 3.6 · No Key)</option>
                   <option value="free-ai">Free.ai (Coding & Vision · No Key)</option>
                   <option value="kilo-gateway">Kilo Gateway (Aggregator · No Key)</option>
+                  <option value="free-gemini-api">Free Gemini API (Gemini 4 Hydrogen & Neon · Local Free)</option>
                 </optgroup>
                 <optgroup label="Custom API (API Key Required)">
                   <option value="ai-studio">Google AI Studio (Gemini 3.8 Live / 2.5 / 2.0)</option>
@@ -1406,6 +1408,7 @@ function kindLabel(kind: string): string {
     case 'ovh-kepler': return 'OVH Kepler Cloud (Free)'
     case 'free-ai': return 'Free.ai (Free)'
     case 'kilo-gateway': return 'Kilo Gateway (Free)'
+    case 'free-gemini-api': return 'Free Gemini API (Gemini 4 · Free)'
     case 'chatgpt-web': return 'ChatGPT Web'
     case 'gemini-web': return 'Gemini Web'
     case 'deepseek-web': return 'DeepSeek Web'

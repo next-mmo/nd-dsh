@@ -39,6 +39,7 @@
     "dsh:build": "node scripts/build-harness.mjs",
     "dsh:update": "node scripts/update-harness.mjs",
     "nd-pencil:build": "node scripts/build-nd-pencil.mjs",
+    "free-gemini-api:build": "node scripts/build-free-gemini-api.mjs",
     "core:build:dev": "cargo build -p nd-core -p nd-agent",
     "core:build": "cargo build --release -p nd-core -p nd-agent",
     "core:test": "cargo fmt --check && cargo clippy -p nd-protocol -p nd-runtime -p nd-core -p nd-agent --all-targets -- -D warnings && cargo test -p nd-protocol -p nd-runtime -p nd-core -p nd-agent",

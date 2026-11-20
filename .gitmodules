@@ -5,3 +5,6 @@
 [submodule "vendor/openpencil"]
 	path = vendor/openpencil
 	url = https://github.com/ZSeven-W/openpencil.git
+[submodule "vendor/free-gemini-api"]
+	path = vendor/free-gemini-api
+	url = https://github.com/kodelyx/free-gemini-api.git

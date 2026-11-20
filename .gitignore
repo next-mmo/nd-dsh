@@ -30,13 +30,16 @@ artifacts/
 # Pinned upstream infrastructure populated by git submodule/bootstrap.
 /vendor/deepseek-harness/
 /vendor/openpencil/
+/vendor/free-gemini-api/
 !/vendor/README.md
 !/vendor/deepseek-harness.json
 !/vendor/openpencil.json
 !/vendor/openpencil.LICENSE
+!/vendor/free-gemini-api.json
 
 # Built ND Pencil runtime staged for packaging; never commit platform binaries.
 /resources/nd-pencil/bin/
+/resources/free-gemini-api/bin/
 
 *.tsbuildinfo
 

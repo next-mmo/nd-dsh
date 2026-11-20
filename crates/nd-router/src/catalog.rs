@@ -5,6 +5,7 @@ pub const KIND_POLLINATIONS: &str = "pollinations";
 pub const KIND_OVH_KEPLER: &str = "ovh-kepler";
 pub const KIND_FREE_AI: &str = "free-ai";
 pub const KIND_KILO: &str = "kilo-gateway";
+pub const KIND_FREE_GEMINI_API: &str = "free-gemini-api";
 pub const KIND_ANTIGRAVITY: &str = "antigravity";
 pub const KIND_GEMINI_CLI: &str = "gemini-cli";
 pub const KIND_QODER: &str = "qoder";
@@ -51,6 +52,9 @@ pub fn normalize_kind(value: &str) -> Result<String, String> {
         "ovh" | "ovh-kepler" | "ovh-cloud" | "ovh-anonymous" => Ok(KIND_OVH_KEPLER.to_owned()),
         "free-ai" | "freeai" => Ok(KIND_FREE_AI.to_owned()),
         "kilo" | "kilo-gateway" | "kilo-ai" => Ok(KIND_KILO.to_owned()),
+        "free-gemini-api" | "free-gemini" | "gemini-free" | "gemini-4-free" => {
+            Ok(KIND_FREE_GEMINI_API.to_owned())
+        }
         "antigravity" | "agy" => Ok(KIND_ANTIGRAVITY.to_owned()),
         "gemini-cli" | "gemini" => Ok(KIND_GEMINI_CLI.to_owned()),
         "qoder" | "qoder-cli" => Ok(KIND_QODER.to_owned()),
@@ -112,13 +116,14 @@ pub fn is_http_kind(kind: &str) -> bool {
             | KIND_OVH_KEPLER
             | KIND_FREE_AI
             | KIND_KILO
+            | KIND_FREE_GEMINI_API
     )
 }
 
 pub fn is_free_api_kind(kind: &str) -> bool {
     matches!(
         kind,
-        KIND_POLLINATIONS | KIND_OVH_KEPLER | KIND_FREE_AI | KIND_KILO
+        KIND_POLLINATIONS | KIND_OVH_KEPLER | KIND_FREE_AI | KIND_KILO | KIND_FREE_GEMINI_API
     )
 }
 

@@ -1,0 +1,6 @@
+{
+  "repository": "https://github.com/kodelyx/free-gemini-api.git",
+  "commit": "bcac6040765fa151a8ee7840740627c0dfc5d2a0",
+  "branch": "main",
+  "purpose": "OpenAI-compatible Gemini 4 Hydrogen/Neon HTTP/3 QUIC proxy runtime for ND Router"
+}

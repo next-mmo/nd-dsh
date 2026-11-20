@@ -1689,6 +1689,7 @@ fn categorizes_and_seeds_free_api_providers() {
         ("ovh", catalog::KIND_OVH_KEPLER, "gpt-oss-120b"),
         ("free-ai", catalog::KIND_FREE_AI, "qwen3-coder"),
         ("kilo", catalog::KIND_KILO, "openrouter/free"),
+        ("free-gemini-api", catalog::KIND_FREE_GEMINI_API, "gemini-4-hydrogen"),
     ] {
         let normalized = catalog::normalize_kind(alias).expect("normalize");
         assert_eq!(normalized, expected_kind);

@@ -1135,6 +1135,7 @@ async function createWindow(cdpPort: number): Promise<void> {
     disposeDesignIpc()
     disposeTerminalIpc()
     void nineRouterManaged.dispose().catch((error) => console.error('9Router cleanup failed:', error))
+    void routerService.dispose().catch((error) => console.error('Router cleanup failed:', error))
     superagentPrototype.dispose()
     disposeIpc()
     disposeCoreReady()

@@ -40,3 +40,13 @@ ND's built-in **Source Control** (Git) feature is derived from the MIT-licensed 
 
 The snapshot is provenance/reference only. ND owns the Source Control UI, IPC contracts, repository-state service, security policy and distribution; the adapted runtime lives in `src/main/git/` and carries Microsoft's copyright headers where source is derived. Credential prompts fail closed (`GIT_ASKPASS=echo`, `GIT_TERMINAL_PROMPT=0`) instead of spawning an askpass helper.
 
+## Free Gemini API upstream runtime
+
+ND Router integrates `free-gemini-api` as a local OpenAI-compatible provider lane (`free-gemini-api`) for Gemini 4 Hydrogen, Gemini 4 Neon, and Task Mode:
+
+- upstream repository: `https://github.com/kodelyx/free-gemini-api.git`
+- commit: `bcac6040765fa151a8ee7840740627c0dfc5d2a0`
+- metadata/provenance: `free-gemini-api.json`
+
+Run `corepack pnpm free-gemini-api:build` to compile and stage the local Go binary under `resources/free-gemini-api/bin/`. In development, ND Router can also compile or reuse an existing local `free-gemini-api` instance on `http://127.0.0.1:8001/v1`.
+

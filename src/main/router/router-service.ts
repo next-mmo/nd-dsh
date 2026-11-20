@@ -26,6 +26,7 @@ import type { CoreClient } from '../core/core-client.js'
 import type { ProviderStore } from '../providers.js'
 import { NINE_ROUTER_EXTERNAL_PROVIDER_ID } from '../../shared/nine-router.js'
 import { RouterExternalKeyStore } from './external-key-store.js'
+import { FreeGeminiApiRuntime } from './free-gemini-api.js'
 import { RouterSafeModeStore } from './router-safe-mode-store.js'
 import type { WebLaneBridgeDescriptor } from './web-lane-bridge.js'
 
@@ -67,6 +68,7 @@ export class RouterService {
   private appliedKey: string | undefined
   private readonly externalKeys: RouterExternalKeyStore
   private readonly safeMode: RouterSafeModeStore
+  private readonly freeGeminiApi: FreeGeminiApiRuntime
   private webLaneBridge: WebLaneCanceller | undefined
   private lastWebBridgeDescriptor: WebLaneBridgeDescriptor | undefined
   private initPromise: Promise<void> | undefined
@@ -82,6 +84,7 @@ export class RouterService {
   ) {
     this.externalKeys = new RouterExternalKeyStore(join(dataDir, 'external-key.json'), undefined, log)
     this.safeMode = new RouterSafeModeStore(join(dataDir, 'router-safe-mode.json'), log)
+    this.freeGeminiApi = new FreeGeminiApiRuntime(core, dataDir, log)
     if (typeof (this.core as { onEvent?: unknown }).onEvent === 'function') {
       (this.core as { onEvent(event: string, listener: () => void): () => void }).onEvent('core.ready', () => {
         void this.ensureInitialized().catch((error) => {
@@ -108,6 +111,11 @@ export class RouterService {
       this.key = result.key
       this.persistServerInfo(result.port)
       this.syncManagedProvider(result.state)
+      if (result.state.providers.some((provider) => provider.kind === 'free-gemini-api' && provider.isActive)) {
+        void this.ensureFreeGeminiApiStarted(result.state).catch((error) => {
+          this.log(`Free Gemini API startup skipped: ${message(error)}`)
+        })
+      }
     } catch (error) {
       // Web lanes are unavailable without the bridge, but API lanes still work.
       this.log(`ND Router is unavailable: ${message(error)}`)
@@ -152,29 +160,31 @@ export class RouterService {
     return this.withEndpoint({ ...state, safeMode: state.safeMode === true })
   }
 
-  testCandidate(input: RouterProviderInput): Promise<RouterTestResult> {
-    const timeout = isRouterWebProviderKind(input.kind ?? '') ? 310_000 : 150_000
-    return this.coreRequest<RouterTestResult>('router.testCandidate', input, timeout)
+  async testCandidate(input: RouterProviderInput): Promise<RouterTestResult> {
+    const resolved = await this.withManagedFreeGeminiBaseUrl(input)
+    const timeout = isRouterWebProviderKind(resolved.kind ?? '') ? 310_000 : 150_000
+    return this.coreRequest<RouterTestResult>('router.testCandidate', resolved, timeout)
   }
 
   async saveProvider(input: RouterProviderInput, options?: { skipPingTest?: boolean }): Promise<RouterState> {
+    const resolved = await this.withManagedFreeGeminiBaseUrl(input)
     const isTogglingActiveOnly = Boolean(
-      input.id &&
-      input.isActive !== undefined &&
-      !input.baseUrl &&
-      !input.apiKey &&
-      !input.models &&
-      !input.kind
+      resolved.id &&
+      resolved.isActive !== undefined &&
+      !resolved.baseUrl &&
+      !resolved.apiKey &&
+      !resolved.models &&
+      !resolved.kind
     )
     if (!isTogglingActiveOnly && !options?.skipPingTest) {
-      const ping = await this.testCandidate(input)
+      const ping = await this.testCandidate(resolved)
       if (!ping.ok) {
         throw new Error(
           `Ping test failed (${ping.statusCode}): ${ping.error || 'Connection test failed'}. Provider cannot be saved.`
         )
       }
     }
-    await this.coreRequest('router.saveProvider', input)
+    await this.coreRequest('router.saveProvider', resolved)
     return this.refreshedState()
   }
 
@@ -228,15 +238,22 @@ export class RouterService {
     return this.refreshedState()
   }
 
-  testProvider(providerId: string): Promise<RouterTestResult> {
+  async testProvider(providerId: string): Promise<RouterTestResult> {
     // Web lanes can wait on a full browser turn; API lanes keep the short ping.
-    return this.state()
-      .then((state) => {
-        const provider = state.providers.find((candidate) => candidate.id === providerId)
-        const timeout = provider && isRouterWebProviderKind(provider.kind) ? 310_000 : 150_000
-        return this.coreRequest<RouterTestResult>('router.testProvider', { providerId }, timeout)
-      })
-      .catch(() => this.coreRequest<RouterTestResult>('router.testProvider', { providerId }, 150_000))
+    try {
+      const state = await this.state()
+      const provider = state.providers.find((candidate) => candidate.id === providerId)
+      if (provider?.kind === 'free-gemini-api' && this.freeGeminiApi.isManagedUrl(provider.baseUrl)) {
+        const url = await this.freeGeminiApi.ensureStarted()
+        if (provider.baseUrl !== url) {
+          await this.coreRequest('router.saveProvider', { id: provider.id, baseUrl: url })
+        }
+      }
+      const timeout = provider && isRouterWebProviderKind(provider.kind) ? 310_000 : 150_000
+      return await this.coreRequest<RouterTestResult>('router.testProvider', { providerId }, timeout)
+    } catch {
+      return this.coreRequest<RouterTestResult>('router.testProvider', { providerId }, 150_000)
+    }
   }
 
   usage(): Promise<RouterUsageSummary> {
@@ -538,6 +555,28 @@ export class RouterService {
       this.providers.setApiKey(MANAGED_ROUTER_PROVIDER_ID, this.key)
       this.appliedKey = this.key
     }
+  }
+
+  private async withManagedFreeGeminiBaseUrl(input: RouterProviderInput): Promise<RouterProviderInput> {
+    if (input.kind !== 'free-gemini-api' || input.isActive === false) return input
+    if (!this.freeGeminiApi.isManagedUrl(input.baseUrl)) return input
+    const baseUrl = await this.freeGeminiApi.ensureStarted()
+    return { ...input, baseUrl }
+  }
+
+  private async ensureFreeGeminiApiStarted(state: RouterState): Promise<void> {
+    const active = state.providers.filter((provider) => provider.kind === 'free-gemini-api' && provider.isActive)
+    if (active.length === 0) return
+    const url = await this.freeGeminiApi.ensureStarted()
+    for (const provider of active) {
+      if (this.freeGeminiApi.isManagedUrl(provider.baseUrl) && provider.baseUrl !== url) {
+        await this.coreRequest('router.saveProvider', { id: provider.id, baseUrl: url })
+      }
+    }
+  }
+
+  async dispose(): Promise<void> {
+    await this.freeGeminiApi.dispose()
   }
 }
 

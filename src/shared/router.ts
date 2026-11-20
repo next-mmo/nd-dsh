@@ -28,6 +28,7 @@ export type RouterProviderKind =
   | 'ovh-kepler'
   | 'free-ai'
   | 'kilo-gateway'
+  | 'free-gemini-api'
   | RouterTtsProviderKind
   | RouterCliProviderKind
   | 'chatgpt-web'
@@ -148,6 +149,20 @@ export const ROUTER_FREE_API_MODELS: Record<string, string[]> = {
     'kilo-auto/small',
     'nvidia/nemotron-3.5-lightning:free',
   ],
+  'free-gemini-api': [
+    'gemini-4-hydrogen',
+    'gemini-4-hydrogen-task',
+    'gemini-4-neon',
+    'gemini-4-neon-task',
+    'gemini-4-neon-thinking-high',
+    'gemini-4-neon-thinking-medium',
+    'gemini-4-neon-thinking-low',
+    'gemini-auto',
+    'gemini-4-argon',
+    'gemini-4-carbon',
+    'gemini-3.8-flash',
+    'gemini-3.1-pro',
+  ],
 }
 
 export const ROUTER_FREE_API_BASE_URLS: Record<string, string> = {
@@ -155,6 +170,7 @@ export const ROUTER_FREE_API_BASE_URLS: Record<string, string> = {
   'ovh-kepler': 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1',
   'free-ai': 'https://api.free.ai/v1',
   'kilo-gateway': 'https://api.kilo.ai/api/gateway/v1',
+  'free-gemini-api': 'http://127.0.0.1:8001/v1',
 }
 
 export const ROUTER_AI_STUDIO_MODELS: string[] = [
@@ -189,7 +205,7 @@ export function isRouterTtsProviderKind(kind: string): kind is RouterTtsProvider
 }
 
 export function isRouterFreeApiKind(kind: string): boolean {
-  return kind === 'pollinations' || kind === 'ovh-kepler' || kind === 'free-ai' || kind === 'kilo-gateway'
+  return kind === 'pollinations' || kind === 'ovh-kepler' || kind === 'free-ai' || kind === 'kilo-gateway' || kind === 'free-gemini-api'
 }
 
 export function providerCategory(kind: string): RouterProviderCategory {

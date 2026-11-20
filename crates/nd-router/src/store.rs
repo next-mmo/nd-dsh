@@ -247,6 +247,7 @@ fn default_name(kind: &str) -> String {
         catalog::KIND_OVH_KEPLER => "OVH Kepler Cloud (Free)".to_owned(),
         catalog::KIND_FREE_AI => "Free.ai (Free)".to_owned(),
         catalog::KIND_KILO => "Kilo Gateway (Free)".to_owned(),
+        catalog::KIND_FREE_GEMINI_API => "Free Gemini API (Gemini 4 · Free)".to_owned(),
         catalog::KIND_ANTIGRAVITY => "Antigravity".to_owned(),
         catalog::KIND_GEMINI_CLI => "Gemini CLI".to_owned(),
         catalog::KIND_QODER => "Qoder CLI".to_owned(),
@@ -315,6 +316,20 @@ fn default_models(kind: &str) -> Vec<String> {
             "cohere/north-mini-code:free".to_owned(),
             "kilo-auto/small".to_owned(),
             "nvidia/nemotron-3.5-lightning:free".to_owned(),
+        ],
+        catalog::KIND_FREE_GEMINI_API => vec![
+            "gemini-4-hydrogen".to_owned(),
+            "gemini-4-hydrogen-task".to_owned(),
+            "gemini-4-neon".to_owned(),
+            "gemini-4-neon-task".to_owned(),
+            "gemini-4-neon-thinking-high".to_owned(),
+            "gemini-4-neon-thinking-medium".to_owned(),
+            "gemini-4-neon-thinking-low".to_owned(),
+            "gemini-auto".to_owned(),
+            "gemini-4-argon".to_owned(),
+            "gemini-4-carbon".to_owned(),
+            "gemini-3.8-flash".to_owned(),
+            "gemini-3.1-pro".to_owned(),
         ],
         catalog::KIND_CODEX_CLI => {
             vec!["default".to_owned(), "o3-mini".to_owned(), "o1".to_owned()]
@@ -424,6 +439,7 @@ fn default_base_url(kind: &str) -> String {
         catalog::KIND_OVH_KEPLER => "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1".to_owned(),
         catalog::KIND_FREE_AI => "https://api.free.ai/v1".to_owned(),
         catalog::KIND_KILO => "https://api.kilo.ai/api/gateway/v1".to_owned(),
+        catalog::KIND_FREE_GEMINI_API => "http://127.0.0.1:8001/v1".to_owned(),
         _ => String::new(),
     }
 }
