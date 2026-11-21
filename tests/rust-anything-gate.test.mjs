@@ -14,7 +14,7 @@ function fixture() {
   const unit = join(root, 'rust', 'sample')
   mkdirSync(bin, { recursive: true })
   mkdirSync(unit, { recursive: true })
-  writeFileSync(join(unit, 'Cargo.toml'), '[package]\\nname="sample"\\nversion="0.1.0"\\n'.replaceAll('\\n', '\n'))
+  writeFileSync(join(unit, 'Cargo.toml'), '[package]\nname="sample"\nversion="0.1.0"\n')
   writeFileSync(join(unit, 'cases.jsonl'), '{"fn":"x","args":[]}\n')
   const mock = join(bin, 'mock.mjs')
   writeFileSync(mock, `#!/usr/bin/env node
