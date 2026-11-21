@@ -63,3 +63,7 @@ target-e2e/
 
 # Chromium's generated declarative-rule index, written next to a loaded package.
 resources/browser-extensions/*/_metadata/
+
+# rust-anything local proof output (recorded fixtures require separate review)
+rust/gate-report.json
+rust/PORT_MAP.md
