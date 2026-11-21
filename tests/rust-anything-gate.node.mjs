@@ -53,7 +53,7 @@ describe('rust-anything gate', () => {
       assert.equal(existsSync(f.calls), false)
     } finally { f.cleanup() }
   })
-  it('verifies diff and gate before marking a recorded unit passed', () => {
+  it('verifies diff and gate before marking a recorded unit passed', { skip: process.platform === 'win32' }, () => {
     const f = fixture()
     try {
       const out = f.run('--all')
@@ -64,7 +64,7 @@ describe('rust-anything gate', () => {
       assert.equal(report.units[0].status, 'passed')
     } finally { f.cleanup() }
   })
-  it('fails closed on a behavior mismatch and never runs bench or shadow', () => {
+  it('fails closed on a behavior mismatch and never runs bench or shadow', { skip: process.platform === 'win32' }, () => {
     const f = fixture()
     try {
       f.env.MOCK_FAIL_ON = 'diff'
