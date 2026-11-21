@@ -72,7 +72,10 @@
     "beta:e2e": "corepack pnpm build && corepack pnpm e2e && corepack pnpm e2e:prod:user",
     "beta:artifact": "corepack pnpm dist:win:portable && node scripts/packaged-runtime-smoke.mjs",
     "beta:soak": "corepack pnpm e2e:beta:soak",
-    "beta:preflight": "corepack pnpm beta:unit && corepack pnpm beta:e2e"
+    "beta:preflight": "corepack pnpm beta:unit && corepack pnpm beta:e2e",
+    "rust:analyze": "rust-anything analyze . --whole-app -o rust/research/analyze-generated.md",
+    "rust:gate": "node scripts/rust-anything-gate.mjs --all",
+    "rust:gate:test": "node --test tests/rust-anything-gate.test.mjs"
   },
   "dependencies": {
     "@msgpack/msgpack": "3.1.3",
