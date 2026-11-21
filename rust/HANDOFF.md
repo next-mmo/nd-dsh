@@ -11,7 +11,7 @@ Branch: `feat/rust-anything` off `dev`; no merge to `main`.
 
 ## Verified / not verified
 
-- Local `node --test tests/rust-anything-gate.test.mjs`: five harness tests passed in this session using a fake CLI, **not a rust-anything binary**.
+- Local `node --test tests/rust-anything-gate.node.mjs`: five harness tests passed in this session using a fake CLI, **not a rust-anything binary**.
 - This execution container lacks the Rust toolchain, the rust-anything executable, the full checked-out repository and desktop E2E environment.
 - No actual Rust-port unit passed a recorded `diff` or `gate`; no full desktop build or macOS/Windows packaged smoke run occurred. This is **incomplete** relative to the requested full migration.
 
