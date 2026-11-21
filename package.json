@@ -75,7 +75,7 @@
     "beta:preflight": "corepack pnpm beta:unit && corepack pnpm beta:e2e",
     "rust:analyze": "rust-anything analyze . --whole-app -o rust/research/analyze-generated.md",
     "rust:gate": "node scripts/rust-anything-gate.mjs --all",
-    "rust:gate:test": "node --test tests/rust-anything-gate.test.mjs"
+    "rust:gate:test": "node --test tests/rust-anything-gate.node.mjs"
   },
   "dependencies": {
     "@msgpack/msgpack": "3.1.3",
