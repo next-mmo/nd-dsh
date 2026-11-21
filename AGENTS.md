@@ -26,3 +26,5 @@
   - **Local secrets & `.env` protection**: Keep `.env*` and local credential files untracked and excluded in `.gitignore`. Never use `git add -f` on ignored files containing environment or runtime state.
   - **Pre-commit diff inspection**: Always verify `git diff --staged` before committing to ensure no private keys, session tokens, or high-entropy credentials are inadvertently introduced.
 - Run `pnpm verify`, `pnpm typecheck`, `pnpm test`, and `pnpm build` before publishing changes.
+- **Rust migration branch contract:** Use `feat/rust-anything` from `dev`, never merge changes to `main`. Read `rust/EXECUTE.md`, `rust/MAP.md`, `rust/DECISIONS.md`, and the vendored `.agents/skills/rust-anything/SKILL.md` before any broad Rust port.
+- **Rust proof standard:** No component is called migrated until the original cases replay, `rust-anything diff` and `gate` pass, desktop local verification succeeds and the performance verdict supports the cutover. Original-code recording runs only with disposable fixtures and no production credentials.
