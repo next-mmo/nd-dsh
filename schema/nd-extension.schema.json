@@ -112,7 +112,8 @@
           "phoneinput.read",
           "phoneinput.write",
           "openspec.read",
-          "openspec.write"
+          "openspec.write",
+          "video-gen.generate"
         ]
       }
     },
@@ -566,6 +567,8 @@
         "browser.search",
         "browser.openExternal",
         "skill.compose",
+        "video-gen.models",
+        "video-gen.generate",
         "media.download.current",
         "media.download.status",
         "media.download.prepare",

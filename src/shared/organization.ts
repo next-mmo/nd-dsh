@@ -191,6 +191,8 @@ export interface OrganizationAgent {
   lastSessionId?: string
   providerId?: string
   modelId?: string
+  /** Native model selections belong to their execution engines. */
+  engineModels?: Record<string, string>
 }
 
 export interface OrganizationSkill {
@@ -536,7 +538,7 @@ export type OrganizationMutation =
   | { type: 'role.create'; companyId: string; name: string; responsibility: string; systemPrompt: string; skillIds?: string[]; providerId?: string; modelId?: string }
   | { type: 'role.update'; id: string; patch: Partial<Pick<OrganizationRole, 'name' | 'responsibility' | 'systemPrompt' | 'skillIds' | 'providerId' | 'modelId'>> }
   | { type: 'agent.create'; companyId: string; name: string; roleId: string; teamId?: string; skillIds?: string[]; providerId?: string; modelId?: string }
-  | { type: 'agent.update'; id: string; patch: Partial<Pick<OrganizationAgent, 'name' | 'roleId' | 'teamId' | 'status' | 'skillIds' | 'providerId' | 'modelId'>> }
+  | { type: 'agent.update'; id: string; patch: Partial<Pick<OrganizationAgent, 'name' | 'roleId' | 'teamId' | 'status' | 'skillIds' | 'providerId' | 'modelId' | 'engineModels'>> }
   | { type: 'skill.create'; scope: Exclude<OrganizationScope, 'builtin'>; name: string; description: string; instructions: string; companyId?: string; projectId?: string; teamId?: string; roleId?: string; agentId?: string }
   | { type: 'workflow.create'; companyId: string; projectId?: string; name: string; steps: WorkflowStep[] }
   | { type: 'goal.create'; companyId: string; projectId: string; title: string; description: string }

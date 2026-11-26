@@ -4166,6 +4166,7 @@ const PERMISSION_LABELS: Record<string, string> = {
   'phoneinput.write': 'Control Phone Link remote keyboard and trackpad',
   'openspec.read': 'Read OpenSpec specifications and changes',
   'openspec.write': 'Create and update OpenSpec specifications and tasks',
+  'video-gen.generate': 'Generate scene settings with a selected ND Router model',
 }
 
 function describePermissions(permissions: string[]): string {

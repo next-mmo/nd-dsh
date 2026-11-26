@@ -129,6 +129,7 @@ import { ND_TRANSLATE_ID, ND_TRANSLATE_MAX_TEXT, isLlmProvider } from '../../sha
 import { ND_WEBVIEW_URL_SCHEME } from '../../shared/extension-webview.js'
 import type { ProviderStore } from '../providers.js'
 import { registerSkillComposeHost, type SkillCatalogPort } from './skill-compose-host.js'
+import { registerVideoGenHosts } from './video-gen-host.js'
 import { OPENSPEC_HUB_ID, OpenSpecHubService, type OpenSpecRouterPort } from './openspec-hub/nd-service.js'
 import { assertSafeId, readProjectFile } from './openspec-hub/security.js'
 import { findProject } from './openspec-hub/config.js'
@@ -1005,6 +1006,7 @@ export function registerNativeHostHandlers(
   phoneAudioService?: PhoneAudioService | null,
 ): { dispose: () => void } {
   const { host, providers } = deps
+  const disposeVideoGen = registerVideoGenHosts(host, deps.router)
   registerSkillComposeHost(host, deps.skills, (request) => {
     if (deps.window.isDestroyed()) throw new Error('ND window is unavailable')
     deps.window.webContents.send(ND_EXTENSIONS_IPC.skillComposeEvent, request)
@@ -3818,6 +3820,7 @@ export function registerNativeHostHandlers(
   return {
     dispose: () => {
       if (!phoneAudioService) void phoneAudio.dispose()
+      disposeVideoGen()
       translator.dispose()
       payGuardScheduler.stop()
       diskScans?.dispose()

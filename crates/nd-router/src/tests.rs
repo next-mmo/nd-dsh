@@ -106,6 +106,43 @@ fn persists_providers_without_exposing_secrets() {
     assert_eq!(value["providers"][0]["hasSecret"], true);
 }
 
+#[tokio::test]
+async fn required_api_model_uses_the_selected_model_and_rejects_stale_routes() {
+    let (url, calls) = mock_upstream().await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let state = RouterState::new(temp.path().to_path_buf()).expect("state");
+    state
+        .save_provider(provider_input("studio", &url, &["first", "org/selected"]))
+        .expect("save provider");
+    state
+        .save_combo(combo_input(
+            "fallback",
+            "priority",
+            vec![combo_entry("studio", "first")],
+        ))
+        .expect("save fallback");
+
+    for (model, available) in [
+        ("studio/org/selected", true),
+        ("studio/removed", false),
+        ("removed/org/selected", false),
+    ] {
+        let result = state
+            .chat(
+                json!({
+                    "model": model,
+                    "nd_require_api_model": true,
+                    "messages": [{"role": "user", "content": "cartoon brief"}],
+                }),
+                None,
+                "/v1/chat/completions",
+            )
+            .await;
+        assert_eq!(result.is_ok(), available, "{model}");
+    }
+    assert_eq!(*calls.lock().unwrap(), vec!["org/selected"]);
+}
+
 #[test]
 fn resolves_priority_and_round_robin_combos() {
     let temp = tempfile::tempdir().expect("tempdir");

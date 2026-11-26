@@ -1066,10 +1066,29 @@ impl RouterState {
             .and_then(Value::as_str)
             .map(ToOwned::to_owned);
         let streaming = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
-        if let Some(object) = body.as_object_mut() {
+        let require_api_model = if let Some(object) = body.as_object_mut() {
             object.remove("combo");
-        }
+            object
+                .remove("nd_require_api_model")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false)
+        } else {
+            false
+        };
         let (combo_name, entries) = self.resolve(combo_hint, model_hint.as_deref())?;
+        if require_api_model
+            && (combo_name != "direct"
+                || entries.iter().any(|entry| {
+                    !catalog::is_http_kind(&entry.provider.kind)
+                        || !entry.provider.models.contains(&entry.model)
+                        || model_hint.as_deref()
+                            != Some(format!("{}/{}", entry.provider.id, entry.model).as_str())
+                }))
+        {
+            return Err(RouterError::bad_request(
+                "the selected API model is unavailable",
+            ));
+        }
         let mut last: Option<(u16, String)> = None;
 
         for entry in entries {

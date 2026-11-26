@@ -3,7 +3,7 @@ import { access, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { CODEX_CLI_ENGINE_ID, ND_HARNESS_ENGINE_ID } from '../src/shared/coding-engines.js'
 import { isRetryableExecutionFailure } from '../src/main/organization/execution-reliability.js'
 import { OrganizationOrchestrator } from '../src/main/organization/orchestrator.js'
@@ -228,7 +228,9 @@ describe('beta execution reliability', () => {
     const { root, store, company, task, orchestrator } = await organizationFixture(undefined, CODEX_CLI_ENGINE_ID, engineRuns)
     await store.mutate({ type: 'company.update', id: company.id, patch: { autonomyLevel: 4 } })
 
-    await expect(orchestrator.runTask(task.id)).rejects.toThrow(/502/)
+    const initial = await orchestrator.runTask(task.id)
+    await vi.waitFor(() => expect(engineRuns.runOptions).toHaveLength(2), { timeout: 3_000 })
+    expect((await store.state()).runs.find((run) => run.id === initial.runId)?.error).toMatch(/502/)
 
     expect(engineRuns.created).toEqual([CODEX_CLI_ENGINE_ID, ND_HARNESS_ENGINE_ID])
     expect(engineRuns.runOptions[1]).toMatchObject({ provider: 'provider-primary', model: 'model-primary' })
@@ -269,7 +271,9 @@ describe('beta execution reliability', () => {
     const { store, company, task, orchestrator } = await organizationFixture(undefined, CODEX_CLI_ENGINE_ID, engineRuns)
     await store.mutate({ type: 'company.update', id: company.id, patch: { autonomyLevel: 4 } })
 
-    await expect(orchestrator.runTask(task.id)).rejects.toThrow(/unauthorized/i)
+    const initial = await orchestrator.runTask(task.id)
+    await vi.waitFor(async () => expect((await store.taskContext(task.id)).task.status).toBe('blocked'))
+    expect((await store.state()).runs.find((run) => run.id === initial.runId)?.error).toMatch(/unauthorized/i)
 
     expect(engineRuns.created).toEqual([CODEX_CLI_ENGINE_ID])
     expect(engineRuns.runOptions).toHaveLength(1)

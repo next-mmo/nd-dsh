@@ -364,8 +364,12 @@ export class RouterService {
   }
 
   /** Kick off one playground turn; progress arrives through the event callback. */
-  playgroundStart(input: RouterPlaygroundInput, onEvent: (event: RouterPlaygroundEvent) => void): void {
-    void this.runPlayground(input, onEvent)
+  playgroundStart(
+    input: RouterPlaygroundInput,
+    onEvent: (event: RouterPlaygroundEvent) => void,
+    options?: { requireApiModel?: boolean },
+  ): void {
+    void this.runPlayground(input, onEvent, options?.requireApiModel === true)
   }
 
   playgroundStop(requestId: string): void {
@@ -385,7 +389,7 @@ export class RouterService {
     if (this.safeMode.enabled()) throw new Error('ND Router Safe Mode is on: the external API key is closed.')
   }
 
-  private async runPlayground(input: RouterPlaygroundInput, onEvent: (event: RouterPlaygroundEvent) => void): Promise<void> {
+  private async runPlayground(input: RouterPlaygroundInput, onEvent: (event: RouterPlaygroundEvent) => void, apiModelOnly: boolean): Promise<void> {
     const requestId = input.requestId
     const fail = (error: string, code: string): void => {
       onEvent({ requestId, type: 'error', error, code })
@@ -415,7 +419,7 @@ export class RouterService {
     this.playground.set(requestId, controller)
     const started = Date.now()
     const stream = input.stream !== false
-    const agyApproval = this.agyApprovalHeader()
+    const agyApproval = apiModelOnly ? undefined : this.agyApprovalHeader()
     onEvent({ requestId, type: 'phase', phase: 'connecting' })
     try {
       const response = await fetch(`${this.endpoint}/v1/chat/completions`, {
@@ -427,7 +431,7 @@ export class RouterService {
           ...(combo ? { [ROUTER_HEADERS.combo]: combo } : {}),
           ...(agyApproval ? { [ROUTER_HEADERS.agyApproval]: agyApproval } : {}),
         },
-        body: JSON.stringify({ model, messages: input.messages, stream }),
+        body: JSON.stringify({ model, messages: input.messages, stream, ...(apiModelOnly ? { nd_require_api_model: true } : {}) }),
         signal: controller.signal,
       })
       const resolved = this.resolvedRoute(response)

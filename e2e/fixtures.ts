@@ -154,6 +154,8 @@ export async function launchApp(options: LaunchAppOptions = {}): Promise<Launche
   child.stdout?.on('data', (chunk: string) => { diagnostics.stdout = tail(diagnostics.stdout + chunk) })
   child.stderr?.on('data', (chunk: string) => { diagnostics.stderr = tail(diagnostics.stderr + chunk) })
   try {
+    // Keep the disposable test window usable without adding a second ND icon to the macOS Dock.
+    if (process.platform === 'darwin') await app.evaluate(({ app }) => app.dock?.hide())
     const page = await app.firstWindow()
     await page.waitForLoadState('domcontentloaded')
     if (target.kind === 'packaged' && !(await app.evaluate(({ app }) => app.isPackaged))) {

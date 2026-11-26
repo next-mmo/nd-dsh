@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { ArrowDown, ArrowUp, MoreHorizontal, Trash2 } from 'lucide-react'
-import type { CodingEngineDescriptor, ModelProvider, WorkspaceState } from '../../../shared/contracts'
+import type { CodingEngineDescriptor, EngineModelOption, ModelProvider, WorkspaceState } from '../../../shared/contracts'
 import type { CapabilityAssignmentSnapshot, CapabilityDescriptor, CapabilityKind, CapabilityProviderStatus } from '../../../shared/capabilities'
 import { DEFAULT_CAPABILITY_PROVIDER } from '../../../shared/capabilities'
 import { ND_HARNESS_ENGINE_ID } from '../../../shared/coding-engines'
@@ -65,6 +65,7 @@ export function OrganizationDashboard({ workspace, onOpenDeepSeek, onAskAgent, o
   const [memoryDraft, setMemoryDraft] = useState({ title: '', content: '' })
   const [engines, setEngines] = useState<CodingEngineDescriptor[]>([])
   const [engineAssignments, setEngineAssignments] = useState<Record<string, string>>({})
+  const [nativeModelCatalogs, setNativeModelCatalogs] = useState<Record<string, EngineModelOption[]>>({})
   const [capabilityProviders, setCapabilityProviders] = useState<CapabilityDescriptor[]>([])
   const [capabilityAssignments, setCapabilityAssignments] = useState<CapabilityAssignmentSnapshot>({ version: 1, agents: {}, roles: {}, teams: {} })
   const [capabilityStatuses, setCapabilityStatuses] = useState<Record<string, CapabilityProviderStatus>>({})
@@ -416,6 +417,24 @@ export function OrganizationDashboard({ workspace, onOpenDeepSeek, onAskAgent, o
       if (selected) {
         await mutate({ type: 'agent.update', id: agentId, patch: { providerId: selected.providerId, modelId: selected.modelId } })
       }
+    })
+  }
+
+  function loadNativeModels(engineId: string): void {
+    if (nativeModelCatalogs[engineId]) return
+    void window.ndDsh.engines.models(engineId)
+      .then((catalog) => setNativeModelCatalogs((current) => ({ ...current, [engineId]: catalog })))
+      .catch((cause) => onError(errorMessage(cause)))
+  }
+
+  async function assignNativeModel(agentId: string, engineId: string, value: string): Promise<void> {
+    const agent = agents.find((item) => item.id === agentId)
+    if (!agent) return
+    await action(`model-${agentId}`, async () => {
+      const engineModels = { ...agent.engineModels }
+      if (value === 'default') delete engineModels[engineId]
+      else engineModels[engineId] = value
+      await mutate({ type: 'agent.update', id: agentId, patch: { engineModels } })
     })
   }
 
@@ -962,6 +981,12 @@ export function OrganizationDashboard({ workspace, onOpenDeepSeek, onAskAgent, o
         <Card title="AI workers">
           {agents.map((agent) => {
             const engineId = engineAssignments[agent.id] ?? ND_HARNESS_ENGINE_ID
+            const supportsNativeModels = engines.find((engine) => engine.id === engineId)?.capabilities.nativeModelSelection
+            const assignedNativeModel = agent.engineModels?.[engineId]
+            const listedNativeModels = nativeModelCatalogs[engineId] ?? []
+            const nativeModels = assignedNativeModel && !listedNativeModels.some((item) => item.id === assignedNativeModel)
+              ? [...listedNativeModels, { id: assignedNativeModel, name: assignedNativeModel }]
+              : listedNativeModels
             const agentRole = roles.find((role) => role.id === agent.roleId)
             const rawModelValue = agent.providerId && agent.modelId
               ? `${agent.providerId}:${agent.modelId}`
@@ -977,7 +1002,20 @@ export function OrganizationDashboard({ workspace, onOpenDeepSeek, onAskAgent, o
                 left={<><strong className="truncate text-sm">{agent.name}</strong><small className="text-xs text-faint">{agentRole?.name ?? 'Role'} · {agent.status}</small></>}
                 right={
                   <div className="flex flex-wrap items-center gap-2">
-                    <label title="LLM model assigned to this agent" className="flex items-center gap-1.5 text-[11px] text-faint">
+                    {supportsNativeModels ? (
+                      <label title="Model used by this agent’s coding engine" className="flex items-center gap-1.5 text-[11px] text-faint">
+                        Model
+                        <Select value={assignedNativeModel ?? 'default'} disabled={busy !== null} onOpenChange={(open) => { if (open) loadNativeModels(engineId) }} onValueChange={(value) => void assignNativeModel(agent.id, engineId, value)}>
+                          <SelectTrigger aria-label={`Native model for ${agent.name}`} className="h-7 w-[150px] rounded-md border-border-strong bg-secondary px-2 text-[11px] text-soft">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="default">Engine default</SelectItem>
+                            {nativeModels.map((model) => <SelectItem key={model.id} value={model.id}>{model.name || model.id}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      </label>
+                    ) : <label title="LLM model assigned to this agent" className="flex items-center gap-1.5 text-[11px] text-faint">
                       Model
                       <Select value={activeModelValue} disabled={busy !== null} onValueChange={(value) => void assignAgentModel(agent.id, value)}>
                         <SelectTrigger className="h-7 w-[150px] rounded-md border-border-strong bg-secondary px-2 text-[11px] text-soft">
@@ -988,7 +1026,7 @@ export function OrganizationDashboard({ workspace, onOpenDeepSeek, onAskAgent, o
                           {availableModels.map((m) => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}
                         </SelectContent>
                       </Select>
-                    </label>
+                    </label>}
                     <label title="Coding engine used when this employee executes an assigned task" className="flex items-center gap-1.5 text-[11px] text-faint">
                       Engine
                       <Select value={engineId} disabled={busy !== null} onValueChange={(value) => void assignEngine(agent.id, value)}>

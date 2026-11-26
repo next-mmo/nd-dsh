@@ -374,13 +374,13 @@ export class AntigravityEngine {
     const argv = [bin, '--output-format', 'stream-json', '--input-format', 'stream-json', '--disable-slash-commands']
     const resolvedPermissionMode = session.permissionMode
       ?? (process.env.ND_DSH_PERMISSION_MODE?.trim() || 'workspace-write')
-    const defaultMode = resolvedPermissionMode === 'read-only' ? 'plan' : 'accept-edits'
-    const mode = process.env.ND_DSH_ANTIGRAVITY_MODE ?? this.options.mode ?? defaultMode
+    const readOnly = resolvedPermissionMode === 'read-only'
+    const mode = readOnly ? 'plan' : process.env.ND_DSH_ANTIGRAVITY_MODE ?? this.options.mode ?? 'accept-edits'
     if (mode) argv.push('--mode', mode)
-    const defaultSkipPermissions = resolvedPermissionMode !== 'read-only'
-    const skipPermissions = process.env.ND_DSH_ANTIGRAVITY_SKIP_PERMISSIONS !== '0'
+    const skipPermissions = !readOnly
+      && process.env.ND_DSH_ANTIGRAVITY_SKIP_PERMISSIONS !== '0'
       && process.env.ND_DSH_ANTIGRAVITY_SKIP_PERMISSIONS !== 'false'
-      && (this.options.skipPermissions ?? defaultSkipPermissions)
+      && (this.options.skipPermissions ?? true)
     if (skipPermissions) argv.push('--dangerously-skip-permissions')
     if (session.conversationId !== undefined) argv.push('--conversation', session.conversationId)
     if (session.model !== undefined) argv.push('--model', session.model)

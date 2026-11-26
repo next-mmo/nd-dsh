@@ -392,6 +392,80 @@ describe('OrganizationOrchestrator', () => {
     expect(state.runs.find((run) => run.status === 'running')?.taskId).toBe(future.id)
   })
 
+  it('dispatches a second CLI worker while the first turn is pending and rolls back a failed turn only once', async () => {
+    const { store, company, project, harness, workspace } = await fixture(2)
+    const taskIds: string[] = []
+    for (const title of ['First CLI task', 'Second CLI task']) {
+      const state = await store.mutate({ type: 'task.create', companyId: company.id, projectId: project.id, title, description: title })
+      taskIds.push(state.tasks.find((task) => task.title === title)!.id)
+    }
+    const agentId = (await store.taskContext(taskIds[0]!)).agent!.id
+    await store.mutate({
+      type: 'agent.update', id: agentId,
+      patch: { engineModels: { antigravity: 'gemini-4-hydrogen-high' }, providerId: 'other-provider', modelId: 'other-model' },
+    })
+    const pending = new Map<string, { resolve(value: { sessionId: string }): void; reject(error: Error): void }>()
+    const run = vi.fn((_prompt: string, options: { sessionId: string }) =>
+      new Promise<{ sessionId: string }>((resolve, reject) => pending.set(options.sessionId, { resolve, reject })),
+    )
+    const router = { createSession: async (_engine: string, root: string) => ({ sessionId: root }), run }
+    const engines = {
+      assignedEngine: async () => 'antigravity',
+      assertAvailable: () => ({ id: 'antigravity', name: 'Antigravity CLI', capabilities: { nativeModelSelection: true } }),
+    }
+    const isolated = async (_root: string, id: string) => ({ root: '/isolated/' + id, branch: 'nd/task-' + id, taskId: id })
+    const manager = { ensure: isolated, existing: isolated, baseline: async () => 'baseline', rollback: vi.fn(async () => {}), checkpoint: vi.fn() }
+    const orchestrator = new OrganizationOrchestrator(store, harness as never, workspace as never, engines as never, router as never, undefined, undefined, undefined, manager as never)
+    const first = await orchestrator.runTask(taskIds[0]!)
+    const second = await orchestrator.runTask(taskIds[1]!)
+    expect(pending.size).toBe(2)
+    expect(run.mock.calls[0]?.[1]).toMatchObject({ model: 'gemini-4-hydrogen-high' })
+    expect(run.mock.calls[0]?.[1]).not.toHaveProperty('provider')
+
+    const idle = orchestrator.handleHarnessEvent(stopped(first.sessionId))
+    const failed = orchestrator.handleHarnessEvent({ kind: 'agent-error', sessionId: first.sessionId, message: 'Model rejected the request' })
+    pending.get(first.sessionId)!.reject(new Error('Model rejected the request'))
+    await Promise.all([idle, failed])
+    expect(manager.checkpoint).not.toHaveBeenCalled()
+    expect(manager.rollback).toHaveBeenCalledOnce()
+    const state = await store.state()
+    expect(state.runs.find((item) => item.id === first.runId)).toMatchObject({ status: 'failed', error: 'Model rejected the request' })
+    expect(state.runs.find((item) => item.id === second.runId)?.status).toBe('running')
+    pending.get(second.sessionId)!.resolve({ sessionId: second.sessionId })
+  })
+
+  it('uses the assigned read-only reviewer and applies its verdict only after a successful CLI turn', async () => {
+    const { store, company, project, harness, workspace } = await fixture(2)
+    const state = await store.mutate({ type: 'task.create', companyId: company.id, projectId: project.id, title: 'Review CLI evidence', description: 'Review completed work.' })
+    const task = state.tasks[0]!
+    await store.markForReview(task.id, 'Worker deliverable')
+    const reviewer = (await store.reviewerForTask(task.id)).agent!
+    await store.mutate({ type: 'agent.update', id: reviewer.id, patch: { engineModels: { antigravity: 'gemini-4-hydrogen-high' } } })
+    let ready!: () => void
+    const started = new Promise<void>((resolve) => { ready = resolve })
+    let finish!: (value: { sessionId: string }) => void
+    const terminal = new Promise<{ sessionId: string }>((resolve) => { finish = resolve })
+    const run = vi.fn((_prompt, _options) => { ready(); return terminal })
+    const router = { createSession: async () => ({ sessionId: 'review-cli' }), run }
+    const engines = {
+      assignedEngine: async () => 'antigravity',
+      assertAvailable: () => ({ id: 'antigravity', name: 'Antigravity CLI', capabilities: { readOnlyReview: true } }),
+    }
+    const orchestrator = new OrganizationOrchestrator(store, harness as never, workspace as never, engines as never, router as never)
+    const reviewing = orchestrator.reviewTask(task.id)
+    await started
+    expect(run.mock.calls[0]?.[1]).toMatchObject({ model: 'gemini-4-hydrogen-high', permissionMode: 'read-only' })
+    await orchestrator.handleHarnessEvent(assistant('review-cli', review('pass', 'Inspected the deliverable')))
+    expect((await store.state()).tasks[0]?.status).toBe('review')
+    const idle = orchestrator.handleHarnessEvent(stopped('review-cli'))
+    finish({ sessionId: 'review-cli' })
+    const receipt = await reviewing
+    await idle
+    expect(receipt.engineId).toBe('antigravity')
+    expect((await store.state()).tasks[0]?.status).toBe('completed')
+    expect(harness.prompts).toHaveLength(0)
+  })
+
   it('shares cancellation cleanup when the stop event races the cancel RPC response', async () => {
     const { store, company, project, harness, workspace } = await fixture(2)
     let notifyRollback!: () => void
@@ -476,10 +550,45 @@ describe('OrganizationOrchestrator', () => {
     await finishWorker(orchestrator, retry.sessionId, 'Required artifact produced.')
     state = await store.state()
     expect(state.tasks[0]?.status).toBe('review')
-    await orchestrator.reviewTask(task.id)
+    const reviewer = await orchestrator.reviewTask(task.id)
     expect(harness.prompts.at(-1)?.prompt).toContain('docs/research/ux-a11y-i18n.md')
     expect(harness.prompts.at(-1)?.prompt).toContain('Inspect the content against the acceptance criteria')
+    await finishReview(orchestrator, reviewer.sessionId, 'pass', 'Inspected the findings.')
+    state = await store.mutate({
+      type: 'task.create', companyId: company.id, projectId: project.id,
+      title: 'Apply the findings', description: 'Update the form controls.', dependsOn: [task.id],
+    })
+    await orchestrator.runTask(state.tasks.find(item => item.title === 'Apply the findings')!.id)
+    expect(harness.prompts.at(-1)?.prompt).toContain('"artifactPaths":["docs/research/ux-a11y-i18n.md"]')
     await rm(root, { recursive: true, force: true })
+  })
+
+  it('passes the completed dependency outcome to the next worker without sibling reports or runtime receipts', async () => {
+    const { store, company, project, harness, orchestrator } = await fixture(2)
+    const createTask = (title: string, dependsOn: string[] = []) =>
+      store.mutate({ type: 'task.create', companyId: company.id, projectId: project.id, title, description: title, dependsOn })
+    const producer = (await createTask('Define the import format')).tasks[0]!
+    const sibling = (await createTask('Survey export options')).tasks.find(item => item.title === 'Survey export options')!
+    const consumer = (await createTask('Implement the importer', [producer.id])).tasks.find(item => item.title === 'Implement the importer')!
+
+    for (const [id, summary] of [
+      [sibling.id, 'The export-only finding is unrelated.'],
+      [producer.id, 'Use the header in formats/import.md. Empty rows are valid.'],
+    ] as const) {
+      const execution = await orchestrator.runTask(id)
+      expect(harness.prompts.at(-1)?.prompt).not.toContain('Completed dependency handoffs')
+      await finishWorker(orchestrator, execution.sessionId, summary)
+      const reviewer = await orchestrator.reviewTask(id)
+      await finishReview(orchestrator, reviewer.sessionId, 'pass', 'Checked the deliverable.')
+    }
+
+    await orchestrator.runTask(consumer.id)
+    const prompt = harness.prompts.at(-1)!.prompt
+    expect(prompt).toContain('Completed dependency handoffs')
+    expect(prompt).toContain('Use the header in formats/import.md. Empty rows are valid.')
+    expect(prompt).not.toContain('The export-only finding')
+    expect(prompt).not.toContain('<nd-dsh-execution-route>')
+    expect(prompt).not.toContain('<nd-dsh-verification>')
   })
 
   it('tells code workers the configured machine command and exposes skipped verification', async () => {

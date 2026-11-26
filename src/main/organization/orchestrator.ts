@@ -64,7 +64,7 @@ const MAX_AUTOPILOT_PARALLEL_FILL = 16
 const STRUCTURED_RESULT_GRACE_MS = 2_500
 
 type WorkflowKind = 'plan' | 'execute' | 'review'
-type TaskEngine = Pick<CodingEngineDescriptor, 'id' | 'name' | 'workerInstructions'>
+type TaskEngine = Pick<CodingEngineDescriptor, 'id' | 'name' | 'workerInstructions'> & { nativeModelSelection?: boolean }
 
 /**
  * Asked before every automatic dispatch. Only the control plane can compute a
@@ -97,6 +97,10 @@ export class OrganizationOrchestrator {
   private stallReconcileBusy = false
   private dispatchAvailability: DispatchAvailabilityProvider | undefined
   private fastPathAuditRecorder: FastPathAuditRecorder | undefined
+  private readonly directReviewTurns = new Map<string, Promise<unknown>>()
+  private readonly workerDispatches = new Map<string, Promise<unknown>>()
+  private readonly workerFailures = new Map<string, Promise<void>>()
+  private readonly completingWorkers = new Set<string>()
   private readonly capacityWaiting = new Set<string>()
   private readonly structuredErrors = new Map<string, string>()
   private readonly decisionSupportReceipts = new Map<string, DecisionSupportReceipt>()
@@ -207,8 +211,12 @@ export class OrganizationOrchestrator {
     const state = await this.store.state()
     const previousExecution = state.runs.find((item) => item.taskId === taskId && item.kind === 'task-execution')
     const attempt = await this.store.executionAttemptCount(taskId) + 1
-    const retryablePreviousFailure = Boolean(previousExecution?.status === 'failed' && isRetryableExecutionFailure(previousExecution.error ?? ''))
-    const fallbackRoute = retryablePreviousFailure
+    const retryablePreviousFailure = previousExecution?.status === 'failed' && isRetryableExecutionFailure(previousExecution.error ?? '')
+    const assignedEngine = retryablePreviousFailure && context.agent?.engineModels
+      ? await this.engines?.assignedEngine(context.agent.id)
+      : undefined
+    const pinnedModel = assignedEngine ? context.agent?.engineModels?.[assignedEngine] : undefined
+    const fallbackRoute = retryablePreviousFailure && !pinnedModel
       ? this.pendingFallbackRoutes.get(taskId) ?? await this.selectFallbackProviderRoute(context)
       : undefined
     const useFallbackRoute = Boolean(fallbackRoute)
@@ -254,8 +262,11 @@ export class OrganizationOrchestrator {
 
     const subagentMode = context.company.subagentMode ?? 'auto'
     const engine = await this.resolveTaskEngine(context.agent?.id, useFallbackRoute, subagentMode)
-    const prompt = workerPrompt(context, engine, attempt, taskWorktree, subagentMode)
-    let modelOpts = this.resolveAgentModel(context.agent, context.role)
+    const prompt = workerPrompt(context, engine, attempt, taskWorktree, subagentMode, dependencyHandoffs(context.task, state.tasks))
+    const nativeModel = engine.nativeModelSelection ? context.agent?.engineModels?.[engine.id] : undefined
+    let modelOpts: { provider?: string; model?: string } = engine.nativeModelSelection
+      ? (nativeModel ? { model: nativeModel } : {})
+      : this.resolveAgentModel(context.agent, context.role)
     if (useFallbackRoute) {
       modelOpts = fallbackRoute!
       this.pendingFallbackRoutes.delete(taskId)
@@ -335,16 +346,22 @@ export class OrganizationOrchestrator {
         ...modelOpts,
         ...(workspaceRoot ? { workspaceCwd: workspaceRoot } : {}),
       }
-      if (this.engineRuns) await this.engineRuns.run(browserPrompt, runOptions)
-      else await this.harness.run(browserPrompt, runOptions)
-    } catch (cause) {
-      const message = errorMessage(cause)
-      const queued = await this.handleExecutionFailure(run, message)
-      this.cleanupSession(target.sessionId)
-      if (queued) {
-        await delay(retryBackoffMs(attempt))
-        await this.continueProject(run.projectId)
+      if (this.engineRuns && engine.id !== ND_HARNESS_ENGINE_ID) {
+        // Direct CLI adapters may resolve only when the turn ends. A task
+        // receipt acknowledges dispatch so the board and scheduler can start
+        // other isolated tasks while this worker is still running.
+        const dispatch = this.engineRuns.run(browserPrompt, runOptions)
+        this.workerDispatches.set(target.sessionId, dispatch)
+        void dispatch.catch((cause) => this.finishWorkerFailure(run, errorMessage(cause)))
+          .catch((cause) => console.warn('Organization worker finalization failed:', errorMessage(cause)))
+          .finally(() => this.workerDispatches.delete(target.sessionId))
+      } else if (this.engineRuns) {
+        await this.engineRuns.run(browserPrompt, runOptions)
+      } else {
+        await this.harness.run(browserPrompt, runOptions)
       }
+    } catch (cause) {
+      await this.finishWorkerFailure(run, errorMessage(cause))
       throw cause
     }
     return receipt(run)
@@ -500,7 +517,15 @@ export class OrganizationOrchestrator {
     const reviewer = await this.store.reviewerForTask(taskId)
     const reviewerAgent = reviewer.agent
     const reviewerRole = reviewer.role
-    const modelOpts = this.resolveAgentModel(reviewerAgent, reviewerRole)
+    const assignedEngine = reviewerAgent && this.engines && this.engineRuns
+      ? this.engines.assertAvailable(await this.engines.assignedEngine(reviewerAgent.id))
+      : undefined
+    const directReview = assignedEngine?.capabilities?.readOnlyReview ? assignedEngine : undefined
+    if (directReview) await this.capabilities?.assertUsableForAgent(reviewerAgent)
+    const nativeModel = directReview ? reviewerAgent?.engineModels?.[directReview.id] : undefined
+    const modelOpts = directReview
+      ? (nativeModel ? { model: nativeModel } : {})
+      : this.resolveAgentModel(reviewerAgent, reviewerRole)
     const taskWorktree = await this.taskWorktrees.existing(context.project.workspacePath, context.task.id)
     await this.assertTaskRunSlot(context.task.id, context.project.id, Boolean(taskWorktree))
     if (!taskWorktree) await this.prepareWorkspace(context.project.workspacePath)
@@ -509,7 +534,10 @@ export class OrganizationOrchestrator {
       .filter((item) => item.taskId === taskId && item.kind === 'task-execution')
       .sort((left, right) => right.startedAt - left.startedAt)[0]
     const recordedVerification = recordedReviewVerification(executionRun, reviewHead, taskWorktree?.root ?? context.project.workspacePath, context.project.testCommand)
-    const sessionId = await this.createHarnessSession(taskWorktree?.root, `Review · ${context.task.title}`)
+    const title = `Review · ${context.task.title}`
+    const sessionId = directReview && this.engineRuns
+      ? (await this.engineRuns.createSession(directReview.id, taskWorktree?.root, title)).sessionId
+      : await this.createHarnessSession(taskWorktree?.root, title)
     const run = await this.store.beginRun(
       'task-review',
       context.company.id,
@@ -519,7 +547,7 @@ export class OrganizationOrchestrator {
       context.task.goalId,
       {
         ...(taskWorktree ? { parallelTask: true } : {}),
-        engineId: ND_HARNESS_ENGINE_ID,
+        engineId: directReview?.id ?? ND_HARNESS_ENGINE_ID,
         workspaceKind: taskWorktree ? 'git-worktree' : 'project-workspace',
         ...((taskWorktree?.root ?? context.project.workspacePath)
           ? { workspaceRoot: (taskWorktree?.root ?? context.project.workspacePath)! }
@@ -532,7 +560,7 @@ export class OrganizationOrchestrator {
     if (taskWorktree && reviewHead) this.reviewWorktrees.set(sessionId, { worktree: taskWorktree, head: reviewHead })
     this.lastProgressAt.set(sessionId, run.startedAt)
     await this.store.markReviewStarted(taskId, sessionId, reviewerAgent?.id)
-    const decisionSupport = await this.decisionSupport?.reviewAssist({
+    const decisionSupport = directReview ? undefined : await this.decisionSupport?.reviewAssist({
       company: context.company.name,
       project: context.project.name,
       task: {
@@ -574,17 +602,17 @@ export class OrganizationOrchestrator {
       })
     }
     try {
-      const prompt = appendBrowserAccess(
-        reviewPrompt(context.task, context, taskWorktree, formatDecisionSupportForReviewer(decisionSupport), recordedVerification),
-        sessionId,
-        this.browserAccess,
-      )
+      const prompt = reviewPrompt(context.task, context, taskWorktree, formatDecisionSupportForReviewer(decisionSupport), recordedVerification)
       const reviewWorkspaceRoot = taskWorktree?.root ?? context.project.workspacePath
-      await this.harness.run(prompt, {
-        sessionId,
-        ...modelOpts,
-        ...(reviewWorkspaceRoot ? { workspaceCwd: reviewWorkspaceRoot } : {}),
-      })
+      const options = { sessionId, ...modelOpts, ...(reviewWorkspaceRoot ? { workspaceCwd: reviewWorkspaceRoot } : {}) }
+      if (directReview && this.engineRuns) {
+        const inspection = 'Use the engine’s native file listing and reading tools to inspect the deliverables in the task workspace. ND already records the checkpoint and checks that it stays unchanged. Use that receipt for Git and machine verification. Shell commands require headless permission, so use them only when a specific acceptance criterion cannot be evaluated with the file tools and the receipt.'
+        const turn = this.engineRuns.run(`${inspection}\n\n${prompt}`, { ...options, permissionMode: 'read-only' })
+        this.directReviewTurns.set(sessionId, turn)
+        await turn
+      } else {
+        await this.harness.run(appendBrowserAccess(prompt, sessionId, this.browserAccess), options)
+      }
     } catch (cause) {
       const active = await this.store.runBySession(sessionId)
       if (active) {
@@ -780,7 +808,7 @@ export class OrganizationOrchestrator {
           const mayCompleteStructured = frame.event.type === 'assistant/message' || text.includes('}') || text.includes('>')
           if (mayCompleteStructured) {
             if (run.kind === 'pm-plan') await this.handlePlan(run.projectId, sessionId, accumulated)
-            if (run.kind === 'task-review' && run.taskId) await this.handleReview(run.taskId, run.projectId, sessionId, accumulated)
+            if (run.kind === 'task-review' && run.taskId && !this.directReviewTurns.has(sessionId)) await this.handleReview(run.taskId, run.projectId, sessionId, accumulated)
           }
         }
       }
@@ -793,14 +821,12 @@ export class OrganizationOrchestrator {
         return
       }
       if (run.kind === 'task-execution' && run.taskId) {
-        const queued = await this.handleExecutionFailure(run, frame.message ?? 'Agent error')
-        this.cleanupSession(sessionId)
-        if (queued) {
-          await delay(retryBackoffMs(await this.store.executionAttemptCount(run.taskId)))
-          await this.continueProject(run.projectId)
-        }
+        await this.finishWorkerFailure(run, frame.message ?? 'Agent error')
         return
       }
+      // The direct review's rejected turn owns failure recovery. Keep the
+      // verified worker checkpoint available for another review attempt.
+      if (this.directReviewTurns.has(sessionId)) return
       await this.store.completeRun(run.id, this.finalText.get(sessionId), frame.message ?? 'Agent error')
       if (run.taskId) await this.failTask(run.taskId, frame.message ?? 'Agent error')
       this.cleanupSession(sessionId)
@@ -818,6 +844,12 @@ export class OrganizationOrchestrator {
     }
 
     if (run?.kind === 'task-execution' && run.taskId) {
+      // Idle status is also emitted on CLI failure. Wait for the dispatch
+      // outcome before allowing the checkpoint and failure rollback to race.
+      try { await this.workerDispatches.get(sessionId) } catch { return }
+      if (!(await this.store.runBySession(sessionId))) return
+      if (this.workerFailures.has(sessionId) || this.completingWorkers.has(sessionId)) return
+      this.completingWorkers.add(sessionId)
       const workerOutput = `${this.finalText.get(sessionId) ?? 'Worker session finished.'}${this.routeEvidence(sessionId)}`
       try {
         const context = await this.store.taskContext(run.taskId)
@@ -920,10 +952,20 @@ export class OrganizationOrchestrator {
         } else {
           await this.failTask(run.taskId, message)
         }
+      } finally {
+        this.completingWorkers.delete(sessionId)
       }
       this.cleanupSession(sessionId)
       await this.continueProject(run.projectId)
       return
+    }
+
+    const directReviewTurn = this.directReviewTurns.get(sessionId)
+    if (directReviewTurn && run?.taskId) {
+      try { await directReviewTurn } catch { return }
+      if (!(await this.store.runBySession(sessionId))) return
+      const text = this.finalText.get(sessionId)
+      if (text) await this.handleReview(run.taskId, run.projectId, sessionId, text)
     }
 
     if (run && this.structuredHandled.has(sessionId)) {
@@ -1095,6 +1137,23 @@ export class OrganizationOrchestrator {
     this.autoAdvance.set(sessionId, projectId)
   }
 
+  private async finishWorkerFailure(run: OrganizationRun, message: string): Promise<void> {
+    const existing = this.workerFailures.get(run.sessionId)
+    if (existing) return existing
+    const finalize = async (): Promise<void> => {
+      if (!(await this.store.runBySession(run.sessionId))) return
+      const queued = await this.handleExecutionFailure(run, message)
+      this.cleanupSession(run.sessionId)
+      if (queued && run.taskId) {
+        await delay(retryBackoffMs(await this.store.executionAttemptCount(run.taskId)))
+        await this.continueProject(run.projectId)
+      }
+    }
+    const failure = finalize()
+    this.workerFailures.set(run.sessionId, failure)
+    try { await failure } finally { this.workerFailures.delete(run.sessionId) }
+  }
+
   private async handleExecutionFailure(run: OrganizationRun, message: string, stalled = false): Promise<boolean> {
     if (!run.taskId) return false
     const active = await this.store.runBySession(run.sessionId)
@@ -1113,7 +1172,8 @@ export class OrganizationOrchestrator {
     const attempts = await this.store.executionAttemptCount(run.taskId)
     const retryable = stalled || isRetryableExecutionFailure(message)
     if (context.company.autonomyLevel < 4 || attempts >= MAX_EXECUTION_ATTEMPTS || !retryable) return false
-    const fallback = await this.selectFallbackProviderRoute(context)
+    const pinnedModel = run.engineId ? context.agent?.engineModels?.[run.engineId] : undefined
+    const fallback = pinnedModel ? undefined : await this.selectFallbackProviderRoute(context)
     if (fallback) this.pendingFallbackRoutes.set(run.taskId, fallback)
     await this.store.queueRework(run.taskId, `${stalled ? 'Stall recovery' : 'Transient engine/provider failure'}: ${message}`)
     return true
@@ -1225,7 +1285,7 @@ export class OrganizationOrchestrator {
   }
 
   private effectiveExecutionRoute(engineId: string, attempt: number, modelOpts: { provider?: string; model?: string }): ExecutionRoute {
-    if (engineId !== ND_HARNESS_ENGINE_ID) return { engineId, attempt }
+    if (engineId !== ND_HARNESS_ENGINE_ID) return { engineId, attempt, ...(modelOpts.model && !modelOpts.provider ? { model: modelOpts.model } : {}) }
     const provider = modelOpts.provider ?? this.harness.status().provider
     const model = modelOpts.model ?? this.harness.status().model
     return {
@@ -1458,6 +1518,7 @@ export class OrganizationOrchestrator {
     return {
       id: descriptor.id,
       name: descriptor.name,
+      ...(descriptor.capabilities?.nativeModelSelection ? { nativeModelSelection: true } : {}),
       ...(descriptor.workerInstructions === undefined ? {} : { workerInstructions: descriptor.workerInstructions }),
     }
   }
@@ -1490,6 +1551,7 @@ export class OrganizationOrchestrator {
     this.canceledSessions.delete(sessionId)
     this.lastProgressAt.delete(sessionId)
     this.decisionSupportReceipts.delete(sessionId)
+    this.directReviewTurns.delete(sessionId)
   }
 
   private assertPolicy(effect: 'allow' | 'ask' | 'deny', explicit: boolean, label: string): void {
@@ -1584,12 +1646,44 @@ function pmPrompt(context: Awaited<ReturnType<OrganizationStore['projectContext'
   return `You are the AI Product Manager for ${context.company.name}.\nMission: ${context.company.mission}\nProject: ${context.project.name}\nObjective: ${context.project.objective}\n\nCreate a practical delivery plan. Organize milestones around small, verifiable user outcomes; the first milestone should deliver the smallest useful MVP slice. ND initially focuses execution on the first milestone and waits for the human to select the next one, so avoid depending on later-milestone work for that first outcome. Respect company/project isolation. Tasks execute in isolated Git worktrees: a task sees integrated predecessors, never unfinished sibling changes. Every code task must pass the configured project verification command in that worktree before review and integration; a later verification task cannot postpone this gate. If tests import files another task creates, declare that authoring task as a dependency, or keep the coupled implementation and tests in one task. Never skip tests or mark code as artifact evidence to bypass verification. Use the existing teams and roles when assigning work. Keep independent work parallel: use dependsOn only for real code/data ordering, never merely to serialize execution. Tests, docs, accessibility, i18n, fixtures and independent components should remain parallel when safe. For each task, declare advisory workScopes for paths this task will create or modify; shared contracts, reference files and read-only inputs do not belong in workScopes. Verification tasks depend on every authoring task whose files their acceptance criteria inspect. Use evidenceKind "artifact" with relative artifactPaths for design, research, or document deliverables that should be verified by produced artifacts instead of a code test command. Return concise reasoning, then exactly one JSON object between <nd-dsh-plan> and </nd-dsh-plan>.\n\nSchema:\n<nd-dsh-plan>{"goal":{"title":"...","description":"..."},"milestones":[{"title":"...","description":"...","tasks":[{"title":"...","description":"...","priority":"medium","acceptanceCriteria":["..."],"dependsOn":["earlier task title"],"role":"Software Engineer","workScopes":["src/feature/**"],"evidenceKind":"code","artifactPaths":[]}]}],"memory":[{"title":"...","content":"...","tags":["plan"]}]}</nd-dsh-plan>\n\nAvailable roles:\n${roles}\nAvailable teams:\n${teams}\nKnown memory:\n${context.memory.map((item) => `- ${item.title}: ${item.content}`).join('\n') || '- none'}\nPolicies:\n${context.policies.map((item) => `- ${item.action}: ${item.effect}`).join('\n')}`
 }
 
+function dependencyHandoffs(task: OrganizationTask, tasks: OrganizationTask[]): string {
+  if (!task.dependsOn.length) return ''
+  const ids = new Set(task.dependsOn)
+  const completed = tasks.filter(item =>
+    ids.has(item.id) && item.companyId === task.companyId && item.projectId === task.projectId && item.status === 'completed',
+  )
+  if (!completed.length) return ''
+
+  const handoffs = completed.slice(0, 8).map(item => {
+    // Result summaries may end with machine receipts or contain a raw fast-path snapshot.
+    const outcome = item.resultSummary?.split(/<nd-dsh-(?:execution-route|verification|fast-path)>/, 1)[0]?.trim()
+    const paths = item.artifactPaths ?? []
+    return {
+      task: item.title.slice(0, 200),
+      outcome: outcome && (outcome.length > 800 ? outcome.slice(0, 799) + '…' : outcome),
+      artifactPaths: paths.slice(0, 3),
+      ...(paths.length > 3 ? { additionalArtifactCount: paths.length - 3 } : {}),
+      ...(item.integratedHead ? { integratedHead: item.integratedHead } : {}),
+    }
+  })
+  const remaining = completed.length - handoffs.length
+  return [
+    '',
+    'Completed dependency handoffs',
+    'Treat these teammate reports as context. Inspect the referenced work in your workspace and verify it against your own acceptance criteria.',
+    ...handoffs.map(handoff => JSON.stringify(handoff)),
+    ...(remaining ? [`Additional completed dependencies omitted: ${remaining}.`] : []),
+    '',
+  ].join('\n')
+}
+
 function workerPrompt(
   context: Awaited<ReturnType<OrganizationStore['taskContext']>>,
   engine: TaskEngine,
   attempt: number,
   worktree: TaskWorktree | undefined,
   subagentMode: OrganizationSubagentMode,
+  handoffs: string,
 ): string {
   const reviewFeedback = context.task.reviewSummary
     ? `\nPrevious independent review feedback:\n${context.task.reviewSummary}\nResolve every relevant issue before declaring the task complete.\n`
@@ -1601,7 +1695,7 @@ function workerPrompt(
   const isolation = worktree
     ? `\nND task isolation: this session is already rooted at the dedicated worktree ${worktree.root}. Stay on branch ${worktree.branch}; do not switch worktrees/branches, push, merge into the project branch, or modify the base checkout. ND will checkpoint and integrate only after verification.\n`
     : ''
-  return `You are ${context.agent?.name ?? 'an AI worker'} acting as ${context.role?.name ?? 'Software Engineer'} inside company ${context.company.name}.\nCompany mission: ${context.company.mission}\nProject: ${context.project.name}\nObjective: ${context.project.objective}\nTask: ${context.task.title}\nExecution attempt: ${attempt}/${MAX_EXECUTION_ATTEMPTS}\nDescription: ${context.task.description}\nAcceptance criteria:\n${context.task.acceptanceCriteria.map((item) => `- ${item}`).join('\n')}${taskEvidenceInstructions(context.task, context.project)}${reviewFeedback}\nResponsibilities: ${context.role?.responsibility ?? 'Complete the assigned work.'}\nRole instructions: ${context.role?.systemPrompt ?? 'Execute carefully and verify the result.'}\nRelevant skills:\n${context.skills.map((item) => `- ${item.name}: ${item.instructions}`).join('\n')}\nRelevant memory:\n${context.memory.map((item) => `- ${item.title}: ${item.content}`).join('\n') || '- none'}\nPolicies:\n${context.policies.map((item) => `- ${item.action}: ${item.effect}`).join('\n')}${engineInstructions}${delegationInstructions}${isolation}\nInspect before editing, run meaningful validation, and finish with a concise result summary for the independent reviewer.`
+  return `You are ${context.agent?.name ?? 'an AI worker'} acting as ${context.role?.name ?? 'Software Engineer'} inside company ${context.company.name}.\nCompany mission: ${context.company.mission}\nProject: ${context.project.name}\nObjective: ${context.project.objective}\nTask: ${context.task.title}\nExecution attempt: ${attempt}/${MAX_EXECUTION_ATTEMPTS}\nDescription: ${context.task.description}\nAcceptance criteria:\n${context.task.acceptanceCriteria.map((item) => `- ${item}`).join('\n')}${taskEvidenceInstructions(context.task, context.project)}${reviewFeedback}${handoffs}\nResponsibilities: ${context.role?.responsibility ?? 'Complete the assigned work.'}\nRole instructions: ${context.role?.systemPrompt ?? 'Execute carefully and verify the result.'}\nRelevant skills:\n${context.skills.map((item) => `- ${item.name}: ${item.instructions}`).join('\n')}\nRelevant memory:\n${context.memory.map((item) => `- ${item.title}: ${item.content}`).join('\n') || '- none'}\nPolicies:\n${context.policies.map((item) => `- ${item.action}: ${item.effect}`).join('\n')}${engineInstructions}${delegationInstructions}${isolation}\nInspect before editing, run meaningful validation, and finish with a concise handoff for the reviewer and the next worker. Name the delivered outcome, where to inspect it, the checks you ran and their results, and any unresolved limitation.`
 }
 
 function taskEvidenceInstructions(task: OrganizationTask, project: { testCommand?: string }, reviewing = false): string {

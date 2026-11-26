@@ -334,6 +334,8 @@ export interface CodingEngineCapabilities {
   skills: boolean
   mcp: boolean
   modelProviderRouting: boolean
+  nativeModelSelection?: boolean
+  readOnlyReview?: boolean
   humanApprovals: boolean
   streaming: boolean
   persistentSessions: boolean

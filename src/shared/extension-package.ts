@@ -222,6 +222,7 @@ export const ND_EXTENSION_PERMISSIONS = [
   'phoneinput.write',
   'openspec.read',
   'openspec.write',
+  'video-gen.generate',
 ] as const
 
 export type NdExtensionPermission = (typeof ND_EXTENSION_PERMISSIONS)[number]
@@ -310,6 +311,8 @@ export const ND_HOST_METHODS = [
   { id: 'apistudio.request.execute', title: 'Send an HTTP request for API Studio', permission: 'apistudio.execute', contexts: ['personal'], sensitive: true },
   { id: 'browser.openUrl', title: 'Open a website', permission: 'browser.navigate', contexts: ['personal', 'company', 'project'], sensitive: false },
   { id: 'skill.compose', title: 'Prepare a skill request in ND chat', permission: 'chat.compose', contexts: ['personal', 'company', 'project'], sensitive: false },
+  { id: 'video-gen.models', title: 'List ND Video Gen models', permission: 'video-gen.generate', contexts: ['personal'], sensitive: false },
+  { id: 'video-gen.generate', title: 'Generate ND Video Gen scene settings', permission: 'video-gen.generate', contexts: ['personal'], sensitive: true },
   { id: 'browser.translate', title: 'Translate text in the ND browser', permission: 'browser.navigate', contexts: ['personal', 'company', 'project'], sensitive: false },
   { id: 'browser.translate.history', title: 'Read translation history', permission: 'translate.history', contexts: ['personal', 'company', 'project'], sensitive: false },
   { id: 'browser.translate.history.clear', title: 'Clear translation history', permission: 'translate.history', contexts: ['personal', 'company', 'project'], sensitive: false },
