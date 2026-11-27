@@ -71,6 +71,6 @@ export function electronLaunchOptions(profileDir, cwd = process.cwd(), env = pro
     ...(target.kind === 'packaged' ? { executablePath: target.executable } : {}),
     args: [...(target.kind === 'source' ? ['.'] : []), '--user-data-dir=' + profileDir],
     cwd,
-    env: { ...launchEnv, ND_DSH_USER_DATA_DIR: profileDir },
+    env: { ...launchEnv, ND_DSH_USER_DATA_DIR: profileDir, ND_DSH_TEST_DRIVER_PID: String(process.pid) },
   }
 }

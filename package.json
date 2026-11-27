@@ -15,7 +15,7 @@
     "bootstrap": "node scripts/bootstrap.mjs",
     "dev": "corepack pnpm core:build:dev && electron-vite dev",
     "dev:vendors": "node scripts/build-dev-vendors.mjs",
-    "build": "electron-vite build",
+    "build": "node --import ./scripts/app-build-workload.mjs node_modules/electron-vite/bin/electron-vite.js build",
     "preview": "electron-vite preview",
     "typecheck": "node node_modules/typescript/bin/tsc --noEmit -p tsconfig.node.json && node node_modules/typescript/bin/tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",

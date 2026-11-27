@@ -20,7 +20,8 @@ export default defineConfig({
     // Integration files spawn real Git repositories and process trees. Avoid
     // saturating Windows disk/process startup on machines with many CPU cores;
     // the product's parallel-worktree assertions and deadlines stay unchanged.
-    maxWorkers: 4,
+    globalSetup: ['./scripts/unit-test-workload.mjs'],
+    maxWorkers: process.platform === 'win32' ? 2 : 4,
     testTimeout: 15_000,
   },
 })

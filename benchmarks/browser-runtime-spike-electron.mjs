@@ -6,9 +6,13 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import process from 'node:process'
 import { performance } from 'node:perf_hooks'
+import { acquireLocalWorkload, watchTestDriver } from '../scripts/local-workload.mjs'
 
 const output = process.argv[2]
 if (!output) throw new Error('output path is required')
+acquireLocalWorkload('browser runtime benchmark')
+const driver = Number(process.env.ND_DSH_TEST_DRIVER_PID)
+if (Number.isSafeInteger(driver) && driver > 0) watchTestDriver(driver, () => app.quit())
 
 const root = process.cwd()
 const userData = mkdtempSync(join(tmpdir(), 'nd-dsh-browser-runtime-spike-'))

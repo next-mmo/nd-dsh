@@ -27,6 +27,7 @@ describe('Electron release target', () => {
     const options = electronLaunchOptions('test-profile', 'checkout', { ND_DSH_USER_DATA_DIR: 'real-profile' })
     expect(options.args).toEqual(['.', '--user-data-dir=test-profile'])
     expect(options.env.ND_DSH_USER_DATA_DIR).toBe('test-profile')
+    expect(options.env.ND_DSH_TEST_DRIVER_PID).toBe(String(process.pid))
     expect(options.executablePath).toBeUndefined()
   })
 

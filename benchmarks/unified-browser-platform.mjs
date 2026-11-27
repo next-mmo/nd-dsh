@@ -24,6 +24,7 @@ try {
       ...safeEnvironment(),
       ND_DSH_WORKSPACE: workspace,
       ND_DSH_USER_DATA_DIR: userData,
+      ND_DSH_TEST_DRIVER_PID: String(process.pid),
       ND_DSH_BROWSER_URL: 'about:blank',
       ND_DSH_BROWSER_PLATFORM_BENCH_OUTPUT: output,
     },

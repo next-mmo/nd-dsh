@@ -1180,6 +1180,20 @@ async function createWindow(cdpPort: number): Promise<void> {
 
 if (hasSingleInstanceLock) {
   void (async () => {
+    const testDriver = Number(process.env.ND_DSH_TEST_DRIVER_PID)
+    if (userDataOverride && Number.isSafeInteger(testDriver) && testDriver > 0) {
+      // The test app itself owns the lock so losing its driver cannot let a
+      // second expensive job start while Electron and its agents are still up.
+      try {
+        const { acquireLocalWorkload, watchTestDriver } = await import('../../scripts/local-workload.mjs')
+        acquireLocalWorkload('Electron acceptance test')
+        watchTestDriver(testDriver, () => app.quit())
+      } catch (error) {
+        console.error(error instanceof Error ? error.message : error)
+        app.exit(1)
+        return
+      }
+    }
     const cdpPort = await resolveCdpPort(requestedCdpPort)
     console.log(`ND-DSH CDP port: ${cdpPort}`)
     app.commandLine.appendSwitch('remote-debugging-port', String(cdpPort))

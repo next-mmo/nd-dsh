@@ -17,7 +17,7 @@ const child = spawn(electron, [join(root, 'benchmarks', 'browser-runtime-spike-e
   cwd: root,
   stdio: 'inherit',
   windowsHide: true,
-  env: safeEnvironment(),
+  env: { ...safeEnvironment(), ND_DSH_TEST_DRIVER_PID: String(process.pid) },
 })
 
 const code = await new Promise((resolvePromise, reject) => {

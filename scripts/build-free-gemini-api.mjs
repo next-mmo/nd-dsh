@@ -3,7 +3,8 @@ import { spawn } from 'node:child_process'
 import { existsSync, promises as fs } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import process from 'node:process'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { acquireLocalWorkload } from './local-workload.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const upstreamRoot = join(root, 'vendor', 'free-gemini-api', 'free-gemini-api')
@@ -12,26 +13,31 @@ const binaryName = process.platform === 'win32' ? 'free-gemini-api.exe' : 'free-
 const stagedDirectory = join(root, 'resources', 'free-gemini-api', 'bin')
 const stagedBinary = join(stagedDirectory, binaryName)
 
-if (!existsSync(mainGo)) {
-  throw new Error('Free Gemini API upstream source is missing. Initialize vendor/free-gemini-api first.')
+export async function buildFreeGeminiApi(environment = process.env) {
+  if (!existsSync(mainGo)) {
+    throw new Error('Free Gemini API upstream source is missing. Initialize vendor/free-gemini-api first.')
+  }
+  const env = { ...environment }
+  if (process.platform === 'win32') env.GOMAXPROCS ??= '2'
+  await fs.mkdir(stagedDirectory, { recursive: true })
+  await run('go', ['build', '-o', stagedBinary, '.'], upstreamRoot, env)
+  if (!existsSync(stagedBinary)) {
+    throw new Error(`Free Gemini API build completed without ${stagedBinary}`)
+  }
+  if (process.platform !== 'win32') await fs.chmod(stagedBinary, 0o755)
+  console.log(`\nFree Gemini API runtime staged: ${stagedBinary}`)
 }
 
-await fs.mkdir(stagedDirectory, { recursive: true })
-await run('go', ['build', '-o', stagedBinary, '.'], upstreamRoot)
-
-if (!existsSync(stagedBinary)) {
-  throw new Error(`Free Gemini API build completed without ${stagedBinary}`)
-}
-if (process.platform !== 'win32') {
-  await fs.chmod(stagedBinary, 0o755)
+if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+  acquireLocalWorkload('Free Gemini API build')
+  await buildFreeGeminiApi()
 }
 
-console.log(`\nFree Gemini API runtime staged: ${stagedBinary}`)
-
-function run(command, args, cwd) {
+function run(command, args, cwd, env) {
   return new Promise((resolveRun, rejectRun) => {
     const child = spawn(command, args, {
       cwd,
+      env,
       stdio: 'inherit',
       shell: false,
     })
