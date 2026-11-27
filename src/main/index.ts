@@ -497,6 +497,7 @@ async function createWindow(cdpPort: number): Promise<void> {
   activeBrowser = browser
   const browserCompanion = new BrowserCompanionService({
     dataPath: userData,
+    ...(userDataOverride ? { discoveryPath: join(userData, 'browser-companion.json') } : {}),
     runtimePath: join(bundledResourceRoot(), 'scripts', 'nd-browser-companion-runtime.mjs'),
   })
   await browserCompanion.start().catch((error) => {

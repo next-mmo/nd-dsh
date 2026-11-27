@@ -6,6 +6,7 @@ import {
   WebContentsView,
   session,
   type IpcMainInvokeEvent,
+  type NativeImage,
   type Rectangle,
   type Session,
   type WebContents,
@@ -131,6 +132,7 @@ export class BrowserController {
   private readonly sessionsByProfile = new Map<string, Session>()
   private readonly downloadsByProfile = new Map<string, BrowserDownloadManager>()
   private readonly tabs = new Map<string, BrowserTabRuntime>()
+  private visualFrame: { id: string; tabId: string; image: NativeImage; width: number; height: number } | undefined
   private readonly lastTabByProfile = new Map<string, string>()
   private readonly agentBrowser: AgentBrowserClient
   private readonly historyStore: BrowserHistoryStore
@@ -543,6 +545,7 @@ export class BrowserController {
       this.activeProfileValue = tab.profileId
     }
     if (this.activeTabIdValue === tabId) return this.describeTab(tab)
+    this.visualFrame = undefined
     const previous = this.activeTab()
     if (previous.state.inspectMode) await previous.inspector.stop().catch(() => undefined)
     previous.state.inspectMode = false
@@ -676,7 +679,10 @@ export class BrowserController {
   async setVisible(visible: boolean): Promise<void> {
     this.visibilityGeneration += 1
     this.visible = visible
-    if (!visible) this.closeExtensionPopup()
+    if (!visible) {
+      this.visualFrame = undefined
+      this.closeExtensionPopup()
+    }
     this.syncViewVisibility()
     if (visible && this.extensionPopup && !this.extensionPopup.contents.isDestroyed()) {
       this.extensionPopup.contents.focus()
@@ -943,6 +949,80 @@ export class BrowserController {
   async screenshot(tabId = this.activeTabIdValue): Promise<{ tabId: string; dataUrl: string }> {
     const image = await this.requireTab(tabId).view.webContents.capturePage()
     return { tabId, dataUrl: image.toDataURL() }
+  }
+
+  async captureVisualFrame(tabId: string) {
+    const tab = this.requireTab(tabId)
+    const contents = tab.view.webContents
+    const frameId = randomUUID()
+    const viewport = await contents.executeJavaScriptInIsolatedWorld(918, [{ code: `(() => {
+      window.ndFrame?.observer.disconnect();
+      const frame = { id: ${JSON.stringify(frameId)}, width: innerWidth, height: innerHeight,
+        x: scrollX, y: scrollY, url: location.href, stale: false };
+      frame.observer = new MutationObserver(() => { frame.stale = true; frame.observer.disconnect(); });
+      frame.observer.observe(document, { subtree: true, attributes: true, childList: true, characterData: true });
+      window.ndFrame = frame;
+      return { width: innerWidth, height: innerHeight };
+    })()` }]) as { width: number; height: number }
+    const image = await contents.capturePage()
+    if (tabId === this.activeTabIdValue && this.visible) this.visualFrame = { id: frameId, tabId, image, ...viewport }
+    return { tabId, frameId, viewport, dataUrl: image.toDataURL() }
+  }
+
+  async prepareVisualClick(tabId: string, frameId: string, x: number, y: number) {
+    const tab = this.requireTab(tabId)
+    const contents = tab.view.webContents
+    const frame = this.visualFrame
+    if (!frame || frame.id !== frameId || frame.tabId !== tabId || x >= frame.width || y >= frame.height) {
+      throw new Error('STALE_BROWSER_REFERENCE: Take a fresh screenshot of the active tab')
+    }
+    const hitTest = async (verify: boolean): Promise<string> => {
+      if (this.visualFrame !== frame || !this.visible || this.activeTabIdValue !== tabId || tab.state.annotationMode || tab.state.inspectMode) {
+        throw new Error('Visual clicks require the active visible browser tab')
+      }
+      const detail = await contents.executeJavaScriptInIsolatedWorld(918, [{ code: `(() => {
+        const frame = window.ndFrame;
+        const [id, x, y, verify] = ${JSON.stringify([frameId, x, y, verify])};
+        if (!frame || frame.id !== id || frame.stale || frame.url !== location.href ||
+            frame.width !== innerWidth || frame.height !== innerHeight ||
+            frame.x !== scrollX || frame.y !== scrollY || x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) return null;
+        const hit = document.elementFromPoint(x, y);
+        if (!hit || hit.closest('iframe,frame,object,embed,[disabled],[aria-disabled="true"]')) return null;
+        const target = hit.closest('button,a[href],input,select,textarea,label,[role]') || hit;
+        if (target.matches('input[type="file"]') || target.closest('label')?.control?.matches('input[type="file"]')) return null;
+        if (verify && frame.hit !== hit) return null;
+        frame.hit = hit;
+        if (verify) { frame.stale = true; frame.observer.disconnect(); }
+        return [target.getAttribute('aria-label'), target.getAttribute('title'),
+          target.textContent?.slice(0, 500), target.getAttribute('href'), target.getAttribute('type'),
+          target.getAttribute('role'), target.tagName].filter(Boolean).join(' ').slice(0, 2000);
+      })()` }])
+      if (typeof detail !== 'string') throw new Error('STALE_BROWSER_REFERENCE: Take a fresh screenshot of the active tab')
+      return detail
+    }
+    const detail = await hitTest(false)
+    return {
+      detail,
+      click: async () => {
+        // Canvas and compositor-only updates do not trigger a DOM mutation.
+        const current = await contents.capturePage()
+        const size = frame.image.getSize()
+        const left = Math.max(0, Math.floor(x * size.width / frame.width) - 12)
+        const top = Math.max(0, Math.floor(y * size.height / frame.height) - 12)
+        const patch = { x: left, y: top, width: Math.min(25, size.width - left), height: Math.min(25, size.height - top) }
+        if (current.getSize().width !== size.width || current.getSize().height !== size.height ||
+          !current.crop(patch).toBitmap().equals(frame.image.crop(patch).toBitmap()) || await hitTest(true) !== detail) {
+          throw new Error('STALE_BROWSER_REFERENCE: Click target changed')
+        }
+        this.visualFrame = undefined
+        const zoom = contents.getZoomFactor()
+        const point = { x: Math.round(x * zoom), y: Math.round(y * zoom), button: 'left' as const, clickCount: 1 }
+        contents.focus()
+        contents.sendInputEvent({ type: 'mouseDown', ...point })
+        contents.sendInputEvent({ type: 'mouseUp', ...point })
+        return { ok: true }
+      },
+    }
   }
 
   async discoverSiteTools(tabId = this.activeTabIdValue): Promise<BrowserSiteToolDescriptor[]> {
@@ -1658,6 +1738,9 @@ const SEMANTIC_DRIVER_SCRIPT = `(() => {
     return (element.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 500);
   };
   const implicitRole = (element) => {
+    if (/^H[1-6]$/.test(element.tagName)) return 'heading';
+    if (element.tagName === 'DIALOG') return 'dialog';
+    if (element.tagName === 'OUTPUT') return 'status';
     if (element instanceof HTMLButtonElement) return 'button';
     if (element instanceof HTMLAnchorElement) return 'link';
     if (element instanceof HTMLInputElement) {
@@ -1704,7 +1787,7 @@ const SEMANTIC_DRIVER_SCRIPT = `(() => {
     snapshot() {
       refs.clear();
       const elements = Array.from(document.querySelectorAll(
-        'a[href],button,input,textarea,select,summary,[role],[tabindex],[contenteditable="true"]'
+        'a[href],button,input,textarea,select,summary,h1,h2,h3,h4,h5,h6,dialog,output,[aria-live],[role],[tabindex],[contenteditable="true"]'
       )).filter(visible).slice(0, 750).map((element) => {
         let ref = elementRefs.get(element);
         if (!ref) {
@@ -1732,6 +1815,7 @@ const SEMANTIC_DRIVER_SCRIPT = `(() => {
         revision,
         url: location.href,
         title: document.title,
+        heading: Array.from(document.querySelectorAll('h1,[role="heading"][aria-level="1"]')).filter(visible).map(textOf).find(Boolean),
         viewport: { width: innerWidth, height: innerHeight, scrollX, scrollY },
         elements
       };

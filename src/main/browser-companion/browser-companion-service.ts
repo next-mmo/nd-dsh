@@ -57,7 +57,7 @@ export class BrowserCompanionService {
   constructor(options: BrowserCompanionServiceOptions) {
     const runtimeDir = join(homedir(), '.nd-dsh')
     this.discoveryPath = options.discoveryPath ?? join(runtimeDir, 'browser-companion.json')
-    this.endpoint = options.endpoint ?? defaultEndpoint(runtimeDir)
+    this.endpoint = options.endpoint ?? defaultEndpoint(dirname(this.discoveryPath), options.discoveryPath ?? homedir())
     this.runtimePath = options.runtimePath
     this.connections = new BrowserConnectionStore(join(options.dataPath, 'browser-companion-connections.json'))
   }
@@ -69,7 +69,6 @@ export class BrowserCompanionService {
     if (process.platform !== 'win32') await fs.rm(this.endpoint, { force: true }).catch(() => undefined)
 
     const server = createServer((socket) => this.accept(socket))
-    this.server = server
     await new Promise<void>((resolve, reject) => {
       const onError = (error: Error): void => reject(error)
       server.once('error', onError)
@@ -79,6 +78,7 @@ export class BrowserCompanionService {
       })
     })
 
+    this.server = server
     const discovery = {
       version: BROWSER_COMPANION_PROTOCOL_VERSION,
       endpoint: this.endpoint,
@@ -103,7 +103,8 @@ export class BrowserCompanionService {
       pending.reject(new Error('Browser companion is shutting down'))
     }
     this.pending.clear()
-    if (server) await new Promise<void>((resolve) => server.close(() => resolve()))
+    if (!server) return
+    await new Promise<void>((resolve) => server.close(() => resolve()))
     await this.connections.markAllDisconnected()
     await fs.rm(this.discoveryPath, { force: true }).catch(() => undefined)
     if (process.platform !== 'win32') await fs.rm(this.endpoint, { force: true }).catch(() => undefined)
@@ -359,9 +360,9 @@ export class BrowserCompanionService {
   }
 }
 
-function defaultEndpoint(runtimeDir: string): string {
+function defaultEndpoint(runtimeDir: string, identity: string): string {
   if (process.platform === 'win32') {
-    const suffix = createHash('sha256').update(homedir()).digest('hex').slice(0, 16)
+    const suffix = createHash('sha256').update(identity).digest('hex').slice(0, 16)
     return `\\\\.\\pipe\\nd-dsh-browser-${suffix}`
   }
   return join(runtimeDir, 'browser-companion.sock')

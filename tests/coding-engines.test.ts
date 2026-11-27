@@ -131,7 +131,7 @@ describe('coding engine catalog', () => {
     // conversations are not restored across ND restarts.
     expect(antigravity.capabilities.humanApprovals).toBe(false)
     expect(antigravity.capabilities.persistentSessions).toBe(false)
-    expect(antigravity.capabilities.browser).toBe(false)
+    expect(antigravity.capabilities.browser).toBe(true)
     expect(antigravity.capabilities.skills).toBe(false)
     expect(antigravity.capabilities.mcp).toBe(false)
     expect(antigravity.capabilities.modelProviderRouting).toBe(false)

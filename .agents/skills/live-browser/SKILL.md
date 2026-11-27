@@ -5,7 +5,9 @@ description: Drive either the ND built-in browser or an explicitly connected Chr
 
 # Unified ND browser
 
-Use the `nd_browser_call` tool from the `nd-extensions` MCP server.
+Use ND’s `nd_browser_call` tool. In Antigravity use `call_mcp_tool` on
+server `nd-browser` with tool name `nd_browser_call`. Harness exposes the
+same tool on `nd-extensions`.
 
 There is one model-facing browser API. Do not launch a hidden automation browser
 and do not bypass the unified route with raw CDP commands.
@@ -43,6 +45,12 @@ and approval decisions are made in the desktop main process.
 
 Old refs fail with `STALE_BROWSER_REFERENCE`.
 
+After a click or submission, verify the requested outcome in the same tab.
+Use `browser.waitFor` with expected text or a URL fragment, then take a fresh
+snapshot and check the page heading, dialog, or status. A successful click only
+means the input was delivered. If the reference is stale, observe again before
+retrying. Check for an already completed submission before repeating it.
+
 Password values are intentionally absent from snapshots.
 
 ## Mutation workflow
@@ -53,6 +61,11 @@ Before navigate/click/fill/press/scroll/site-tool mutation:
 2. keep the returned `lease.id`;
 3. pass it as `leaseId` on mutating calls;
 4. call `browser.detach` when the work is finished.
+
+For a visible control missing from the built-in tab snapshot, request
+`browser.screenshot`, then call `browser.click` with its `frameId`, the
+`leaseId`, and integer `x` and `y` in the returned viewport’s CSS pixels.
+Inspect the new state after the click. Take a new screenshot if the page moved.
 
 One execution lane owns one writable tab at a time.
 

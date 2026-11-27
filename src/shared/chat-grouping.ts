@@ -2,7 +2,7 @@ import type { ThreadEntry } from './chat-types.js'
 
 export type ToolEntry = Extract<ThreadEntry, { kind: 'tool' }>
 
-export type ToolGroupIcon = 'tool' | 'file' | 'skill' | 'read' | 'command' | 'search' | 'reasoning'
+export type ToolGroupIcon = 'tool' | 'file' | 'skill' | 'read' | 'command' | 'search' | 'reasoning' | 'browser'
 
 export type DisplayGroup =
   | { kind: 'entry'; key: string; entry: ThreadEntry }
@@ -75,6 +75,7 @@ export function groupEntries(entries: ThreadEntry[]): DisplayGroup[] {
     // Sub-group by category. Adjacent same-type tools stay together; type
     // changes produce a new group.
     const subGroupOf = (t: ToolEntry): ToolGroupIcon => {
+      if (t.name.startsWith('browser.') || t.name === 'nd_browser_call') return 'browser'
       if (SKILL_TOOL_NAMES.has(t.name)) return 'skill'
       if (FS_WRITE_TOOL_NAMES.has(t.name) || FILE_CHANGE_TOOL_NAMES.has(t.name)) return 'file'
       if (FS_READ_TOOL_NAMES.has(t.name)) return 'read'
@@ -95,6 +96,7 @@ export function groupEntries(entries: ThreadEntry[]): DisplayGroup[] {
         icon === 'skill' ? `Loaded ${n} skill${n === 1 ? '' : 's'}`
         : icon === 'file' ? `Edited ${n} file${n === 1 ? '' : 's'}`
         : icon === 'read' ? `Read ${n} file${n === 1 ? '' : 's'}`
+        : icon === 'browser' ? `${n} browser action${n === 1 ? '' : 's'}`
         : icon === 'command' ? `Ran ${n} command${n === 1 ? '' : 's'}`
         : icon === 'search' ? `Searched ${n} file${n === 1 ? '' : 's'}`
         : `Used ${n} tool${n === 1 ? '' : 's'}`

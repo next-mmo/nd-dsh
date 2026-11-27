@@ -477,7 +477,7 @@ export function buildCodingEngineCatalog(availability: CodingEngineAvailability)
         workspace: true,
         filesystem: true,
         shell: true,
-        browser: false,
+        browser: true,
         skills: false,
         mcp: false,
         modelProviderRouting: false,

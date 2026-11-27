@@ -1,5 +1,8 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type {
   DshEventFrame,
   EngineModelOption,
@@ -125,9 +128,11 @@ export interface AntigravityEngineOptions {
   mode?: string
   /** Auto-approve headless tool calls without prompting (defaults to true in headless stream-json). */
   skipPermissions?: boolean
+
 }
 
 export class AntigravityEngine {
+
   private readonly sessions = new Map<string, AntigravitySession>()
   private modelsCache: { at: number; models: EngineModelOption[] } | undefined
   private onEvent: ((frame: DshEventFrame) => void) | undefined
@@ -356,6 +361,7 @@ export class AntigravityEngine {
       this.emitFrame({ kind: 'agent-error', sessionId: session.sessionId, message: 'Antigravity engine stopped before the turn completed.' })
     }
     await Promise.all(children.map((child) => killProcessTree(child)))
+
     this.stopping = false
   }
 
@@ -390,18 +396,31 @@ export class AntigravityEngine {
 
     // Engines must never see ND's control-plane configuration.
     const environment = engineEnvironment()
+    const browserEntry = process.env.ND_DSH_EXTENSION_MCP_ENTRY
+    const toolsDirectory = browserEntry && environment.ND_BROWSER_COMPANION_RUNTIME
+      ? createBrowserToolsDirectory(browserEntry)
+      : undefined
+    if (toolsDirectory) argv.push('--add-dir', toolsDirectory)
 
     const log = this.options.log ?? ((line: string) => console.warn(line))
     const spawnProcess = this.options.spawnProcess ?? spawn
-    const child = spawnProcess(argv[0] as string, argv.slice(1), {
-      windowsHide: true,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: environment,
-      cwd: session.cwd ?? process.cwd(),
-      // A process group lets POSIX teardown take the whole tree down; Windows
-      // uses taskkill /T instead.
-      detached: process.platform !== 'win32',
-    })
+    let child: ChildProcess
+    const releaseTools = () => {
+      if (toolsDirectory) rmSync(toolsDirectory, { recursive: true, force: true })
+    }
+    try {
+      child = spawnProcess(argv[0] as string, argv.slice(1), {
+        windowsHide: true,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: environment,
+        cwd: session.cwd ?? process.cwd(),
+        detached: process.platform !== 'win32',
+      })
+    } catch (error) {
+      releaseTools()
+      throw error
+    }
+    child.once('close', releaseTools)
     session.child = child
     session.buffer = ''
     child.stdout?.setEncoding('utf8')
@@ -495,7 +514,14 @@ export class AntigravityEngine {
       ? step.tool_name
       : typeof step.tool_info?.name === 'string' ? step.tool_info.name : 'tool'
     if (step.state === 'ACTIVE') {
-      this.recordToolCall(session, callId, name, step.tool_info?.parameters ?? null)
+      const parameters = step.tool_info?.parameters
+      if (name === 'call_mcp_tool' && isObject(parameters) && parameters.ServerName === 'nd-browser'
+        && parameters.ToolName === 'nd_browser_call' && isObject(parameters.Arguments)) {
+        const method = parameters.Arguments.method
+        this.recordToolCall(session, callId, typeof method === 'string' && /^browser\.[A-Za-z]+$/.test(method) ? method : 'nd_browser_call', null)
+      } else {
+        this.recordToolCall(session, callId, name, parameters ?? null)
+      }
       return
     }
     if (step.state !== 'DONE' && step.state !== 'ERROR') return
@@ -647,6 +673,19 @@ export class AntigravityEngine {
 
   private emitFrame(frame: DshEventFrame): void {
     this.onEvent?.(frame)
+  }
+}
+
+function createBrowserToolsDirectory(entry: string): string {
+  const directory = mkdtempSync(join(tmpdir(), 'nd-agy-browser-'))
+  try {
+    mkdirSync(join(directory, '.agents'))
+    const server = { command: process.execPath, args: [entry, '--browser-only'], env: { ELECTRON_RUN_AS_NODE: '1' } }
+    writeFileSync(join(directory, '.agents', 'mcp_config.json'), JSON.stringify({ mcpServers: { 'nd-browser': server } }))
+    return directory
+  } catch (error) {
+    rmSync(directory, { recursive: true, force: true })
+    throw error
   }
 }
 

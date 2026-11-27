@@ -75,8 +75,8 @@ async function runProxy(catalog: string, state: string, args: string[], extraEnv
   return JSON.parse(stdout) as unknown
 }
 
-async function runGateway(catalog: string, state: string, messages: unknown[]) {
-  const child = spawn(process.execPath, [mcpScript], {
+async function runGateway(catalog: string, state: string, messages: unknown[], args: string[] = [], env: Record<string, string> = {}) {
+  const child = spawn(process.execPath, [mcpScript, ...args], {
     stdio: ['pipe', 'pipe', 'pipe'],
     env: {
       ...process.env,
@@ -84,6 +84,7 @@ async function runGateway(catalog: string, state: string, messages: unknown[]) {
       ND_EXTENSION_PROXY: proxyScript,
       ND_EXTENSION_CATALOG: catalog,
       ND_EXTENSION_STATE: state,
+      ...env,
     },
   })
   let stdout = ''
@@ -159,6 +160,24 @@ describe('ND extension portable runtime', () => {
     ])
     const names = replies.find((reply) => reply.id === 2)?.result?.tools?.map((tool) => tool.name)
     expect(names).toEqual(['nd_extension_list', 'nd_browser_call', 'nd_extension_call'])
+  })
+
+  it('limits Antigravity to browser tools and delivers screenshot pixels with frame coordinates', async () => {
+    const { root, catalog, state } = await enabledCounterCatalog()
+    const runtime = join(root, 'browser.mjs')
+    await writeFile(runtime, `export async function request() {
+      return { frameId: 'test-frame', viewport: { width: 320, height: 200 }, dataUrl: 'data:image/png;base64,dGVzdA==' }
+    }`)
+    const replies = await runGateway(catalog, state, [
+      { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+      { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'nd_browser_call', arguments: { method: 'browser.screenshot' } } },
+      { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'nd_extension_list', arguments: {} } },
+    ], ['--browser-only'], { ND_BROWSER_COMPANION_RUNTIME: runtime })
+    expect(replies.find(reply => reply.id === 1)?.result?.tools?.map(tool => tool.name)).toEqual(['nd_browser_call'])
+    const content = replies.find(reply => reply.id === 2)?.result?.content
+    expect(JSON.parse(content?.[0]?.text ?? '{}')).toEqual({ frameId: 'test-frame', viewport: { width: 320, height: 200 } })
+    expect(content?.[1]).toEqual({ type: 'image', mimeType: 'image/png', data: 'dGVzdA==' })
+    expect(replies.find(reply => reply.id === 3)?.result).toMatchObject({ isError: true })
   })
 
   it('forwards routed MCP call results as native gateway content', async () => {

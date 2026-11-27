@@ -16,6 +16,7 @@ const PROXY = process.env.ND_EXTENSION_PROXY?.trim() || process.env.ND_DSH_EXTEN
 const BROWSER_PROXY = process.env.ND_BROWSER_COMPANION_RUNTIME?.trim() || ''
 const TIMEOUT_MS = 120_000
 const HARNESS_ENGINE_ID = 'nd-harness'
+const browserOnly = process.argv.includes('--browser-only')
 
 const TOOLS = [
   {
@@ -44,6 +45,9 @@ const TOOLS = [
         tabId: { oneOf: [{ type: 'string' }, { type: 'number' }] },
         leaseId: { type: 'string' },
         ref: { type: 'string' },
+        frameId: { type: 'string', description: 'For a visual browser.click in the visible built-in tab, use the latest browser.screenshot frameId with x and y instead of ref and revision.' },
+        x: { type: 'integer', minimum: 0, description: 'Horizontal CSS pixel in the screenshot viewport.' },
+        y: { type: 'integer', minimum: 0, description: 'Vertical CSS pixel in the screenshot viewport.' },
         revision: { type: 'number' },
         url: { type: 'string' },
         text: { type: 'string' },
@@ -142,13 +146,26 @@ async function getBrowserCompanion() {
 }
 
 async function dispatch(name, args) {
+  if (browserOnly && name !== 'nd_browser_call') throw new Error('Unknown browser tool')
   if (name === 'nd_browser_call') {
     const input = args && typeof args === 'object' && !Array.isArray(args) ? { ...args } : {}
+
     if (typeof input.method !== 'string' || !input.method.startsWith('browser.')) throw new Error('A browser.* method is required')
     const companion = await getBrowserCompanion()
     if (companion && typeof companion.request === 'function') {
       const { method, ...params } = input
-      return { mode: 'list', value: await companion.request(method, params) }
+      const value = await companion.request(method, params)
+      if (method === 'browser.screenshot' && typeof value?.dataUrl === 'string') {
+        const match = /^data:(image\/(?:png|jpeg|webp));base64,(.+)$/.exec(value.dataUrl)
+        if (match) {
+          const { dataUrl, ...metadata } = value
+          return { mode: 'call', value: { content: [
+            { type: 'text', text: JSON.stringify(metadata) },
+            { type: 'image', mimeType: match[1], data: match[2] },
+          ] } }
+        }
+      }
+      return { mode: 'list', value }
     }
     return { mode: 'list', value: await runBrowserProxy(['call', JSON.stringify(input)]) }
   }
@@ -184,7 +201,8 @@ async function handleMessage(message) {
       result: {
         protocolVersion: message.params?.protocolVersion ?? '2024-11-05',
         capabilities: { tools: {} },
-        serverInfo: { name: 'nd-extensions', version: '1.0.0' },
+        serverInfo: { name: browserOnly ? 'nd-browser' : 'nd-extensions', version: '1.0.0' },
+        instructions: 'For browser tasks use nd_browser_call. Read the selected tab, attach before acting, and confirm the result in a fresh snapshot. When semantic controls are unavailable in the built-in tab, use browser.screenshot then browser.click with frameId, x and y in viewport CSS pixels. Detach when finished.',
       },
     })
     return
@@ -195,7 +213,7 @@ async function handleMessage(message) {
     return
   }
   if (message.method === 'tools/list') {
-    writeMessage({ jsonrpc: '2.0', id: message.id, result: { tools: TOOLS } })
+    writeMessage({ jsonrpc: '2.0', id: message.id, result: { tools: browserOnly ? TOOLS.filter(tool => tool.name === 'nd_browser_call') : TOOLS } })
     return
   }
   if (message.method === 'tools/call') {

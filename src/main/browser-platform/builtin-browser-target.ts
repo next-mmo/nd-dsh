@@ -90,7 +90,7 @@ export class BuiltinBrowserTarget implements BrowserTarget {
   }
 
   async screenshot(tabId: string) {
-    return this.browser.screenshot(tabId)
+    return this.browser.captureVisualFrame(tabId)
   }
 
   async discoverSiteTools(tabId: string) {

@@ -366,6 +366,17 @@ export class BrowserTargetRouter {
         origin: tab.origin,
       }, () => target.reload(tabId))
     }
+    if (method === 'browser.click' && params.frameId !== undefined) {
+      if (targetId !== 'builtin' || params.ref !== undefined) throw new Error('Visual clicks require a built-in browser screenshot and no element reference')
+      const frameId = requiredString(params.frameId, 'frameId')
+      const point = await this.browser.prepareVisualClick(tabId, frameId, requiredInteger(params.x, 'x'), requiredInteger(params.y, 'y'))
+      return this.runAction(context, {
+        operation: 'browser.click', targetId, profileId: descriptor.profileId, tabId, origin: tab.origin, detail: point.detail,
+      }, () => {
+        this.assertLease(params, targetId, tabId, context)
+        return point.click()
+      })
+    }
     if (method === 'browser.click') {
       const ref = requiredString(params.ref, 'ref')
       const revision = requiredInteger(params.revision, 'revision')
