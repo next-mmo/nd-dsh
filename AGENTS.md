@@ -26,3 +26,4 @@
   - **Local secrets & `.env` protection**: Keep `.env*` and local credential files untracked and excluded in `.gitignore`. Never use `git add -f` on ignored files containing environment or runtime state.
   - **Pre-commit diff inspection**: Always verify `git diff --staged` before committing to ensure no private keys, session tokens, or high-entropy credentials are inadvertently introduced.
 - Run `pnpm verify`, `pnpm typecheck`, `pnpm test`, and `pnpm build` before publishing changes.
+- For local dev and vendor build requests, run `corepack pnpm dev:vendors` and wait for it to finish before running `corepack pnpm dev`. Schedule full test runs separately from vendor builds and the dev launch. Use `--skip-harness-install` when resuming a build whose Harness dependency install already completed.

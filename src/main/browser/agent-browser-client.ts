@@ -16,7 +16,10 @@ export interface AgentBrowserStatus {
 
 const COMMAND_TIMEOUT_MS = 120_000
 const MAX_CAPTURE_CHARS = 2_000_000
-const BIND_COMMAND_TIMEOUT_MS = 10_000
+// Cold agent-browser daemon startup + initial CDP attach on Windows routinely
+// takes 12–20s; 10s timed out mid-attach and surfaced as "DSH runtime unavailable"
+// seconds before the daemon finished warming up.
+const BIND_COMMAND_TIMEOUT_MS = 30_000
 const BIND_RETRY_DELAY_MS = 2_500
 const SMOKE_TEST_TIMEOUT_MS = 15_000
 // Shutdown must fit inside the app's own 5 s quit budget, and the CLI close is
@@ -141,6 +144,9 @@ export class AgentBrowserClient {
       if (!existsSync(this.entryPath)) {
         throw new Error(`agent-browser MCP entry is missing from this ND install at ${this.entryPath}. Reinstall ND.`)
       }
+      // Dead-daemon pid/port sidecars left behind by an unclean exit make
+      // agent-browser stall on stale endpoints until the bind timeout fires.
+      await this.pruneStaleSessionSidecars()
       // A brand-new pinned session may create a fresh tab before a target is
       // selected. Bind once without strict pinning, then turn strict pinning on
       // for every subsequent CLI and MCP command.
@@ -153,6 +159,7 @@ export class AgentBrowserClient {
         await this.bindPinnedTab(targetId)
       } catch {
         this.statusValue = { state: 'binding' }
+        await this.pruneStaleSessionSidecars()
         await sleep(BIND_RETRY_DELAY_MS)
         await this.bindPinnedTab(targetId)
       }
@@ -175,6 +182,20 @@ export class AgentBrowserClient {
   private async bindPinnedTab(targetId: string): Promise<void> {
     await this.run(['tab', targetId], ['--no-pin-tab'], BIND_COMMAND_TIMEOUT_MS)
     await this.run(['get', 'url'], ['--pin-tab'], BIND_COMMAND_TIMEOUT_MS)
+  }
+
+  private async pruneStaleSessionSidecars(): Promise<void> {
+    const staleExtensions = ['.pid', '.port', '.sock', '.stream', '.config', '.version']
+    for (const root of daemonRootsFor(this.socketDir)) {
+      const pidPath = join(root, `${this.sessionName}.pid`)
+      if (!existsSync(pidPath)) continue
+      const pid = await readPidFile(pidPath)
+      if (pid !== undefined && isProcessAlive(pid)) continue
+      console.warn(`[agent-browser] removing stale daemon sidecars in ${root} (pid=${String(pid ?? 'invalid')})`)
+      await Promise.all(
+        staleExtensions.map((ext) => fs.rm(join(root, `${this.sessionName}${ext}`), { force: true }).catch(() => {})),
+      )
+    }
   }
 
   /**

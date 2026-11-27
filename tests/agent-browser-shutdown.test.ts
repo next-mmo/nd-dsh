@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -264,6 +265,82 @@ describe('agent-browser daemon process matching', () => {
     expect(isAgentBrowserDaemonCommand('/repo/node_modules/.bin/agent-browser --config x get url')).toBe(false)
     // Someone else's installation is not this app's daemon.
     expect(isAgentBrowserDaemonCommand('/usr/local/bin/agent-browser open https://example.com')).toBe(false)
+  })
+})
+
+describe('AgentBrowserClient bindTarget resilience', () => {
+  it('prunes stale dead-daemon sidecars before binding and uses a 30s bind timeout', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'nd-agent-browser-stale-bind-'))
+    temporary.push(root)
+    electronState.userData = root
+
+    // Spawn a short-lived process and wait for it to exit so we have a guaranteed dead PID.
+    const deadChild = spawn(process.execPath, ['-e', 'process.exit(0)'], { stdio: 'ignore', windowsHide: true })
+    if (!deadChild.pid) throw new Error('test helper did not start')
+    const deadPid = deadChild.pid
+    await waitForExit(deadChild, 2_000)
+
+    const client = new AgentBrowserClient(9_222, process.cwd())
+    const runDir = join(client.socketDir, 'namespaces', AGENT_BROWSER_DAEMON_NAMESPACE, 'run')
+    await mkdir(runDir, { recursive: true })
+    const stalePid = join(runDir, `${client.sessionName}.pid`)
+    const stalePort = join(runDir, `${client.sessionName}.port`)
+    await writeFile(stalePid, String(deadPid), 'utf8')
+    await writeFile(stalePort, '55555', 'utf8')
+
+    const internal = client as unknown as {
+      run: (command: string[], globalArguments?: string[], timeoutMs?: number) => Promise<{ stdout: string; stderr: string }>
+    }
+    const calls: Array<{ command: string[]; timeoutMs: number | undefined }> = []
+    internal.run = vi.fn(async (command: string[], _globalArgs?: string[], timeoutMs?: number) => {
+      calls.push({ command, timeoutMs })
+      return { stdout: '{}', stderr: '' }
+    })
+
+    await client.bindTarget('TARGET-1')
+
+    expect(existsSync(stalePid)).toBe(false)
+    expect(existsSync(stalePort)).toBe(false)
+    expect(calls[0]).toEqual({ command: ['tab', 'TARGET-1'], timeoutMs: 30_000 })
+    expect(calls[1]).toEqual({ command: ['get', 'url'], timeoutMs: 30_000 })
+    expect(client.status().state).toBe('ready')
+  })
+
+  it('preserves live daemon sidecars during bindTarget', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'nd-agent-browser-live-bind-'))
+    temporary.push(root)
+    electronState.userData = root
+
+    const liveChild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+      stdio: 'ignore',
+      windowsHide: true,
+    })
+    if (!liveChild.pid) throw new Error('test helper did not start')
+    const livePid = liveChild.pid
+
+    try {
+      const client = new AgentBrowserClient(9_222, process.cwd())
+      const runDir = join(client.socketDir, 'namespaces', AGENT_BROWSER_DAEMON_NAMESPACE, 'run')
+      await mkdir(runDir, { recursive: true })
+      const livePidPath = join(runDir, `${client.sessionName}.pid`)
+      const livePortPath = join(runDir, `${client.sessionName}.port`)
+      await writeFile(livePidPath, String(livePid), 'utf8')
+      await writeFile(livePortPath, '55556', 'utf8')
+
+      const internal = client as unknown as {
+        run: (command: string[], globalArguments?: string[], timeoutMs?: number) => Promise<{ stdout: string; stderr: string }>
+      }
+      internal.run = vi.fn(async () => ({ stdout: '{}', stderr: '' }))
+
+      await client.bindTarget('TARGET-2')
+
+      expect(existsSync(livePidPath)).toBe(true)
+      expect(existsSync(livePortPath)).toBe(true)
+    } finally {
+      if (isAlive(livePid)) {
+        try { process.kill(livePid, 'SIGKILL') } catch { /* already exited */ }
+      }
+    }
   })
 })
 

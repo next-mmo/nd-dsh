@@ -111,6 +111,9 @@ const startUrl = process.env.ND_DSH_BROWSER_URL?.trim() || DEFAULT_BROWSER_URL
 app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
 const userDataOverride = process.env.ND_DSH_USER_DATA_DIR?.trim()
 if (userDataOverride) app.setPath('userData', resolve(userDataOverride))
+if (!app.isPackaged && process.platform === 'win32' && process.env.ND_DSH_DEV_HARDWARE_ACCELERATION !== '1') {
+  app.disableHardwareAcceleration()
+}
 app.enableSandbox()
 
 let mainWindow: BrowserWindow | undefined

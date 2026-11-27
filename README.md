@@ -230,6 +230,17 @@ corepack pnpm bootstrap
 corepack pnpm dev
 ```
 
+To rebuild the vendored runtimes, initialize the submodules and run
+`corepack pnpm dev:vendors` with the toolchains required by those checkouts,
+including Rust and Go. It builds DeepSeek Harness, ND Pencil, and Free Gemini
+API in sequence. Wait for it to finish before starting dev or the full test
+suite. Use `--skip-harness-install` when resuming after a completed Harness
+dependency install.
+
+On Windows, local dev starts with GPU acceleration disabled. Set
+`ND_DSH_DEV_HARDWARE_ACCELERATION=1` in the launch environment when testing
+with GPU acceleration.
+
 ### Run ND Cloud locally (every new dev)
 
 The ND Cloud pilot is part of the standard local stack. In a second terminal:
