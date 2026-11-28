@@ -198,6 +198,24 @@ export class TaskWorktreeManager {
       .then((repoRoot) => describe(repoRoot, taskId).root)
       .catch(() => undefined)
   }
+
+  /**
+   * Read the changed-file list and numstat for the task worktree's latest
+   * checkpoint commit (or working diff) so deterministic risk scoring can bound
+   * blast radius without leaving ND's worktree Git boundary.
+   */
+  async diffFootprint(worktree: TaskWorktree): Promise<{ files: string[]; numstat: string }> {
+    const hasParent = await this.runGit(worktree.root, ['rev-parse', '--verify', 'HEAD~1'])
+      .then(() => true)
+      .catch(() => false)
+    const range = hasParent ? ['HEAD~1..HEAD'] : []
+    const [names, stats] = await Promise.all([
+      this.runGit(worktree.root, ['diff', '--no-renames', '--name-only', '-z', ...range]).catch(() => ({ stdout: '', stderr: '' })),
+      this.runGit(worktree.root, ['diff', '--no-renames', '--numstat', '-z', ...range]).catch(() => ({ stdout: '', stderr: '' })),
+    ])
+    const files = names.stdout.split('\0').filter(Boolean)
+    return { files, numstat: stats.stdout }
+  }
 }
 
 /**

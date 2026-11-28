@@ -168,9 +168,22 @@ export function OrganizationControlCenter({ companyId, projectId, agents, onErro
           <div key={item.id} className="flex items-center justify-between gap-2 border-t border-border-soft py-2 text-xs">
             <div className="min-w-0">
               <strong className="block truncate font-mono text-[11px]">{item.taskId}</strong>
-              <span className="text-faint">{item.changedFiles.length} files · {item.exact ? 'exact Git receipt' : 'weak evidence'}</span>
+              <span className="text-faint">
+                {item.changedFiles.length} files · {item.exact ? 'exact Git receipt' : 'weak evidence'}
+                {item.risk?.changedLines !== null && item.risk?.changedLines !== undefined ? ` · ${item.risk.changedLines} lines` : ''}
+              </span>
             </div>
-            <span className={cn('rounded-full border px-1.5 py-0.5 text-[10px] font-bold uppercase', evidenceClass(item.status))}>{item.status.replace('_', ' ')}</span>
+            <div className="flex shrink-0 items-center gap-1.5">
+              {item.risk ? (
+                <span
+                  className={cn('rounded-full border px-1.5 py-0.5 text-[10px] font-bold uppercase', riskClass(item.risk.level))}
+                  title={[item.risk.reason, ...item.risk.safeguards].filter(Boolean).join('\n')}
+                >
+                  {item.risk.level} {item.risk.score}/10
+                </span>
+              ) : null}
+              <span className={cn('rounded-full border px-1.5 py-0.5 text-[10px] font-bold uppercase', evidenceClass(item.status))}>{item.status.replace('_', ' ')}</span>
+            </div>
           </div>
         ))}
         {!evidence.length ? <Empty text="Evidence receipts appear when tasks enter independent review." /> : null}
@@ -337,5 +350,10 @@ function evidenceClass(status: string): string {
   if (status === 'verified') return 'border-primary/30 bg-primary/10 text-primary'
   if (status === 'pending_review') return 'border-info/30 bg-info/10 text-info'
   return 'border-destructive/30 bg-destructive/[0.06] text-destructive'
+}
+function riskClass(level: 'low' | 'medium' | 'high'): string {
+  if (level === 'low') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+  if (level === 'medium') return 'border-warning/35 bg-warning/10 text-warning'
+  return 'border-destructive/35 bg-destructive/10 text-destructive'
 }
 function errorMessage(cause: unknown): string { return cause instanceof Error ? cause.message : String(cause) }

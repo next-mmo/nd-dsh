@@ -76,6 +76,9 @@ export function registerOrganizationIpc(
   orchestrator.setFastPathAuditRecorder(async (record) => {
     await strategy.mutate({ type: 'action.record', ...record })
   })
+  orchestrator.setReviewRiskRecorder(async (taskId, selfReview, stats) => {
+    await control.recordEvidenceRisk(taskId, selfReview, stats)
+  })
 
   // Guard the orchestrator itself instead of only guarding renderer IPC. The
   // orchestrator calls its public methods for autonomy-3/4 continuation, so

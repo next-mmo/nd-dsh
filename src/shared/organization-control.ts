@@ -1,4 +1,5 @@
 import type { ComputeManagementProjection } from './compute-budget.js'
+import type { OrganizationDiffRiskAssessment } from './diff-risk.js'
 import type { OrganizationRunKind } from './organization.js'
 
 export type OrganizationTurnRoute =
@@ -130,6 +131,7 @@ export interface OrganizationEvidenceReceipt {
   capturedAt: number
   reviewerRunId?: string
   reviewSummary?: string
+  risk?: OrganizationDiffRiskAssessment
   invalidatedAt?: number
 }
 

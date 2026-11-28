@@ -4,6 +4,7 @@ import type { NdCaptureResultView, NdHomeStateView } from '../../../shared/nd-in
 import { Badge } from './ui/badge'
 import { Button } from './ui/button'
 import { Card } from './ui/card'
+import { ChatAvatar } from './ChatAvatar'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog'
 import { Input } from './ui/input'
 import { Textarea } from './ui/textarea'
@@ -247,7 +248,15 @@ export function HomeView({
               {state.chats.length === 0 ? (
                 <p className="text-xs text-faint">Personal chats run in a managed per-chat folder and stay bound to Personal.</p>
               ) : state.chats.map((chat) => (
-                <div key={chat.chatId} className="flex items-center justify-between gap-2 rounded-md border border-border-soft bg-surface-0/40 p-2">
+                <div key={chat.chatId} className="flex items-center justify-between gap-2.5 rounded-lg border border-border-soft bg-surface-0/40 p-2">
+                  <ChatAvatar
+                    name={chat.title}
+                    fallbackName="ND"
+                    seed={chat.sessionId || chat.chatId}
+                    size={28}
+                    status="idle"
+                    ringClassName="ring-surface-0"
+                  />
                   <div className="min-w-0 flex-1">
                     <span className="block truncate text-xs font-medium text-foreground">{chat.title}</span>
                     <span className="block truncate text-[10px] text-faint">{chat.workDir}</span>

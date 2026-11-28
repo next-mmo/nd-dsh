@@ -11,6 +11,7 @@ import { resolveMemberCapabilities } from '../../../shared/organization'
 import type { OrganizationManagementProjection } from '../../../shared/organization-control'
 import { cn } from '../lib/utils'
 import { Card as UiCard } from './ui/card'
+import { ChatAvatar } from './ChatAvatar'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'
 
 interface Props {
@@ -266,21 +267,31 @@ export function OrganizationCollaborationCenter({ companyId, projectId, onAskAge
               const { label: author, kind: authorKind } = authorKindLabel(message.author.id, members, agents)
               const task = message.taskId ? tasks.find((item) => item.id === message.taskId) : undefined
               return (
-                <div key={message.id} className="border-b border-border-soft py-2 last:border-b-0">
-                  <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                    <span className="text-xs">{authorKind === 'agent' ? '🤖' : authorKind === 'human' ? '👤' : '⚙️'}</span>
-                    <strong className="text-foreground">{author}</strong>
-                    <span className="rounded border border-border-soft bg-secondary px-1 py-0.5 text-[9px] uppercase text-faint">{authorKind}</span>
-                    {message.category && message.category !== 'chat' ? (
-                      <span className="rounded border border-primary/25 bg-primary/10 px-1 py-0.5 font-mono text-[9px] uppercase text-primary">{message.category}</span>
-                    ) : null}
-                    {message.runId ? (
-                      <span className="font-mono text-[9px] text-faint">run #{message.runId.slice(0, 8)}</span>
-                    ) : null}
-                    {task ? <span className="rounded border border-border-soft bg-secondary px-1.5 py-0.5 text-faint">{task.title}</span> : <span className="text-faint">project</span>}
-                    <span className="ml-auto text-faint">{new Date(message.createdAt).toLocaleString()}</span>
+                <div key={message.id} className="flex items-start gap-2.5 border-b border-border-soft py-2.5 last:border-b-0">
+                  <ChatAvatar
+                    name={author}
+                    fallbackName={authorKind === 'agent' ? 'AG' : authorKind === 'human' ? 'HU' : 'SY'}
+                    seed={message.author.id || author}
+                    size={26}
+                    status={authorKind === 'agent' ? 'idle' : 'none'}
+                    ringClassName="ring-surface-0"
+                    className="mt-0.5"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                      <strong className="text-foreground">{author}</strong>
+                      <span className="rounded border border-border-soft bg-secondary px-1 py-0.5 text-[9px] uppercase text-faint">{authorKind}</span>
+                      {message.category && message.category !== 'chat' ? (
+                        <span className="rounded border border-primary/25 bg-primary/10 px-1 py-0.5 font-mono text-[9px] uppercase text-primary">{message.category}</span>
+                      ) : null}
+                      {message.runId ? (
+                        <span className="font-mono text-[9px] text-faint">run #{message.runId.slice(0, 8)}</span>
+                      ) : null}
+                      {task ? <span className="rounded border border-border-soft bg-secondary px-1.5 py-0.5 text-faint">{task.title}</span> : <span className="text-faint">project</span>}
+                      <span className="ml-auto text-faint">{new Date(message.createdAt).toLocaleString()}</span>
+                    </div>
+                    <p className="m-0 mt-1 whitespace-pre-wrap text-sm/[1.45] text-muted-foreground">{message.body}</p>
                   </div>
-                  <p className="m-0 mt-1 whitespace-pre-wrap text-sm/[1.45] text-muted-foreground">{message.body}</p>
                 </div>
               )
             }) : <Empty text="Start the project conversation. Team chat is durable project context, not an agent execution transcript." />}

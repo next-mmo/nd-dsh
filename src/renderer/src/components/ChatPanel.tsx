@@ -54,7 +54,6 @@ import {
   ArrowUpIcon,
   BrainIcon,
   CalendarIcon,
-  ChatIcon,
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
@@ -98,6 +97,17 @@ import { Button } from './ui/button'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from './ui/dropdown-menu'
 import { EnginePicker } from './EnginePicker'
+import { ChatAvatar, type ChatAvatarStatus } from './ChatAvatar'
+import { ChatSplitStage } from './ChatSplitStage'
+import {
+  addSplitPane,
+  persistSplitPanes,
+  readStoredSplitPanes,
+  removeSplitPane,
+  swapSplitPanes,
+  type SplitChatCandidate,
+  type SplitPaneItem,
+} from '../lib/chat-split'
 
 interface ChatPanelProps {
   onGitEditableChange?(editable: boolean): void
@@ -398,6 +408,8 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [collapsedSessionParents, setCollapsedSessionParents] = useState<Set<string>>(new Set())
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
+  const [splitMode, setSplitMode] = useState(false)
+  const [splitPanes, setSplitPanes] = useState<SplitPaneItem[]>(readStoredSplitPanes)
   const [terminalOpen, setTerminalOpen] = useState(false)
   const [logsOpen, setLogsOpen] = useState(false)
   const [sessionLogs, setSessionLogs] = useState<Record<string, ProcessLogEntry[]>>({})
@@ -779,6 +791,10 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
     ),
     [projects, listedTree, listedHarnessSessions, listedEngineSessions, sessionProjects],
   )
+  const totalListedChats = useMemo(
+    () => chatSections.reduce((sum, section) => sum + section.entries.length, 0),
+    [chatSections],
+  )
   const archiveableIds = useMemo(
     () => showArchived ? [] : archiveableVisibleSessionIds(visibleSessions, visibleEngineSessions, activeSessionId),
     [showArchived, visibleSessions, visibleEngineSessions, activeSessionId],
@@ -909,9 +925,16 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
     explicitSessionOpenRef.current = sessionOpenRequest.sessionId
     setShowArchived(false)
     setActiveSessionId(sessionOpenRequest.sessionId)
+    if (splitMode) {
+      setSplitPanes((current) => {
+        const next = addSplitPane(current, sessionOpenRequest.sessionId)
+        persistSplitPanes(next)
+        return next
+      })
+    }
     void refreshSessions()
     void refreshEngineSessions()
-  }, [sessionOpenRequest, onSessionOpenConsumed, refreshSessions, refreshEngineSessions])
+  }, [sessionOpenRequest, onSessionOpenConsumed, refreshSessions, refreshEngineSessions, splitMode])
 
   /** Restore a non-harness thread by replaying its stored session events. */
   const loadEngineTranscript = useCallback(async (sessionId: string): Promise<void> => {
@@ -949,12 +972,26 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
   const selectSession = useCallback((session: SessionSummary): void => {
     setDraftEngineId(null)
     setActiveSessionId(session.sessionId)
+    if (splitMode) {
+      setSplitPanes((current) => {
+        const next = addSplitPane(current, session.sessionId)
+        persistSplitPanes(next)
+        return next
+      })
+    }
     if (!threads[session.sessionId]) void loadHistory(session.sessionId)
-  }, [threads, loadHistory])
+  }, [threads, loadHistory, splitMode])
 
   const selectEngineSession = useCallback((summary: EngineSessionSummary): void => {
     setDraftEngineId(null)
     setActiveSessionId(summary.sessionId)
+    if (splitMode) {
+      setSplitPanes((current) => {
+        const next = addSplitPane(current, summary.sessionId)
+        persistSplitPanes(next)
+        return next
+      })
+    }
     if (summary.engineId in WEB_ENGINE_INFO) {
       // The engine owns (and persists) the tab mapping; it recreates the tab
       // when the user closed it or the app restarted.
@@ -963,7 +1000,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
         .catch(() => undefined)
     }
     if (!threads[summary.sessionId]) void loadEngineTranscript(summary.sessionId)
-  }, [threads, loadEngineTranscript, onActivateBrowserTab])
+  }, [threads, loadEngineTranscript, onActivateBrowserTab, splitMode])
 
   // Archival is a desktop-side flag; refetching both listings re-applies the
   // annotated flags exactly like every other session mutation does.
@@ -1117,6 +1154,111 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
     // so an existing thread shows its messages and context immediately.
     void loadHistory(activeSessionId)
   }, [activeSessionId, threads, loadHistory, loadEngineTranscript, engineSessionIds])
+
+  const updateSplitPanes = useCallback((updater: (current: SplitPaneItem[]) => SplitPaneItem[]): void => {
+    setSplitPanes((current) => {
+      const next = updater(current)
+      persistSplitPanes(next)
+      return next
+    })
+  }, [])
+
+  const toggleSplitMode = useCallback((): void => {
+    setSplitMode((open) => {
+      const nextOpen = !open
+      if (nextOpen && activeSessionId) {
+        updateSplitPanes((current) => current.length === 0 ? addSplitPane(current, activeSessionId) : current)
+      }
+      return nextOpen
+    })
+  }, [activeSessionId, updateSplitPanes])
+
+  const ensureSplitSessionLoaded = useCallback((sessionId: string): void => {
+    if (threads[sessionId]) return
+    if (engineSessionIds.has(sessionId)) {
+      void loadEngineTranscript(sessionId)
+      return
+    }
+    void loadHistory(sessionId)
+  }, [threads, engineSessionIds, loadEngineTranscript, loadHistory])
+
+  const splitCandidates = useMemo<SplitChatCandidate[]>(() => {
+    const projectNameById = new Map((projects ?? []).map((item) => [item.id, item.name]))
+    const engineNameById = new Map(engines.map((item) => [item.id, item.name]))
+    const hasPendingNeed = (sessionId: string): boolean => (threads[sessionId] ?? []).some(
+      (entry) => (entry.kind === 'approval' || entry.kind === 'question') && !entry.resolved,
+    )
+    const projectLabelFor = (sessionId: string): string | undefined => {
+      const pid = sessionProjectScope?.sessionProjects[sessionId]
+      return pid ? projectNameById.get(pid) : undefined
+    }
+    const items: SplitChatCandidate[] = []
+    for (const session of visibleSessions) {
+      const state: SplitChatCandidate['state'] = hasPendingNeed(session.sessionId)
+        ? 'needs-you'
+        : busySessions.has(session.sessionId) || session.running
+          ? 'working'
+          : session.archived
+            ? 'archived'
+            : 'ready'
+      const projectLabel = projectLabelFor(session.sessionId)
+      items.push({
+        sessionId: session.sessionId,
+        title: sessionTitle(session),
+        engineLabel: 'ND Harness',
+        ...(projectLabel ? { projectLabel } : {}),
+        state,
+        updatedAt: typeof session.updatedAt === 'number' ? session.updatedAt : (Date.parse(String(session.updatedAt ?? '')) || 0),
+      })
+    }
+    for (const session of visibleEngineSessions) {
+      const state: SplitChatCandidate['state'] = hasPendingNeed(session.sessionId)
+        ? 'needs-you'
+        : busySessions.has(session.sessionId) || session.running
+          ? 'working'
+          : session.archived
+            ? 'archived'
+            : 'ready'
+      const projectLabel = projectLabelFor(session.sessionId)
+      items.push({
+        sessionId: session.sessionId,
+        title: session.title,
+        engineLabel: engineNameById.get(session.engineId) ?? session.engineId,
+        ...(projectLabel ? { projectLabel } : {}),
+        state,
+        updatedAt: session.updatedAt || session.createdAt || 0,
+      })
+    }
+    return items
+  }, [visibleSessions, visibleEngineSessions, threads, busySessions, projects, engines, sessionProjectScope])
+
+  const sendSplitMessage = useCallback(async (sessionId: string, text: string): Promise<boolean> => {
+    const cleaned = text.trim()
+    if (!cleaned) return false
+    const engineSession = engineSessions.find((item) => item.sessionId === sessionId)
+    const isBusy = busySessions.has(sessionId) || Boolean(engineSession?.running) || Boolean(sessions.find((item) => item.sessionId === sessionId)?.running)
+    try {
+      await window.ndDsh.harness.run(cleaned, {
+        sessionId,
+        ...(engineSession ? { engineId: engineSession.engineId } : {}),
+        ...(isBusy && !engineSession ? { mode: 'steer' as const } : {}),
+      })
+      void refreshEngineSessions()
+      if (!sessions.some((s) => s.sessionId === sessionId)) void refreshSessions()
+      return true
+    } catch (cause) {
+      onError(ipcFailureMessage(cause instanceof Error ? cause.message : String(cause)))
+      return false
+    }
+  }, [engineSessions, busySessions, sessions, onError, refreshEngineSessions, refreshSessions])
+
+  const stopSplitSession = useCallback(async (sessionId: string): Promise<void> => {
+    try {
+      await window.ndDsh.harness.stopSession(sessionId)
+    } catch (cause) {
+      onError(ipcFailureMessage(cause instanceof Error ? cause.message : String(cause)))
+    }
+  }, [onError])
 
   // Archiving (or leaving the archived view) must not strand the composer on
   // a hidden thread: fall back to the first visible chat, else the draft state.
@@ -2359,15 +2501,20 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
     const runningChildren = countRunningSessionDescendants(node, busySessions)
     const collapsed = collapsedSessionParents.has(session.sessionId)
     const hasChildren = childCount > 0
-    const summary = hasChildren
+    const sessionBusy = busySessions.has(session.sessionId) || Boolean(session.running) || runningChildren > 0
+    const subtitle = hasChildren
       ? runningChildren > 0
         ? `${runningChildren}/${childCount} active`
         : `${childCount} subagent${childCount === 1 ? '' : 's'}`
-      : sessionTime(session)
+      : session.archived === true
+        ? 'Archived'
+        : sessionBusy
+          ? 'Running'
+          : 'Idle'
 
     return (
       <div key={session.sessionId}>
-        <div className="flex min-w-0 items-center gap-0.5" style={{ paddingLeft: Math.min(depth, 6) * 14 }}>
+        <div className="flex min-w-0 items-center gap-0.5">
           {hasChildren ? (
             <button
               type="button"
@@ -2383,14 +2530,17 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
             >
               {collapsed ? <ChevronRightIcon /> : <ChevronDownIcon />}
             </button>
-          ) : depth > 0 ? <span className="size-5 shrink-0" /> : null}
+          ) : null}
           <div className="min-w-0 flex-1">
             <SessionCard
               active={activeSessionId === session.sessionId}
-              busy={busySessions.has(session.sessionId) || Boolean(session.running) || runningChildren > 0}
+              busy={sessionBusy}
               title={sessionTitle(session)}
-              time={summary}
-              leading={hasChildren ? 'none' : session.origin === 'subagent' ? 'subagent' : 'chat'}
+              subtitle={subtitle}
+              time={hasChildren ? undefined : sessionTime(session)}
+              avatarSeed={session.sessionId}
+              avatarStatus={hasChildren ? (sessionBusy ? 'busy' : 'none') : session.archived === true ? 'archived' : sessionBusy ? 'busy' : 'idle'}
+              leading={hasChildren ? 'parent' : session.origin === 'subagent' || depth > 0 ? 'subagent' : 'chat'}
               cardTitle={session.origin === 'subagent' ? 'Subagent session' : hasChildren ? 'Main agent session with subagents' : undefined}
               archived={session.archived === true}
               onToggleArchive={() => void setSessionArchived(session.sessionId, session.archived !== true)}
@@ -2398,20 +2548,28 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
             />
           </div>
         </div>
-        {!collapsed && node.children.map((child) => renderSessionNode(child, depth + 1))}
+        {!collapsed && node.children.length > 0 ? (
+          <div className="ml-[10px] mt-1 flex flex-col gap-1 border-l border-border-soft pl-2">
+            {node.children.map((child) => renderSessionNode(child, depth + 1))}
+          </div>
+        ) : null}
       </div>
     )
   }
 
   const renderEngineSession = (session: EngineSessionSummary): ReactNode => {
     const engineName = engines.find((engine) => engine.id === session.engineId)?.name ?? session.engineId
+    const sessionBusy = busySessions.has(session.sessionId) || Boolean(session.running)
     return (
       <SessionCard
         key={session.sessionId}
         active={activeSessionId === session.sessionId}
-        busy={busySessions.has(session.sessionId) || Boolean(session.running)}
+        busy={sessionBusy}
         title={cleanThreadTitle(session.title)}
+        subtitle={session.archived === true ? 'Archived' : sessionBusy ? 'Running' : 'Idle'}
         time={sessionTime({ updatedAt: session.updatedAt } as SessionSummary)}
+        avatarSeed={session.sessionId}
+        avatarStatus={session.archived === true ? 'archived' : sessionBusy ? 'busy' : 'idle'}
         engineChip={engineName}
         cardTitle={`${engineName} chat`}
         archived={session.archived === true}
@@ -2446,7 +2604,7 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
           <button
             type="button"
             className={cn(
-              'flex h-[23px] min-w-0 flex-1 items-center gap-1.5 rounded-md px-1 text-left text-xs transition-colors [&_svg]:size-3 [&_svg]:shrink-0',
+              'flex h-[24px] min-w-0 flex-1 items-center gap-1.5 rounded-md px-1.5 text-left text-xs transition-colors [&_svg]:size-3 [&_svg]:shrink-0',
               section.active
                 ? 'bg-selected-row text-selected-row-foreground hover:bg-selected-row'
                 : 'text-soft hover:bg-accent hover:text-foreground',
@@ -2455,25 +2613,32 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
             onClick={() => selectProjectSection(section)}
           >
             <FolderIcon style={{ color: FOLDER_ACCENT }} />
-            <span className="min-w-0 truncate">{section.name}</span>
+            <span className="min-w-0 truncate font-medium">{section.name}</span>
             {section.active ? (
-              <span className="ml-auto shrink-0 text-[9px] font-bold text-primary">ACTIVE</span>
+              <span className="ml-auto flex shrink-0 items-center gap-1">
+                <span className="text-[9px] font-bold text-primary">ACTIVE</span>
+                <span className="text-[9px] font-semibold tabular-nums opacity-70">{section.entries.length}</span>
+              </span>
             ) : (
-              <span className="ml-auto shrink-0 text-[9px] font-semibold text-faint">{section.entries.length}</span>
+              <span className="ml-auto shrink-0 text-[10px] font-semibold tabular-nums text-faint">{section.entries.length}</span>
             )}
           </button>
         </div>
-        {!expanded ? null : section.entries.length === 0 ? (
-          <div className="px-2 py-0.5 text-[10px]/[1.5] text-faint">No chats</div>
-        ) : groupByDate ? (
-          section.groups.map((bucket) => (
-            <div key={bucket.group} className="flex flex-col gap-1">
-              <span className="px-2 text-[10px] font-medium text-faint">{bucket.group}</span>
-              {bucket.entries.map(renderSessionEntry)}
-            </div>
-          ))
-        ) : (
-          <div className="flex flex-col gap-1">{section.entries.map(renderSessionEntry)}</div>
+        {!expanded ? null : (
+          <div className="ml-[9px] flex flex-col gap-1 border-l border-border-soft pl-2">
+            {section.entries.length === 0 ? (
+              <div className="px-1.5 py-0.5 text-[10px]/[1.5] text-faint">No chats</div>
+            ) : groupByDate ? (
+              section.groups.map((bucket) => (
+                <div key={bucket.group} className="flex flex-col gap-1">
+                  <span className="px-1.5 pt-0.5 text-[10px] font-medium text-faint">{bucket.group}</span>
+                  {bucket.entries.map(renderSessionEntry)}
+                </div>
+              ))
+            ) : (
+              <div className="flex flex-col gap-1">{section.entries.map(renderSessionEntry)}</div>
+            )}
+          </div>
         )}
       </div>
     )
@@ -2719,9 +2884,16 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
             </div>
           ) : null}
 
-          <div className="mt-1.5 flex flex-col gap-1">
+          <div className="mt-1.5 flex flex-col gap-1.5">
             <div className="flex items-center justify-between">
-              <span className="px-2 text-[9px] font-semibold tracking-[0.08em] text-faint">CHATS</span>
+              <div className="flex items-center gap-1.5 px-1.5">
+                <span className="text-[10px] font-semibold tracking-[0.08em] text-faint">CHATS</span>
+                {sessionsLoaded ? (
+                  <span className="inline-flex h-[16px] min-w-[16px] items-center justify-center rounded-full bg-accent px-1.5 text-[9px] font-semibold tabular-nums text-muted-foreground">
+                    {totalListedChats}
+                  </span>
+                ) : null}
+              </div>
               <div className="flex items-center gap-0.5">
                 <button
                   className="grid size-[22px] shrink-0 place-items-center rounded-[5px] text-faint transition-colors hover:bg-accent hover:text-foreground [&_svg]:size-[13px]"
@@ -2824,6 +2996,28 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
       <aside className={cn('flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-surface-0', threadCollapsed && 'hidden')}>
         <header className="flex h-[38px] shrink-0 items-center justify-between border-b border-border-soft bg-sidebar px-2.5">
           <div className="flex min-w-0 flex-1 flex-row items-center gap-2">
+            {activeSession || activeEngineSession || draftEngineId !== null ? (
+              <ChatAvatar
+                name={
+                  activeSession
+                    ? sessionTitle(activeSession)
+                    : activeEngineSession
+                      ? activeEngineSession.title
+                      : `New ${activeEngineName} chat`
+                }
+                fallbackName={onHarnessThread ? 'ND' : activeEngineName}
+                seed={activeSession?.sessionId ?? activeEngineSession?.sessionId ?? activeEngineId}
+                size={24}
+                status={
+                  busy
+                    ? 'busy'
+                    : activeSession?.archived === true || activeEngineSession?.archived === true
+                      ? 'archived'
+                      : 'idle'
+                }
+                ringClassName="ring-sidebar"
+              />
+            ) : null}
             <div className="flex min-w-0 flex-1 flex-col justify-center gap-px">
               <span className="m-0 text-[8px]/[1.2] tracking-[0.1em] text-faint">{onHarnessThread ? 'ACTIVE THREAD' : 'ENGINE THREAD'}</span>
               <strong
@@ -2841,6 +3035,22 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
+            <Button
+              variant="ghost"
+              size="xs"
+              aria-pressed={splitMode}
+              aria-label={splitMode ? 'Switch to single chat view' : 'Open multi-chat split view'}
+              title={splitMode ? 'Return to single chat view' : 'Watch up to 4 chats side by side'}
+              className={cn(
+                'h-6 rounded-md border px-1.5 text-[10px] font-medium',
+                splitMode
+                  ? 'border-primary/30 bg-primary/10 text-primary'
+                  : 'border-border-soft text-faint hover:bg-accent hover:text-foreground',
+              )}
+              onClick={toggleSplitMode}
+            >
+              {splitMode ? `Split (${splitPanes.length})` : 'Split'}
+            </Button>
             <span
               className={cn(
                 'inline-block size-2 rounded-full',
@@ -2862,6 +3072,31 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
             </Button>
           </div>
         </header>
+
+        {splitMode ? (
+          <ChatSplitStage
+            panes={splitPanes}
+            candidates={splitCandidates}
+            threads={threads}
+            busySessions={busySessions}
+            focusedSessionId={activeSessionId}
+            onFocusPane={(sessionId) => setActiveSessionId(sessionId)}
+            onAddPane={(sessionId) => updateSplitPanes((current) => addSplitPane(current, sessionId))}
+            onRemovePane={(index) => updateSplitPanes((current) => removeSplitPane(current, index))}
+            onSwapPanes={(from, to) => updateSplitPanes((current) => swapSplitPanes(current, from, to))}
+            onOpenAlone={(sessionId) => {
+              setActiveSessionId(sessionId)
+              setSplitMode(false)
+            }}
+            onExitSplit={() => setSplitMode(false)}
+            onEnsureLoaded={ensureSplitSessionLoaded}
+            onSendMessage={sendSplitMessage}
+            onStopSession={stopSplitSession}
+            {...(onOpenFile ? { onOpenFile } : {})}
+            {...(onOpenLink ? { onOpenLink } : {})}
+          />
+        ) : (
+        <>
 
         {/* Harness runtime health is a harness-thread concern; engine chats
             authenticate natively and never route through ND providers. */}
@@ -3948,6 +4183,8 @@ export function ChatPanel({ status, workspaceRoot, workspaceName, workspaceSelec
           </div>
           <span className="min-w-0 truncate text-right text-[8px] text-fainter" title="Browser actions run in the pane you can see.">Browser actions run in the pane you can see.</span>
         </div>
+        </>
+        )}
       </aside>
       <ProcessLogsDrawer
         open={logsOpen}
@@ -4032,30 +4269,41 @@ function countRunningSessionDescendants(node: SessionTreeNode, busySessions: Rea
 }
 
 /**
- * Session thread card in the left sidebar. The card stays a plain select
- * button; Archive/Unarchive is a single-click action button that swaps in
- * for the timestamp on hover, so no interactive element nests inside another.
- * `leading` picks the row glyph: a chat bubble for ordinary chats, a circular
- * agent avatar for subagent rows, or none when the parent row's collapse
- * chevron already leads the row.
+ * Session thread card in the left sidebar. Displays a circular colored monogram
+ * avatar with a bottom-right status dot (green when idle, pulsing blue when
+ * busy, muted when archived) and a curved left accent rail on the active row.
  *
- * Long titles truncate; a "See more" strip appears under the card only when
- * the title actually overflows and expands it to wrap (with "See less" to
- * collapse again). Hovering always exposes the full title as a tooltip.
- *
- * The engine chip and timestamp sit on their own line rather than beside the
- * title: at the sidebar's default 220px they left the title ~20px, which clipped
- * every chat to one letter and made the expanded wrap one word per line.
+ * The card stays a plain select button; Archive/Unarchive is a single-click
+ * action button that swaps in for the timestamp on hover, so no interactive
+ * element nests inside another. Long titles truncate with an expandable
+ * "See more" strip when overflowing.
  */
-function SessionCard({ active, busy, title, time, engineChip, cardTitle, archived = false, leading = 'chat', onToggleArchive, onClick }: {
+function SessionCard({
+  active,
+  busy,
+  title,
+  subtitle,
+  time,
+  avatarSeed,
+  avatarStatus = 'idle',
+  engineChip,
+  cardTitle,
+  archived = false,
+  leading = 'chat',
+  onToggleArchive,
+  onClick,
+}: {
   active: boolean
   busy: boolean
   title: string
-  time: string
+  subtitle?: string | undefined
+  time?: string | undefined
+  avatarSeed: string
+  avatarStatus?: ChatAvatarStatus
   engineChip?: string | undefined
   cardTitle?: string | undefined
   archived?: boolean
-  leading?: 'chat' | 'subagent' | 'none'
+  leading?: 'chat' | 'subagent' | 'parent'
   onToggleArchive(): void
   onClick(): void
 }) {
@@ -4076,54 +4324,73 @@ function SessionCard({ active, busy, title, time, engineChip, cardTitle, archive
 
   const showTitleToggle = titleExpanded || titleOverflowing
   const tooltip = [cardTitle, title].filter(Boolean).join('\n')
-  // Keeps the meta line under the title text, which starts after the status dot
-  // plus whichever leading glyph this row carries (6px gaps either side).
-  const metaIndent = leading === 'chat' ? 'pl-[30px]' : leading === 'subagent' ? 'pl-[33px]' : 'pl-[11px]'
+  const avatarSize = leading === 'subagent' ? 24 : 28
 
   return (
     <div
       className={cn(
-        'group relative rounded-lg border text-[11px] transition-colors',
+        'group relative rounded-xl border text-[11px] transition-colors',
         active
           ? 'border-border-strong bg-secondary text-foreground shadow-sm'
-          : 'border-border-soft bg-surface-1 text-soft hover:bg-accent hover:text-foreground',
+          : 'border-transparent bg-transparent text-soft hover:bg-accent/80 hover:text-foreground',
       )}
     >
+      {active ? (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute -inset-y-px -left-px w-3 rounded-l-xl border-l-[3px] border-primary"
+        />
+      ) : null}
       <button
         type="button"
-        className="flex w-full flex-col gap-px px-2.5 py-1.5 text-left"
+        className="flex w-full min-w-0 items-center gap-2.5 px-2 py-1.5 text-left"
         {...(tooltip ? { title: tooltip } : {})}
         onClick={onClick}
       >
-        <span className="flex w-full min-w-0 items-center gap-1.5">
-          <span className={cn('size-[5px] shrink-0 rounded-full', busy ? 'bg-primary' : 'bg-faint opacity-40')} />
-          {leading === 'chat' ? (
-            <ChatIcon className="size-[13px] shrink-0 text-faint" />
-          ) : leading === 'subagent' ? (
-            <span className={cn('grid size-[16px] shrink-0 place-items-center rounded-full', busy ? 'bg-primary text-background' : 'bg-faint/25 text-soft')}>
-              <SparkIcon className="size-[10px]" />
-            </span>
-          ) : null}
+        <ChatAvatar
+          name={title}
+          fallbackName={engineChip ?? 'ND'}
+          seed={avatarSeed}
+          size={avatarSize}
+          status={avatarStatus}
+          ringClassName={active ? 'ring-secondary' : 'ring-sidebar'}
+        />
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span
             ref={titleRef}
-            className={cn('min-w-0 flex-1 font-medium', titleExpanded ? 'whitespace-pre-wrap break-words' : 'truncate')}
+            className={cn(
+              'min-w-0 text-[12px] font-medium leading-[1.3]',
+              active ? 'text-foreground' : 'text-soft group-hover:text-foreground',
+              titleExpanded ? 'whitespace-pre-wrap break-words' : 'truncate',
+            )}
           >
             {title}
           </span>
-        </span>
-        <span className={cn('flex w-full items-center gap-1.5 text-[9px] leading-[13px] text-faint', metaIndent)}>
-          {engineChip ? (
-            <span className="min-w-0 truncate rounded-md border border-border-soft px-1.5 py-px font-semibold uppercase tracking-[0.04em] text-soft">
-              {engineChip}
-            </span>
-          ) : null}
-          <span className="ml-auto shrink-0 transition-opacity group-hover:opacity-0">{time}</span>
+          <span className="flex w-full min-w-0 items-center gap-1.5 text-[10px] leading-[1.25] text-faint">
+            {engineChip ? (
+              <span className="min-w-0 truncate rounded border border-border-soft bg-surface-1/80 px-1 py-px text-[9px] font-medium text-soft">
+                {engineChip}
+              </span>
+            ) : subtitle ? (
+              <span className={cn('min-w-0 truncate', busy && 'font-medium text-primary')}>
+                {subtitle}
+              </span>
+            ) : null}
+            {time ? (
+              <span className="ml-auto shrink-0 text-[9px] text-fainter transition-opacity group-hover:opacity-0">
+                {time}
+              </span>
+            ) : null}
+          </span>
         </span>
       </button>
       {showTitleToggle ? (
         <button
           type="button"
-          className="w-full px-2.5 pb-1.5 text-left text-[9px] font-bold uppercase tracking-[0.06em] text-faint transition-colors hover:text-primary"
+          className={cn(
+            'w-full pb-1.5 pr-2.5 text-left text-[9px] font-bold uppercase tracking-[0.06em] text-faint transition-colors hover:text-primary',
+            leading === 'subagent' ? 'pl-[42px]' : 'pl-[46px]',
+          )}
           onClick={(event) => {
             event.stopPropagation()
             setTitleExpanded((value) => !value)

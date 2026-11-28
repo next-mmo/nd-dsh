@@ -279,6 +279,8 @@ export default function App() {
   const [workspaceCollapsed, setWorkspaceCollapsed] = useState(false)
   const [externalPrompt, setExternalPrompt] = useState<{ id: string; text: string; prepend?: boolean } | null>(null)
   const [sessionOpenRequest, setSessionOpenRequest] = useState<{ id: string; sessionId: string } | null>(null)
+  const [needsYouInboxOpen, setNeedsYouInboxOpen] = useState(false)
+  const [needsYouCount, setNeedsYouCount] = useState(0)
   const [theme, setTheme] = useState<ThemeState | null>(null)
   const [appInspectCountdown, setAppInspectCountdown] = useState<number | null>(null)
   const [appInspectInFlight, setAppInspectInFlight] = useState(false)
@@ -1985,6 +1987,20 @@ export default function App() {
           </div>
         </nav>
         <div className="app-no-drag flex min-w-0 items-center justify-end gap-[7px] overflow-hidden font-mono text-xs text-faint">
+          {needsYouCount > 0 ? (
+            <button
+              type="button"
+              onClick={() => setNeedsYouInboxOpen((open) => !open)}
+              title="Open Needs you decision inbox"
+              aria-label={`Needs you: ${needsYouCount} item${needsYouCount === 1 ? '' : 's'} waiting`}
+              className="flex h-6 shrink-0 items-center gap-1.5 rounded-full border border-warning/40 bg-warning/15 px-2 font-sans text-[11px] font-semibold text-warning transition-colors hover:bg-warning/25"
+            >
+              <span>Needs you</span>
+              <span className="grid min-w-[16px] place-items-center rounded-full bg-warning px-1 text-[10px] font-extrabold text-surface-0 tabular-nums">
+                {needsYouCount}
+              </span>
+            </button>
+          ) : null}
           {workspace?.binding === 'project' ? (
             <Badge
               variant="outline"
@@ -2558,7 +2574,21 @@ export default function App() {
           onCaptureUrl={(url) => launcherQuickNote(url, ['capture', 'url'])}
         />
       ) : null}
-      <RuntimePrompts onError={notify} organization={orgState} />
+      <RuntimePrompts
+        onError={notify}
+        organization={orgState}
+        inboxOpen={needsYouInboxOpen}
+        onInboxOpenChange={setNeedsYouInboxOpen}
+        onNeedsYouCountChange={setNeedsYouCount}
+        onOpenSession={(sessionId) => {
+          setSessionOpenRequest({ id: crypto.randomUUID(), sessionId })
+          switchToWorkbench('agent')
+        }}
+        onOpenCompany={() => {
+          switchToWorkbench('company')
+          setCompanyView('operations')
+        }}
+      />
       <ExtensionKeepAliveHost theme={theme?.effective ?? 'dark'} onError={notify} />
       <Dialog open={miniBrowserOpen} onOpenChange={setMiniBrowserOpen}>
         <DialogContent

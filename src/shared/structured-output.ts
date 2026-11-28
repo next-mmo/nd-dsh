@@ -1,9 +1,11 @@
+import type { DiffRiskSelfReview } from './diff-risk.js'
 import type { ProjectPlanInput } from './organization.js'
 
 export interface ReviewVerdict {
   verdict: 'pass' | 'fail'
   summary: string
   issues?: string[]
+  risk?: DiffRiskSelfReview
   memory?: Array<{ title: string; content: string; tags?: string[] }>
 }
 

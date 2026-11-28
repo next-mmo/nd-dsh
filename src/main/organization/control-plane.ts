@@ -16,6 +16,7 @@ import type {
   OrganizationTurnRecord,
   OrganizationTurnResultKind,
 } from '../../shared/organization-control.js'
+import { assessDiffRisk, type DiffRiskSelfReview } from '../../shared/diff-risk.js'
 import type { OrganizationRun, OrganizationRunKind, OrganizationRunReceipt, OrganizationSnapshot } from '../../shared/organization.js'
 import type { OrganizationStore } from './store.js'
 import { unavailableEvidenceCapturer, type WorkspaceEvidenceCapture } from './worktree-evidence.js'
@@ -294,11 +295,57 @@ export class OrganizationControlPlane {
       ? 'failed'
       : current.fingerprint === latest.fingerprint ? 'verified' : 'stale'
     if (latest.status !== 'verified') latest.invalidatedAt = Date.now()
+    const preservedSelfReview: DiffRiskSelfReview | undefined = latest.status === 'verified' && latest.risk?.agentScore !== null && latest.risk?.agentScore !== undefined
+      ? {
+          score: latest.risk.agentScore,
+          requiresHumanReview: latest.risk.requiresHumanReview,
+          reason: latest.risk.reason,
+          ...(latest.risk.factors.length ? { factors: latest.risk.factors } : {}),
+        }
+      : undefined
+    latest.risk = assessDiffRisk(
+      {
+        files: current.changedFiles.length ? current.changedFiles : latest.changedFiles,
+        changedLines: latest.risk?.changedLines ?? null,
+        binary: latest.risk?.binary ?? false,
+        fingerprint: current.fingerprint,
+        exact: latest.exact && current.exact,
+      },
+      preservedSelfReview,
+    )
     latest.reviewSummary = latest.status === 'verified'
       ? 'Exact task-worktree fingerprint still matches the review receipt.'
       : latest.status === 'stale'
         ? 'Task worktree changed after the review evidence was captured; re-review is required.'
         : 'Exact Git task-worktree evidence was unavailable; completion cannot be strongly verified.'
+    await this.save()
+    return clone(latest)
+  }
+
+  /**
+   * Bind a reviewer's self-assessment and optional diff stats to the newest
+   * evidence receipt for a task, enforcing the deterministic risk floor.
+   */
+  async recordEvidenceRisk(
+    taskId: string,
+    selfReview: DiffRiskSelfReview | undefined,
+    stats?: { files?: readonly string[]; changedLines?: number | null; binary?: boolean; fingerprint?: string; exact?: boolean },
+  ): Promise<OrganizationEvidenceReceipt | null> {
+    await this.load()
+    const latest = this.value.evidence.find((item) => item.taskId === taskId)
+    if (!latest) return null
+    const fingerprint = stats?.fingerprint ?? latest.fingerprint
+    const exact = (stats?.exact ?? latest.exact) && fingerprint === latest.fingerprint
+    latest.risk = assessDiffRisk(
+      {
+        files: stats?.files?.length ? stats.files : latest.changedFiles,
+        changedLines: stats?.changedLines ?? latest.risk?.changedLines ?? null,
+        binary: stats?.binary ?? latest.risk?.binary ?? false,
+        fingerprint,
+        exact,
+      },
+      selfReview,
+    )
     await this.save()
     return clone(latest)
   }
@@ -450,6 +497,11 @@ export class OrganizationControlPlane {
       id: randomUUID(), companyId: context.company.id, projectId: context.project.id, taskId,
       fingerprint: capture.fingerprint, exact: capture.exact, source: capture.source,
       changedFiles: capture.changedFiles, ...(capture.gitHead ? { gitHead: capture.gitHead } : {}),
+      risk: assessDiffRisk({
+        files: capture.changedFiles,
+        fingerprint: capture.fingerprint,
+        exact: capture.exact,
+      }),
       status: 'pending_review', capturedAt: capture.capturedAt,
     })
     return true

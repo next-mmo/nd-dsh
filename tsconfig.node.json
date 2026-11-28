@@ -28,6 +28,8 @@
     "src/renderer/src/lib/runtime-notices.ts",
     "src/renderer/src/lib/runtime-prompt-context.ts",
     "src/renderer/src/lib/runtime-prompt-action.ts",
+    "src/renderer/src/lib/needs-you-inbox.ts",
+    "src/renderer/src/lib/chat-split.ts",
     "src/renderer/src/lib/settings-route.ts",
     "src/renderer/src/lib/settings-search.ts",
     "src/renderer/src/lib/quick-launcher-model.ts",
